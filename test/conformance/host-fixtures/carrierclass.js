@@ -13,8 +13,8 @@
 
 const $rt = require("../deal/runtime");
 
-const VALUE = "@$external/host.carrierclass/Config";
-const HOLDER = "@$external/host.carrierclass/Holder";
+const VALUE = "@$external/host/carrierclass/Config";
+const HOLDER = "@$external/host/carrierclass/Holder";
 
 function config(value) {
   return { $kind: "class", $classname: VALUE, value: value };

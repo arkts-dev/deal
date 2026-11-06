@@ -126,7 +126,7 @@ public final class ClassPresenceProductionTest {
                 CompositionProductionTest.execute(imports
                     + "function consume(n:host.Node):void{}function identity(n:host.Node):host.Node{return n;}"
                     + "export function main():null{let n:host.Node={x:1,next:null};n.next=n;"
-                    + "function get():host.Node{console.log(\"RETURN_BODY\");return n;}host.mutate(n);try{"
+                    + "let get:()=>host.Node=function():host.Node{console.log(\"RETURN_BODY\");return n;};host.mutate(n);try{"
                     + operation + "console.log(\"OK\");}catch(e){console.log(\"REJECT\");}return null;}",
                     boundary.equals("return") ? "RETURN_BODY\nREJECT\n" : "REJECT\n", root.resolve("cycle-" + boundary), host,
                     List.of(deal.codegen.Backend.JS, deal.codegen.Backend.LUAJIT));
@@ -178,8 +178,8 @@ public final class ClassPresenceProductionTest {
             }
             """);
         Files.writeString(project.resolve("deal.json"), """
-            {"languageVersion":"1.5","moduleRoots":["src"],"output":"out",
-             "backend":"js","stdlib":"1.5","dependencies":{},
+            {"languageVersion":"1.6","moduleRoots":["src"],"output":"out",
+             "backend":"js","stdlib":"1.6","dependencies":{},
              "externals":{"host/record":{"declaration":"bindings/record.d.deal"}}}
             """);
         String javaCommand = Path.of(System.getProperty("java.home"), "bin/java").toString();

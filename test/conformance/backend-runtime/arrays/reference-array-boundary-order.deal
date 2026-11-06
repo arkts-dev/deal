@@ -15,9 +15,9 @@ export function main(): null {
   }
 
   let trace: string = "";
-  function target(): number[] { trace = trace + "T"; return b; }
-  function index(): number { trace = trace + "I"; return 3; }
-  function value(): number { trace = trace + "V"; return 256; }
+  let target = function(): number[] { trace = trace + "T"; return b; };
+  let index = function(): number { trace = trace + "I"; return 3; };
+  let value = function(): number { trace = trace + "V"; return 256; };
 
   try {
     target()[index()] = value();

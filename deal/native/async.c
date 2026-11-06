@@ -386,8 +386,10 @@ deal_outcome_data deal_async_await(void *operation,
         completion_descriptor);
     deal_check_input checked;
     memset(&checked, 0, sizeof(checked));
-    if (record->presentation == DEAL_PRESENT_INVALID_UNICODE) {
-        checked.presentation = DEAL_PRESENT_INVALID_UNICODE;
+    if (record->presentation == DEAL_PRESENT_INVALID_UNICODE
+            || record->presentation == DEAL_PRESENT_RAW_FUNCTION
+            || record->presentation == DEAL_PRESENT_OPAQUE) {
+        checked.presentation = record->presentation;
         checked.unicode_defect = record->unicode_defect;
     } else {
         deal_host_present_datum(record->completion, &checked);
@@ -592,7 +594,7 @@ static void deal_async_deliver(deal_completion_frame *frame) {
     }
     case DEAL_COMPLETION_STRING: {
         const char *bytes = deal_async_frame_span(base, copy.string);
-        if (!deal_text_is_scalar_sequence(bytes, copy.string.length)) {
+        if (!deal_text_is_code_units(bytes, copy.string.length)) {
             /* A malformed encoding is not a string datum: the await-origin
              * boundary renders the invalid-unicode arm (R2, R4). */
             deal_data datum = deal_data_of_undefined();
@@ -655,13 +657,15 @@ deal_status deal_async_complete_value(deal_async_token token, deal_value value) 
          * value: a `Promise<void>` completes with `undefined` (H5). */
         return DEAL_STATUS_KIND;
     }
-    if (checked.presentation == DEAL_PRESENT_INVALID_UNICODE) {
-        /* A malformed text carrier is no datum: the record keeps the closed
-         * presentation, so the await-origin boundary renders the invalid
-         * Unicode arm instead of the completion being invented as a value. */
+    if (checked.presentation == DEAL_PRESENT_INVALID_UNICODE
+            || checked.presentation == DEAL_PRESENT_RAW_FUNCTION
+            || checked.presentation == DEAL_PRESENT_OPAQUE) {
+        /* These host values are not data. Preserve their closed presentation
+         * through completion so the await owns the exact rejection, rather
+         * than losing the operation or inventing a successful value. */
         deal_data datum = deal_data_of_undefined();
         deal_async_record_complete(entry->record, &datum, 0,
-            DEAL_PRESENT_INVALID_UNICODE, checked.unicode_defect);
+            checked.presentation, checked.unicode_defect);
         return DEAL_OK;
     }
     if (checked.presentation != DEAL_PRESENT_DATUM) {

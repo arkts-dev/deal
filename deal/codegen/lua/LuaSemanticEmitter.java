@@ -791,6 +791,11 @@ public final class LuaSemanticEmitter {
                     default -> {
                         if (c < 0x20) {
                             sb.append(String.format("\\%03d", (int) c));
+                        } else if (c >= 0x80) {
+                            int[] bytes = c < 0x800
+                                ? new int[]{0xc0 | (c >> 6), 0x80 | (c & 63)}
+                                : new int[]{0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63)};
+                            for (int b : bytes) sb.append(String.format("\\%03d", b));
                         } else {
                             sb.append(c);
                         }
@@ -2753,8 +2758,8 @@ public final class LuaSemanticEmitter {
          * declared target parameter, which the D15 invocation protocol
          * checks before the leading-M projection. The ignored trailing
          * parameters of an arity extension are checked exactly like the
-         * forwarded leading ones (docs/spec-v1.3.md Arity extension
-         * adapter), so a host invocation of the published adapter value
+         * forwarded leading ones (docs/spec-v1.6.md Function values, calls, and
+         * wrappers), so a host invocation of the published adapter value
          * enforces the whole declared target signature.
          */
         private static String targetParameterCells(RuntimeDescriptor.Func target) {
@@ -2882,7 +2887,7 @@ public final class LuaSemanticEmitter {
          * op executes, so an earlier declaration's closure captures the
          * cell by identity even when the publishing group op runs later
          * in the same module init — the declaration-order-independent
-         * forward reference of docs/spec-v1.5.md §Name resolution
+         * forward reference of docs/spec-v1.6.md §Name resolution
          * (Declaration order) and C1's body
          * coverage. A nested group's cells are still created per
          * execution by its own op ({@link #emitRecursiveGroupInit}).
@@ -4856,7 +4861,7 @@ private void emitStdlib(SemanticOp op) {
                     String cellName = cell(payload.binding(), payload.generation());
                     String cont = loopCont(op.opId());
                     out.append("do\n");
-                    out.append("  local __sitT = ").append(iterable).append("\n");
+                    out.append("  local __sitT = require(\"deal.runtime\").string_normalize(").append(iterable).append(")\n");
                     out.append("  local __siT = 1\n");
                     out.append("  while __siT <= #__sitT do\n");
                     out.append("    local __sbT = string.byte(__sitT, __siT)\n");
@@ -4864,6 +4869,7 @@ private void emitStdlib(SemanticOp op) {
                     out.append("    if __sbT >= 240 then __slnT = 4\n");
                     out.append("    elseif __sbT >= 224 then __slnT = 3\n");
                     out.append("    elseif __sbT >= 192 then __slnT = 2 end\n");
+                    out.append("    if __sbT == 237 and string.byte(__sitT, __siT + 1) >= 160 and string.byte(__sitT, __siT + 1) <= 175 and string.byte(__sitT, __siT + 3) == 237 and string.byte(__sitT, __siT + 4) >= 176 and string.byte(__sitT, __siT + 4) <= 191 then __slnT = 6 end\n");
                     out.append("    ").append(cellName)
                         .append(" = {__u8sub(__sitT, __siT, __siT + __slnT - 1)}\n");
                     emitLabeledBlock(payload.body());
@@ -6906,21 +6912,6 @@ local function __jsonParse(s)
           if #hex < 4 or not string.match(hex, "^%x%x%x%x$") then return nil end
           local cp = tonumber(hex, 16)
           pos = pos + 4
-          if cp >= 0xD800 and cp <= 0xDBFF then
-            if string.sub(s, pos, pos + 1) == __BS .. "u" then
-              local hex2 = string.sub(s, pos + 2, pos + 5)
-              if #hex2 == 4 and string.match(hex2, "^%x%x%x%x$") then
-                local lo = tonumber(hex2, 16)
-                if lo >= 0xDC00 and lo <= 0xDFFF then
-                  pos = pos + 6
-                  cp = 0x10000 + (cp - 0xD800) * 0x400 + (lo - 0xDC00)
-                end
-              end
-            end
-            if cp >= 0xD800 and cp <= 0xDFFF then return nil end
-          elseif cp >= 0xDC00 and cp <= 0xDFFF then
-            return nil
-          end
           out[#out + 1] = __jsonUtf8(cp)
         else
           return nil
@@ -7185,20 +7176,7 @@ local function __jsonNumText(v)
   return sign .. text
 end
 local function __jsonEscapeString(s)
-  local out = {}
-  for i = 1, #s do
-    local b = string.byte(s, i)
-    if b == 34 then out[#out + 1] = __BS .. __QT
-    elseif b == 92 then out[#out + 1] = __BS .. __BS
-    elseif b == 8 then out[#out + 1] = __BS .. "b"
-    elseif b == 12 then out[#out + 1] = __BS .. "f"
-    elseif b == 10 then out[#out + 1] = __BS .. "n"
-    elseif b == 13 then out[#out + 1] = __BS .. "r"
-    elseif b == 9 then out[#out + 1] = __BS .. "t"
-    elseif b < 32 then out[#out + 1] = __BS .. "u" .. string.format("%04x", b)
-    else out[#out + 1] = string.sub(s, i, i) end
-  end
-  return table.concat(out)
+  return require("deal.runtime").string_json_body(s)
 end
 local function __jsonKindOf(desc)
   if string.sub(desc, 1, 6) == "array(" then return "array", string.sub(desc, 7, -2) end
@@ -7399,7 +7377,7 @@ local function __jsonDecodeRaw(desc, v, numberVariant)
     if type(v) == "string" and __jsonValidUtf8(v) then return true, v end
     return false
   elseif kind == "table" then
-    -- A table field accepts only a JSON object (docs/spec-v1.5.md:695):
+    -- A record field accepts only a JSON object (docs/spec-v1.6.md §JSON serialization):
     -- an array-shaped value of any length, the empty array included, is
     -- a validation failure — never an empty table.
     if __jsonIsObject(v) then return true, __jsonToLanguage(v) end
@@ -7555,7 +7533,7 @@ local function __jsonToClassOp(planName, root)
   -- plain Lua table (the LuaJIT value mapping's table value — a host-returned
   -- table, or one composed outside TABLE_NEW) is classified by its own keys:
   -- the dense 1..n integer form is an array and the string-keyed form an
-  -- object, exactly the JSON shape docs/spec-v1.5.md:728 admits. A value that
+  -- object, exactly the shape docs/spec-v1.6.md §JSON encoding admits. A value that
   -- carries a private value-model carrier mark is never JSON-shaped content.
   local function __jsonContentCarrier(v)
     local kind = v[__dealCarrierKeys.kind]
@@ -7699,11 +7677,8 @@ local function __jsonToClassOp(planName, root)
           if text == nil then text = "null" end
           out[#out + 1] = text
         else
-          -- An unmarked numeric leaf (a plain host table carries no
-          -- per-slot marks) is JSON content only when it is finite: the
-          -- non-finite values are not JSON-shaped (docs/spec-v1.5.md:728)
-          -- and take the closed typed-boundary failure at their own
-          -- position, exactly like the JVM/JS walks' finite check.
+          -- Plain host numbers use JSON encoding's non-finite-to-null rule,
+          -- just like marked number slots and the JVM/JS walks.
           if element ~= element or element == math.huge
               or element == -math.huge then
             out[#out + 1] = "null"
@@ -7836,11 +7811,9 @@ local function __jsonToClassOp(planName, root)
           local element = frame.value[key]
           if element == __NULL then element = nil end
           local elementPath = (frame.path == "") and key or (frame.path .. "." .. key)
-          -- The object key is a JSON string: an invalid scalar sequence
-          -- fails the walk at the object's own position like every other
-          -- invalid string carrier — the member path would interpolate
-          -- the non-scalar key into the message, so the failure names
-          -- the object exactly as the JVM/JS walks do.
+          -- A malformed byte key fails at the object's own position,
+          -- rather than interpolating invalid transport into the path.
+          -- Lone UTF-16 key units are legal and escape losslessly.
           if not __jsonValidUtf8(key) then return fail(frame.path, key) end
           local omit = element == __UNDEFINED or element == __MISSING or type(element) == "function"
             or (type(element) == "table" and (element[__dealCarrierKeys.fn] ~= nil or element[__dealCarrierKeys.kind] == "function"))
@@ -8712,13 +8685,80 @@ __factories.__errorCarrier = function(v)
   end
   return v
 end
+-- Convert only public string data in place. Private descriptor, numeric,
+-- presence and order storage keeps its identity; graph nodes are never copied.
+__factories.__hostTextGraph = function(v, outbound, seen)
+  local function convert(text)
+    if type(text) ~= "string" or not __jsonValidUtf8(text) then return text end
+    if outbound then return __rt.string_transport(text) end
+    return __rt.string_normalize(text)
+  end
+  if type(v) == "string" then return convert(v) end
+  if seen == nil then seen = {} end
+  local pending = {v}
+  while #pending > 0 do
+    local node = pending[#pending]; pending[#pending] = nil
+    local admitted = type(node) == "table" and node ~= __NULL and node ~= __rt.__NULL
+      and node ~= __UNDEFINED and node ~= __MISSING and not seen[node]
+    if admitted then
+      admitted = (getmetatable(node) == nil or rawget(node, __dealCarrierKeys.c) ~= nil
+        or rawget(node, __dealCarrierKeys.d) ~= nil or rawget(node, __dealCarrierKeys.kind) ~= nil)
+        and not rawget(node, __dealCarrierKeys.jn) and not rawget(node, __dealCarrierKeys.fn)
+        and rawget(node, __dealCarrierKeys.kind) ~= "function"
+        and rawget(node, __dealCarrierKeys.kind) ~= "async"
+    end
+    if admitted then
+      seen[node] = true
+      if rawget(node, __dealCarrierKeys.d) then
+        node.code = convert(node.code); node.m = convert(node.m)
+      else
+        local fields = rawget(node, __dealCarrierKeys.f)
+        if type(fields) == "table" and fields ~= node then pending[#pending + 1] = fields end
+        local entries = {}
+        for key, value in pairs(node) do
+          if type(key) == "string" or type(key) == "number" then
+            entries[#entries + 1] = {key, value}
+          end
+        end
+        local presence, marks, order = rawget(node, __dealCarrierKeys.keys),
+          rawget(node, __dealCarrierKeys.nK), rawget(node, __dealCarrierKeys.order)
+        for i = 1, #entries do
+          local key, value = entries[i][1], entries[i][2]
+          local target = type(key) == "string" and convert(key) or key
+          if target ~= key then
+            node[key] = nil
+            if type(presence) == "table" then presence[target] = presence[key]; presence[key] = nil end
+            if type(marks) == "table" then marks[target] = marks[key]; marks[key] = nil end
+          end
+          node[target] = type(value) == "string" and convert(value) or value
+          if type(value) == "table" then pending[#pending + 1] = value end
+        end
+        if type(order) == "table" then
+          for i = 1, #order do
+            local key = order[i]
+            local target = convert(key)
+            if target ~= key and type(presence) == "table" and presence[key] then
+              presence[target] = presence[key]; presence[key] = nil
+            end
+            order[i] = target
+          end
+        end
+      end
+    end
+  end
+  return v
+end
 __factories.__hostCarrierOut = function(desc, v, memo)
+  if memo == nil then memo = {__outDirection = true} end
+  if memo.__textOut == nil then memo.__textOut = {} end
+  v = __factories.__hostTextGraph(v, true, memo.__textOut)
   if memo ~= nil and not memo.__outDirection then
-    if memo.__outMemo == nil then memo.__outMemo = {__outDirection = true} end
+    if memo.__outMemo == nil then memo.__outMemo = {__outDirection = true, __textOut = memo.__textOut} end
     memo = memo.__outMemo
   end
   if type(v) ~= "table" then
     if v == nil then return __rt.__NULL end
+    if type(v) == "string" then return __rt.string_transport(v) end
     return v
   end
   if v == __NULL or v == __rt.__NULL then return __rt.__NULL end
@@ -9120,6 +9160,9 @@ __factories.__hostCarrierOut = function(desc, v, memo)
 end
 
 __factories.__hostCarrierIn = function(desc, v, memo)
+  if memo == nil then memo = {} end
+  if memo.__textIn == nil then memo.__textIn = {} end
+  v = __factories.__hostTextGraph(v, false, memo.__textIn)
   local source = __factories.__hostFunctionSources[v]
   if source ~= nil then return source end
   if type(v) == "table" and getmetatable(v) ~= nil
@@ -9127,6 +9170,7 @@ __factories.__hostCarrierIn = function(desc, v, memo)
       and rawget(v, __dealCarrierKeys.kind) == nil then return v end
   if v == nil then return __NULL end
   if v == __rt.__NULL or v == __NULL then return __NULL end
+  if type(v) == "string" then return require("deal.runtime").string_normalize(v) end
   if type(v) ~= "table" then return v end
   if v == __MISSING or (__rtMissing ~= nil and v == __rtMissing) then return v end
   if memo == nil then memo = {} end
@@ -9546,7 +9590,10 @@ local function __member(t, k)
   end
   local __keys = t[__dealCarrierKeys.keys]
   if __keys ~= nil then
-    if __keys[k] then return t[k] end
+    -- Hosts retain the same table and can add a raw member without the
+    -- compiler's insertion helper. Such a live value is still present.
+    local value = t[k]
+    if value ~= nil or __keys[k] then return value end
     return __MISSING
   end
   local v = t[k]
@@ -9556,9 +9603,24 @@ end
 local function __esc(s)
   if s == nil then return "" end
   local out = {}
-  for i = 1, #s do
+  local i = 1
+  while i <= #s do
     local c = string.sub(s, i, i)
-    local b = string.byte(c)
+    local b,b2,b3,b4 = string.byte(s,i,i+3)
+    if b == 237 and b2 and b2 >= 160 and b2 <= 191
+        and b3 and b3 >= 128 and b3 <= 191 then
+      out[#out + 1] = string.format("\\\\u%04x", (b-224)*4096+(b2-128)*64+b3-128)
+      i = i+3
+    elseif b >= 240 and b <= 244 and b2 and b3 and b4
+        and b2 >= 128 and b2 <= 191 and b3 >= 128 and b3 <= 191
+        and b4 >= 128 and b4 <= 191 then
+      local cp = (b-240)*262144+(b2-128)*4096+(b3-128)*64+b4-128-65536
+      if cp >= 0 and cp <= 1048575 then
+        out[#out+1] = string.format("\\\\u%04x\\\\u%04x",
+          55296+math.floor(cp/1024),56320+cp%1024)
+        i = i+4
+      else out[#out+1] = c; i = i+1 end
+    else
     if c == "\\\\" then out[#out + 1] = "\\\\\\\\"
     elseif c == "\\n" then out[#out + 1] = "\\\\n"
     elseif c == "\\t" then out[#out + 1] = "\\\\t"
@@ -9568,6 +9630,8 @@ local function __esc(s)
     elseif b < 32 or b == 127 then
       out[#out + 1] = string.format("\\\\u%04x", b)
     else out[#out + 1] = c end
+    i = i+1
+    end
   end
   return table.concat(out)
 end
@@ -9690,6 +9754,22 @@ end
 -- keeps the boxed Long/Double), so the JSON_STRINGIFY walker, the trace
 -- atoms, and the failure actuals always see the value's own variant.
 local function __readVar(t, k, v, wantsNumber)
+  -- Retained host aliases may write scalar UTF-8 after the crossing.
+  -- Do not decode malformed data before its owning boundary checks it.
+  if type(v) == "string" then
+    -- Four-byte scalar spellings become the canonical pair of unit spellings.
+    -- Other bytes are untouched so owning boundary validation still rejects
+    -- malformed carriers rather than decoding or repairing them here.
+    return (string.gsub(v, "[\\240-\\244][\\128-\\191][\\128-\\191][\\128-\\191]", function(s)
+      local a,b,c,d = string.byte(s,1,4)
+      local cp = (a-240)*262144+(b-128)*4096+(c-128)*64+d-128
+      if cp < 65536 or cp > 1114111 then return s end
+      cp = cp-65536
+      local hi,lo = 55296+math.floor(cp/1024),56320+cp%1024
+      return string.char(224+math.floor(hi/4096),128+math.floor(hi/64)%64,128+hi%64,
+        224+math.floor(lo/4096),128+math.floor(lo/64)%64,128+lo%64)
+    end))
+  end
   if type(v) ~= "number" then return v end
   local ns = __nsSurfaces[t]
   local marks = ns ~= nil and ns.numbers or t[__dealCarrierKeys.nK]
@@ -10585,11 +10665,10 @@ local function __innerArm(id, values)
   end
   return __renderTemplate(id, values)
 end
--- The Unicode-scalar validity of one string carrier (the typed-boundary
--- projection's invalid-scalar classification): a sequence that is not a
--- valid Unicode scalar sequence projects "invalid-unicode". Declared here
--- (before the projections that use it) rather than in the JSON prelude,
--- which is emitted later and whose locals are not lexically visible here.
+-- Validate UTF-8/WTF-8 transport structure, including legal lone UTF-16
+-- units. Only malformed byte sequences project "invalid-unicode". Declared
+-- before its projection consumers rather than in the later JSON prelude,
+-- whose locals are not lexically visible here.
 local function __jsonValidUtf8(s)
   local i = 1
   local n = #s
@@ -10616,7 +10695,6 @@ local function __jsonValidUtf8(s)
     if len == 3 and cp < 0x800 then return false end
     if len == 4 and cp < 0x10000 then return false end
     if cp > 0x10FFFF then return false end
-    if cp >= 0xD800 and cp <= 0xDFFF then return false end
     i = i + len
   end
   return true
@@ -10649,8 +10727,8 @@ local function __typedBoundaryKind(staticKind, v)
     return "number"
   end
   if t == "string" then
-    -- The invalid-scalar classification: a string carrier that is not a
-    -- valid Unicode scalar sequence projects invalid-unicode.
+    -- Malformed byte transport projects invalid-unicode; lone units are
+    -- legal strings, not a scalar-validity defect.
     if not __jsonValidUtf8(v) then return "invalid-unicode" end
     return "string"
   end
@@ -10951,13 +11029,10 @@ local function __bcheck(desc, staticKind, v, csig, completion, classSeen)
     return fail("number")
   elseif desc == "string" then
     if type(v) == "string" then
-      -- The DEAL string boundary's scalar validation (the oracle's
-      -- TYPED_BOUNDARY_INVALID_UNICODE selection): a valid Unicode
-      -- scalar sequence admits unchanged, while an invalid one renders
-      -- the declared invalid-Unicode arm (the completion cell keeps its
-      -- own pinned kind arm). The classification is the same one
-      -- __typedBoundaryKind and the oracle's value view use, so no
-      -- consumer admits an invalid scalar the others reject.
+      -- Admit legal UTF-8/WTF-8 transport, including lone units. Malformed
+      -- bytes select TYPED_BOUNDARY_INVALID_UNICODE; a completion retains
+      -- its own pinned kind arm. Classification agrees with the value view,
+      -- without imposing scalar validity on UTF-16 language strings.
       if __jsonValidUtf8(v) then return v end
       if completion then
         return failKind("string", "string")
@@ -11142,10 +11217,10 @@ local function __cmp(selector, kindL, l, kindR, r, side)
   if selector == "NUMBER_GE" then return l >= r end
   if selector == "STRING_EQ" then return l == r end
   if selector == "STRING_NE" then return l ~= r end
-  if selector == "STRING_LT" then return l < r end
-  if selector == "STRING_LE" then return l <= r end
-  if selector == "STRING_GT" then return l > r end
-  if selector == "STRING_GE" then return l >= r end
+  if selector == "STRING_LT" then return require("deal.runtime").string_compare(l, r) < 0 end
+  if selector == "STRING_LE" then return require("deal.runtime").string_compare(l, r) <= 0 end
+  if selector == "STRING_GT" then return require("deal.runtime").string_compare(l, r) > 0 end
+  if selector == "STRING_GE" then return require("deal.runtime").string_compare(l, r) >= 0 end
   if selector == "BOOLEAN_EQ" then return l == r end
   if selector == "BOOLEAN_NE" then return l ~= r end
   if selector == "NULL_EQ" then return true end
@@ -11358,7 +11433,7 @@ local function __adaptSource(w)
 end
 -- The D15 adapter invocation protocol: the target signature's
 -- parameter cells (the ignored trailing parameters of an arity
--- extension included — docs/spec-v1.3.md Arity extension adapter), the
+-- extension included — docs/spec-v1.6.md Function values, calls, and wrappers), the
 -- retained source value, the source-signature check, then
 -- the source invocation with the leading M arguments only. A DEAL-body
 -- source owns its own frame (its carrier wrapper pushes and pops it);
@@ -11388,7 +11463,7 @@ local function __adaptInvoke(w, origin, ...)
   local src = __adaptSource(w)
   __fncheck(src, w.__csrc, origin)
   -- An adapter-valued source is an ordinary function value of its declared
-  -- signature (docs/spec-v1.3.md Function type compatibility): runtime
+  -- signature (docs/spec-v1.6.md Function type compatibility): runtime
   -- provenance as an adapter is not part of the type. Resolve the nested
   -- adapter's own source and source-signature check the same way and keep
   -- its own leading-M projection, so the invocation reaches the statically
@@ -12054,23 +12129,7 @@ end
 -- through string.char, so the emitted prelude carries no escape
 -- ambiguity.
 local function __jsonEscape(s)
-  local out = { string.char(34) }
-  for i = 1, #s do
-    local b = string.byte(s, i)
-    if b == 34 then out[#out + 1] = string.char(92, 34)
-    elseif b == 92 then out[#out + 1] = string.char(92, 92)
-    elseif b == 8 then out[#out + 1] = string.char(92, 98)
-    elseif b == 12 then out[#out + 1] = string.char(92, 102)
-    elseif b == 10 then out[#out + 1] = string.char(92, 110)
-    elseif b == 13 then out[#out + 1] = string.char(92, 114)
-    elseif b == 9 then out[#out + 1] = string.char(92, 116)
-    elseif b < 32 then
-      out[#out + 1] = string.char(92, 117)
-      out[#out + 1] = string.format("%04x", b)
-    else out[#out + 1] = string.sub(s, i, i) end
-  end
-  out[#out + 1] = string.char(34)
-  return table.concat(out)
+  return string.char(34) .. require("deal.runtime").string_json_body(s) .. string.char(34)
 end
 local function __subseqIndexOf(hay, needle, from)
   if #needle == 0 then
@@ -12146,99 +12205,20 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
     end
     return list
   end
-  if fn == "STRING_LENGTH" then
-    return #__cps(__args[1])
-  elseif fn == "STRING_SUBSTRING" then
-    local start, finish = __args[2], __args[3]
-    if start ~= start or start == math.huge or start == -math.huge
-        or start ~= math.floor(start) or finish ~= finish
-        or finish == math.huge or finish == -math.huge
-        or finish ~= math.floor(finish) then
-      __sfail("SUBSTRING_BOUNDS", nil, nil, nil)
+  if string.sub(fn, 1, 7) == "STRING_" then
+    local names = {STRING_LENGTH="length", STRING_SUBSTRING="substring",
+      STRING_CONTAINS="contains", STRING_STARTS_WITH="startsWith", STRING_ENDS_WITH="endsWith",
+      STRING_REPLACE="replace", STRING_SPLIT="split", STRING_TRIM="trim"}
+    local value = require("std.string")[names[fn]].f(unpack(__args))
+    if fn == "STRING_SPLIT" then
+      local result = {[__dealCarrierKeys.a]=true, [__dealCarrierKeys.n]=#value,
+        [__dealCarrierKeys.elementDescriptor]="string"}
+      for i = 1, #value do result[i] = value[i] end
+      return result
     end
-    local cps = __cps(__args[1])
-    local lo = math.max(0, __args[2])
-    local hi = math.min(math.max(0, __args[3]), #cps)
-    if lo >= hi then return "" end
-    local out = {}
-    for i = lo + 1, hi do out[#out + 1] = __u8enc(cps[i]) end
-    return table.concat(out)
-  elseif fn == "STRING_CONTAINS" then
-    return __subseqIndexOf(__cps(__args[1]), __cps(__args[2]), 0) >= 0
-  elseif fn == "STRING_STARTS_WITH" then
-    local input = __cps(__args[1])
-    local part = __cps(__args[2])
-    if #part > #input then return false end
-    for i = 1, #part do
-      if input[i] ~= part[i] then return false end
-    end
-    return true
-  elseif fn == "STRING_ENDS_WITH" then
-    local input = __cps(__args[1])
-    local part = __cps(__args[2])
-    if #part > #input then return false end
-    for i = 1, #part do
-      if input[#input - #part + i] ~= part[i] then return false end
-    end
-    return true
-  elseif fn == "STRING_REPLACE" then
-    local input = __cps(__args[1])
-    local from = __cps(__args[2])
-    local to = __cps(__args[3])
-    if #from == 0 then return __args[1] end
-    local out = {}
-    local cursor = 1
-    while cursor <= #input - #from + 1 do
-      local ok = true
-      for j = 1, #from do
-        if input[cursor + j - 1] ~= from[j] then ok = false; break end
-      end
-      if ok then
-        for j = 1, #to do out[#out + 1] = __u8enc(to[j]) end
-        cursor = cursor + #from
-      else
-        out[#out + 1] = __u8enc(input[cursor])
-        cursor = cursor + 1
-      end
-    end
-    for i = cursor, #input do out[#out + 1] = __u8enc(input[i]) end
-    return table.concat(out)
-  elseif fn == "STRING_SPLIT" then
-    local input = __cps(__args[1])
-    local sep = __cps(__args[2])
-    if #input == 0 then return {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 0, [__dealCarrierKeys.elementDescriptor] = "string"} end
-    if #sep == 0 then
-      local singles = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = #input, [__dealCarrierKeys.elementDescriptor] = "string"}
-      for i = 1, #input do singles[i] = __u8enc(input[i]) end
-      return singles
-    end
-    local parts = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 0, [__dealCarrierKeys.elementDescriptor] = "string"}
-    local cursor = 1
-    while true do
-      local occ = __subseqIndexOf(input, sep, cursor - 1)
-      if occ < 0 then break end
-      local piece = {}
-      for i = cursor, occ do piece[#piece + 1] = __u8enc(input[i]) end
-      parts[__dealCarrierKeys.n] = parts[__dealCarrierKeys.n] + 1
-      parts[parts[__dealCarrierKeys.n]] = table.concat(piece)
-      cursor = occ + 1 + #sep
-    end
-    local tail = {}
-    for i = cursor, #input do tail[#tail + 1] = __u8enc(input[i]) end
-    parts[__dealCarrierKeys.n] = parts[__dealCarrierKeys.n] + 1
-    parts[parts[__dealCarrierKeys.n]] = table.concat(tail)
-    return parts
-  elseif fn == "STRING_TRIM" then
-    local cps = __cps(__args[1])
-    local function isTrim(cp) return (cp >= 9 and cp <= 13) or cp == 32 end
-    local first = 1
-    while first <= #cps and isTrim(cps[first]) do first = first + 1 end
-    local last = #cps
-    while last >= first and isTrim(cps[last]) do last = last - 1 end
-    local out = {}
-    for i = first, last do out[#out + 1] = __u8enc(cps[i]) end
-    return table.concat(out)
-  elseif fn == "TABLE_KEYS" then
+    return value
+  end
+  if fn == "TABLE_KEYS" then
     -- The string keys of the table value: a module namespace's declared
     -- export order, or the shared table carrier's recorded insertion
     -- order followed by the string keys the carrier's order never saw.
@@ -12323,17 +12303,6 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
           elseif esc == 117 then
             advance()
             local cp = parseHex4()
-            if cp >= 55296 and cp <= 56319 then
-              if atEnd() or peek() ~= 92 then parseFail("unpaired surrogate escape") end
-              advance()
-              if atEnd() or peek() ~= 117 then parseFail("unpaired surrogate escape") end
-              advance()
-              local lo = parseHex4()
-              if lo < 56320 or lo > 57343 then parseFail("unpaired surrogate escape") end
-              cp = 65536 + (cp - 55296) * 1024 + (lo - 56320)
-            elseif cp >= 56320 and cp <= 57343 then
-              parseFail("unpaired surrogate escape")
-            end
             out[#out + 1] = __u8enc(cp)
           else
             parseFail("invalid escape")
@@ -12588,11 +12557,9 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
         return
       end
       if t == "string" then
-        -- RFC 8259 output must be UTF-8: an invalid scalar sequence is
-        -- still a string carrier, so it rejects through the closed arm
-        -- with the string actual token (the shipped std/json and the JS
-        -- and JVM projections), never as escaped invalid bytes that the
-        -- STDLIB_RETURN cell would reject after the walk.
+        -- Reject malformed transport before the walk publishes output.
+        -- Legal lone units pass and __jsonEscape writes their lossless
+        -- \\uXXXX spellings, rather than emitting surrogate bytes as JSON.
         if not __jsonValidUtf8(v) then sfFail(v) end
         out[#out + 1] = __jsonEscape(v); return
       end
@@ -12698,7 +12665,7 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
         end
         -- A plain Lua table (the LuaJIT table representation the host
         -- side and the shipped std/json realization produce) takes the
-        -- shared table-form rule of docs/spec-v1.3.md:728 and of the
+        -- shared object/array rules of docs/spec-v1.6.md §JSON encoding and the
         -- shipped encoder: the pure positive-integer-keyed form is the
         -- array (a missing slot is the closed missing arm at its own
         -- index), the pure string-keyed form the object with the
@@ -12903,6 +12870,7 @@ end
 -- record (the effect's exact scalar text plus its channel) and
 -- production mode the exact effect bytes.
 local function __consoleEffect(channel, text)
+  text = require("deal.runtime").string_transport(text, true)
   if channel == "STDOUT" then
     io.write(text.."\\n")
     io.stdout:flush()

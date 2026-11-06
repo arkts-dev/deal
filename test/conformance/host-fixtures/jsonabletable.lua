@@ -5,9 +5,8 @@
 -- array member, the deployed std/json decode graph (makeParsed, ISSUE-0900:
 -- the decoder's own table with only its per-slot numeric-variant marks
 -- besides the content keys), and a self-referential table for the closed
--- cycle arm. The closed arms' returns carry a non-finite numeric leaf, an
--- invalid UTF-8 object value and an invalid UTF-8 object key, the content
--- shapes the finite acyclic JSON domain excludes.
+-- cycle arm. Non-finite leaves substitute null; lone UTF-16 units in
+-- object values and keys remain lossless JSON data.
 
 local json = require("std.json")
 local K = require("deal.runtime").__keys
@@ -53,15 +52,15 @@ function M.makeInfiniteElements()
 end
 
 function M.makeBadKey()
-  return { [string.char(0xFF)] = 1 }
+  return { [string.char(0xed, 0xa0, 0x80)] = 1 }
 end
 
 function M.makeNestedBadKey()
-  return { inner = { [string.char(0xFF)] = 1 } }
+  return { inner = { [string.char(0xed, 0xa0, 0x80)] = 1 } }
 end
 
 function M.makeBadString()
-  return { a = string.char(0xFF) }
+  return { a = string.char(0xed, 0xa0, 0x80) }
 end
 
 return M

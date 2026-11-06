@@ -138,10 +138,9 @@ public final class NativeValueStorageTest {
     // 3. Text storage and the scalar-sequence comparison (R2, R8)
     // =========================================================================
     private static void testTextStorage() throws IOException {
-        System.out.println("-- UTF-8 storage, scalar counts, hash and comparison --");
+        System.out.println("-- UTF-16 storage, iteration, transport, hash and comparison --");
         runPositive("text_storage_driver", "text storage ok\n",
-            "the scalar-sequence validation, immutable storage and Unicode "
-                + "scalar ordering", List.of("-DDEAL_TEXT_CASE=0"));
+            "encoding validation, immutable UTF-16 storage and unit ordering", List.of("-DDEAL_TEXT_CASE=0"));
     }
 
     // =========================================================================
@@ -187,7 +186,7 @@ public final class NativeValueStorageTest {
             new Fault("memory_storage_driver", "-DDEAL_MEMORY_CASE=12",
                 "size arithmetic: addition overflow"),
             new Fault("text_storage_driver", "-DDEAL_TEXT_CASE=1",
-                "text: bytes are not a Unicode scalar sequence"),
+                "text: malformed string encoding"),
             new Fault("crossing_storage_driver", "-DDEAL_CROSSING_CASE=1",
                 "crossing value table: null out-parameter"),
             new Fault("crossing_storage_driver", "-DDEAL_CROSSING_CASE=2",

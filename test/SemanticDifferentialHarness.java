@@ -434,11 +434,9 @@ public final class SemanticDifferentialHarness {
         }
 
         /**
-         * A string argument. The value is emitted byte-exact into both
-         * scripted drivers, so a string whose contents are not a valid
-         * Unicode scalar sequence (an unpaired surrogate code unit)
-         * survives the source encoding as the same invalid scalar
-         * content the oracle's value model carries.
+         * A string argument. Scripted drivers preserve every UTF-16 unit,
+         * including lone surrogates, through their source transport. The
+         * Oracle observes the same legal string data.
          */
         record Str(String value) implements CallbackArg {
         }
@@ -451,13 +449,18 @@ public final class SemanticDifferentialHarness {
          * An array argument (the closed carriers as elements): the
          * scripted carrier is a real array value on every consumer, so a
          * declared array parameter slot's element boundaries run over the
-         * scripted elements. The harness realizes the homogeneous
-         * String/Int/Number arrays; a mixed or unsupported element shape
-         * fails closed.
+         * scripted elements. Homogeneous String/Int/Number arrays infer
+         * their element descriptor; hostile mixed arrays require an explicit
+         * declared descriptor so element checks, not root-kind checks, run.
          */
-        record Array(List<CallbackArg> elements) implements CallbackArg {
+        record Array(List<CallbackArg> elements,
+                     RuntimeDescriptor declaredElement) implements CallbackArg {
             public Array {
                 elements = List.copyOf(elements);
+            }
+
+            public Array(List<CallbackArg> elements) {
+                this(elements, null);
             }
         }
     }
@@ -547,6 +550,9 @@ public final class SemanticDifferentialHarness {
      * or unsupported array fails closed.
      */
     private static RuntimeDescriptor arrayElementDescriptorOf(CallbackArg.Array array) {
+        if (array.declaredElement() != null) {
+            return array.declaredElement();
+        }
         RuntimeDescriptor descriptor = null;
         for (CallbackArg element : array.elements()) {
             RuntimeDescriptor elementDescriptor = switch (element) {
@@ -559,8 +565,8 @@ public final class SemanticDifferentialHarness {
             if (descriptor == null) {
                 descriptor = elementDescriptor;
             } else if (!descriptor.equals(elementDescriptor)) {
-                throw new IllegalArgumentException("the harness array argument "
-                    + "elements are not homogeneous: " + array.elements());
+                throw new IllegalArgumentException("a mixed fixture array needs an "
+                    + "explicit declared element descriptor: " + array.elements());
             }
         }
         return descriptor == null ? RuntimeDescriptor.String.INSTANCE : descriptor;

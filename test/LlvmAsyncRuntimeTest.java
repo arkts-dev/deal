@@ -87,7 +87,7 @@ public final class LlvmAsyncRuntimeTest {
     private static final int[] LEVELS = {0, 2};
 
     private static final String DEAL_JSON = """
-        {"languageVersion": "1.5", "backend": "llvm",
+        {"languageVersion": "1.6", "backend": "llvm",
          "moduleRoots": ["src"], "output": "out",
          "externals": {"host/async": {"declaration": "bindings/async.d.deal"}}}
         """;
@@ -155,7 +155,7 @@ public final class LlvmAsyncRuntimeTest {
           }
           if (rejected) { c.log("descriptor:rejected"); }
           let text: string = await probe.copiedText();
-          if (text === "copied-completion") { c.log("copied:ok"); }
+          if (text === `copied-completion\\0\\uD800😀\\uDC00`) { c.log("copied:ok"); }
           else { c.log("copied:bad"); }
           let caught: boolean = false;
           try {
@@ -360,7 +360,7 @@ public final class LlvmAsyncRuntimeTest {
         export async function run(): Promise<null> {
           let relayed: Error | null = null;
           let caughtValue: Error | null = null;
-          function failer(): number {
+          let failer = function(): number {
             let numbers: number[] = [7];
             try {
               let bad: number = numbers[3];
@@ -372,7 +372,7 @@ public final class LlvmAsyncRuntimeTest {
               relayed = e;
               throw e;
             }
-          }
+          };
           let armed: number = probe.armFailure(failer);
           if (armed === 1) { c.log("relay:armed"); } else { c.log("relay:armed:bad"); }
           let observed: boolean = false;
@@ -948,6 +948,45 @@ public final class LlvmAsyncRuntimeTest {
             """);
         runExecuted(scratch, rejected, "nested-ingress", 16,
             "nested:rejected\n", 0, "");
+        Path raw = compile(scratch, "raw-function-ingress", """
+            import * as probe from "host/async";
+            import * as c from "std/console";
+            export async function run(): Promise<null> {
+              let caught = false;
+              try { await probe.ingress(); }
+              catch (e) {
+                if (e instanceof Error) {
+                  caught = e.code === "E8001"
+                    && e.message === "expected number";
+                }
+              }
+              if (!caught) { throw {code:"FAIL", message:"lost raw callable rejection"}; }
+              c.log("raw:rejected");
+              return null;
+            }
+            export function main(): null { return null; }
+            """);
+        runExecuted(scratch, raw, "raw-function-ingress", 17,
+            "raw:rejected\n", 0, "");
+        Path opaque = compile(scratch, "opaque-ingress", """
+            import * as probe from "host/async";
+            import * as c from "std/console";
+            export async function run(): Promise<null> {
+              let caught = false;
+              try { await probe.ingress(); }
+              catch (e) {
+                if (e instanceof Error) {
+                  caught = e.code === "E8001" && e.message === "expected number";
+                }
+              }
+              if (!caught) { throw {code:"FAIL", message:"lost opaque rejection"}; }
+              c.log("opaque:rejected");
+              return null;
+            }
+            export function main(): null { return null; }
+            """);
+        runExecuted(scratch, opaque, "opaque-ingress", 18,
+            "opaque:rejected\n", 0, "");
     }
 
     /**
@@ -1075,9 +1114,9 @@ public final class LlvmAsyncRuntimeTest {
         Path product = scratch.resolve("product-" + name + "-" + hostCase
             + "-" + level);
         deleteRecursively(product);
-        NativeCompiler.build(new deal.toolchain
-            .NativeBuildRequest(output, product, level, hosts,
-                DRIVER_SOURCE.formatted(exportName)));
+        deal.toolchain.NativeBuildRequest request = new deal.toolchain.NativeBuildRequest(
+            output, product, level, hosts, DRIVER_SOURCE.formatted(exportName));
+        NativeCompiler.build(request);
         NativeCompiler.Result run = NativeCompiler.execute(product, scratch,
             Map.of());
         NativeCompiler.Result stressed = NativeCompiler.execute(product, scratch,
@@ -1089,6 +1128,21 @@ public final class LlvmAsyncRuntimeTest {
             + name + "' fixture is byte-identical under DEAL_GC_STRESS");
         checkEq(run.stderr(), stressed.stderr(), "-O" + level + " the stressed '"
             + name + "' fixture writes no diagnostics");
+        if (hostCase == 17 || hostCase == 18) {
+            Path sanitized = scratch.resolve("sanitized-" + name + "-" + level);
+            NativeCompiler.build(new deal.toolchain.NativeBuildRequest(output, sanitized,
+                level, hosts, DRIVER_SOURCE.formatted(exportName)), NativeCompiler.SANITIZER_FLAGS);
+            for (String stress : List.of("0", "1")) {
+                Map<String, String> environment = new LinkedHashMap<>(NativeCompiler.sanitizerEnvironment());
+                environment.put("DEAL_GC_STRESS", stress);
+                NativeCompiler.Result instrumented = NativeCompiler.runSanitized(
+                    sanitized, scratch, environment).result();
+                checkEq(run.exitCode(), instrumented.exitCode(), "nondata completion sanitizer exit: "
+                    + instrumented.describe());
+                checkEq(run.stdout(), instrumented.stdout(), "nondata completion sanitizer stdout");
+                checkEq(run.stderr(), instrumented.stderr(), "nondata completion sanitizer stderr");
+            }
+        }
         return run;
     }
 

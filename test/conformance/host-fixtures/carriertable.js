@@ -13,8 +13,8 @@
 
 const $rt = require("../deal/runtime");
 
-const WIDGET = "@$external/host.carriertable/Widget";
-const BOARD = "@$external/host.carriertable/Board";
+const WIDGET = "@$external/host/carriertable/Widget";
+const BOARD = "@$external/host/carriertable/Board";
 
 function step(x) {
   return 42;

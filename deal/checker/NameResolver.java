@@ -549,17 +549,18 @@ public final class NameResolver {
                 return;
             }
         }
-        // v1.2 declaration order: `let` declarations are not hoisted and
-        // are visible only after their declaration, so the initializer is
-        // resolved before the name is defined (a forward reference is
-        // E2001; a self reference resolves against an enclosing binding,
-        // never against the declaration being initialized).
-        // F1: Walk the initializer expression to find any FunctionExpr nodes
-        walkExpression(vd.initializer());
-
-        currentScope.define(name,
-            new Symbol.VariableSymbol(name, type, false, declaredClass,
-                vd.typeAnnotation().orElse(null)));
+        if (vd.initializer() instanceof FunctionExpr fe) {
+            Type bindingType = type != null ? type : new Type.Func(
+                fe.params().stream().map(p -> resolveTypeNode(p.type())).toList(),
+                resolveResultTypeNode(fe.returnType()), fe.isAsync());
+            currentScope.define(name, new Symbol.VariableSymbol(name, bindingType, false,
+                declaredClass, vd.typeAnnotation().orElse(null)));
+            walkExpression(fe);
+        } else {
+            walkExpression(vd.initializer());
+            currentScope.define(name, new Symbol.VariableSymbol(name, type, false,
+                declaredClass, vd.typeAnnotation().orElse(null)));
+        }
     }
 
     /**

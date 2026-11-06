@@ -13,6 +13,7 @@ Carry active profiles through constructors/guards. Recompute context hashes from
 ## Values and operations
 
 - Canonical binary64 atoms preserve signed zero, subnormals, infinities and NaN across typed/raw/text transport. Integer IDs cannot substitute for numeric scalars.
+- StringSemantics owns UTF-16 algorithms and display-only lone-unit replacement; console display never changes language text or lossless trace transport.
 - Nominal checks validate complete declared field plans using operation-local cycle guards, never lasting certificates. Callable admission validates payload/signature, including unread descendants.
 - Required fields read their declared descriptor; optional reads use RuntimeDescriptor.optionalRead and add undefined. Missing normalizes to undefined, never null. Host failure shapes distinguish language undefined from private absent-carrier nil.
 - CLASS_NEW requires every nonoptional field, including nullable and Error fields. Supplied fields own declaration-order boundaries; omissions own none. Reject retired initializer operations, payload keys and companion/default flags rather than ignoring them.
@@ -25,6 +26,6 @@ Carry active profiles through constructors/guards. Recompute context hashes from
 
 ## JSON and failures
 
-Preserve closed failure arms and their location/token dialects, including the unlocated raw host-result shape. Never feed rendered table tokens into canonical descriptor parsing.
+Preserve closed failure arms and their location/token dialects, including the unlocated raw host-result shape. Substring and sqrt have no algorithm failure; their declared parameter/result boundaries remain. Never feed rendered table tokens into canonical descriptor parsing.
 
 Decode preserves persistent descriptors recursively, including empty arrays, presence checks and exact failure paths. Generic/generated Records omit object undefined/functions, null-substitute arrays/nonfinite numbers, order numeric keys first and encode nested classes; declared nonfinite numbers encode null. Unknown equality compares kinds/scalars/original identities without conversion. Validate Record/unknown ingress graphs, preserving supported cycles.

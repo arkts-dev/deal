@@ -63,7 +63,20 @@ and executes the complete selection in `tools/gate-manifest.sh` with
 assertions enabled, including the TypeScript compiler's syntactic/grammar
 diagnostics and real JS/LuaJIT/JVM runtime records. `--jobs` bounds suites
 (default four); nested work/coverage stay serial.
-No alternate full-suite profile exists.
+No alternate full-suite profile exists. The native corpus alone uses the exact
+LLVM-only omissions in [`test/llvm-known-skips.tsv`](test/llvm-known-skips.tsv):
+the list is currently empty because upstream native completion covers the former
+omissions. Any future skip is printed with its reason; case totals and requirement
+denominators remain visible and skipped work earns no execution credit. Unknown
+cases, stale requirement entries and unlisted failures fail. JS/LuaJIT/JVM
+conformance is unchanged and has no exclusions. A successful selected gate is
+not full LLVM certification.
+
+Run the strict native corpus without this list (after building tests):
+
+```bash
+java -ea -cp build:build/test-classes deal.test.LlvmConformanceTest
+```
 
 `run_tests.sh` first preflights its required tools (`javac`, `java`, `luajit`,
 `node`, `gcc`, `clang`, `llvm-as`, `llvm-dwarfdump`). A missing required tool fails the run with the named

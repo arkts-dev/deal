@@ -5,11 +5,11 @@
 
 export function test_direct_recursion(): number {
   let downCalls: number = 0;
-  function down(n: number): number {
+  let down: (n: number) => number = function(n: number): number {
     downCalls = downCalls + 1;
     if (n === 0) { return 0; }
     return down(n - 1);
-  }
+  };
   let result: number = down(8);
   if (result !== 0) {
     throw { code: "TEST_FAIL", message: "direct recursion terminal value mismatch" };

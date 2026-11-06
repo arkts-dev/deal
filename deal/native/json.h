@@ -12,7 +12,7 @@
  *
  * Decoded graphs are persistent tagged data (`deal_data`), never crossing
  * handles: a decoded JSON object is a record, a decoded array records the
- * `unknown` element descriptor (spec v1.5 `T[]`: "json.parse arrays ...
+ * `unknown` element descriptor (spec v1.6 `T[]`: "json.parse arrays ...
  * retain unknown descriptors"), and a decoded `null` token is the language null
  * datum, so JSON decoding never creates stored `undefined`.
  *
@@ -69,7 +69,7 @@ deal_outcome_data deal_json_parse(deal_string *text, const deal_origin *origin);
  * The generic `std/json.stringify(unknown)` encoder. Answers the encoded text
  * as a string datum, or the undefined datum when the root value carries no
  * JSON representation (top-level `undefined` or a function value). Encoding
- * follows spec v1.5: non-finite numbers become `null`, finite output numbers
+ * follows spec v1.6: non-finite numbers become `null`, finite output numbers
  * roundtrip to the same binary64 value with negative zero as `0`, `null` is
  * preserved, `undefined`/function-valued object members are omitted while such
  * array elements encode as `null`, a record's own keys encode array-index keys

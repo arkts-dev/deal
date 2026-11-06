@@ -805,10 +805,6 @@ static void check_arm_matrix(void) {
         {"fieldPath", "value.name"}, {"actual", "function"} };
     static const deal_arm_parameter stringify[] = { {"actual", "function"} };
 
-    char sqrt_text[DEAL_ARM_NUMBER_TEXT_CAPACITY];
-    const char *sqrt_actual = deal_arm_number_text(-4.0, sqrt_text,
-        sizeof(sqrt_text));
-
     const deal_arm_case matrix[] = {
         { DEAL_ARM_ID_TYPED_BOUNDARY_KIND, kind_number, 1u, "number", "string",
           NULL },
@@ -853,9 +849,7 @@ static void check_arm_matrix(void) {
         { DEAL_ARM_ID_JSON_TO_WALK, walk, 2u, NULL, "function", NULL },
         { DEAL_ARM_ID_JSON_STRINGIFY_UNSUPPORTED, stringify, 1u,
           "string, number, boolean, or table", "function", NULL },
-        { DEAL_ARM_ID_JSON_TO_WALK_CYCLE, NULL, 0u, NULL, NULL, NULL },
-        { DEAL_ARM_ID_SUBSTRING_BOUNDS, NULL, 0u, NULL, NULL, NULL },
-        { DEAL_ARM_ID_SQRT_NEGATIVE, NULL, 0u, NULL, sqrt_actual, NULL }
+        { DEAL_ARM_ID_JSON_TO_WALK_CYCLE, NULL, 0u, NULL, NULL, NULL }
     };
     for (size_t index = 0; index < sizeof(matrix) / sizeof(matrix[0]); index += 1u) {
         deal_error *cause = matrix[index].cause_code == NULL ? NULL
@@ -1126,7 +1120,7 @@ static void check_live_graphs(void) {
           "a deep shared cyclic graph is admitted without changing its identity");
     check(deal_container_table_read(root, alias_key).reference == leaf,
           "live admission retains the shared string identity");
-    memcpy((void *)deal_text_bytes(leaf), "\xed\xa0\x80", 3u);
+    memcpy((void *)deal_text_bytes(leaf), "\xe2\x82\x00", 3u);
     deal_outcome rejected = live_check(root_value, "record");
     check(rejected.error != NULL, "a later live check detects corrupt shared Unicode");
     if (rejected.error != NULL) {
@@ -1183,6 +1177,99 @@ static void check_live_graphs(void) {
     check(live_check(root_value, "record").error == NULL,
           "signature repair readmits the original graph");
 
+    /* Admit first, then corrupt a real tagged slot without changing the array
+     * identity, persistent descriptor, length or unrelated first element. */
+    deal_descriptor *numbers = deal_descriptor_intern("number");
+    deal_array *changed = deal_container_array_new_typed(DEAL_LAYOUT_ELEMENT_DATUM,
+        deal_descriptor_reference(numbers), 0u);
+    (void)deal_root_scope_hold(changed);
+    deal_data first = deal_data_of_number(-0.0);
+    deal_data second = deal_data_of_number(99.0);
+    deal_container_array_append(changed, &first);
+    deal_container_array_append(changed, &second);
+    deal_data changed_value = deal_data_of_reference(DEAL_DATA_ARRAY, changed);
+    check(live_check(changed_value, "[number]").error == NULL,
+          "typed datum array admits before hostile mutation");
+    deal_data *slot = deal_container_array_element(changed, 1u);
+    *slot = text;
+    deal_store_barrier(changed, leaf);
+    rejected = live_check(changed_value, "[number]");
+    check(rejected.error != NULL, "live typed array rejects a wrong-kind element");
+    if (rejected.error != NULL) {
+        (void)deal_root_scope_hold(rejected.error);
+        const char *code = NULL, *message = NULL, *expected = NULL, *actual = NULL;
+        (void)deal_error_code(rejected.error, &code);
+        (void)deal_error_message(rejected.error, &message);
+        (void)deal_error_expected(rejected.error, &expected);
+        (void)deal_error_actual(rejected.error, &actual);
+        check(code != NULL && strcmp(code, "E8003") == 0
+                && message != NULL && strcmp(message, "array element 2 type mismatch") == 0
+                && expected != NULL && strcmp(expected, "number") == 0
+                && actual != NULL && strcmp(actual, "string") == 0,
+              "live array owns the exact indexed E8003 projection");
+        const char *cause_code = NULL;
+        check(deal_error_cause_code(rejected.error, &cause_code)
+                && cause_code != NULL && strcmp(cause_code, "E8001") == 0,
+              "live array failure retains its independent E8001 leaf cause");
+    }
+    /* A nested typed array uses the outer failing position and the original
+     * leaf cause, not stacked E8003 wrappers or the inner index. */
+    deal_array *outer = deal_container_array_new_typed(DEAL_LAYOUT_ELEMENT_DATUM,
+        deal_descriptor_reference(deal_descriptor_intern("[number]")), 0u);
+    (void)deal_root_scope_hold(outer);
+    deal_container_array_append(outer, &changed_value);
+    deal_data outer_value = deal_data_of_reference(DEAL_DATA_ARRAY, outer);
+    rejected = live_check(outer_value, "[[number]]");
+    check(rejected.error != NULL, "nested live array rejects its invalid descendant");
+    if (rejected.error != NULL) {
+        const char *message = NULL, *expected = NULL, *actual = NULL, *cause = NULL;
+        (void)deal_error_message(rejected.error, &message);
+        (void)deal_error_expected(rejected.error, &expected);
+        (void)deal_error_actual(rejected.error, &actual);
+        (void)deal_error_cause_code(rejected.error, &cause);
+        check(message != NULL && strcmp(message, "array element 1 type mismatch") == 0
+                && expected != NULL && strcmp(expected, "[number]") == 0
+                && actual != NULL && strcmp(actual, "array") == 0
+                && cause != NULL && strcmp(cause, "E8001") == 0,
+              "nested array pins outer position and unwrapped leaf cause");
+    }
+    memcpy((void *)deal_text_bytes(leaf), "\xe2\x82\x00", 3u);
+    rejected = live_check(changed_value, "unknown");
+    check(rejected.error != NULL, "unknown graph still rejects a malformed array leaf");
+    if (rejected.error != NULL) {
+        const char *code = NULL;
+        (void)deal_error_code(rejected.error, &code);
+        check(code != NULL && strcmp(code, "E8001") == 0,
+              "unknown graph validation does not invent a typed array wrapper");
+    }
+    memcpy((void *)deal_text_bytes(leaf), "abc", 3u);
+    *slot = second;
+    deal_gc_collect_full();
+    const deal_data *unchanged = deal_container_array_element(changed, 0u);
+    check(live_check(changed_value, "[number]").error == NULL
+            && unchanged->number == 0.0 && 1.0 / unchanged->number < 0.0
+            && deal_container_array_count(changed) == 2u
+            && deal_container_array_element_descriptor(changed) == deal_descriptor_reference(numbers),
+          "repair preserves original identity, descriptor, signed zero and length");
+
+    deal_array *untyped = deal_container_array_new_typed(DEAL_LAYOUT_ELEMENT_DATUM, 0u, 0u);
+    (void)deal_root_scope_hold(untyped);
+    deal_container_array_append(untyped, &text);
+    deal_data untyped_value = deal_data_of_reference(DEAL_DATA_ARRAY, untyped);
+    check(live_check(untyped_value, "unknown").error == NULL,
+          "untyped array accepts its valid string at an unknown boundary");
+    rejected = live_check(untyped_value, "[number]");
+    check(rejected.error != NULL,
+          "an untyped array still checks the consuming declared element type");
+    if (rejected.error != NULL) {
+        const char *code = NULL, *expected = NULL;
+        (void)deal_error_code(rejected.error, &code);
+        (void)deal_error_expected(rejected.error, &expected);
+        check(code != NULL && strcmp(code, "E8003") == 0
+                && expected != NULL && strcmp(expected, "number") == 0,
+              "untyped array failure is owned by its declared number element");
+    }
+
     double number = -0.0;
     uint8_t boolean = 1u;
     deal_data boxed = root_value;
@@ -1211,8 +1298,11 @@ static void check_live_graphs(void) {
           "unknown graph validation rejects a builtin Error without code");
     memcpy(error, &code, sizeof(code));
     memcpy((void *)code, "\xed\xa0\x80", 3u);
+    check(live_check(error_value, "Error").error == NULL,
+          "builtin Error validation admits a lone UTF-16 unit without replacement");
+    memcpy((void *)code, "\xe2\x82\x00", 3u);
     check(live_check(error_value, "Error").error != NULL,
-          "builtin Error validation rejects corrupted text without allocating a string");
+          "builtin Error validation rejects malformed bytes without allocating a string");
     memcpy((void *)code, "ABC", 3u);
     deal_gc_collect_full();
     check(live_check(error_value, "Error").error == NULL,

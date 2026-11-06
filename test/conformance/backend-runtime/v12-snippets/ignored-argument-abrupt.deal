@@ -6,10 +6,10 @@
 import * as c from "std/console";
 export function main(): null {
  let trace: string = "";
- function small(x: number): number { trace = trace + "F"; return x; }
- function first(): number {trace = trace + "A"; return 1;}
- function fail(): number {trace = trace + "B"; throw {code:"STOP",message:"ignored"};}
- function last(): number {trace = trace + "X"; return 3;}
+ let small = function(x: number): number { trace = trace + "F"; return x; };
+ let first = function(): number {trace = trace + "A"; return 1;};
+ let fail = function(): number {trace = trace + "B"; throw {code:"STOP",message:"ignored"};};
+ let last = function(): number {trace = trace + "X"; return 3;};
  let extended: (x: number, y: number, z: number) => number = small;
  try {let r: number = extended(first(), fail(), last()); trace = trace + "Y";} catch(value) { let e: Error = value as Error;
   if(e.code !== "STOP" || e.message !== "ignored") {throw {code:"TEST_FAIL",message:"wrong error"};} trace = trace + "C";

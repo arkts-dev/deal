@@ -48,7 +48,10 @@ public final class GateRunnerTest {
             for (String name : List.of("first", "second", "third", "fourth")) {
                 check(passed.stdout().contains("executed:" + name), "every suite executes: " + name);
             }
-            check(passed.stdout().contains("All Tests Passed"), "success is explicit");
+            check(passed.stdout().contains("Selected Tests Passed"), "selected success is explicit");
+            check(passed.stdout().contains("known LLVM skips: test/llvm-known-skips.tsv")
+                    && passed.stdout().contains("not full LLVM certification"),
+                "selected success discloses LLVM omissions");
             var serial = BoundedProcess.runCaptured(
                 List.of("/bin/bash", "run_tests.sh", "--jobs", "1"), scratch, env);
             check(serial.exitCode() == 0 && !serial.stdout().contains("active=2"),
@@ -64,7 +67,7 @@ public final class GateRunnerTest {
                 List.of("/bin/bash", "run_tests.sh", "--jobs", "2"), scratch, env);
             check(failed.exitCode() == 7, "suite failure is the gate's status: " + failed);
             check(failed.stdout().contains("executed:fail"), "failure output is retained");
-            check(!failed.stdout().contains("All Tests Passed"), "failure never prints success");
+            check(!failed.stdout().contains("Selected Tests Passed"), "failure never prints success");
             check(!Files.exists(scratch.resolve("markers/forbidden")), "failure stops admission");
             var invalid = BoundedProcess.runCaptured(
                 List.of("/bin/bash", "run_tests.sh", "--jobs", "0"), scratch, env);

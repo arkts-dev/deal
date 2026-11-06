@@ -1546,7 +1546,7 @@ public final class ClassOpsExecutor {
                     yield tableValue;
                 }
                 // A table field accepts only a JSON object
-                // (docs/spec-v1.5.md:695): an array-shaped value of any
+                // (docs/spec-v1.6.md:695): an array-shaped value of any
                 // length, the empty array included, is a validation
                 // failure — never an empty table.
                 throw new JsonFromFailure("expected table, got " + raw.actualKind());

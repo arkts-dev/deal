@@ -600,20 +600,14 @@ record NumValue(double value) implements Value {
          * backend-native) carrier records the carrier's closed encoding
          * defect so the boundary projection selects the same pinned host
          * string-carrier reason the production artifacts select.
-         * {@code null} classifies the carrier by its own scalar validity.
-         * A non-null mark is legal only on a carrier that is itself not a
-         * valid scalar sequence, so every other consumer of the value
-         * agrees with the marked classification.
+         * {@code null} admits the Java UTF-16 units. A non-null mark models
+         * malformed byte transport, which no Java String can itself encode;
+         * the mark is authoritative independently of the placeholder units.
          */
         record StrValue(String value, UnicodeScalars.Defect defect) implements Value {
 
             public StrValue {
                 Objects.requireNonNull(value, "value must not be null");
-                if (defect != null && UnicodeScalars.carrierDefect(value) == null) {
-                    throw new IllegalArgumentException(
-                        "a marked host string carrier must itself be an invalid "
-                            + "scalar sequence (the mark refines the classification)");
-                }
             }
 
             /** A carrier classified by its own scalar validity. */
@@ -1807,7 +1801,7 @@ record NumValue(double value) implements Value {
          * so an earlier declaration's closure captures the cell by
          * identity even when the publishing group op runs later in the
          * same module init (the declaration-order-independent forward
-         * reference: docs/spec-v1.5.md §Name resolution — Declaration order,
+         * reference: docs/spec-v1.6.md §Name resolution — Declaration order,
          * C1 body coverage). The
          * group op's publication phase still writes the member closures
          * into these pre-created cells in one ordered sequence (phase 0's
@@ -3519,8 +3513,7 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
 
                 case Value.NumValue num -> BoundaryValueView.ofNumber(num.value());
                 case Value.StrValue str -> {
-                    UnicodeScalars.Defect defect = str.defect() != null
-                        ? str.defect() : UnicodeScalars.carrierDefect(str.value());
+                    UnicodeScalars.Defect defect = str.defect();
                     yield defect == null
                         ? BoundaryValueView.of(ActualKind.STRING)
                         : BoundaryValueView.ofInvalidUnicode(defect);
@@ -4160,7 +4153,7 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
          * position: every declared target parameter is admitted through the
          * typed-boundary row its descriptor selects — the ignored trailing
          * parameters of an arity extension included
-         * (docs/spec-v1.3.md Arity extension adapter: the wrapper checks the
+         * (docs/spec-v1.6.md Function values, calls, and wrappers: check the
          * parameter it ignores). A DEAL call site's parameter cells already
          * admitted the same values (the repeated check is idempotent); a host
          * that invokes the published adapter value directly (a host-declared
@@ -4197,7 +4190,7 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
 
         /**
          * The D15 source resolution with the adapter-valued-source descent
-         * (docs/spec-v1.3.md Function type compatibility): a resolved source
+         * (docs/spec-v1.6.md Function type compatibility): a resolved source
          * whose own binding is an adapter is an ordinary function value of its
          * declared signature — runtime provenance as an adapter is not part of
          * the type — so the invocation descends that level's own published
@@ -5642,14 +5635,12 @@ private static IllegalStateException dynamicFunctionValueDefect(
 
         /**
          * The canonical typed-boundary token of one string carrier: the
-         * marked raw-carrier defect or the carrier's own scalar validity
-         * classifies it, and every invalid carrier projects the single
+         * explicit raw-carrier defect classifies it, and every invalid
+         * presentation projects the single
          * closed {@code invalid-unicode} token (P2 item 1).
          */
         private static String canonicalKindOf(Value.StrValue str) {
-            return str.defect() != null
-                    || UnicodeScalars.carrierDefect(str.value()) != null
-                ? "invalid-unicode" : "string";
+            return str.defect() != null ? "invalid-unicode" : "string";
         }
 
         /** The canonical typed-boundary token of a runtime value (P2 item 1). */
@@ -5661,10 +5652,8 @@ private static IllegalStateException dynamicFunctionValueDefect(
                 case Value.BoolValue ignored -> "boolean";
 
                 case Value.NumValue ignored -> "number";
-                // The closed typed-boundary projection's invalid-scalar
-                // classification (the same viewOfValue classification the
-                // boundary cells project): a string carrier that is not a
-                // valid Unicode scalar sequence projects invalid-unicode.
+                // Only explicit transport-defect metadata projects invalid-unicode;
+                // every ordinary UTF-16 string, including lone units, is valid.
                 case Value.StrValue str -> canonicalKindOf(str);
                 case Value.TableValue ignored -> "table";
                 case Value.ArrayValue ignored -> "array";
@@ -6231,7 +6220,7 @@ private static IllegalStateException dynamicFunctionValueDefect(
             // expected/actual, frames and cause unchanged and catching the
             // rethrown error again is the identical Error value. The
             // binding is a fresh mutable lexical binding per catch
-            // execution (docs/spec-v1.5.md §Closures and captured
+            // execution (docs/spec-v1.6.md §Closures and captured
             // variables, §try / catch), so the cell is allocated here and
             // never reused: a closure created in an earlier catch captured
             // that execution's cell and keeps observing its own caught

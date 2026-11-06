@@ -5,7 +5,7 @@
 
 export function main(): null {
   while (false) {
-    function f(): null { continue; return null; }
+    let f = function(): null { continue; return null; };
   }
   return null;
 }

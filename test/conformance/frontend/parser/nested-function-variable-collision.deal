@@ -1,4 +1,4 @@
 // @spec: Functions — Function declaration; Variables — Redeclaration
-// @description: Nested function declarations validate variable-collision without invoking the body.
+// @description: Local function bindings validate variable-collision without invoking the body.
 // @expected: compile-error E2002
-export function main():null{let f:number=0;function f():number{return 1;}return null;}
+export function main():null{let f:number=0;let f = function():number{return 1;};return null;}

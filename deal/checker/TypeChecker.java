@@ -39,7 +39,7 @@ public final class TypeChecker {
 
     // -- Direct contextual-read position: true only while the expression
     //    being checked is the outermost expression of one of the five
-    //    admitted positions (docs/spec-v1.3.md §Reading table fields — a
+    //    admitted positions (docs/spec-v1.6.md §Reading and writing fields — a
     //    let initializer, an assignment value, a return expression, a call
     //    argument, an if condition). A table read the check descends into
     //    (a literal element or class-literal field value, a template
@@ -116,7 +116,7 @@ public final class TypeChecker {
     //    a catch binding or a catch-local declaration that shadows an
     //    enclosing binding and a write inside a nested function body never
     //    revert another binding's refinement
-    //    (docs/spec-v1.3.md §Narrowing across try/catch). The stack is
+    //    (docs/spec-v1.6.md §Narrowing across try/catch). The stack is
     //    swapped at function boundaries: declaring a function does not
     //    execute its body, so its writes are the nested function's own
     //    flow and the enclosing try region never records them. --
@@ -153,7 +153,7 @@ public final class TypeChecker {
     // -- Saved pre-loop narrowing states of the open loops: a loop body
     //    is checked under a fresh narrowing state, so an await inside a
     //    body must invalidate the enclosing function's saved states too
-    //    (docs/spec-v1.5.md §Nullable semantics: after an await every
+    //    (docs/spec-v1.6.md §Nullable semantics: after an await every
     //    narrowed variable of the enclosing async function reverts to
     //    its declared type, and a loop exit must not restore an entry
     //    the suspension invalidated). The stack is swapped at function
@@ -872,6 +872,14 @@ public final class TypeChecker {
                     : exactAnnotationClassSymbol(currentScope, vd.typeAnnotation().get());
             }
         }
+        if (vd.initializer() instanceof FunctionExpr) {
+            for (PendingScope ps : pendingScopes) {
+                if (ps.scope == currentScope) {
+                    ps.remaining.remove(vd.name());
+                    break;
+                }
+            }
+        }
         Type exprType = checkContextualReadPosition(vd.initializer());
         if (exprType instanceof Type.Void) {
             error(DiagnosticCode.E3001, "Void results cannot initialize bindings", vd.initializer().span());
@@ -889,7 +897,7 @@ public final class TypeChecker {
         // following statements of its block. Only the declaration's own
         // scope stops treating it as pending — an inner block's
         // same-name declaration never makes an enclosing scope's pending
-        // declaration visible early (docs/spec-v1.5.md §Name resolution —
+        // declaration visible early (docs/spec-v1.6.md §Name resolution —
         // Declaration order: a let declaration is visible only after its declaration
         // and only in its own block).
         for (PendingScope ps : pendingScopes) {
@@ -931,7 +939,7 @@ public final class TypeChecker {
                     // was laid out by that declaration, so a later
                     // boundary crossing to a distinct same-named
                     // declaration must still be E3019
-                    // (docs/spec-v1.5.md §Nominal typing and
+                    // (docs/spec-v1.6.md §Nominal typing and
                     // §Equality and comparison operand rules: class types
                     // are equal by declared class symbol only).
                     Symbol sym = currentScope.resolve(vd.name());
@@ -1070,7 +1078,7 @@ public final class TypeChecker {
             // definitely returns via return statements requires the catch
             // block to definitely return or throw, independently of the
             // enclosing body's termination and of its return type
-            // (docs/spec-v1.5.md §try / catch). The deficient catch block
+            // (docs/spec-v1.6.md §try / catch). The deficient catch block
             // carries the diagnostic even when a later statement returns;
             // when the composite rule fires, the whole-body falloff
             // diagnostic is redundant and stays suppressed.
@@ -1377,7 +1385,7 @@ public final class TypeChecker {
         tryAssignments.pop();
 
         // The catch identifier declares a fresh `Error` binding in the catch
-        // scope (docs/spec-v1.3.md §try / catch: the bound variable has
+        // scope (docs/spec-v1.6.md §try / catch: the bound variable has
         // type Error), so a same-named enclosing binding's refinement is
         // another binding's flow fact and never types the catch read: an
         // `int`/`null` refinement must not reject a valid Error read, and a
@@ -1404,7 +1412,7 @@ public final class TypeChecker {
 
     /**
      * Closes one try statement's assignment frame
-     * (docs/spec-v1.3.md §Narrowing across try/catch: after a try/catch
+     * (docs/spec-v1.6.md §Narrowing across try/catch: after a try/catch
      * every variable assigned inside the try block reverts to its declared
      * type). The recorded bindings propagate to an enclosing try statement's
      * frame — a re-narrowing later inside that try block must not outlive
@@ -1519,7 +1527,7 @@ public final class TypeChecker {
         // into — an array literal element, a class-literal field value, a
         // template interpolation part, a composite operand, an index key —
         // is checked as a nested expression with no direct-read permission
-        // (docs/spec-v1.3.md §Reading table fields, whose allowed contexts
+        // (docs/spec-v1.6.md §Reading and writing fields, whose allowed contexts
         // name the position's whole expression E, never a subexpression).
         boolean direct = pendingContextualReadPosition;
         pendingContextualReadPosition = false;
@@ -1542,7 +1550,7 @@ public final class TypeChecker {
 
     /**
      * Checks the outermost expression of one admitted contextual-read
-     * position (docs/spec-v1.3.md §Reading table fields): the position's
+     * position (docs/spec-v1.6.md §Reading and writing fields): the position's
      * own expression E may be a direct table read, and no subexpression
      * it descends into may be.
      */
@@ -1586,7 +1594,7 @@ public final class TypeChecker {
                     ExpressionNode part = tl.parts().get(i);
                     Type partType = checkExpression(part);
                     // The interpolation's string requirement is the whole
-                    // context of an embedded expression (docs/spec-v1.3.md
+                    // context of an embedded expression (docs/spec-v1.6.md
                     // §Template literals): it grants no contextual-read
                     // position, and an already-rejected part is not
                     // re-reported against it.
@@ -1934,7 +1942,7 @@ public final class TypeChecker {
         // Intrinsic call? The callee's own visible binding decides: a
         // lexically shadowing local, parameter or enclosing-block binding
         // — and a same-block `let` that is not declared yet
-        // (docs/spec-v1.5.md §Name resolution — Declaration order) —
+        // (docs/spec-v1.6.md §Name resolution — Declaration order) —
         // precedes the root intrinsic, exactly as checkIdentifier
         // resolved the callee expression's type above.
         if (call.callee() instanceof IdentifierExpr id) {
@@ -2117,7 +2125,7 @@ public final class TypeChecker {
         //
         // ISSUE-0717 (defect snippet 30): a nullable-typed receiver must
         // be narrowed before its fields are read. Narrowing is supported
-        // only for local variables and parameters (docs/spec-v1.5.md
+        // only for local variables and parameters (docs/spec-v1.6.md
         // §Nullable semantics — "No property-path narrowing"), so a
         // plain identifier receiver is narrowed by the null-narrowing
         // analysis inside its guarded branch and an unguarded read — a
@@ -2196,7 +2204,7 @@ public final class TypeChecker {
             return Type.Error.INSTANCE;
 
         // A-D10 (assignment-delete-address-chains): table index
-        // write/delete keys must have static type string (docs/spec-v1.5.md
+        // write/delete keys must have static type string (docs/spec-v1.6.md
         // §Writing table fields and §Deletion). The F5 "allow any index
         // type and skip further checks" skip is superseded by the static string-key gate.
         if (arrayType instanceof Type.Table) {
@@ -3068,7 +3076,7 @@ public final class TypeChecker {
 
     /**
      * Resolves a name to the binding the declaration-order rules make
-     * visible at the current statement (docs/spec-v1.5.md §Name resolution —
+     * visible at the current statement (docs/spec-v1.6.md §Name resolution —
      * Declaration order and §Scope): a let declaration is visible only after its
      * declaration, so a reference from inside the declaring block's
      * earlier statements (a forward or self reference) resolves against

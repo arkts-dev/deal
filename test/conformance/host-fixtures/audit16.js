@@ -1,5 +1,5 @@
 const rt = require('../deal/runtime');
-const identity = '@$external/host.audit15/C';
+const identity = '@$external/host/audit16/C';
 let retained, growing, callback, unknown;
 module.exports = {
   C: {$kind:'class', $classname:identity},

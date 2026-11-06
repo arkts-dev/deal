@@ -9,7 +9,7 @@ export function test_string_transform_helpers(): null {
   if (str.trim("  deal  ") !== "deal") {
     throw { code: "TEST_FAIL", message: "trim mismatch" };
   }
-  if (str.replace("a-b-c", "-", ":") !== "a:b:c") {
+  if (str.replace("a-b-c", "-", ":") !== "a:b-c") {
     throw { code: "TEST_FAIL", message: "replace mismatch" };
   }
   let parts: string[] = str.split("a,b,c", ",");

@@ -12,8 +12,8 @@ import java.util.concurrent.CompletableFuture;
 // assertion proves the declared value survived the crossing.
 
 final class HostCarrierclass {
-  public static final String Config = "@$external/host.carrierclass/Config";
-  public static final String Holder = "@$external/host.carrierclass/Holder";
+  public static final String Config = "@$external/host/carrierclass/Config";
+  public static final String Holder = "@$external/host/carrierclass/Holder";
   public static final java.util.Map<String, Object> Config_defaults =
       java.util.Map.of("value", Double.valueOf(0));
 
@@ -72,9 +72,9 @@ final class HostCarrierclass {
 
   // The declared callback position's synthesized wrapper type: the shape
   // id escapes the canonical descriptor of the function type, so this
-  // name carries the corpus lane's dotted external identity of Config.
+  // name carries the raw external import identity of Config.
   public static Object consume(
-      $DealRt.Fn1_$$a$$external$shost$icarrierclass$sConfig_R_$$a$$external$shost$icarrierclass$sConfig g) {
+      $DealRt.Fn1_$$a$$external$shost$scarrierclass$sConfig_R_$$a$$external$shost$scarrierclass$sConfig g) {
     if (g == null) {
       return Double.valueOf(-2);
     }

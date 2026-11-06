@@ -2,9 +2,9 @@
 // @description: Unknown/nullish/void carriers, recursive ingress, cycles and original host alias identity.
 // @expected: runtime-ok
 // @features: host-abi, unknown, undefined, void, async, arrays
-import * as host from "host/language15";
+import * as host from "host/language16";
 class Item { n: number; }
-function check(ok: boolean): void { if (!ok) { throw {code: "FAIL", message: "host v1.5 contract"}; } }
+function check(ok: boolean): void { if (!ok) { throw {code: "FAIL", message: "host v1.6 contract"}; } }
 function callback(): void {}
 export function test_sync(): void {
   let values: number[] = [1, 2];
@@ -52,15 +52,24 @@ export function test_sync(): void {
   check(host.maybeBoolean(undefined) === undefined);
   check((host.maybeBoolean(true) as boolean) === true);
   host.nothing(); host.callback(callback);
+  let nested = host.invalidNested();
+  let child = nested.child as Record<string, unknown>;
+  check((child.bad as string) === `\uD800`);
   let rejected: boolean = false;
-  try { host.invalidNested(); } catch (e) { if (e instanceof Error) { rejected = e.code === "E8010"; } }
-  check(rejected);
-  rejected = false;
   try { host.opaque(); } catch (e) { if (e instanceof Error) { rejected = e.code === "E8010"; } }
   check(rejected);
   let graph = host.graph() as Record<string, unknown>;
   check(graph.self === (graph as unknown));
   check(graph.a === graph.b);
+  let texts:string[]=["😀",`\uD800`];
+  let textGraph:Record<string,unknown>={};
+  textGraph.self=textGraph;textGraph.a=texts;textGraph.b=texts;
+  textGraph["😀"]=`\uD800`;
+  check(host.inspectText(textGraph));
+  check(host.echo(textGraph)===(textGraph as unknown));
+  check(textGraph.self===(textGraph as unknown) && textGraph.a===textGraph.b);
+  check((textGraph["😀"] as string)===`\uD800`);
+  check(texts[0]==="😀" && texts[1]===`\uD800`);
 }
 export async function test_async(): Promise<void> {
   let value: unknown = await host.asyncUnknown();

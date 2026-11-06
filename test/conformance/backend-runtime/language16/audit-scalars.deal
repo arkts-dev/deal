@@ -20,7 +20,7 @@ export function main():null{
   let elements=decoded.values as unknown[];check(elements.length===2);check(equal(elements[0],null));check(equal(elements[1],null));
   let async=1;let as=async;let from=as as number;let of=from;
   for(let of of [of]){check(of===1);}
-  function recurse(n:number):number{if(n===0){return 0;}return recurse(n-1);}
+  let recurse:(n:number)=>number=function(n:number):number{if(n===0){return 0;}return recurse(n-1);};
   check(recurse(2)===0);
   return null;
 }

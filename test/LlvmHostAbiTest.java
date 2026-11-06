@@ -118,14 +118,14 @@ public final class LlvmHostAbiTest {
     private static final int[] LEVELS = {0, 2};
 
     private static final String DEAL_JSON = """
-        {"languageVersion": "1.5", "backend": "llvm",
+        {"languageVersion": "1.6", "backend": "llvm",
          "moduleRoots": ["src"], "output": "out",
          "externals": {"host/probe": {"declaration": "bindings/probe.d.deal"}}}
         """;
 
     /** The fixture whose declared class carries a function-typed field. */
     private static final String SLOT_JSON = """
-        {"languageVersion": "1.5", "backend": "llvm",
+        {"languageVersion": "1.6", "backend": "llvm",
          "moduleRoots": ["src"], "output": "out",
          "externals": {"host/slot": {"declaration": "bindings/slot.d.deal"}}}
         """;
@@ -405,7 +405,7 @@ public final class LlvmHostAbiTest {
           } catch (value) {
             let e: Error = value as Error;
             check(e.code === "E8010", "the malformed text renders E8010");
-            check(e.message === "return value 1 type mismatch: expected string, got UTF-16 surrogate code point",
+            check(e.message === "return value 1 type mismatch: expected string, got invalid UTF-8 encoding",
                   "the host string arm's own reason is the inner text");
             textRejected = true;
           }
@@ -2319,7 +2319,7 @@ public final class LlvmHostAbiTest {
         Files.createDirectories(root.resolve("src"));
         Files.createDirectories(root.resolve("bindings"));
         Files.writeString(root.resolve("deal.json"), """
-            {"languageVersion": "1.5", "backend": "llvm",
+            {"languageVersion": "1.6", "backend": "llvm",
              "moduleRoots": ["src"], "output": "out",
              "externals": {"host/pr": {"declaration": "bindings/pr.d.deal"},
                            "host/pr2": {"declaration": "bindings/pr2.d.deal"}}}
@@ -2514,6 +2514,27 @@ public final class LlvmHostAbiTest {
                 checkEq("", stressed.stderr(), "-O" + level + " the stressed"
                     + " host value case " + expectation.getKey()
                     + " keeps stderr empty");
+                if (expectation.getKey().equals("7")) {
+                    Path sanitized = scratch.resolve("host_value_case7_sanitized_o" + level);
+                    NativeCompiler.Result instrumentedLink = NativeCompiler.link(output, level,
+                        caseSources, NativeCompiler.SANITIZER_FLAGS, sanitized);
+                    check(instrumentedLink.succeeded(), "instrumented function surface builds: "
+                        + instrumentedLink.describe());
+                    if (instrumentedLink.succeeded()) {
+                        for (String stress : List.of("0", "1")) {
+                            Map<String, String> environment = new LinkedHashMap<>(
+                                NativeCompiler.sanitizerEnvironment());
+                            environment.put("DEAL_GC_STRESS", stress);
+                            NativeCompiler.Result instrumented = NativeCompiler.runSanitized(
+                                sanitized, scratch, environment).result();
+                            checkEq(0, instrumented.exitCode(), "instrumented function surface -O"
+                                + level + " stress=" + stress + ": " + instrumented.describe());
+                            checkEq(expectation.getValue(), instrumented.stdout(),
+                                "instrumented function surface observations");
+                            checkEq("", instrumented.stderr(), "instrumented function surface stderr");
+                        }
+                    }
+                }
             }
         }
         // The unconsumed-token rule: one deterministic stderr line, exit 2, and
@@ -2592,14 +2613,14 @@ public final class LlvmHostAbiTest {
               check((pair.second as string) === "keep");
               let a: unknown[] = [];
               let r: Record<string, unknown> = {};
-              function mutate(child: Record<string, unknown>, nested: unknown[], e: Error): number {
+              let mutate = function(child: Record<string, unknown>, nested: unknown[], e: Error): number {
                 child.value = 11;
                 delete child.later;
                 child.added = 1;
                 nested[1] = 12;
                 e.code = "after";
                 return 1;
-              }
+              };
               let u: unknown = p.aliases(a, r, mutate);
               check(a.length === 3);
               let nested: unknown[] = a[2] as unknown[];

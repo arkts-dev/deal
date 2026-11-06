@@ -32,17 +32,15 @@ import java.util.regex.Pattern;
  * ordered arrays. Serialization never iterates a {@code Map} or
  * {@code Set}: objects carry an ordered entry list, and the serializer
  * sorts a defensive copy of it, so the output bytes are fully determined
- * by the value model. Strings must contain Unicode scalars — an unpaired
- * surrogate is rejected at construction (producer defect,
- * {@link IllegalArgumentException}) and at parse time (transport failure,
- * {@link SemanticIrTextDecodeException}).</p>
+ * by the value model. Strings carry UTF-16 units; lone surrogates serialize
+ * as lowercase Unicode escapes, keeping the byte transport valid UTF-8.</p>
  *
  * <p>The parser is the exact inverse of the serializer over the pinned
  * schema: it accepts every serializer output, and re-serializing a parsed
  * tree reproduces the input bytes exactly. It is a strict transport: only
  * canonical number forms are accepted (decimal signed32 integers and
  * hex floats in the unique {@code Double.toHexString} spelling), duplicate
- * object keys, invalid UTF-8, unpaired surrogates, malformed syntax, and
+ * object keys, invalid UTF-8, malformed syntax, and
  * trailing content raise {@link SemanticIrTextDecodeException}. It performs
  * no closed-enum, reserved-name, policy, or profile validation — those are
  * the validator's rules (T6).</p>
@@ -78,12 +76,11 @@ public final class CanonicalJson {
     public record Num(double value) implements Value {
     }
 
-    /** A canonical JSON string of Unicode scalars. */
+    /** A canonical JSON string of UTF-16 code units. */
     public record Str(String value) implements Value {
 
         public Str {
             Objects.requireNonNull(value, "value must not be null");
-            requireUnicodeScalars(value);
         }
     }
 
@@ -105,7 +102,6 @@ public final class CanonicalJson {
 
         public Entry {
             Objects.requireNonNull(key, "key must not be null");
-            requireUnicodeScalars(key);
             Objects.requireNonNull(value, "value must not be null");
         }
     }
@@ -283,7 +279,7 @@ public final class CanonicalJson {
                 case '\r' -> sb.append("\\r");
                 case '\t' -> sb.append("\\t");
                 default -> {
-                    if (cp < 0x20) {
+                    if (cp < 0x20 || cp >= 0xd800 && cp <= 0xdfff) {
                         sb.append(String.format("\\u%04x", cp));
                     } else {
                         sb.appendCodePoint(cp);
@@ -292,24 +288,6 @@ public final class CanonicalJson {
             }
         }
         sb.append('"');
-    }
-
-    private static void requireUnicodeScalars(String s) {
-        for (int i = 0; i < s.length(); i++) {
-            char c = s.charAt(i);
-            if (Character.isHighSurrogate(c)) {
-                if (i + 1 >= s.length() || !Character.isLowSurrogate(s.charAt(i + 1))) {
-                    throw new IllegalArgumentException(
-                        "string contains an unpaired high surrogate; DEAL strings must be "
-                            + "Unicode scalars (offset " + i + ")");
-                }
-                i++;
-            } else if (Character.isLowSurrogate(c)) {
-                throw new IllegalArgumentException(
-                    "string contains an unpaired low surrogate; DEAL strings must be "
-                        + "Unicode scalars (offset " + i + ")");
-            }
-        }
     }
 
     // =========================================================================
@@ -345,8 +323,8 @@ public final class CanonicalJson {
      * Parses canonical JSON UTF-8 text into the value model. Accepts every
      * serializer output and reproduces it byte-exactly on re-serialization;
      * raises {@link SemanticIrTextDecodeException} for invalid UTF-8,
-     * malformed syntax, non-canonical numbers, duplicate keys, unpaired
-     * surrogates, or trailing content.
+     * malformed syntax, non-canonical numbers, duplicate keys, or trailing
+     * content. Escaped UTF-16 units, including lone surrogates, are preserved.
      *
      */
     public static Value parse(byte[] utf8) {
@@ -501,7 +479,6 @@ public final class CanonicalJson {
                 }
             }
             String result = sb.toString();
-            validateParsedScalars(result);
             return new Str(result);
         }
 
@@ -519,22 +496,6 @@ public final class CanonicalJson {
             }
             pos += 4;
             return (char) value;
-        }
-
-        void validateParsedScalars(String s) {
-            for (int i = 0; i < s.length(); i++) {
-                char c = s.charAt(i);
-                if (Character.isHighSurrogate(c)) {
-                    if (i + 1 >= s.length() || !Character.isLowSurrogate(s.charAt(i + 1))) {
-                        throw err("unpaired high surrogate in a string (DEAL strings must be "
-                            + "Unicode scalars)");
-                    }
-                    i++;
-                } else if (Character.isLowSurrogate(c)) {
-                    throw err("unpaired low surrogate in a string (DEAL strings must be "
-                        + "Unicode scalars)");
-                }
-            }
         }
 
         Value parseArray() {

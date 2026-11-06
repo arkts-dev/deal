@@ -176,16 +176,6 @@ rows.put(FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR,
             "first declaration-order unsupported value, wrong identity, cycle, missing "
                 + "required value, or nonfinite number"));
 
-        rows.put(FailurePolicyId.SUBSTRING_BOUNDS, makeRow(FailurePolicyId.SUBSTRING_BOUNDS,
-            DiagnosticCode.E8001, List.of("substring bounds must be finite integers"),
-            List.of(), ORIGIN_OPERATION, CAUSE_NONE, FRAMES_ACTIVE,
-            "reject nonfinite or fractional bounds before clamping"));
-
-        rows.put(FailurePolicyId.SQRT_NEGATIVE, makeRow(FailurePolicyId.SQRT_NEGATIVE,
-            DiagnosticCode.E8001, List.of("sqrt of negative number"), List.of(),
-            ORIGIN_OPERATION, CAUSE_NONE, FRAMES_ACTIVE,
-            "negative non-NaN number fails; NaN returns NaN"));
-
         rows.put(FailurePolicyId.THROW_TRANSFER, makeRow(FailurePolicyId.THROW_TRANSFER,
             null, List.of(), List.of(),
             "the supplied Error's origin; if it has no origin, the THROW origin",
@@ -412,13 +402,6 @@ declared.add(arm(FailureArmId.ARRAY_ELEMENT_KIND,
             FailurePolicyId.JSON_TO_ERROR, 2,
             FailureArm.ExpectedSource.NONE, null,
             FailureArm.ActualProjection.NONE,
-            FailureArm.OriginConvention.CALL_EXPRESSION, FailureArm.RenderScope.TOP_LEVEL));
-        declared.add(arm(FailureArmId.SUBSTRING_BOUNDS, FailurePolicyId.SUBSTRING_BOUNDS, 0,
-            FailureArm.ExpectedSource.NONE, null, FailureArm.ActualProjection.NONE,
-            FailureArm.OriginConvention.CALL_EXPRESSION, FailureArm.RenderScope.TOP_LEVEL));
-        declared.add(arm(FailureArmId.SQRT_NEGATIVE, FailurePolicyId.SQRT_NEGATIVE, 0,
-            FailureArm.ExpectedSource.NONE, null,
-            FailureArm.ActualProjection.CANONICAL_VALUE_TEXT,
             FailureArm.OriginConvention.CALL_EXPRESSION, FailureArm.RenderScope.TOP_LEVEL));
 
         for (FailureArm arm : declared) {

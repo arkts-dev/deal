@@ -319,13 +319,13 @@ public final class LlvmDataClassEmissionTest {
               if (untyped instanceof Address) { report("T3", "instanceof other"); }
               let narrowed: User = untyped as User;
               if (narrowed.name !== "Ada") { report("T4", "assertion"); }
-              function maybeUser(flag: boolean): User | null { if (flag) { return user; } return null; }
+              let maybeUser = function(flag: boolean): User | null { if (flag) { return user; } return null; };
               let nullableUser = maybeUser(true);
               let absentUser = maybeUser(false);
               if (!(nullableUser instanceof User)) { report("T8", "nullable instance"); }
               if (nullableUser instanceof Address) { report("T9", "nullable other class"); }
               if (absentUser instanceof User) { report("T10", "null is not instance"); }
-              function maybeUnknown(flag: boolean): unknown { if (flag) { return user; } return null; }
+              let maybeUnknown = function(flag: boolean): unknown { if (flag) { return user; } return null; };
               if (!(maybeUnknown(true) instanceof User)) { report("T11", "unknown instance"); }
               if (maybeUnknown(false) instanceof User) { report("T12", "unknown null"); }
 
@@ -826,7 +826,7 @@ public final class LlvmDataClassEmissionTest {
     }
 
     /**
-     * The executed narrowing fixture (R4, docs/spec-v1.5.md "Narrowing and
+     * The executed narrowing fixture (R4, docs/spec-v1.6.md "Narrowing and
      * checked assertions"): a refined identifier read of every staged base kind
      * — {@code ?number}, {@code ?number|undefined}, {@code ?boolean},
      * {@code ?string}, {@code ?Class}, {@code ?T[]} — is consumable inside the
@@ -1697,7 +1697,7 @@ public final class LlvmDataClassEmissionTest {
         fixtures.put("callable-storage", """
             class Holder { run: () => number; }
             function make(n: number): () => number {
-              function value(): number { return n; }
+              let value = function(): number { return n; };
               return value;
             }
             function check(ok: boolean): void {
@@ -1706,7 +1706,7 @@ public final class LlvmDataClassEmissionTest {
             export function main(): null {
               let functions: (() => number)[] = [];
               for (let n of [1, 2, 3]) {
-                function capture(): number { return n; }
+                let capture = function(): number { return n; };
                 functions[functions.length] = capture;
               }
               check(functions[0]() === 1);
@@ -1875,7 +1875,7 @@ public final class LlvmDataClassEmissionTest {
     private static void writeProject(Path root, String source) throws IOException {
         Files.createDirectories(root.resolve("src"));
         Files.writeString(root.resolve("deal.json"),
-            "{\"languageVersion\": \"1.5\", \"moduleRoots\": [\"src\"],"
+            "{\"languageVersion\": \"1.6\", \"moduleRoots\": [\"src\"],"
                 + " \"backend\": \"llvm\"}", StandardCharsets.UTF_8);
         Files.writeString(root.resolve("src/main.deal"), source,
             StandardCharsets.UTF_8);

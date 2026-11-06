@@ -1,23 +1,13 @@
 package deal.source;
 
 /**
- * The single owner of decoded-Unicode-scalar position arithmetic.
+ * Scalar traversal with UTF-16 source coordinates.
  *
- * <p>All positions are measured in decoded Unicode scalars (code points):
- * <ul>
- *   <li>one code point = one scalar; {@link #advance()} consumes exactly one
- *       decoded code point per call — a surrogate pair is one advance (one
- *       column, one scalar offset), and an unpaired UTF-16 surrogate is one
- *       recovery unit (one column, one scalar offset);</li>
- *   <li>line terminators are LF, CRLF, and CR; CRLF is two scalars and one
- *       line break: the line increments once at the CR, and an {@code \n}
- *       immediately following a consumed {@code \r} increments no line and
- *       resets no column while still counting one scalar offset; LF and a
- *       lone CR each increment the line and reset the column to 1;</li>
- *   <li>a tab and every other scalar increment the column by 1;</li>
- *   <li>lines and columns are 1-based; scalar offsets are 0-based counts of
- *       decoded scalars from the start of the source.</li>
- * </ul>
+ * <p>{@link #advance()} consumes one decoded code point. Supplementary
+ * characters advance two columns and offsets; lone surrogates are single
+ * recovery units. Lines and columns are 1-based, offsets 0-based. CRLF
+ * consumes two offsets but one line break; LF and lone CR also reset the
+ * column to 1. Tabs occupy one column.
  *
  * <p>Errors: none. The cursor never throws for any input: unpaired
  * surrogates count as recovery units, {@link #advance()} at end of input is
@@ -48,10 +38,10 @@ public final class ScalarSourceCursor {
     /** 1-based line number. */
     private int line = 1;
 
-    /** 1-based scalar column within the line. */
+    /** 1-based UTF-16 column within the line. */
     private int column = 1;
 
-    /** 0-based count of decoded Unicode scalars consumed from source start. */
+    /** 0-based count of UTF-16 units consumed from source start. */
     private int scalarOffset;
 
     /**
@@ -82,7 +72,7 @@ public final class ScalarSourceCursor {
      * Returns the UTF-16 index of the next unconsumed source unit. Consumers
      * that retain a UTF-16 index for substring extraction (e.g. the lexer)
      * use this accessor to keep their index in lockstep with the cursor's
-     * scalar arithmetic.
+     * coordinate arithmetic.
      */
     public int index() {
         return index;
@@ -112,13 +102,9 @@ public final class ScalarSourceCursor {
 
     /**
      * Consumes exactly one decoded code point and returns it as a code point:
-     * a surrogate pair is one advance (one column, one scalar offset), an
-     * unpaired UTF-16 surrogate is one recovery unit. An {@code \n}
-     * immediately following a consumed {@code \r} increments no line and
-     * resets no column while still counting one scalar offset (CRLF = two
-     * scalars and one line break); LF and a lone CR each increment the line
-     * and reset the column to 1; a tab and every other scalar increment the
-     * column by 1. Returns {@code -1} and does nothing at end of input.
+     * a surrogate pair is one advance with two UTF-16 units, an unpaired
+     * surrogate one recovery unit. CRLF increments the line only at CR;
+     * LF and lone CR reset the column. Returns {@code -1} at end of input.
      */
     public int advance() {
         if (atEnd()) {
@@ -138,10 +124,10 @@ public final class ScalarSourceCursor {
             line++;
             column = 1;
         } else {
-            column++;
+            column += Character.charCount(scalar);
         }
         index += Character.charCount(scalar);
-        scalarOffset++;
+        scalarOffset += Character.charCount(scalar);
         return scalar;
     }
 
@@ -172,11 +158,8 @@ public final class ScalarSourceCursor {
     }
 
     /**
-     * Counts the decoded Unicode scalars in {@code s}: each surrogate pair
-     * counts as one scalar, each unpaired surrogate counts as one recovery
-     * unit. Never throws; a {@code null} string counts zero scalars. The
-     * result agrees with the scalar offset reached by a cursor after
-     * consuming the whole string.
+     * Counts UTF-16 source units. Null counts zero; the result agrees with
+     * the offset reached by a cursor after consuming the whole string.
      */
     public static int scalarCount(String s) {
         if (s == null) {
@@ -186,10 +169,8 @@ public final class ScalarSourceCursor {
     }
 
     /**
-     * Counts the decoded Unicode scalars in the UTF-16 substring
-     * {@code s.substring(from, to)}: each surrogate pair within the range
-     * counts as one scalar, each unpaired surrogate counts as one recovery
-     * unit. Bounds outside {@code [0, s.length()]} are clamped; if
+     * Counts UTF-16 units in {@code s.substring(from, to)}.
+     * Bounds outside {@code [0, s.length()]} are clamped; if
      * {@code from >= to} the result is zero. Never throws.
      */
     public static int scalarCount(String s, int from, int to) {
@@ -199,17 +180,6 @@ public final class ScalarSourceCursor {
         int len = s.length();
         int f = Math.max(0, Math.min(from, len));
         int t = Math.max(0, Math.min(to, len));
-        int count = 0;
-        for (int i = f; i < t; ) {
-            char c = s.charAt(i);
-            if (Character.isHighSurrogate(c) && i + 1 < t
-                    && Character.isLowSurrogate(s.charAt(i + 1))) {
-                i += 2;
-            } else {
-                i += 1;
-            }
-            count++;
-        }
-        return count;
+        return Math.max(0, t - f);
     }
 }

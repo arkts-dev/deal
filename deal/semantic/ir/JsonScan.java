@@ -18,8 +18,6 @@ public final class JsonScan {
     private static final String REASON_UNEXPECTED_CHARACTER = "unexpected character";
     private static final String REASON_UNTERMINATED_STRING = "unterminated string";
     private static final String REASON_INVALID_ESCAPE = "invalid escape";
-    private static final String REASON_UNPAIRED_SURROGATE_ESCAPE =
-        "unpaired surrogate escape";
     private static final String REASON_INVALID_NUMBER = "invalid number";
     private static final String REASON_LEADING_ZERO = "leading zero";
     private static final String REASON_UNEXPECTED_END = "unexpected end of input";
@@ -149,29 +147,7 @@ public final class JsonScan {
                         }
                         case 'u' -> {
                             advance(); // 'u'
-                            int codePoint = parseHex4();
-                            if (Character.isHighSurrogate((char) codePoint)) {
-                                // A high surrogate must pair with a
-                                // following four-hex-digit low surrogate escape.
-                                if (atEnd() || peek() != '\\') {
-                                    throw failure(REASON_UNPAIRED_SURROGATE_ESCAPE);
-                                }
-                                advance(); // backslash
-                                if (atEnd() || peek() != 'u') {
-                                    throw failure(REASON_UNPAIRED_SURROGATE_ESCAPE);
-                                }
-                                advance(); // 'u'
-                                int low = parseHex4();
-                                if (!Character.isLowSurrogate((char) low)) {
-                                    throw failure(REASON_UNPAIRED_SURROGATE_ESCAPE);
-                                }
-                                result.appendCodePoint(
-                                    Character.toCodePoint((char) codePoint, (char) low));
-                            } else if (Character.isLowSurrogate((char) codePoint)) {
-                                throw failure(REASON_UNPAIRED_SURROGATE_ESCAPE);
-                            } else {
-                                result.appendCodePoint(codePoint);
-                            }
+                            result.append((char) parseHex4());
                         }
                         default -> throw failure(REASON_INVALID_ESCAPE);
                     }

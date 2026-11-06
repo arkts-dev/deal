@@ -8,7 +8,7 @@
   "expected": {
     "mode": "runtime-ok",
     "transcript": {
-      "stdout": "E8010\n",
+      "stdout": "OK\n",
       "stderr": ""
     },
     "exitCode": 0

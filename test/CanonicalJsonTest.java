@@ -113,9 +113,9 @@ public class CanonicalJsonTest {
     private static final String PINNED_SNAPSHOT_DIGEST_GOLDEN =
         "872e60b2a134aba880de0c8f2076fb92cde0bedda9d8c32d1e9a34d64ebc6deb";
 
-    /** Stored golden: {@code LoweringContextHash.of(DEAL_V1_5_BINARY64, REGISTRY_HASH)}. */
+    /** Stored golden: {@code LoweringContextHash.of(DEAL_V1_6_BINARY64, REGISTRY_HASH)}. */
     private static final String PINNED_LOWERING_CONTEXT_GOLDEN =
-        "9a4b252b482ffed0ff9d5915ae7c9ebf782e7c1898cba8c44dadbc2f9296c881";
+        "6a36fae58b9b5e2cec584624894b479af5edc24442e590413f80ed7f21fac675";
 
     // =========================================================================
     // Fixtures
@@ -302,13 +302,15 @@ public class CanonicalJsonTest {
         check(bytes.length == 4 && (bytes[0] & 0xff) == 0x22 && (bytes[3] & 0xff) == 0x22,
             "the output is UTF-8 (pi = 2 bytes inside the quotes)");
 
-        // Unpaired surrogates are a producer defect at construction.
-        try {
-            CanonicalJson.str("\ud800");
-            fail("an unpaired surrogate string cannot be constructed");
-        } catch (IllegalArgumentException expected) {
-            check(true, "unpaired surrogates are rejected at construction");
-        }
+        // Runtime strings and keys preserve lone UTF-16 units without losing
+        // them through Java's replacement-based UTF-8 encoder.
+        check("\"\\ud800\"".equals(CanonicalJson.serializeText(CanonicalJson.str("\ud800"))),
+            "a lone high unit has a lossless escaped transport");
+        check("\"\\udc00\"".equals(CanonicalJson.serializeText(CanonicalJson.str("\udc00"))),
+            "a lone low unit has a lossless escaped transport");
+        testRoundTripBytes(CanonicalJson.serializeBytes(CanonicalJson.obj(
+            new CanonicalJson.Entry("\ud800", CanonicalJson.str("\udc00")))),
+            "lone units survive keys and values");
 
         // The stored golden document (byte-exact).
         String doc = CanonicalJson.serializeText(compositeDocument());
@@ -510,9 +512,14 @@ public class CanonicalJsonTest {
         expectDecode(() -> CanonicalJson.parse("{\"a\":0x1.0P0}"),
             "uppercase hex-float exponent spelling (canonical is 0x1.0p0)");
         expectDecode(() -> CanonicalJson.parse("{\"a\":-0x0.0p0,\"a\":1}"), "duplicate object key");
-        expectDecode(() -> CanonicalJson.parse("[\"\ud800\"]"), "unpaired raw high surrogate");
-        expectDecode(() -> CanonicalJson.parse("[\"\\ud800\"]"), "unpaired high surrogate escape");
-        expectDecode(() -> CanonicalJson.parse("[\"\\uDC00\"]"), "unpaired low surrogate escape");
+        check(CanonicalJson.parse("[\"\ud800\"]").equals(
+            CanonicalJson.arr(CanonicalJson.str("\ud800"))), "raw UTF-16 text preserves a lone high unit");
+        check(CanonicalJson.parse("[\"\\ud800\"]").equals(
+            CanonicalJson.arr(CanonicalJson.str("\ud800"))), "escaped high unit is runtime data");
+        check(CanonicalJson.parse("[\"\\uDC00\"]").equals(
+            CanonicalJson.arr(CanonicalJson.str("\udc00"))), "escaped low unit is runtime data");
+        expectDecode(() -> CanonicalJson.parse(new byte[]{34, (byte)0xed, (byte)0xa0, (byte)0x80, 34}),
+            "surrogate bytes are not valid UTF-8 transport; escaped units are");
         expectDecode(() -> CanonicalJson.parse(new byte[]{(byte) 0xc3, 0x28}),
             "invalid UTF-8 bytes");
         expectDecode(() -> CanonicalJson.parse("{\"a\":999999999999999999999}"),
@@ -643,7 +650,7 @@ public class CanonicalJsonTest {
             SemanticOpKind.BINARY, RuntimeDescriptor.Number.INSTANCE,
             List.of(RuntimeDescriptor.Number.INSTANCE, RuntimeDescriptor.Number.INSTANCE),
             BinarySelector.NUMBER_ADD, new KindPayload.BinaryPayload(BinarySelector.NUMBER_ADD,
-                null, null), FailurePolicyId.SQRT_NEGATIVE, List.of(new FunctionId(0)),
+                null, null), FailurePolicyId.JSON_TO_ERROR, List.of(new FunctionId(0)),
             PLACEHOLDER_DIGEST);
         check(!baseDigest.equals(digest(policyFlip)),
             "flipping the failure policy changes the digest");
@@ -747,7 +754,7 @@ public class CanonicalJsonTest {
     static void testLoweringContextHash() {
         System.out.println("-- Lowering context hash (pinned formula) --");
 
-        String hash = LoweringContextHash.of(SemanticProfile.DEAL_V1_5_BINARY64, REGISTRY_HASH);
+        String hash = LoweringContextHash.of(SemanticProfile.DEAL_V1_6_BINARY64, REGISTRY_HASH);
         check(PINNED_LOWERING_CONTEXT_GOLDEN.equals(hash),
             "the lowering-context hash equals the stored golden; got " + hash);
         check(hash.length() == 64 && hash.matches("[0-9a-f]{64}"),
@@ -757,10 +764,10 @@ public class CanonicalJsonTest {
         // order with the profile as its enum name and the registry hash
         // verbatim.
         String expected = "{\"capabilityRegistryHash\":\"" + REGISTRY_HASH
-            + "\",\"semanticProfile\":\"DEAL_V1_5_BINARY64\"}";
+            + "\",\"semanticProfile\":\"DEAL_V1_6_BINARY64\"}";
         CanonicalJson.Value json = CanonicalJson.obj(
             CanonicalJson.e("semanticProfile",
-                CanonicalJson.str(SemanticProfile.DEAL_V1_5_BINARY64.name())),
+                CanonicalJson.str(SemanticProfile.DEAL_V1_6_BINARY64.name())),
             CanonicalJson.e("capabilityRegistryHash", CanonicalJson.str(REGISTRY_HASH)));
         check(expected.equals(CanonicalJson.serializeText(json)),
             "the digest input serializes as " + expected);
@@ -768,12 +775,12 @@ public class CanonicalJsonTest {
             "the helper computes SHA-256 of exactly that canonical JSON");
 
         // Same input, different registry hash → different digest.
-        check(!hash.equals(LoweringContextHash.of(SemanticProfile.DEAL_V1_5_BINARY64,
+        check(!hash.equals(LoweringContextHash.of(SemanticProfile.DEAL_V1_6_BINARY64,
                 REGISTRY_HASH.replace('a', 'b'))),
             "changing the capability-registry hash changes the digest");
 
         // The LoweringContext record overload (T2's pinned input domain).
-        LoweringContext context = new LoweringContext(SemanticProfile.DEAL_V1_5_BINARY64, REGISTRY_HASH);
+        LoweringContext context = new LoweringContext(SemanticProfile.DEAL_V1_6_BINARY64, REGISTRY_HASH);
         check(hash.equals(LoweringContextHash.of(context)),
             "the LoweringContext overload computes the same digest");
     }
@@ -912,7 +919,7 @@ public class CanonicalJsonTest {
             System.out.println("DOC=" + CanonicalJson.serializeText(compositeDocument()));
             System.out.println("SNAP_DIGEST=" + ContractSnapshotCanonicalizer.digest(pinnedSnapshot()));
             System.out.println("LCH=" + LoweringContextHash.of(
-                SemanticProfile.DEAL_V1_5_BINARY64, REGISTRY_HASH));
+                SemanticProfile.DEAL_V1_6_BINARY64, REGISTRY_HASH));
             System.out.println("SNAP_TEXT=" + ContractSnapshotCanonicalizer.serializeText(
                 pinnedSnapshot()));
             return;

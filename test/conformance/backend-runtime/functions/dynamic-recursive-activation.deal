@@ -10,6 +10,10 @@ function check(ok:boolean):void{
     };
   }
 }
+function staticFactorial(n:number):number{
+  if(n===0){return 1;}
+  return n*staticFactorial(n-1);
+}
 export function main():null{
   {
     // factorial-nonrecursive-control
@@ -23,13 +27,7 @@ export function main():null{
   }
   {
     // factorial-static-control
-    function f(n:number):number{
-      if(n===0){
-        return 1;
-      }
-      return n*f(n-1);
-    }
-    check(f(5)===120);
+    check(staticFactorial(5)===120);
   }
   {
     // factorial
@@ -60,13 +58,13 @@ export function main():null{
   }
   {
     // sum-direct-unknown
-    function f(n:number):number{
+    let f:(n:number)=>number=function(n:number):number{
       if(n===0){
         return 0;
       }
       let u:unknown=f;
       return n+(u as (n:number)=>number)(n-1);
-    }
+    };
     check(f(3)===6);
   }
   {

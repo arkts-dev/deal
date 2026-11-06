@@ -3,9 +3,7 @@
 
 static deal_host_result mutate(deal_async_token token, const deal_value *args, size_t argc) {
     (void)argc;
-    deal_value string = text("bad");
-    set(args[0], "bad", string);
-    fixture_surrogate_string(get(args[0], "bad"));
+    set(args[0], "bad", text("\xed\xa0\x80"));
     return complete(token, undefined_value());
 }
 const deal_host_export deal_host_exports_probe[] = {

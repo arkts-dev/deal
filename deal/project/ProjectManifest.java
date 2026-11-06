@@ -8,12 +8,12 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The strictly parsed v1.5 project manifest (docs/spec-v1.5.md).
+ * The strictly parsed v1.6 project manifest (docs/spec-v1.6.md).
  *
  * <p>Published by {@link StrictManifestParser} after the strict walk and
  * {@link ProjectConfigValidator}'s post-walk validations. Absent fields
  * carry their pinned parser-level defaults after validation:
- * {@code backend} is {@code "luajit"}, {@code stdlib} is {@code "1.5"},
+ * {@code backend} is {@code "luajit"}, {@code stdlib} is {@code "1.6"},
  * {@code moduleRoots} is the empty list (no implicit root), and
  * {@code externals} is the empty map. {@code output} and
  * {@code dependencies} remain absent (null) — the effective output path

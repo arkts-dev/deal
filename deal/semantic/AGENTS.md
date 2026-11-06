@@ -8,7 +8,7 @@ Resolve construction/field layouts from checked declarations and defining provid
 
 Implementation seeds agree with exact interface/module identity; declaration seeds agree with layout fields, optional-read descriptors and canonical annotations. Optional reads add undefined, including null|undefined for optional null; absence never fabricates null. Typed/raw/text admission consumes the same complete facts. Supplied companion views must match the unit's owned records; content-equal detached views resolve to those owned records.
 
-Carry DEAL_V1_5_BINARY64/V1_5_ACTIVE through constructors/comparisons/admission/context hashes. Reject retired profiles/aliases. Evolve serialization, digests and independent pins together.
+Carry DEAL_V1_6_BINARY64/V1_6_ACTIVE through constructors/comparisons/admission/context hashes. Reject retired profiles/aliases. Evolve serialization, digests and independent pins together.
 
 ## Bindings, calls and adapters
 
@@ -16,7 +16,7 @@ Each HOST import read records its source occurrence's alias cell; never reconstr
 
 Function-valued variables assigned anywhere in their declaring body's nested traversal lack static allocation identity: reads materialize current values; calls/await use Dynamic dispatch. Declarations/imported exports are immutable; resolve signatures in their exact owner scope, excluding shadowing parameters. Declarations, recursion and fixed adapters retain recorded static callees. Classify runtime sources by recorded execution class, never spelling/descriptor. If conservative assignment analysis materializes a declared-name read as DynamicFunctionValue, its await invokes that evaluated carrier through dynamic dispatch just like its synchronous twin; sibling-scope spelling collisions must not produce a lowering rejection.
 
-Every adapter captures its source function value once at the source evaluation point, including awaited completion. Preserve genuine closure bindings and recorded sync/async completion cells.
+A direct function-expression initializer captures its own mutable let cell, including through its immediate VALUE adapter and declaration boundary; unrelated later writes never justify an earlier load. Every adapter captures its source function value once at the source evaluation point, including awaited completion. Preserve genuine closure bindings and recorded sync/async completion cells.
 
 Assignment evaluates and yields the original RHS once. Storage may receive an adapter without changing the expression's type/identity. All adapters capture VALUE; validators require a preceding source producer. Address-chain validation preserves RHS parent/type/order and original publication. Later loads or enclosing assignments cannot justify earlier captures.
 
@@ -36,4 +36,4 @@ Preserve persistent descriptors on decoded typed arrays recursively, including e
 
 Render canonical interfaces with Record<string, unknown>, Promise results and independent nullish flags ordered null then undefined. Do not reconstruct retired source/async spellings or conflate canonical record with diagnostic/JSON-plan table.
 
-Class stringify follows private presence/declaration order and original cycle identity; Error exposes code/message only. Generic/generated Records omit object undefined/missing/functions, null-substitute arrays/nonfinite numbers, order numeric keys first, encode nested classes. Declared nonfinite numbers likewise encode null. Reject malformed Unicode/cycles. Parsed Record arrays retain unknown[] descriptors; declared fields retain declared descriptors.
+Class stringify follows private presence/declaration order and original cycle identity; Error exposes code/message only. Generic/generated Records omit object undefined/missing/functions, null-substitute arrays/nonfinite numbers, order numeric keys first, encode nested classes. Declared nonfinite numbers likewise encode null. Reject malformed transport/cycles; preserve every UTF-16 unit. Shared string algorithms use StringSemantics; retain no scalar-only search/trim implementation or lone-unit JSON rejection. Trace strings escape surrogate units losslessly across process transport; console sinks encode display-only U+FFFD for lone units, preserving valid pairs and language values. Parsed Record arrays retain unknown[] descriptors; declared fields retain declared descriptors.

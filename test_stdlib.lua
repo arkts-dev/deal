@@ -156,8 +156,8 @@ test("string.substring with start == end returns empty", function()
   assert(strings.substring.f("hello", 2, 2) == "")
 end)
 
-test("string.substring with start > end returns empty", function()
-  assert(strings.substring.f("hello", 3, 1) == "")
+test("string.substring with start > end swaps bounds", function()
+  assert(strings.substring.f("hello", 3, 1) == "el")
 end)
 
 test("string.substring at boundaries", function()
@@ -184,25 +184,26 @@ end)
 
 -- ----- Unicode scalar-value length / substring (v1.2) -----
 
-test("string.length counts Unicode scalar values, not bytes", function()
+test("string.length counts UTF-16 units, not bytes", function()
   -- a, U+00E9 (2 bytes), U+4E2D (3 bytes), U+1F600 (4 bytes), b: 5 scalars, 11 bytes
   local s = "a\xC3\xA9\xE4\xB8\xAD\xF0\x9F\x98\x80b"
   assert(#s == 11)
-  assert(strings.length.f(s) == 5)
+  assert(strings.length.f(s) == 6)
 end)
 
-test("string.substring positions are Unicode scalar values", function()
-  -- a, U+00E9, U+4E2D, U+1F600, b — 5 scalars
+test("string.substring positions are UTF-16 units", function()
+  local rt = require("deal.runtime")
   local s = "a\xC3\xA9\xE4\xB8\xAD\xF0\x9F\x98\x80b"
-  assert(strings.substring.f(s, 0, 5) == s)
+  assert(strings.substring.f(s, 0, 6) == rt.string_normalize(s))
   assert(strings.substring.f(s, 0, 1) == "a")
   assert(strings.substring.f(s, 1, 2) == "\xC3\xA9")
   assert(strings.substring.f(s, 2, 3) == "\xE4\xB8\xAD")
-  assert(strings.substring.f(s, 3, 4) == "\xF0\x9F\x98\x80")
-  assert(strings.substring.f(s, 4, 5) == "b")
-  assert(strings.substring.f(s, 1, 4) == "\xC3\xA9\xE4\xB8\xAD\xF0\x9F\x98\x80")
+  assert(strings.substring.f(s, 3, 4) == "\xED\xA0\xBD")
+  assert(strings.substring.f(s, 4, 5) == "\xED\xB8\x80")
+  assert(strings.substring.f(s, 5, 6) == "b")
+  assert(rt.string_transport(strings.substring.f(s, 1, 5)) == "\xC3\xA9\xE4\xB8\xAD\xF0\x9F\x98\x80")
   assert(strings.substring.f(s, 2, 2) == "")
-  assert(strings.substring.f(s, 5, 10) == "")
+  assert(strings.substring.f(s, 6, 10) == "")
 end)
 
 test("string.substring clamps out-of-range end at the scalar boundary", function()
@@ -211,18 +212,17 @@ test("string.substring clamps out-of-range end at the scalar boundary", function
   assert(strings.substring.f(s, 1, 99) == "\xE4\xB8\xAD")
 end)
 
-test("string.split with empty separator splits into Unicode scalar values", function()
-  local s = "a\xC3\xA9\xF0\x9F\x98\x80"
-  local parts = strings.split.f(s, "")
-  assert(#parts == 3, "expected 3 scalars, got " .. #parts)
-  assert(parts[1] == "a")
-  assert(parts[2] == "\xC3\xA9")
-  assert(parts[3] == "\xF0\x9F\x98\x80")
+test("string.split with empty separator splits UTF-16 units", function()
+  local parts = strings.split.f("a\xC3\xA9\xF0\x9F\x98\x80", "")
+  assert(#parts == 4)
+  assert(parts[1] == "a" and parts[2] == "\xC3\xA9")
+  assert(parts[3] == "\xED\xA0\xBD" and parts[4] == "\xED\xB8\x80")
 end)
 
 test("string.length rejects malformed UTF-8 with E8001 (v1.2 boundary rule)", function()
   assert_error(function() strings.length.f("\xC3") end, "E8001")
-  assert_error(function() strings.substring.f("\xED\xA0\x80", 0, 1) end, "E8001")
+  assert(strings.substring.f("\xED\xA0\x80", 0, 1) == "\xED\xA0\x80")
+  assert_error_code(function() strings.substring.f("\xE0\x80\x80", 0, 1) end, "E8001")
 end)
 
 -- ----- contains -----
@@ -324,25 +324,25 @@ end)
 
 -- ----- replace -----
 
-test("string.replace replaces all occurrences", function()
+test("string.replace replaces the first occurrence", function()
   assert(strings.replace.f("hello world", "world", "earth") == "hello earth")
-  assert(strings.replace.f("aaa", "a", "b") == "bbb")
-  assert(strings.replace.f("ababab", "ab", "x") == "xxx")
+  assert(strings.replace.f("aaa", "a", "b") == "baa")
+  assert(strings.replace.f("ababab", "ab", "x") == "xabab")
 end)
 
 test("string.replace with no match returns original", function()
   assert(strings.replace.f("hello", "xyz", "abc") == "hello")
 end)
 
-test("string.replace with empty from returns original", function()
-  assert(strings.replace.f("hello", "", "x") == "hello")
+test("string.replace with empty search prepends", function()
+  assert(strings.replace.f("hello", "", "x") == "xhello")
 end)
 
 test("string.replace is plain-text (no pattern matching)", function()
   -- Lua magic characters in 'from' should be treated literally
-  assert(strings.replace.f("a.b.c", ".", "-") == "a-b-c")
+  assert(strings.replace.f("a.b.c", ".", "-") == "a-b.c")
   assert(strings.replace.f("100%", "%", "pct") == "100pct")
-  assert(strings.replace.f("a*b*c", "*", "+") == "a+b+c")
+  assert(strings.replace.f("a*b*c", "*", "+") == "a+b*c")
 end)
 
 test("string.replace handles % in replacement string", function()
@@ -378,9 +378,9 @@ test("string.split with single element returns array of one", function()
   assert(r[1] == "hello")
 end)
 
-test("string.split with empty string returns empty array", function()
+test("string.split empty text with nonempty separator preserves one part", function()
   local r = strings.split.f("", ",")
-  assert(#r == 0)
+  assert(#r == 1 and r[1] == "")
 end)
 
 test("string.split with empty separator splits into characters", function()
@@ -498,8 +498,8 @@ test("table.keys preserves the deterministic iteration order of the current stat
     "order mismatch: " .. table.concat(keys, ","))
 end)
 
-test("table.keys returns a chunk table carrier's present-null key (v1.4)", function()
-  -- docs/spec-v1.4.md:1909–1912 — each present string key once,
+test("table.keys returns a chunk table carrier's present-null key", function()
+  -- std/table keys: each present string key once,
   -- null-valued keys included. The chunk table carrier records a present
   -- null as an ordered presence key whose slot stores no value, so the
   -- key list is the carrier's recorded order, never a walk of the stored
@@ -1223,30 +1223,27 @@ test("json.parse decodes \\u4E2D to UTF-8 bytes E4 B8 AD", function()
 end)
 
 test("json.parse combines surrogate pair \\uD834\\uDD1E to U+1D11E (F0 9D 84 9E)", function()
-  assert_byte_seq(json.parse.f('{"v":"\\uD834\\uDD1E"}').v, 0xF0, 0x9D, 0x84, 0x9E)
+  assert_byte_seq(json.parse.f('{"v":"\\uD834\\uDD1E"}').v, 0xED, 0xA0, 0xB4, 0xED, 0xB4, 0x9E)
 end)
 
 test("json.parse combines boundary pair \\uD800\\uDC00 to U+10000 (F0 90 80 80)", function()
-  assert_byte_seq(json.parse.f('{"v":"\\uD800\\uDC00"}').v, 0xF0, 0x90, 0x80, 0x80)
+  assert_byte_seq(json.parse.f('{"v":"\\uD800\\uDC00"}').v, 0xED, 0xA0, 0x80, 0xED, 0xB0, 0x80)
 end)
 
 test("json.parse combines boundary pair \\uDBFF\\uDFFF to U+10FFFF (F4 8F BF BF)", function()
-  assert_byte_seq(json.parse.f('{"v":"\\uDBFF\\uDFFF"}').v, 0xF4, 0x8F, 0xBF, 0xBF)
+  assert_byte_seq(json.parse.f('{"v":"\\uDBFF\\uDFFF"}').v, 0xED, 0xAF, 0xBF, 0xED, 0xBF, 0xBF)
 end)
 
-test("json.parse rejects lone high surrogate \\uD834 with E8001", function()
-  assert_json_error(function() json.parse.f('"\\uD834"') end,
-    "unpaired surrogate code unit in unicode escape")
+test("json.parse preserves a lone high surrogate", function()
+  assert_byte_seq(json.parse.f('{"v":"\\uD834"}').v, 0xED, 0xA0, 0xB4)
 end)
 
-test("json.parse rejects lone low surrogate \\uDD1E with E8001", function()
-  assert_json_error(function() json.parse.f('"\\uDD1E"') end,
-    "unpaired surrogate code unit in unicode escape")
+test("json.parse preserves a lone low surrogate", function()
+  assert_byte_seq(json.parse.f('{"v":"\\uDD1E"}').v, 0xED, 0xB4, 0x9E)
 end)
 
-test("json.parse rejects surrogate pair mismatch \\uD834\\u0041 with E8001", function()
-  assert_json_error(function() json.parse.f('"\\uD834\\u0041"') end,
-    "unpaired surrogate code unit in unicode escape")
+test("json.parse preserves a high unit followed by a non-low unit", function()
+  assert_byte_seq(json.parse.f('{"v":"\\uD834\\u0041"}').v, 0xED, 0xA0, 0xB4, 0x41)
 end)
 
 test("json.parse rejects malformed \\u escapes with E8001", function()
@@ -1293,12 +1290,12 @@ end)
 
 test("json.parse passes raw supplementary UTF-8 through byte-identically", function()
   local supplementary = "\xF0\x9D\x84\x9E" -- U+1D11E, scalar-valid UTF-8
-  assert_byte_seq(json.parse.f('{"v":"' .. supplementary .. '"}').v, 0xF0, 0x9D, 0x84, 0x9E)
+  assert_byte_seq(json.parse.f('{"v":"' .. supplementary .. '"}').v, 0xED, 0xA0, 0xB4, 0xED, 0xB4, 0x9E)
 end)
 
 test("json.stringify emits supplementary characters raw (byte-identical)", function()
   local supplementary = "\xF0\x9D\x84\x9E" -- U+1D11E
-  local result = json.stringify.f({ v = supplementary })
+  local result = require("deal.runtime").string_transport(json.stringify.f({ v = supplementary }))
   assert(string.find(result, supplementary, 1, true) ~= nil,
     "supplementary bytes should be emitted raw, got: " .. result)
   assert(string.find(result, "\\uD834\\uDD1E") == nil,
@@ -1307,10 +1304,11 @@ end)
 
 test("json supplementary stringify/parse round-trip is byte-identical", function()
   local orig = "\xF0\x9D\x84\x9E\xC3\xA9\xE4\xB8\xAD" -- U+1D11E U+00E9 U+4E2D
+  local rt = require("deal.runtime")
   local encoded = json.stringify.f({ v = orig })
-  assert(string.find(encoded, orig, 1, true) ~= nil, "raw bytes should survive stringify")
+  assert(string.find(rt.string_transport(encoded), orig, 1, true) ~= nil, "transport retains scalar bytes")
   local decoded = json.parse.f(encoded)
-  assert(decoded.v == orig, "parse(stringify(s)) should be byte-identical")
+  assert(decoded.v == rt.string_normalize(orig), "parse(stringify(s)) preserves code units")
 end)
 
 -- An invalid scalar sequence is still a string carrier: the closed
@@ -1335,7 +1333,7 @@ end
 
 test("json.stringify rejects invalid UTF-8 leaves with E8001", function()
   local invalid = {
-    string.char(0xED, 0xA0, 0x80), -- UTF-16 surrogate encoded in UTF-8
+    string.char(0xF4, 0x90, 0x80, 0x80), -- above Unicode range
     string.char(0xC0, 0xAF),       -- overlong encoding
     string.char(0xC3),             -- truncated 2-byte sequence
   }
@@ -1345,11 +1343,13 @@ test("json.stringify rejects invalid UTF-8 leaves with E8001", function()
   end
 end)
 
-test("json.stringify rejects invalid UTF-8 keys with E8001", function()
+test("json.stringify preserves lone-unit keys and rejects malformed keys", function()
   local t = {}
   t[string.char(0xED, 0xA0, 0x80)] = "value"
+  assert(json.stringify.f(t) == '{"\\ud800":"value"}')
+  t = {[string.char(0xED, 0xA0)] = "value"}
   assert_invalid_scalar_stringify_error(function() json.stringify.f(t) end,
-    "invalid scalar key")
+    "malformed key")
 end)
 
 -- The invalid-scalar key arm through a forwarded call site: the shipped
@@ -1364,13 +1364,8 @@ test("json.stringify invalid-scalar tuple matches the compiled-lane pin", functi
 end)
 
 test("json.parse rejects raw invalid UTF-8 input with E8001 (entry gate)", function()
-  -- The entry gate is __rt.check_string: a UTF-16 surrogate code point
-  -- now gets the specific boundary message (ISSUE-0598, the
-  -- host-surrogate-utf8-e8010 convergence); every other malformed
-  -- encoding keeps the general message.
   local surrogate_bytes = string.char(0xED, 0xA0, 0x80)
-  assert_json_error(function() json.parse.f('"' .. surrogate_bytes .. '"') end,
-    "expected string, got UTF-16 surrogate code point")
+  assert(json.parse.f('{"v":"' .. surrogate_bytes .. '"}').v == surrogate_bytes)
   local stray_bytes = string.char(0x61, 0x80, 0x62)
   assert_json_error(function() json.parse.f('"' .. stray_bytes .. '"') end,
     "expected string, got invalid UTF-8 encoding")

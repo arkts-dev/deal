@@ -35,6 +35,9 @@ static deal_status (*const host_class_new)(deal_value, deal_value *) =
     deal_class_new;
 static deal_status (*const host_function_new)(deal_host_function, const char *,
                                               deal_value *) = deal_function_new;
+static deal_status (*const host_function_raw)(deal_host_function, deal_value *) =
+    deal_function_raw;
+static deal_status (*const host_opaque)(const void *, deal_value *) = deal_opaque;
 static deal_status (*const host_async_operation)(deal_async_token, deal_value *) =
     deal_async_operation;
 static deal_status (*const host_kind)(deal_value, deal_value_kind *) =
@@ -54,6 +57,8 @@ static deal_status (*const host_table_get)(deal_value, const void *, size_t,
                                            deal_value *) = deal_table_get;
 static deal_status (*const host_table_set)(deal_value, const void *, size_t,
                                            deal_value) = deal_table_set;
+static deal_status (*const host_table_set_key)(deal_value, deal_value, deal_value) =
+    deal_table_set_key;
 static deal_status (*const host_table_has)(deal_value, const void *, size_t,
                                            int *) = deal_table_has;
 static deal_status (*const host_table_delete)(deal_value, const void *, size_t) =
@@ -128,7 +133,7 @@ static void (*const host_scope_push)(const deal_origin *) =
     deal_host_scope_push;
 static void (*const host_scope_pop)(void) = deal_host_scope_pop;
 
-/* The C3 v1.5 nullish representation authority (value.h). */
+/* The C3 v1.6 nullish representation authority (value.h). */
 static int (*const value_is_null)(const void *) = deal_value_is_null;
 static int (*const value_is_undefined)(const void *) = deal_value_is_undefined;
 static void *const *const null_singleton = &deal_null_singleton;
@@ -181,12 +186,12 @@ void deal_abi_signature_references(void) {
             || host_array == NULL || host_array_typed == NULL
             || host_table == NULL
             || host_class_atom == NULL || host_class_new == NULL
-            || host_function_new == NULL || host_async_operation == NULL
+            || host_function_new == NULL || host_function_raw == NULL || host_opaque == NULL || host_async_operation == NULL
             || host_kind == NULL || host_as_boolean == NULL
             || host_as_number == NULL || host_as_string == NULL
             || host_same == NULL || host_array_length == NULL
             || host_array_get == NULL || host_array_set == NULL
-            || host_table_get == NULL || host_table_set == NULL
+            || host_table_get == NULL || host_table_set == NULL || host_table_set_key == NULL
             || host_table_has == NULL || host_table_delete == NULL
             || host_class_identity == NULL || host_field_get == NULL
             || host_field_set == NULL || host_field_has == NULL

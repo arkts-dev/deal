@@ -7,11 +7,11 @@ export function test_nested_scope_recursion(): number {
   let calls: number = 0;
   let result: number = 0;
   {
-    function localDown(n: number): number {
+    let localDown: (n: number) => number = function(n: number): number {
       calls = calls + 1;
       if (n === 0) { return 0; }
       return localDown(n - 1);
-    }
+    };
     result = localDown(6);
   }
   if (result !== 0) {

@@ -12,8 +12,8 @@
 local rt = require("deal.runtime")
 local K = rt.__keys
 
-local VALUE = "@$external/host.carrierclass/Config"
-local HOLDER = "@$external/host.carrierclass/Holder"
+local VALUE = "@$external/host/carrierclass/Config"
+local HOLDER = "@$external/host/carrierclass/Holder"
 
 local M = {}
 

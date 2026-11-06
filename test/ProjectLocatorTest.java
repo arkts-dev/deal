@@ -37,7 +37,7 @@ public final class ProjectLocatorTest {
     /** True when no ancestor of realTmp outside the fixtures has a deal.json. */
     private static boolean environmentClean = true;
 
-    private static final String VALID_MANIFEST = "{\n  \"languageVersion\": \"1.5\"\n}\n";
+    private static final String VALID_MANIFEST = "{\n  \"languageVersion\": \"1.6\"\n}\n";
 
     // =========================================================================
     // Test runner
@@ -435,8 +435,8 @@ public final class ProjectLocatorTest {
     }
 
     private static void checkRangeOnSuccess(ProjectContext context) {
-        check(context.languageVersion().equals("1.5"),
-            "context languageVersion is 1.5");
+        check(context.languageVersion().equals("1.6"),
+            "context languageVersion is 1.6");
         check(context.projectRoot().equals(context.manifestDirectory()),
             "projectRoot equals manifestDirectory");
     }
@@ -462,7 +462,7 @@ public final class ProjectLocatorTest {
         }
 
         // Zero manifests anywhere in the chain: one E2010 with the
-        // v1.5-manifest note, anchored at the pinned synthetic shape.
+        // v1.6-manifest note, anchored at the pinned synthetic shape.
         Path orphanDir = fixture("discovery-zero");
         Path orphanEntry = writeEntry(orphanDir, "main.deal");
         CompilerDiagnostic zero = locateE2010(orphanEntry);
@@ -473,8 +473,8 @@ public final class ProjectLocatorTest {
             check(zero.range().file().equals(orphanEntry.toString()),
                 "zero-manifest E2010 anchors at the entry-file value");
             boolean manifestNote = zero.notes().stream().anyMatch(note ->
-                note.message().contains("languageVersion \"1.5\""));
-            check(manifestNote, "zero-manifest E2010 carries the v1.5-manifest note");
+                note.message().contains("languageVersion \"1.6\""));
+            check(manifestNote, "zero-manifest E2010 carries the v1.6-manifest note");
         }
 
         // Two manifests (entry dir + its parent): the walk continues to
@@ -525,7 +525,7 @@ public final class ProjectLocatorTest {
     // =========================================================================
 
     private static final String DECODE_BASE =
-        "{\n  \"languageVersion\": \"1.5\",\n  \"output\": \"build/lua\",\n"
+        "{\n  \"languageVersion\": \"1.6\",\n  \"output\": \"build/lua\",\n"
             + "  \"moduleRoots\": [\"src\"]\n}\n";
 
     private static byte[] corrupted(byte[] base, int offset, byte... injected) {
@@ -600,7 +600,7 @@ public final class ProjectLocatorTest {
     private static void testStrictDecodeValidMultibyteAndLiteralUfffd() throws Exception {
         System.out.println("-- Strict decode: valid multibyte and literal \\uFFFD");
 
-        String manifest = "{\n  \"languageVersion\": \"1.5\",\n"
+        String manifest = "{\n  \"languageVersion\": \"1.6\",\n"
             + "  \"output\": \"\u00E4\u00F6\u00FC/\uD83D\uDE00\",\n"
             + "  \"moduleRoots\": [\"s\u0155c\"]\n}\n";
         Path entry = entryWithManifest("decode-valid-multibyte", manifest);
@@ -617,7 +617,7 @@ public final class ProjectLocatorTest {
 
         // A literal \uFFFD escape is valid and decodes to exactly one
         // U+FFFD; no replacement character is produced anywhere.
-        String literal = "{\n  \"languageVersion\": \"1.5\",\n"
+        String literal = "{\n  \"languageVersion\": \"1.6\",\n"
             + "  \"output\": \"\\uFFFD-ok\"\n}\n";
         Path literalEntry = entryWithManifest("decode-literal-ufffd", literal);
         ProjectContext literalContext = locateOk(literalEntry);
@@ -656,7 +656,7 @@ public final class ProjectLocatorTest {
     // =========================================================================
 
     private static final String OVERRIDE_MANIFEST =
-        "{\n  \"languageVersion\": \"1.5\",\n  \"backend\": \"jvm\",\n"
+        "{\n  \"languageVersion\": \"1.6\",\n  \"backend\": \"jvm\",\n"
             + "  \"output\": \"manifest-out\"\n}\n";
 
     private static void testOverrideRules() throws Exception {
@@ -799,7 +799,7 @@ public final class ProjectLocatorTest {
         Files.createDirectories(dir.resolve("src"));
         writeEntry(dir, "main.deal");
         Path manifestFile = writeText(dir.resolve("deal.json"),
-            "{\n  \"languageVersion\": \"1.5\",\n"
+            "{\n  \"languageVersion\": \"1.6\",\n"
                 + "  \"moduleRoots\": [\"src\", \"lib\"]\n}\n");
         ProjectContext context = locateOk(dir.resolve("main.deal"));
         if (context != null) {
@@ -840,7 +840,7 @@ public final class ProjectLocatorTest {
         System.out.println("-- Roots: normalized-duplicate detection");
 
         // Exact duplicate spelling.
-        String manifest = "{\n  \"languageVersion\": \"1.5\",\n"
+        String manifest = "{\n  \"languageVersion\": \"1.6\",\n"
             + "  \"moduleRoots\": [\"src\", \"src\"]\n}\n";
         Path dir = fixture("roots-dup");
         Files.createDirectories(dir.resolve("src"));
@@ -853,7 +853,7 @@ public final class ProjectLocatorTest {
         }
 
         // Symlink-alias spelling: both roots resolve to one directory.
-        String aliasManifest = "{\n  \"languageVersion\": \"1.5\",\n"
+        String aliasManifest = "{\n  \"languageVersion\": \"1.6\",\n"
             + "  \"moduleRoots\": [\"src\", \"alias\"]\n}\n";
         Path aliasDir = fixture("roots-dup-symlink");
         Files.createDirectories(aliasDir.resolve("src"));
@@ -868,7 +868,7 @@ public final class ProjectLocatorTest {
         }
 
         // Lexical-normalization spelling: "sub/../src" equals "src".
-        String lexicalManifest = "{\n  \"languageVersion\": \"1.5\",\n"
+        String lexicalManifest = "{\n  \"languageVersion\": \"1.6\",\n"
             + "  \"moduleRoots\": [\"src\", \"sub/../src\"]\n}\n";
         Path lexicalDir = fixture("roots-dup-lexical");
         Files.createDirectories(lexicalDir.resolve("src"));
@@ -883,7 +883,7 @@ public final class ProjectLocatorTest {
 
         // Non-existent duplicate spellings are duplicates too (existence
         // is never required).
-        String ghostManifest = "{\n  \"languageVersion\": \"1.5\",\n"
+        String ghostManifest = "{\n  \"languageVersion\": \"1.6\",\n"
             + "  \"moduleRoots\": [\"ghost\", \"ghost\"]\n}\n";
         Path ghostDir = fixture("roots-dup-ghost");
         writeEntry(ghostDir, "main.deal");
@@ -909,7 +909,7 @@ public final class ProjectLocatorTest {
         Files.createDirectories(dir.resolve("libs"));
         writeText(dir.resolve("libs/libhost.so"), "lib");
         Path manifestFile = writeText(dir.resolve("deal.json"),
-            "{\n  \"languageVersion\": \"1.5\",\n"
+            "{\n  \"languageVersion\": \"1.6\",\n"
                 + "  \"externals\": {\n"
                 + "    \"host\": {\n"
                 + "      \"declaration\": \"decl.d.deal\"\n"
@@ -935,7 +935,7 @@ public final class ProjectLocatorTest {
         }
 
         // Missing declaration file: E2010 at the declaration value range.
-        String missingManifest = "{\n  \"languageVersion\": \"1.5\",\n"
+        String missingManifest = "{\n  \"languageVersion\": \"1.6\",\n"
             + "  \"externals\": {\n"
             + "    \"host\": {\"declaration\": \"missing.d.deal\"}\n"
             + "  }\n}\n";
@@ -949,7 +949,7 @@ public final class ProjectLocatorTest {
         }
 
         // Declaration is a directory: E2010 at the declaration range.
-        String dirDeclarationManifest = "{\n  \"languageVersion\": \"1.5\",\n"
+        String dirDeclarationManifest = "{\n  \"languageVersion\": \"1.6\",\n"
             + "  \"externals\": {\n"
             + "    \"host\": {\"declaration\": \"as-dir.d.deal\"}\n"
             + "  }\n}\n";
@@ -970,7 +970,7 @@ public final class ProjectLocatorTest {
         Path unreadableDeclaration = writeText(unreadableDir.resolve("locked.d.deal"),
             "export function x(): null\n");
         Path unreadableManifestFile = writeText(unreadableDir.resolve("deal.json"),
-            "{\n  \"languageVersion\": \"1.5\",\n"
+            "{\n  \"languageVersion\": \"1.6\",\n"
                 + "  \"externals\": {\n"
                 + "    \"host\": {\"declaration\": \"locked.d.deal\"}\n"
                 + "  }\n}\n");
@@ -978,7 +978,7 @@ public final class ProjectLocatorTest {
             CompilerDiagnostic unreadable = locateE2010(unreadableDir.resolve("main.deal"));
             if (unreadable != null) {
                 checkRange(unreadable, unreadableManifestFile.toRealPath().toString(),
-                    rangeOfOccurrence("{\n  \"languageVersion\": \"1.5\",\n"
+                    rangeOfOccurrence("{\n  \"languageVersion\": \"1.6\",\n"
                             + "  \"externals\": {\n"
                             + "    \"host\": {\"declaration\": \"locked.d.deal\"}\n"
                             + "  }\n}\n",
@@ -996,7 +996,7 @@ public final class ProjectLocatorTest {
         Path target = writeText(linkDir.resolve("target.d.deal"), "export function t(): null\n");
         Files.createSymbolicLink(linkDir.resolve("link.d.deal"), Path.of("target.d.deal"));
         writeText(linkDir.resolve("deal.json"),
-            "{\n  \"languageVersion\": \"1.5\",\n"
+            "{\n  \"languageVersion\": \"1.6\",\n"
                 + "  \"externals\": {\n"
                 + "    \"host\": {\"declaration\": \"link.d.deal\"}\n"
                 + "  }\n}\n");
@@ -1014,7 +1014,7 @@ public final class ProjectLocatorTest {
         writeText(orderDir.resolve("a.d.deal"), "export function a(): null\n");
         writeText(orderDir.resolve("b.d.deal"), "export function b(): null\n");
         writeText(orderDir.resolve("deal.json"),
-            "{\n  \"languageVersion\": \"1.5\",\n"
+            "{\n  \"languageVersion\": \"1.6\",\n"
                 + "  \"externals\": {\n"
                 + "    \"first\": {\"declaration\": \"a.d.deal\"},\n"
                 + "    \"second\": {\"declaration\": \"b.d.deal\"}\n"
@@ -1031,7 +1031,7 @@ public final class ProjectLocatorTest {
         writeEntry(absDir, "main.deal");
         writeText(absDir.resolve("d.d.deal"), "export function d(): null\n");
         writeText(absDir.resolve("deal.json"),
-            "{\"languageVersion\":\"1.5\",\"externals\":{\"host\":{"
+            "{\"languageVersion\":\"1.6\",\"externals\":{\"host\":{"
                 + "\"declaration\":\"d.d.deal\",\"nativeLibrary\":\"/abs/lib.so\"}}}");
         CompilerDiagnostic rejected = locateE2010(absDir.resolve("main.deal"));
         check(rejected != null, "nativeLibrary rejects before publication");
@@ -1042,7 +1042,7 @@ public final class ProjectLocatorTest {
         System.out.println("-- Externals: cross-entry duplicate declarations");
 
         // Two lexical spellings of one file.
-        String manifest = "{\n  \"languageVersion\": \"1.5\",\n"
+        String manifest = "{\n  \"languageVersion\": \"1.6\",\n"
             + "  \"externals\": {\n"
             + "    \"a\": {\"declaration\": \"decl.d.deal\"},\n"
             + "    \"b\": {\"declaration\": \"sub/../decl.d.deal\"}\n"
@@ -1062,7 +1062,7 @@ public final class ProjectLocatorTest {
         }
 
         // A symlinked spelling of one file.
-        String linkManifest = "{\n  \"languageVersion\": \"1.5\",\n"
+        String linkManifest = "{\n  \"languageVersion\": \"1.6\",\n"
             + "  \"externals\": {\n"
             + "    \"a\": {\"declaration\": \"decl.d.deal\"},\n"
             + "    \"b\": {\"declaration\": \"link.d.deal\"}\n"
@@ -1085,7 +1085,7 @@ public final class ProjectLocatorTest {
         // Project-local std/ with all six spec-listed files; an externals
         // declaration naming std/console.d.deal directly is E2010 with
         // the module-naming note.
-        String manifest = "{\n  \"languageVersion\": \"1.5\",\n"
+        String manifest = "{\n  \"languageVersion\": \"1.6\",\n"
             + "  \"externals\": {\n"
             + "    \"host\": {\"declaration\": \"std/console.d.deal\"}\n"
             + "  }\n}\n";
@@ -1099,14 +1099,14 @@ public final class ProjectLocatorTest {
                 rangeOfOccurrence(manifest, "\"std/console.d.deal\"", 1));
             boolean moduleNote = direct.notes().stream().anyMatch(note ->
                 note.message().contains("console")
-                    && note.message().contains("docs/spec-v1.5.md#package-manifest")
+                    && note.message().contains("docs/spec-v1.6.md#package-manifest")
                     && note.message().contains("language distribution"));
             check(moduleNote, "stdlib-overlap note names the module and the"
                 + " language-distribution rule");
         }
 
         // A symlinked spelling of the same pinned file fires too.
-        String linkManifest = "{\n  \"languageVersion\": \"1.5\",\n"
+        String linkManifest = "{\n  \"languageVersion\": \"1.6\",\n"
             + "  \"externals\": {\n"
             + "    \"host\": {\"declaration\": \"alias-console.d.deal\"}\n"
             + "  }\n}\n";
@@ -1122,13 +1122,13 @@ public final class ProjectLocatorTest {
                 rangeOfOccurrence(linkManifest, "\"alias-console.d.deal\"", 1));
             boolean moduleNote = linked.notes().stream().anyMatch(note ->
                 note.message().contains("console")
-                    && note.message().contains("docs/spec-v1.5.md#package-manifest"));
+                    && note.message().contains("docs/spec-v1.6.md#package-manifest"));
             check(moduleNote, "symlinked stdlib-overlap carries the module note");
         }
 
         // A non-spec-listed .d.deal physically inside std/ is NOT an
         // overlap: locate succeeds.
-        String otherManifest = "{\n  \"languageVersion\": \"1.5\",\n"
+        String otherManifest = "{\n  \"languageVersion\": \"1.6\",\n"
             + "  \"externals\": {\n"
             + "    \"host\": {\"declaration\": \"std/other.d.deal\"}\n"
             + "  }\n}\n";
@@ -1241,7 +1241,7 @@ public final class ProjectLocatorTest {
         }
 
         Path jvmEntry = entryWithManifest("output-default-jvm-proj",
-            "{\n  \"languageVersion\": \"1.5\",\n  \"backend\": \"jvm\"\n}\n");
+            "{\n  \"languageVersion\": \"1.6\",\n  \"backend\": \"jvm\"\n}\n");
         ProjectContext jvmContext = locateOk(jvmEntry);
         if (jvmContext != null) {
             check(jvmContext.backend().equals("jvm")
@@ -1257,7 +1257,7 @@ public final class ProjectLocatorTest {
             "CLI backend override selects the jvm default output");
 
         Path jsEntry = entryWithManifest("output-default-js-proj",
-            "{\n  \"languageVersion\": \"1.5\",\n  \"backend\": \"js\"\n}\n");
+            "{\n  \"languageVersion\": \"1.6\",\n  \"backend\": \"js\"\n}\n");
         ProjectContext jsContext = locateOk(jsEntry);
         if (jsContext != null) {
             check(jsContext.backend().equals("js")
@@ -1280,7 +1280,7 @@ public final class ProjectLocatorTest {
         Path outDir = fixture("output-forms");
         Path outEntry = writeEntry(outDir, "main.deal");
         writeText(outDir.resolve("deal.json"),
-            "{\n  \"languageVersion\": \"1.5\",\n  \"output\": \"dist/out\"\n}\n");
+            "{\n  \"languageVersion\": \"1.6\",\n  \"output\": \"dist/out\"\n}\n");
         ProjectContext outContext = locateOk(outEntry);
         if (outContext != null) {
             check(outContext.outputPath().decodedText().equals("dist/out"),
@@ -1295,7 +1295,7 @@ public final class ProjectLocatorTest {
         Path dotDir = fixture("output-dot");
         Path dotEntry = writeEntry(dotDir, "main.deal");
         writeText(dotDir.resolve("deal.json"),
-            "{\n  \"languageVersion\": \"1.5\",\n  \"output\": \"./rel\"\n}\n");
+            "{\n  \"languageVersion\": \"1.6\",\n  \"output\": \"./rel\"\n}\n");
         ProjectContext dotContext = locateOk(dotEntry);
         if (dotContext != null) {
             check(dotContext.outputPath().absoluteNormalizedPath().equals(
@@ -1306,7 +1306,7 @@ public final class ProjectLocatorTest {
         Path parentDir = fixture("output-parent/sub");
         Path parentEntry = writeEntry(parentDir, "main.deal");
         writeText(parentDir.resolve("deal.json"),
-            "{\n  \"languageVersion\": \"1.5\",\n  \"output\": \"../rel\"\n}\n");
+            "{\n  \"languageVersion\": \"1.6\",\n  \"output\": \"../rel\"\n}\n");
         ProjectContext parentContext = locateOk(parentEntry);
         if (parentContext != null) {
             Path expected = parentDir.toRealPath().getParent().resolve("rel");
@@ -1319,7 +1319,7 @@ public final class ProjectLocatorTest {
         Path absManifestEntry = writeEntry(absManifestDir, "main.deal");
         Path absTarget = tmpDir.resolve("absolute-output-target");
         writeText(absManifestDir.resolve("deal.json"),
-            "{\n  \"languageVersion\": \"1.5\",\n  \"output\": \""
+            "{\n  \"languageVersion\": \"1.6\",\n  \"output\": \""
                 + absTarget.toString().replace("\\", "\\\\") + "\"\n}\n");
         ProjectContext absContext = locateOk(absManifestEntry);
         if (absContext != null) {
@@ -1337,7 +1337,7 @@ public final class ProjectLocatorTest {
         Files.createSymbolicLink(linkOutDir.resolve("outlink"), linkTarget);
         Path linkEntry = writeEntry(linkOutDir, "main.deal");
         writeText(linkOutDir.resolve("deal.json"),
-            "{\n  \"languageVersion\": \"1.5\",\n  \"output\": \"outlink/lua\"\n}\n");
+            "{\n  \"languageVersion\": \"1.6\",\n  \"output\": \"outlink/lua\"\n}\n");
         ProjectContext linkContext = locateOk(linkEntry);
         if (linkContext != null) {
             check(linkContext.outputPath().absoluteNormalizedPath().equals(
@@ -1475,7 +1475,7 @@ public final class ProjectLocatorTest {
         Path noSurfaceEntry = writeEntry(noSurfaceOverlapDir, "main.deal");
         writeText(noSurfaceOverlapDir.resolve("decl.d.deal"), "export function d(): null\n");
         writeText(noSurfaceOverlapDir.resolve("deal.json"),
-            "{\n  \"languageVersion\": \"1.5\",\n"
+            "{\n  \"languageVersion\": \"1.6\",\n"
                 + "  \"externals\": {\n"
                 + "    \"host\": {\"declaration\": \"decl.d.deal\"}\n"
                 + "  }\n}\n");
@@ -1606,7 +1606,7 @@ public final class ProjectLocatorTest {
         Path dupDir = fixture("privacy-dup");
         Path dupEntry = writeEntry(dupDir, "main.deal");
         writeText(dupDir.resolve("deal.json"),
-            "{\n  \"languageVersion\": \"1.5\",\n"
+            "{\n  \"languageVersion\": \"1.6\",\n"
                 + "  \"moduleRoots\": [\"src\", \"src\"]\n}\n");
         CompilerDiagnostic duplicate = locateE2010(dupEntry);
         checkNoPrivateIdentityText(duplicate, "duplicate-root E2010");
@@ -1622,7 +1622,7 @@ public final class ProjectLocatorTest {
         Path dir = fixture("determinism");
         Path entry = writeEntry(dir, "main.deal");
         writeText(dir.resolve("deal.json"),
-            "{\n  \"languageVersion\": \"1.5\",\n"
+            "{\n  \"languageVersion\": \"1.6\",\n"
                 + "  \"moduleRoots\": [\"src\"],\n"
                 + "  \"externals\": {\"host\": {\"declaration\": \"decl.d.deal\"}}\n}\n");
         Files.createDirectories(dir.resolve("src"));
@@ -1667,7 +1667,7 @@ public final class ProjectLocatorTest {
         Path failDir = fixture("no-artifact-fail");
         Path failEntry = writeEntry(failDir, "main.deal");
         writeText(failDir.resolve("deal.json"),
-            "{\n  \"languageVersion\": \"1.5\",\n"
+            "{\n  \"languageVersion\": \"1.6\",\n"
                 + "  \"moduleRoots\": [\"a\", \"a\"]\n}\n");
         locateE2010(failEntry);
         Set<String> names = new HashSet<>();
@@ -1693,11 +1693,11 @@ public final class ProjectLocatorTest {
         writeText(project.resolve("decl.d.deal"), "export function d(): null\n");
         Path manifestFile = writeText(project.resolve("deal.json"),
             "{\n"
-                + "  \"languageVersion\": \"1.5\",\n"
+                + "  \"languageVersion\": \"1.6\",\n"
                 + "  \"moduleRoots\": [\"src\", \"lib\"],\n"
                 + "  \"output\": \"dist/lua\",\n"
                 + "  \"backend\": \"jvm\",\n"
-                + "  \"stdlib\": \"1.5\",\n"
+                + "  \"stdlib\": \"1.6\",\n"
                 + "  \"dependencies\": {\"dep\": {\"x\": 1}},\n"
                 + "  \"externals\": {\n"
                 + "    \"host\": {\"declaration\": \"decl.d.deal\"}\n"
@@ -1715,7 +1715,7 @@ public final class ProjectLocatorTest {
         check(context.projectRoot().equals(projectReal.toString())
                 && context.manifestDirectory().equals(projectReal.toString()),
             "projectRoot == manifestDirectory == resolved manifest dir");
-        check(context.languageVersion().equals("1.5"), "languageVersion 1.5");
+        check(context.languageVersion().equals("1.6"), "languageVersion 1.6");
         check(context.configuredModuleRoots().size() == 2,
             "two configured roots");
         if (context.configuredModuleRoots().size() == 2) {
@@ -1748,7 +1748,7 @@ public final class ProjectLocatorTest {
 
             check(entry.sourceRange() != null, "externals entry range present");
         }
-        check(context.stdlibVersion().equals("1.5"), "stdlibVersion 1.5");
+        check(context.stdlibVersion().equals("1.6"), "stdlibVersion 1.6");
         check(context.stdlibSurfacePath() != null && context.stdlibSurfacePath().equals(
                 projectReal.resolve("std").toRealPath().toString()),
             "stdlibSurfacePath is the project-local surface");
@@ -1774,11 +1774,11 @@ public final class ProjectLocatorTest {
         // Mutate one manifest byte and re-locate: the new deployment
         // digest differs and the mutated field is re-read.
         String mutated = "{\n"
-            + "  \"languageVersion\": \"1.5\",\n"
+            + "  \"languageVersion\": \"1.6\",\n"
             + "  \"moduleRoots\": [\"src\", \"lib\"],\n"
             + "  \"output\": \"out2/lua\",\n"
             + "  \"backend\": \"jvm\",\n"
-            + "  \"stdlib\": \"1.5\",\n"
+            + "  \"stdlib\": \"1.6\",\n"
             + "  \"dependencies\": {\"dep\": {\"x\": 1}},\n"
             + "  \"externals\": {\n"
             + "    \"host\": {\"declaration\": \"decl.d.deal\"}\n"

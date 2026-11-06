@@ -1,6 +1,11 @@
 local rt = require('deal.runtime')
 return {
   echo = function(value) return value end,
+  inspectText = function(value)
+    local pair, lone=string.char(240,159,152,128),string.char(237,160,128)
+    return value.self==value and value.a==value.b and value[pair]==lone
+      and value.a[1]==pair and value.a[2]==lone
+  end,
   undefinedValue = function() return rt.__UNDEFINED end,
   nothing = function() end,
   maybeNumber = function(value) return value end,

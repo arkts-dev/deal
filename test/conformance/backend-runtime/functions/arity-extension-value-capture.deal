@@ -27,10 +27,10 @@ export function main(): null {
   source = two;
   check(saved(0) === 1);
 
-  function take(value: (ignored: number) => number): number {
+  let take = function(value: (ignored: number) => number): number {
     source = two;
     return value(0);
-  }
+  };
   source = one;
   check(take(source) === 1);
 

@@ -45,6 +45,11 @@
  *  14  `ingress` answers the closed completion statuses for an async-operation
  *      carrier and for the no-value marker, which are never data, and then
  *      completes for real
+ *  15  callback-driven completion while the collector is active
+ *  16  unread malformed-text descendant rejects transactional graph admission
+ *  17  executable raw host callable completes exactly once, survives collection,
+ *      and rejects at await without invoking its entry
+ *  18  unsupported opaque object completes once and rejects at await
  */
 #include "host/async.h"
 
@@ -230,7 +235,8 @@ static deal_host_result copied_text_impl(deal_async_token token,
                                          const deal_value *args, size_t argc) {
   (void)args;
   (void)argc;
-  static const char original[] = "copied-completion";
+  static const char original[] = "copied-completion\0\xed\xa0\x80"
+      "\xf0\x9f\x98\x80\xed\xb0\x80";
   char *bytes = malloc(sizeof original);
   if (bytes == NULL) {
     return failure_result("E_HOST_ASYNC", "the text buffer failed");
@@ -736,7 +742,38 @@ static deal_host_result text_completion_impl(deal_async_token token,
  * The completion ingress (case 14, H5/R3)
  * ========================================================================= */
 
-#if DEAL_HOST_ASYNC_CASE == 16
+#if DEAL_HOST_ASYNC_CASE == 18
+static deal_host_result ingress_impl(deal_async_token token,
+                                     const deal_value *args, size_t argc) {
+  (void)args; (void)argc;
+  static const unsigned char identity = 0u;
+  deal_value opaque;
+  if (deal_opaque(&identity, &opaque) != DEAL_OK
+      || deal_async_complete_value(token, opaque) != DEAL_OK
+      || deal_async_complete_value(token, opaque) != DEAL_STATUS_PROTOCOL) {
+    return failure_result("E_HOST_ASYNC_INGRESS", "opaque completion protocol");
+  }
+  deal_gc_collect_full();
+  return operation_result(token);
+}
+#elif DEAL_HOST_ASYNC_CASE == 17
+static deal_host_result raw_completion_entry(const deal_value *args, size_t argc) {
+  (void)args; (void)argc;
+  return failure_result("FAIL", "rejected raw entry was invoked");
+}
+static deal_host_result ingress_impl(deal_async_token token,
+                                     const deal_value *args, size_t argc) {
+  (void)args; (void)argc;
+  deal_value raw;
+  if (deal_function_raw(raw_completion_entry, &raw) != DEAL_OK
+      || deal_async_complete_value(token, raw) != DEAL_OK
+      || deal_async_complete_value(token, raw) != DEAL_STATUS_PROTOCOL) {
+    return failure_result("FAIL", "raw callable completion was lost or duplicated");
+  }
+  deal_gc_collect_full();
+  return operation_result(token);
+}
+#elif DEAL_HOST_ASYNC_CASE == 16
 /* Recursive admission fails before publication. Completion still resolves once
  * with the carried Error, including when its graph was never read by DEAL. */
 static deal_host_result ingress_impl(deal_async_token token,
@@ -745,7 +782,7 @@ static deal_host_result ingress_impl(deal_async_token token,
   (void)argc;
   deal_value graph, bad;
   if (deal_table_new(&graph) != DEAL_OK
-      || deal_string_new("\xed\xa0\x80", 3u, &bad) != DEAL_OK
+      || deal_string_new("\xe2\x82", 2u, &bad) != DEAL_OK
       || deal_table_set(graph, "unread", 6u, bad) != DEAL_OK
       || deal_async_complete_value(token, graph) != DEAL_OK) {
     return failure_result("E_HOST_ASYNC_INGRESS",
@@ -762,7 +799,7 @@ static deal_host_result ingress_impl(deal_async_token token,
 }
 #elif DEAL_HOST_ASYNC_CASE == 14
 /* Neither an async-operation carrier nor the no-value marker is a completion
- * datum (V1.5, R3): both answer the closed kind status and change nothing, so
+ * datum (V1.6, R3): both answer the closed kind status and change nothing, so
  * the real completion afterwards is still the one the await observes. */
 static deal_host_result ingress_impl(deal_async_token token,
                                      const deal_value *args, size_t argc) {
@@ -828,12 +865,12 @@ static deal_host_result malformed_impl(deal_async_token token,
                                        const deal_value *args, size_t argc) {
   (void)args;
   (void)argc;
-  static const unsigned char surrogate[] = {0xEDu, 0xA0u, 0x80u};
+  static const unsigned char malformed[] = {0xE2u, 0x82u};
   deal_host_completion completion;
   memset(&completion, 0, sizeof completion);
   completion.kind = DEAL_COMPLETION_STRING;
-  completion.as.string.data = surrogate;
-  completion.as.string.length = sizeof surrogate;
+  completion.as.string.data = malformed;
+  completion.as.string.length = sizeof malformed;
   if (deal_async_post(token, &completion) != DEAL_OK) {
     return failure_result("E_HOST_ASYNC", "posting the malformed text failed");
   }

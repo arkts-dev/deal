@@ -29,11 +29,11 @@ class BoundaryMachine(RuleBasedStateMachine):
         self.actions = [
             f"let a:number[]=[{initial},99];let alias=a;let destination:number[]=[42];let untouched=destination;let returns:number=0;",
             "host.keep(a);check((host.echo(a) as number[])===a);",
-            "function get():number[]{returns=returns+1;return a;}",
+            "let get=function():number[]{returns=returns+1;return a;};",
             "let effects:string=\"\";",
-            "function receiver():number[]{effects=effects+\"R\";return destination;}",
-            "function index():number{effects=effects+\"I\";return 9;}",
-            "function rhs():number{effects=effects+\"V\";return 7;}",
+            "let receiver=function():number[]{effects=effects+\"R\";return destination;};",
+            "let index=function():number{effects=effects+\"I\";return 9;};",
+            "let rhs=function():number{effects=effects+\"V\";return 7;};",
         ]
         # Every example covers the full lifecycle; subsequent rules explore
         # repeat/reorder histories instead of hoping random selection hits it.
@@ -101,8 +101,8 @@ class BoundaryMachine(RuleBasedStateMachine):
         source = (
             'import * as c from "std/console";import * as host from "host/probe";'
             'export function main():null{let checks:string="";'
-            'function check(ok:boolean):void{checks=checks+".";'
-            'if(!ok){c.log(checks);throw {code:"TEST_FAIL",message:"stateful"};}}'
+            'let check=function(ok:boolean):void{checks=checks+".";'
+            'if(!ok){c.log(checks);throw {code:"TEST_FAIL",message:"stateful"};}};'
             # Give each action its own lexical block so repeated declarations
             # stay valid while shared bindings live in main's outer scope.
             + "".join(self.actions[:7])

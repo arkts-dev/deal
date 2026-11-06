@@ -1,5 +1,5 @@
 /*
- * test/native/nullish_probe.c — the C3 v1.5 nullish representation authority.
+ * test/native/nullish_probe.c — the C3 v1.6 nullish representation authority.
  *
  * A strict-C11 consumer of the published runtime: `null` and `undefined` are
  * two distinct immutable singletons, neither of them C `NULL`, so no reference

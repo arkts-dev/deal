@@ -65,14 +65,17 @@ final class TemplateScalarMap {
         this.rawLine = new int[total + 1];
         this.rawColumn = new int[total + 1];
         ScalarSourceCursor cursor = new ScalarSourceCursor(content);
-        for (int i = 0; i <= total; i++) {
+        while (true) {
+            int i = cursor.index();
             rawLine[i] = baseLine + cursor.line() - 1;
-            rawColumn[i] = cursor.line() == 1
-                ? baseCol + cursor.column()
-                : cursor.column();
-            if (i < total) {
-                cursor.advance();
+            rawColumn[i] = cursor.line() == 1 ? baseCol + cursor.column() : cursor.column();
+            if (i == total) break;
+            int width = Character.charCount(cursor.peekScalar());
+            if (width == 2) {
+                rawLine[i + 1] = rawLine[i];
+                rawColumn[i + 1] = rawColumn[i] + 1;
             }
+            cursor.advance();
         }
     }
 
@@ -157,9 +160,7 @@ final class TemplateScalarMap {
         int total = ScalarSourceCursor.scalarCount(content);
         int index = Math.max(0, Math.min(rawScalarIndex, total));
         ScalarSourceCursor cursor = new ScalarSourceCursor(content);
-        for (int i = 0; i < index; i++) {
-            cursor.advance();
-        }
+        while (cursor.index() < index) cursor.advance();
         int line = baseLine + cursor.line() - 1;
         int column = cursor.line() == 1
             ? baseCol + cursor.column()

@@ -10,7 +10,7 @@
 local rt = require("deal.runtime")
 local K = rt.__keys
 
-local TARGET = "@$external/host.carrierarity/Target"
+local TARGET = "@$external/host/carrierarity/Target"
 
 local M = {}
 

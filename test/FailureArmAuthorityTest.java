@@ -329,7 +329,7 @@ public class FailureArmAuthorityTest {
                 FailureContractRegistry.rows(), markedArms(markedSource)),
             "a hand-built arm whose parameter source is SIBLING_OWNED_ACTUAL fails the "
                 + "completeness check closed");
-        expectDefect(() -> FailureContractRegistry.render(FailureArmId.SUBSTRING_BOUNDS,
+        expectDefect(() -> FailureContractRegistry.render(FailureArmId.JSON_TO_WALK_CYCLE,
                 Map.of(), "number", null, null),
             "a supplied expected field on a field-less arm fails closed");
         expectDefect(() -> FailureContractRegistry.render(FailureArmId.TYPED_BOUNDARY_KIND,
@@ -365,7 +365,7 @@ public class FailureArmAuthorityTest {
         deal.semantic.ir.ModuleId entry = new deal.semantic.ir.ModuleId("arms");
         deal.semantic.ir.LoweredModuleUnit unit = new deal.semantic.ir.LoweredModuleUnit(
             deal.semantic.ir.LoweredModuleUnit.FORMAT_VERSION,
-            deal.semantic.ir.SemanticProfile.DEAL_V1_5_BINARY64, entry, "hash", "context",
+            deal.semantic.ir.SemanticProfile.DEAL_V1_6_BINARY64, entry, "hash", "context",
             java.util.Set.of(), Map.of(), Map.of(), Map.of(),
             new deal.semantic.ir.ModuleInitPlan(List.of(),
                 new deal.semantic.ir.BlockId(0)),
@@ -385,7 +385,7 @@ public class FailureArmAuthorityTest {
                     deal.semantic.ir.InitializationMode.ONCE_AFTER_DEPENDENCIES)));
         deal.semantic.ir.ExecutableLoweredProject project =
             new deal.semantic.ir.ExecutableLoweredProject(
-                deal.semantic.ir.SemanticProfile.DEAL_V1_5_BINARY64, index, modules, entry,
+                deal.semantic.ir.SemanticProfile.DEAL_V1_6_BINARY64, index, modules, entry,
                 deal.semantic.ClassRegistrationSeeds.builtinErrorOnly());
         Map<deal.semantic.ir.ModuleId, deal.semantic.ir.StructuredBodyTable> tables =
             new LinkedHashMap<>();
@@ -1533,15 +1533,13 @@ public class FailureArmAuthorityTest {
     private static List<String> runProbe(String chunk, String modulePath, String body,
                                          String probeName, int minRows)
             throws Exception {
-        return runProbe(chunk, modulePath, body, probeName, minRows, false);
+        return runProbe(chunk, modulePath, body, probeName, minRows, true);
     }
 
     /**
-     * The probe runner with an option to stage the deployed runtime beside
-     * the artifact: a probe that drives a runtime-produced carrier (the
-     * async handle, the runtime class representation) loads
-     * {@code deal/runtime.lua} through {@code require("deal.runtime")},
-     * exactly like the emitted artifacts of a chunk that binds the host surface.
+     * Stages the deployed runtime beside the artifact. String helpers and
+     * runtime-produced carriers load {@code deal/runtime.lua} exactly as
+     * deployed chunks do.
      */
     private static List<String> runProbe(String chunk, String modulePath, String body,
                                          String probeName, int minRows, boolean bindRuntime)
@@ -1821,17 +1819,11 @@ public class FailureArmAuthorityTest {
 
     /**
      * The typed-boundary invalid-Unicode arm through the real boundary
-     * producers (P1/P4, ISSUE-0705): an unpaired-surrogate string — the
-     * Lua byte sequence/Java string the classification projects as
-     * {@code invalid-unicode} — fails the declared {@code string} boundary
-     * on the oracle's {@code BoundaryExecutor.core}, the JVM runtime's
-     * {@code bcheck}, and the emitted prelude's {@code __bcheck} alike,
-     * with the identical complete tuple. Before the scalar validation both
-     * targets admitted every string, so only the oracle rejected the
-     * value. The nested element cells project the element arm's own tuple
-     * with the closed {@code invalid-unicode} actual, the completion cells
-     * keep their pinned kind arm, and the valid strings are the admission
-     * controls.
+     * producers: explicit invalid presentations remain oracle negatives;
+     * malformed byte transport exercises the Lua boundary with identical
+     * tuples. Java strings, including lone units in arrays and completion
+     * cells, are legal UTF-16 values. Nested malformed elements retain the
+     * element arm and completion cells retain their own kind arm.
      */
     static void testTypedBoundaryInvalidUnicode() throws Exception {
         System.out.println("-- the typed-boundary invalid-Unicode cell (the DEAL "
@@ -1886,62 +1878,29 @@ public class FailureArmAuthorityTest {
             BoundaryContext.none()) instanceof BoundaryOutcome.Pass,
             "the oracle admits the valid completion string");
 
-        // The JVM runtime leg: the same cells through bcheck/bcheckCompletion.
-        deal.codegen.jvm.JvmRuntime.DealError jvmString = jvmFailure(
-            () -> deal.codegen.jvm.JvmRuntime.bcheck("string", "string", "\uD800"));
-        check(jvmString != null, "the JVM string boundary rejects the invalid string");
-        if (jvmString != null) {
-            checkEq(null, firstDifferingField(oracleString, new Tuple(jvmString.code,
-                jvmString.msg, span, jvmString.expected, jvmString.actual)),
-                "the JVM runtime renders the oracle's identical string tuple");
+        // Every Java string is valid data, including lone units. Check
+        // identity as well as admission for mutable aggregate carriers.
+        for (String text : List.of("ok", "\uD800", "a\uDC80b")) {
+            check(deal.codegen.jvm.JvmRuntime.bcheck("string", "string", text) == text,
+                "the JVM string boundary preserves UTF-16 units");
+            var array = jvmArray("ok", text);
+            check(deal.codegen.jvm.JvmRuntime.bcheck("array(string)", "array", array) == array,
+                "the JVM array boundary preserves the admitted carrier");
+            var nested = jvmArray(jvmArray("ok"), array);
+            check(deal.codegen.jvm.JvmRuntime.bcheck("array(array(string))", "array", nested) == nested,
+                "the JVM nested boundary preserves the admitted carrier");
+            check(deal.codegen.jvm.JvmRuntime.bcheckCompletion("string", "string", text) == text,
+                "the JVM completion boundary preserves UTF-16 units");
         }
-        deal.codegen.jvm.JvmRuntime.DealError jvmMid = jvmFailure(
-            () -> deal.codegen.jvm.JvmRuntime.bcheck("string", "string", "a\uDC80b"));
-        check(jvmMid != null, "the JVM string boundary rejects the embedded lone "
-            + "low surrogate");
-        check(jvmFailure(() -> deal.codegen.jvm.JvmRuntime.bcheck("string", "string",
-            "ok")) == null, "the JVM string boundary admits the valid string");
-        check(jvmFailure(() -> deal.codegen.jvm.JvmRuntime.bcheck(
-            "array(string)", "array", jvmArray("ok", "\uD800"))) != null,
-            "the JVM array boundary rejects the invalid element");
-        deal.codegen.jvm.JvmRuntime.DealError jvmElement = jvmFailure(
-            () -> deal.codegen.jvm.JvmRuntime.bcheck("array(string)", "array",
-                jvmArray("ok", "\uD800")));
-        check(jvmElement != null, "the JVM array boundary rejects the invalid "
-            + "element");
-        if (jvmElement != null) {
-            checkEq(null, firstDifferingField(oracleElement, new Tuple(jvmElement.code,
-                jvmElement.msg, span, jvmElement.expected, jvmElement.actual)),
-                "the JVM runtime renders the oracle's identical element tuple");
-        }
-        deal.codegen.jvm.JvmRuntime.DealError jvmNested = jvmFailure(
-            () -> deal.codegen.jvm.JvmRuntime.bcheck("array(array(string))",
-                "array", jvmArray(jvmArray("ok"), jvmArray("\uD800"))));
-        check(jvmNested != null, "the JVM nested array boundary rejects the "
-            + "invalid element");
-        if (jvmNested != null) {
-            checkEq(null, firstDifferingField(oracleNested, new Tuple(jvmNested.code,
-                jvmNested.msg, span, jvmNested.expected, jvmNested.actual)),
-                "the JVM runtime renders the oracle's identical nested tuple");
-        }
-        deal.codegen.jvm.JvmRuntime.DealError jvmCompletion = jvmFailure(
-            () -> deal.codegen.jvm.JvmRuntime.bcheckCompletion("string", "string",
-                "\uD800"));
-        check(jvmCompletion != null, "the JVM completion cell rejects the "
-            + "invalid string");
-        if (jvmCompletion != null) {
-            checkEq(null, firstDifferingField(oracleCompletion,
-                new Tuple(jvmCompletion.code, jvmCompletion.msg, span,
-                    jvmCompletion.expected, jvmCompletion.actual)),
-                "the JVM runtime renders the oracle's identical completion tuple");
-        }
+        check(jvmFailure(() -> deal.codegen.jvm.JvmRuntime.bcheck("string", "string", 1.0)) != null,
+            "the JVM string boundary still rejects a nonstring");
+        check(jvmFailure(() -> deal.codegen.jvm.JvmRuntime.bcheck("array(string)", "array",
+            jvmArray("ok", 1.0))) != null, "the JVM element boundary still rejects a nonstring");
 
-        // The emitted prelude leg under real luajit: the same cells through
-        // __bcheck, with the invalid bytes spelled as the Lua byte sequence
-        // (CESU-8 for the unpaired surrogate).
+        // The emitted prelude leg uses genuinely malformed transport bytes.
         List<String> rows = runPreludeProbe("""
-            local bad = "\\237\\160\\128"
-            local valid = "ok"
+            local bad = "\\226\\130"
+            local valid = "\\237\\160\\128"
             local function arr(...)
               local out = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = select("#", ...)}
               for i = 1, out[__dealCarrierKeys.n] do out[i] = (select(i, ...)) end
@@ -2292,7 +2251,7 @@ public class FailureArmAuthorityTest {
         deal.semantic.ir.LoweredModuleUnit unit =
             new deal.semantic.ir.LoweredModuleUnit(
                 deal.semantic.ir.LoweredModuleUnit.FORMAT_VERSION,
-                deal.semantic.ir.SemanticProfile.DEAL_V1_5_BINARY64, module, "hash",
+                deal.semantic.ir.SemanticProfile.DEAL_V1_6_BINARY64, module, "hash",
                 "context", java.util.Set.of(), Map.of(), Map.of(), Map.of(),
                 new deal.semantic.ir.ModuleInitPlan(List.of(), initBlock),
                 deal.semantic.ir.ExportPlan.empty(), Map.of(), ops, table,
@@ -2453,12 +2412,12 @@ public class FailureArmAuthorityTest {
         expectDefect(() -> FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL,
             Map.of("index", "1", "inner", "expected boolean"), "WRONG", "number", null),
             "a host cell's expected field outside the descriptor grammar fails closed");
-        expectDefect(() -> FailureContractRegistry.render(FailureArmId.SUBSTRING_BOUNDS,
+        expectDefect(() -> FailureContractRegistry.render(FailureArmId.JSON_TO_WALK_CYCLE,
             Map.of(), null, "WRONG", null),
             "an actual field on a field-less arm fails closed");
-        expectDefect(() -> FailureContractRegistry.render(FailureArmId.SQRT_NEGATIVE,
-            Map.of(), null, "WRONG", null),
-            "a non-number canonical-value actual fails closed");
+        expectDefect(() -> FailureContractRegistry.render(FailureArmId.TYPED_BOUNDARY_KIND,
+            Map.of("kind", "number"), "number", "WRONG", null),
+            "a noncanonical typed-boundary actual fails closed");
         expectDefect(() -> FailureContractRegistry.render(FailureArmId.CLASS_IDENTITY,
             Map.of("expected", "not-an-atom", "actual", "@a/C"), "not-an-atom", "@a/C",
             null),
@@ -2474,17 +2433,17 @@ public class FailureArmAuthorityTest {
                 Map.of("actual", "function"), "string, number, boolean, or table",
                 "function", null).message(),
             "the matching pinned expected text renders");
-        checkEq("substring bounds must be finite integers",
-            FailureContractRegistry.render(FailureArmId.SUBSTRING_BOUNDS,
+        checkEq("cyclic value cannot be encoded as JSON",
+            FailureContractRegistry.render(FailureArmId.JSON_TO_WALK_CYCLE,
                 Map.of(), null, null, null).message(),
-            "substring integral admission has one exact arm");
+            "the cycle arm has no expected or actual fields");
         // The serialized Lua renderer's equivalent fail-closed validation,
         // under real luajit.
         renderProbes("field-shape-probe",
             armProbe("kind-expected", "\"TYPED_BOUNDARY_KIND\", {kind = \"number\"}, \"-\", \"WRONG\", \"string\"", "false|"),
             armProbe("kind-actual", "\"TYPED_BOUNDARY_KIND\", {kind = \"number\"}, \"-\", \"number\", \"WRONG\"", "false|"),
             armProbe("pinned-expected", "\"JSON_STRINGIFY_UNSUPPORTED\", {actual = \"function\"}, \"-\", \"WRONG\", \"function\"", "false|"),
-            armProbe("fieldless-actual", "\"SUBSTRING_BOUNDS\", nil, \"-\", nil, \"WRONG\"", "false|"),
+            armProbe("fieldless-actual", "\"JSON_TO_WALK_CYCLE\", nil, \"-\", nil, \"WRONG\"", "false|"),
             armProbe("kind-pair", "\"TYPED_BOUNDARY_KIND\", {kind = \"number\"}, \"-\", \"string\", \"string\"", "false|"),
             armProbe("kind-text", "\"TYPED_BOUNDARY_KIND\", {kind = \"frobnicate\"}, \"-\", \"frobnicate\", \"string\"", "false|"),
             new RenderProbe("arm", "control", "\"TYPED_BOUNDARY_KIND\", {kind = \"number\"}, \"-\", \"number\", \"string\"",
@@ -2639,8 +2598,8 @@ public class FailureArmAuthorityTest {
             FailureContractRegistry.renderInner(FailureArmId.HOST_STRING_SURROGATE,
                 Map.of()),
             "the inner render of the surrogate arm stays green (the control)");
-        checkEq("substring bounds must be finite integers", FailureContractRegistry.renderAtTemplate(
-                FailurePolicyId.SUBSTRING_BOUNDS, 0, null, null, Map.of(), null).message(),
+        checkEq("cyclic value cannot be encoded as JSON", FailureContractRegistry.renderAtTemplate(
+                FailurePolicyId.JSON_TO_ERROR, 2, null, null, Map.of(), null).message(),
             "a row-addressed TOP_LEVEL render stays green (the control)");
 
         expectDefect(() -> FailureContractRegistry.render(
@@ -2772,7 +2731,7 @@ public class FailureArmAuthorityTest {
     }
 
     /**
-     * The nullable-inner invariant (docs/spec-v1.5.md §Runtime type descriptor format;
+     * The nullable-inner invariant (docs/spec-v1.6.md §Runtime type descriptor format;
      * {@code RuntimeDescriptor.Nullable}) holds in both descriptor
      * spellings: {@code ?null} / {@code ??inner} and the dialect
      * {@code nullable(null)} / {@code nullable(nullable(…))} fail closed at
@@ -3151,7 +3110,7 @@ public class FailureArmAuthorityTest {
     static void testEmittedParameterContract() throws Exception {
         System.out.println("-- the emitted arm parameter contract --");
         List<String> rows = runPreludeProbe("""
-            local ok = pcall(__arm, "SUBSTRING_BOUNDS", {extra = "x"}, "-", nil, nil)
+            local ok = pcall(__arm, "JSON_TO_WALK_CYCLE", {extra = "x"}, "-", nil, nil)
             print("extra-parameter|" .. tostring(ok))
             ok = pcall(__arm, "TYPED_BOUNDARY_KIND", {}, "-", "number", "string")
             print("missing-parameter|" .. tostring(ok))
@@ -3160,7 +3119,7 @@ public class FailureArmAuthorityTest {
             print("walk-extra-parameter|" .. tostring(ok))
             ok = pcall(__renderTemplate, "HOST_STRING_INVALID_UTF8", {})
             print("parameterless-control|" .. tostring(ok))
-            local value = __arm("SUBSTRING_BOUNDS", nil, "-", nil, nil)
+            local value = __arm("JSON_TO_WALK_CYCLE", nil, "-", nil, nil)
             print("fieldless-control|" .. value.code .. "|" .. value.m)
             """, "parameter-contract-probe", 5);
         checkEq("extra-parameter|false", rows.get(0),
@@ -3171,7 +3130,7 @@ public class FailureArmAuthorityTest {
             "an extra parameter on the walk arm fails closed");
         checkEq("parameterless-control|true", rows.get(3),
             "a parameterless inner arm renders with no parameters (the control)");
-        checkEq("fieldless-control|E8001|substring bounds must be finite integers", rows.get(4),
+        checkEq("fieldless-control|E8001|cyclic value cannot be encoded as JSON", rows.get(4),
             "the parameterless arm's own render stays green (the control)");
     }
 
@@ -3188,9 +3147,12 @@ public class FailureArmAuthorityTest {
     /** The executing op's own source span (the emitted and driven origin). */
     private static final String WALK_SPAN = "arm-walk.deal:2:8";
 
+    private static final List<String> BRACE_KEYS =
+        List.of("{bad}", "{actual}", "{fieldPath}", "a}b", "a{b");
+
     /** The walk drive's layout (the same declaration order on every consumer). */
     private static deal.semantic.ir.ClassLayout walkLayout() {
-        return new deal.semantic.ir.ClassLayout(WALK_ID, List.of(
+        var fields = new ArrayList<>(List.of(
             new deal.semantic.ir.ClassLayout.FieldLayout("name",
                 RuntimeDescriptor.String.INSTANCE, true,
                 deal.semantic.ir.ConstructionProvider.LOCAL),
@@ -3224,6 +3186,10 @@ public class FailureArmAuthorityTest {
             new deal.semantic.ir.ClassLayout.FieldLayout("matrix",
                 new RuntimeDescriptor.Array(RuntimeDescriptor.Table.INSTANCE), false,
                 deal.semantic.ir.ConstructionProvider.LOCAL)));
+        for (String key : BRACE_KEYS) fields.add(new deal.semantic.ir.ClassLayout.FieldLayout(
+            key, RuntimeDescriptor.String.INSTANCE, false,
+            deal.semantic.ir.ConstructionProvider.LOCAL));
+        return new deal.semantic.ir.ClassLayout(WALK_ID, fields);
     }
 
     /** One drive case: the same failing value on the three consumers. */
@@ -3301,7 +3267,7 @@ public class FailureArmAuthorityTest {
                 "data", LUA_TABLE_CARRIER, "tags", "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 1}"),
             walkNullField("name")));
         // An invalid Unicode scalar sequence: invalid-unicode.
-        cases.add(walkCase("invalid-scalar-string", "JSON_TO_WALK", "name",
+        cases.add(walkCase("lone-unit-string-field", "JSON_TO_WALK", "name",
             "invalid-unicode",
             Map.of("name", walkString("\uD800"), "age", new ClassOpsExecutor.Value.Number(1),
                 "ratio", new ClassOpsExecutor.Value.Number(0.5),
@@ -3372,30 +3338,27 @@ public class FailureArmAuthorityTest {
             Map.of("name", "n", "age", 1L, "ratio", 0.5, "data",
                 new deal.codegen.jvm.JvmRuntime.Table(), "tags", jvmIntArray(1L),
                 "note", 5L)));
-        // A table-content carrier (an unsupported function value inside the
-        // table-typed field): the closed function token at its pinned path.
-        cases.add(walkCase("invalid-string-in-table-content", "JSON_TO_WALK", "data.k",
-            "invalid-unicode",
+        // Lone units are data in declared string fields and nested records.
+        cases.add(walkCase("lone-high-in-table-content", "JSON_TO_WALK", "data.k",
+            "string",
             Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Number(1),
                 "ratio", new ClassOpsExecutor.Value.Number(0.5),
-                "data", walkFunctionTable(), "tags", walkIntArray(1)),
+                "data", walkUnitTable("\uD800"), "tags", walkIntArray(1)),
             Map.of("name", luaString("n"), "age", "1", "ratio", "0.5",
                 "data", "{[__dealCarrierKeys.t] = true, [__dealCarrierKeys.keys] = {k = true}, k = \"\\237\\160\\128\"}",
                 "tags", "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 1}"),
             Map.of("name", "n", "age", 1L, "ratio", 0.5, "data",
-                jvmFunctionTable(), "tags", jvmIntArray(1L))));
-        // A table-content class instance: the carried canonical class atom at
-        // its pinned path, never the class: IR/trace spelling.
-        cases.add(walkCase("invalid-unicode-nested-content", "JSON_TO_WALK", "data.k",
-            "invalid-unicode",
+                jvmUnitTable("\uD800"), "tags", jvmIntArray(1L))));
+        cases.add(walkCase("lone-low-in-table-content", "JSON_TO_WALK", "data.k",
+            "string",
             Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Number(1),
                 "ratio", new ClassOpsExecutor.Value.Number(0.5),
-                "data", walkClassTable(), "tags", walkIntArray(1)),
+                "data", walkUnitTable("\uDC00"), "tags", walkIntArray(1)),
             Map.of("name", luaString("n"), "age", "1", "ratio", "0.5",
-                "data", "{[__dealCarrierKeys.t] = true, [__dealCarrierKeys.keys] = {k = true}, k = \"\\237\\160\\128\"}",
+                "data", "{[__dealCarrierKeys.t] = true, [__dealCarrierKeys.keys] = {k = true}, k = \"\\237\\176\\128\"}",
                 "tags", "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 1}"),
             Map.of("name", "n", "age", 1L, "ratio", 0.5, "data",
-                jvmClassTable(), "tags", jvmIntArray(1L))));
+                jvmUnitTable("\uDC00"), "tags", jvmIntArray(1L))));
         // The builtin Error carrier at the walk root: the root-identity
         // failure publishes the value's carried canonical class atom
         // (Error — ClassId.ERROR.text()), never the superseded
@@ -3507,23 +3470,25 @@ public class FailureArmAuthorityTest {
             Map.of("name", "n", "age", 1L, "ratio", 0.5,
                 "data", jvmCyclicTableThenFunction(), "tags", jvmIntArray(1L))));
         // A table-content carrier under a key containing braces or the
-        // literal spelling of a placeholder: docs/spec-v1.5.md
+        // literal spelling of a placeholder: docs/spec-v1.6.md
         // §Writing table fields permits arbitrary string keys, so the walk's fieldPath carries the key
         // verbatim and the arm's parameter substitution must publish it
         // byte-for-byte on every consumer — never a producer defect, never
         // a placeholder reinterpretation.
-        for (String key : List.of("{bad}", "{actual}", "{fieldPath}", "a}b", "a{b")) {
-            cases.add(walkCase("brace-key-" + key, "JSON_TO_WALK",
-                "data." + key, "invalid-unicode",
+        for (String key : BRACE_KEYS) {
+            cases.add(walkCase("brace-key-" + key, "JSON_TO_WALK", key, "number",
                 Map.of("name", walkString("n"),
                     "age", new ClassOpsExecutor.Value.Number(1),
                     "ratio", new ClassOpsExecutor.Value.Number(0.5),
-                    "data", walkFunctionTable(key), "tags", walkIntArray(1)),
+                    "data", walkEmptyTable(), "tags", walkIntArray(1),
+                    key, new ClassOpsExecutor.Value.Number(7)),
                 Map.of("name", luaString("n"), "age", "1", "ratio", "0.5",
-                    "data", luaFunctionTable(key),
-                    "tags", "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 1}"),
+                    "data", LUA_TABLE_CARRIER,
+                    "tags", "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 1}",
+                    key, "7"),
                 Map.of("name", "n", "age", 1L, "ratio", 0.5,
-                    "data", jvmFunctionTable(key), "tags", jvmIntArray(1L))));
+                    "data", new deal.codegen.jvm.JvmRuntime.Table(), "tags", jvmIntArray(1L),
+                    key, 7.0)));
         }
         return cases;
     }
@@ -3591,6 +3556,12 @@ public class FailureArmAuthorityTest {
                     "{\"name\":\"n\",\"age\":1,\"ratio\":0.5,\"data\":{},\"tags\":[1,null]}";
                 case "nonfinite-number-field" ->
                     "{\"name\":\"n\",\"age\":1,\"ratio\":null,\"data\":{},\"tags\":[1]}";
+                case "lone-unit-string-field" ->
+                    "{\"name\":\"\\ud800\",\"age\":1,\"ratio\":0.5,\"data\":{},\"tags\":[1]}";
+                case "lone-high-in-table-content" ->
+                    "{\"name\":\"n\",\"age\":1,\"ratio\":0.5,\"data\":{\"k\":\"\\ud800\"},\"tags\":[1]}";
+                case "lone-low-in-table-content" ->
+                    "{\"name\":\"n\",\"age\":1,\"ratio\":0.5,\"data\":{\"k\":\"\\udc00\"},\"tags\":[1]}";
                 default -> null;
             };
             if (encoded != null) {
@@ -3600,15 +3571,15 @@ public class FailureArmAuthorityTest {
                         && text.scalar() instanceof deal.semantic.ir.UnicodeScalars.Valid valid
                     ? valid.carrier() : "unexpected failure";
                 checkEq(jsonStructure(encoded), jsonStructure(oracleText),
-                    drive.label() + ": Oracle declared-number JSON encoding");
+                    drive.label() + ": Oracle JSON value encoding");
                 String prefix = drive.label() + "|OK|";
                 check(luaRows.get(i).startsWith(prefix),
                     drive.label() + ": real Lua completed encoding");
                 checkEq(jsonStructure(encoded), jsonStructure(luaRows.get(i).substring(prefix.length())),
-                    drive.label() + ": real Lua declared-number JSON encoding");
+                    drive.label() + ": real Lua JSON value encoding");
                 checkEq(jsonStructure(encoded), jsonStructure(
                     deal.codegen.jvm.JvmJson.toClass(plan, drive.jvmRoot())),
-                    drive.label() + ": JVM declared-number JSON encoding");
+                    drive.label() + ": JVM JSON value encoding");
                 continue;
             }
             check(outcome instanceof ClassOpsExecutor.Outcome.Failure<
@@ -4183,8 +4154,8 @@ public class FailureArmAuthorityTest {
                 present.append(", ");
                 values.append(", ");
             }
-            present.append(entry.getKey()).append(" = true");
-            values.append(entry.getKey()).append(" = ").append(entry.getValue());
+            present.append("[").append(luaString(entry.getKey())).append("] = true");
+            values.append("[").append(luaString(entry.getKey())).append("] = ").append(entry.getValue());
         }
         return "{[__dealCarrierKeys.c] = true, [__dealCarrierKeys.id] = " + quote(WALK_ID.text()) + ", [__dealCarrierKeys.p] = {" + present
             + "}, [__dealCarrierKeys.f] = {" + values + "}}";
@@ -4297,51 +4268,17 @@ public class FailureArmAuthorityTest {
         return carrier;
     }
 
-    /** The drive's table-typed field holding one function value under {@code k}. */
-    private static ClassOpsExecutor.Value walkFunctionTable() {
-        return walkFunctionTable("k");
-    }
-
-    /** The drive's table-typed field holding one function value under {@code key}. */
-    private static ClassOpsExecutor.Value walkFunctionTable(String key) {
+    /** A nested record preserving the supplied UTF-16 units under {@code k}. */
+    private static ClassOpsExecutor.Value walkUnitTable(String units) {
         deal.semantic.ir.SemanticTable<ClassOpsExecutor.Value> table =
             new deal.semantic.ir.SemanticTable<>();
-        table.put(key, walkString("\uD800"));
+        table.put("k", walkString(units));
         return new ClassOpsExecutor.Value.Table(table);
     }
 
-    private static deal.codegen.jvm.JvmRuntime.Table jvmFunctionTable() {
-        return jvmFunctionTable("k");
-    }
-
-    private static deal.codegen.jvm.JvmRuntime.Table jvmFunctionTable(String key) {
+    private static deal.codegen.jvm.JvmRuntime.Table jvmUnitTable(String units) {
         deal.codegen.jvm.JvmRuntime.Table table = new deal.codegen.jvm.JvmRuntime.Table();
-        table.write(key, "\uD800");
-        return table;
-    }
-
-    /**
-     * The emitted Lua carrier of a table holding one function under
-     * {@code key} (the walk's own key-presence shape): the key is a quoted
-     * string literal, so a key containing braces or a placeholder spelling
-     * reaches the walk verbatim.
-     */
-    private static String luaFunctionTable(String key) {
-        return "{[__dealCarrierKeys.t] = true, [__dealCarrierKeys.keys] = {[" + luaString(key) + "] = true}, ["
-            + luaString(key) + "] = \"\\237\\160\\128\"}";
-    }
-
-    /** The drive's table-typed field holding one class instance under {@code k}. */
-    private static ClassOpsExecutor.Value walkClassTable() {
-        deal.semantic.ir.SemanticTable<ClassOpsExecutor.Value> table =
-            new deal.semantic.ir.SemanticTable<>();
-        table.put("k", walkString("\uD800"));
-        return new ClassOpsExecutor.Value.Table(table);
-    }
-
-    private static deal.codegen.jvm.JvmRuntime.Table jvmClassTable() {
-        deal.codegen.jvm.JvmRuntime.Table table = new deal.codegen.jvm.JvmRuntime.Table();
-        table.write("k", "\uD800");
+        table.write("k", units);
         return table;
     }
 
@@ -4497,8 +4434,7 @@ public class FailureArmAuthorityTest {
 
     /** The JVM walk plan of the drive's layout. */
     private static deal.codegen.jvm.JvmJson.Plan walkPlan() {
-        return new deal.codegen.jvm.JvmJson.Plan(WALK_ID.text(),
-            new deal.codegen.jvm.JvmJson.Field[] {
+        var fields = new ArrayList<>(List.of(
                 new deal.codegen.jvm.JvmJson.Field("name", "string", false, "string"),
                 new deal.codegen.jvm.JvmJson.Field("age", "number", false, "number"),
                 new deal.codegen.jvm.JvmJson.Field("ratio", "number", false, "number"),
@@ -4509,8 +4445,12 @@ public class FailureArmAuthorityTest {
                 new deal.codegen.jvm.JvmJson.Field("grid", "array(array(table))", true,
                     "table"),
                 new deal.codegen.jvm.JvmJson.Field("matrix", "array(table)", true,
-                    "table"),
-            }, null);
+                    "table")
+            ));
+        for (String key : BRACE_KEYS) fields.add(new deal.codegen.jvm.JvmJson.Field(
+            key, "string", true, "string"));
+        return new deal.codegen.jvm.JvmJson.Plan(WALK_ID.text(),
+            fields.toArray(deal.codegen.jvm.JvmJson.Field[]::new), null);
     }
 
     /**
@@ -4738,7 +4678,7 @@ public class FailureArmAuthorityTest {
         deal.semantic.ir.LoweredModuleUnit unit =
             new deal.semantic.ir.LoweredModuleUnit(
                 deal.semantic.ir.LoweredModuleUnit.FORMAT_VERSION,
-                deal.semantic.ir.SemanticProfile.DEAL_V1_5_BINARY64, entry, "hash",
+                deal.semantic.ir.SemanticProfile.DEAL_V1_6_BINARY64, entry, "hash",
                 "context", java.util.Set.of(), Map.of(), Map.of(WALK_ID, walkLayout()),
                 Map.of(), new deal.semantic.ir.ModuleInitPlan(List.of(), initBlock),
                 new deal.semantic.ir.ExportPlan(List.of()), Map.of(), ops,
@@ -4756,7 +4696,7 @@ public class FailureArmAuthorityTest {
                     List.of(), List.of(),
                     deal.semantic.ir.InitializationMode.ONCE_AFTER_DEPENDENCIES)));
         return new deal.semantic.ir.ExecutableLoweredProject(
-            deal.semantic.ir.SemanticProfile.DEAL_V1_5_BINARY64, index, modules, entry,
+            deal.semantic.ir.SemanticProfile.DEAL_V1_6_BINARY64, index, modules, entry,
             deal.semantic.ClassRegistrationSeeds.builtinErrorOnly());
     }
 
@@ -5923,7 +5863,7 @@ public class FailureArmAuthorityTest {
         deal.semantic.ir.LoweredModuleUnit unit =
             new deal.semantic.ir.LoweredModuleUnit(
                 deal.semantic.ir.LoweredModuleUnit.FORMAT_VERSION,
-                deal.semantic.ir.SemanticProfile.DEAL_V1_5_BINARY64, entry, "hash",
+                deal.semantic.ir.SemanticProfile.DEAL_V1_6_BINARY64, entry, "hash",
                 "context", java.util.Set.of(), Map.of(), layouts, Map.of(),
                 new deal.semantic.ir.ModuleInitPlan(List.of(), initBlock),
                 deal.semantic.ir.ExportPlan.empty(), Map.of(), ops, table,
@@ -5938,7 +5878,7 @@ public class FailureArmAuthorityTest {
                     deal.semantic.ir.InitializationMode.ONCE_AFTER_DEPENDENCIES)));
         deal.semantic.ir.ExecutableLoweredProject project =
             new deal.semantic.ir.ExecutableLoweredProject(
-                deal.semantic.ir.SemanticProfile.DEAL_V1_5_BINARY64, index,
+                deal.semantic.ir.SemanticProfile.DEAL_V1_6_BINARY64, index,
                 Map.of(entry, unit), entry,
                 deal.semantic.ClassRegistrationSeeds.builtinErrorOnly());
         return new DispatchUnit(project, Map.of(entry, table), json.origin());

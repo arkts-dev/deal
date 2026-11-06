@@ -1,14 +1,14 @@
 // @spec: Standard library declarations — std/string.d.deal
-// @description: std/string substring positions are Unicode scalar-value positions
+// @description: std/string substring positions are UTF-16 unit positions
 // @expected: runtime-ok
 // @features: stdlib, string, unicode
 
 import * as str from "std/string";
 
 export function test_string_substring_unicode(): null {
-  // a, U+00E9, U+4E2D, U+1F600, b — 5 scalar values
+  // a, U+00E9, U+4E2D, U+1F600, b — 6 UTF-16 units
   let s: string = "aé中😀b";
-  if (str.substring(s, 0, 5) !== s) {
+  if (str.substring(s, 0, 6) !== s) {
     throw { code: "TEST_FAIL", message: "whole-string substring mismatch" };
   }
   if (str.substring(s, 0, 1) !== "a") {
@@ -20,19 +20,19 @@ export function test_string_substring_unicode(): null {
   if (str.substring(s, 2, 3) !== "中") {
     throw { code: "TEST_FAIL", message: "substring 2,3 mismatch" };
   }
-  if (str.substring(s, 3, 4) !== "😀") {
-    throw { code: "TEST_FAIL", message: "substring 3,4 mismatch" };
+  if (str.substring(s, 3, 5) !== "😀") {
+    throw { code: "TEST_FAIL", message: "substring 3,5 mismatch" };
   }
-  if (str.substring(s, 4, 5) !== "b") {
-    throw { code: "TEST_FAIL", message: "substring 4,5 mismatch" };
+  if (str.substring(s, 5, 6) !== "b") {
+    throw { code: "TEST_FAIL", message: "substring 5,6 mismatch" };
   }
-  if (str.substring(s, 1, 4) !== "é中😀") {
-    throw { code: "TEST_FAIL", message: "substring 1,4 mismatch" };
+  if (str.substring(s, 1, 5) !== "é中😀") {
+    throw { code: "TEST_FAIL", message: "substring 1,5 mismatch" };
   }
   if (str.substring(s, 2, 2) !== "") {
     throw { code: "TEST_FAIL", message: "empty-range substring mismatch" };
   }
-  if (str.substring(s, 5, 10) !== "") {
+  if (str.substring(s, 6, 10) !== "") {
     throw { code: "TEST_FAIL", message: "start-beyond-end substring mismatch" };
   }
   return null;

@@ -1,11 +1,11 @@
-final class HostAudit15 {
-  public static final String C = "@$external/host.audit15/C";
+final class HostAudit16 {
+  public static final String C = "@$external/host/audit16/C";
   static $DealRt.__RefArray retained;
   static $DealRt.__NumberArray growing;
   static $DealRt.Fn0_R_$void callback;
   static $DealRt.__RefArray unknown;
   public static Object badClass(double kind) {
-    return new $DealRt.$Host$host$saudit15$C(kind==0?null:kind==1?"\ud800":null);
+    return new $DealRt.$Host$host$saudit16$C(kind==0?null:kind==1?"\ud800":null);
   }
   public static Object nullish() { return deal.codegen.jvm.JvmRuntime.UNDEFINED; }
   public static Object echoArray($DealRt.__RefArray value) { return value; }

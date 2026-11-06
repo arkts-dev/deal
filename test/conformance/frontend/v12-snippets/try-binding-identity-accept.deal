@@ -18,7 +18,7 @@ export function main(): null {
   if (p !== null) {
     try {
       let f: () => null = function(): null { p = null; return null; };
-      function clear(): null { p = null; return null; }
+      let clear = function(): null { p = null; return null; };
     } catch (e) {}
     let z: number = p;
   }

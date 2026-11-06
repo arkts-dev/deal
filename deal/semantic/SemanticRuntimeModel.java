@@ -31,7 +31,7 @@ public final class SemanticRuntimeModel {
                 case ';' -> out.append("\\u003b");
                 case '|' -> out.append("\\u007c");
                 default -> {
-                    if (c < 0x20 || c == 0x7f) {
+                    if (c < 0x20 || c == 0x7f || Character.isSurrogate(c)) {
                         out.append(String.format("\\u%04x", (int) c));
                     } else {
                         out.append(c);

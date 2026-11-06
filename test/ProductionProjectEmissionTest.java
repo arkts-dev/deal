@@ -359,7 +359,7 @@ public class ProductionProjectEmissionTest {
      * ProductionProjectEmission with.
      */
     private static CompilerInvocation fixtureInvocation() {
-        return CompilerProfileProvider.resolve(ReleaseState.V1_5_ACTIVE,
+        return CompilerProfileProvider.resolve(ReleaseState.V1_6_ACTIVE,
             CapabilityRegistry.releaseRegistry());
     }
 
@@ -394,7 +394,7 @@ public class ProductionProjectEmissionTest {
         var contextField = CompilationOrchestrator.class.getDeclaredField("context");
         contextField.setAccessible(true);
         var context = (deal.project.ProjectContext) contextField.get(orchestrator);
-        check("1.5".equals(context.languageVersion()) && "1.5".equals(context.stdlibVersion()),
+        check("1.6".equals(context.languageVersion()) && "1.6".equals(context.stdlibVersion()),
             "isolated-phase context uses the active language and stdlib versions");
         boolean compiled = orchestrator.compile();
         CheckedProjectBuildResult built = orchestrator.checkedProject();
@@ -489,10 +489,10 @@ public class ProductionProjectEmissionTest {
                 "src/app.deal", ARRAY_APP_SOURCE)), Map.of());
     }
 
-    /** The fail-closed source: a nested function declaration (CALLS family). */
+    /** A local function cell exercises CALLS-family production emission. */
     private static final String NESTED_DECLARATION_APP_SOURCE = """
         export function main(): null {
-          function inner(): number { return 1; }
+          let inner: () => number = function(): number { return 1; };
           let x: number = inner();
           return null;
         }
@@ -502,7 +502,7 @@ public class ProductionProjectEmissionTest {
      * The call-result arity-extension adapter source: the adapted source is
      * the once-evaluated expression {@code make()}, whose function value is
      * retained when assigned to a longer target signature
-     * (docs/spec-v1.5.md §Function type compatibility: M &lt;= N with the
+     * (docs/spec-v1.6.md §Function type compatibility: M &lt;= N with the
      * extra target parameters accepted and silently ignored; §Arity
      * extension adapter). The production lowering produces the adapter from
      * the call result and the invocation records the closed dynamic
@@ -551,7 +551,7 @@ public class ProductionProjectEmissionTest {
     }
 
     /**
-     * The module-level declaration-order shapes (docs/spec-v1.5.md §Name
+     * The module-level declaration-order shapes (docs/spec-v1.6.md §Name
      * resolution: {@code class} and {@code function} declarations are
      * hoisted within the module, function bodies may reference classes
      * declared later in the same module, and class fields may reference
@@ -1272,7 +1272,7 @@ public class ProductionProjectEmissionTest {
     /**
      * The two v1.4 source shapes the integrated JS route rejected before
      * rendering (acceptance remediation of the JS production migration):
-     * docs/spec-v1.5.md §Name resolution, Declaration order requires a
+     * docs/spec-v1.6.md §Name resolution, Declaration order requires a
      * function body — and a class field — to reference a class declared
      * later in the same module, and the arity-extension adapter of
      * §Function type compatibility admits a call-result source that is
@@ -1515,7 +1515,7 @@ public class ProductionProjectEmissionTest {
      * The declaration-order shapes through the public production route: an
      * earlier function body constructs a literal of a later-declared class
      * and of a later-declared class supplied with a module function's result
-     * (docs/spec-v1.5.md §Name resolution). The one
+     * (docs/spec-v1.6.md §Name resolution). The one
      * production lowering resolves both from the hoisted structural
      * declaration facts; the complete set stages and publishes, and the
      * published CommonJS artifact executes both constructions under Node.

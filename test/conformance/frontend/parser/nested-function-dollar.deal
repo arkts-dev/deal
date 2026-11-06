@@ -1,4 +1,4 @@
 // @spec: Functions — Function declaration; Variables — Redeclaration
-// @description: Nested function declarations validate dollar without invoking the body.
+// @description: Local function bindings validate dollar without invoking the body.
 // @expected: compile-error E2008
-export function main():null{function bad$name():number{return 1;}return null;}
+export function main():null{let bad$name = function():number{return 1;};return null;}

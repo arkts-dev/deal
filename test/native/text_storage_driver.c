@@ -1,14 +1,12 @@
 /*
  * test/native/text_storage_driver.c — the R2/R8 text storage acceptance.
  *
- * A strict-C11 consumer of the published runtime: strict UTF-8 scalar-sequence
- * validation, immutable string storage with its exact byte length, scalar count
- * and cached hash, and the one scalar-value sequence comparison including BMP,
- * astral, prefix, equal and unequal cases. The ordering case `U+FFFF` versus
- * `U+1F600` distinguishes scalar order from UTF-16 code-unit order.
+ * Published-runtime consumer: strict UTF-8 versus WTF-8 admission, canonical
+ * UTF-16 storage, host transport, JavaScript iteration, hash and unit ordering.
+ * `U+FFFF` versus `U+1F600` distinguishes scalar from code-unit ordering.
  *
- * `-DDEAL_TEXT_CASE=1` is the malformed-carrier negative: bytes that are not a
- * Unicode scalar sequence never become an admitted string, so the entry
+ * `-DDEAL_TEXT_CASE=1` is the malformed-carrier negative: malformed bytes
+ * never become an admitted string, so the entry
  * terminates with one deterministic stderr line and exit 2 instead of
  * publishing malformed text.
  */
@@ -36,7 +34,9 @@ static void check(int condition, const char *what) {
 }
 
 static deal_string *string_of(const char *text) {
-    return deal_text_new(text, strlen(text));
+    deal_string *value = deal_text_new(text, strlen(text));
+    (void)deal_root_scope_hold(value);
+    return value;
 }
 
 static int same_bytes(const deal_string *string, const void *bytes,
@@ -81,7 +81,13 @@ static void check_validation(void) {
     check(deal_text_is_scalar_sequence(overlong_three, 3u) == 0,
           "an overlong three-byte form is malformed");
     check(deal_text_is_scalar_sequence(surrogate, 3u) == 0,
-          "an unpaired surrogate is malformed");
+          "surrogate bytes are not strict scalar UTF-8");
+    check(deal_text_is_code_units(surrogate, 3u) == 1,
+          "WTF-8 preserves a lone UTF-16 unit");
+    check(deal_text_is_code_units(overlong_three, 3u) == 0
+          && deal_text_is_code_units(truncated, 2u) == 0
+          && deal_text_is_code_units(above_maximum, 4u) == 0,
+          "code-unit transport still rejects malformed encodings");
     check(deal_text_is_scalar_sequence(above_maximum, 4u) == 0,
           "a code point above U+10FFFF is malformed");
     check(deal_text_is_scalar_sequence(truncated, 2u) == 0,
@@ -96,11 +102,12 @@ static void check_storage(void) {
     static const char bmp[] = "\xE2\x82\xAC";           /* U+20AC, 3 bytes */
     static const char astral[] = "\xF0\x9F\x98\x80";    /* U+1F600, 4 bytes */
     char mutable_text[] = "copied";
-    deal_string *copied = deal_text_new(mutable_text, strlen(mutable_text));
-    deal_string *same = deal_text_new(mutable_text, strlen(mutable_text));
-    deal_string *empty = deal_text_new(NULL, 0u);
-    deal_string *bmp_string = deal_text_new(bmp, 3u);
-    deal_string *astral_string = deal_text_new(astral, 4u);
+    deal_root_scope_push();
+    deal_string *copied = string_of(mutable_text);
+    deal_string *same = string_of(mutable_text);
+    deal_string *empty = string_of("");
+    deal_string *bmp_string = string_of(bmp);
+    deal_string *astral_string = string_of(astral);
 
     check(deal_text_byte_length(copied) == 6u,
           "the string caches its exact byte length");
@@ -112,8 +119,27 @@ static void check_storage(void) {
           "a three-byte BMP scalar keeps three bytes");
     check(deal_text_scalar_length(astral_string) == 1u,
           "a four-byte astral scalar counts once");
-    check(deal_text_byte_length(astral_string) == 4u,
-          "a four-byte astral scalar keeps four bytes");
+    check(deal_text_byte_length(astral_string) == 6u
+              && deal_text_unit_length(astral_string) == 2u,
+          "a supplementary scalar is two canonical three-byte units");
+    check(deal_text_transport_length(astral_string) == 4u
+              && memcmp(deal_text_transport_bytes(astral_string), astral, 4u) == 0,
+          "the host view recombines a pair to ordinary UTF-8");
+    check(deal_text_unit_offset(astral_string, 1u) == 3u
+              && deal_text_scalar_offset(astral_string, 1u) == 6u,
+          "unit positions and iteration positions are distinct");
+    deal_string *high = string_of("\xED\xA0\xBD");
+    deal_string *low = string_of("\xED\xB8\x80");
+    deal_string *joined = deal_text_concat(high, low);
+    (void)deal_root_scope_hold(joined);
+    check(deal_text_compare(joined, astral_string) == 0
+              && deal_text_hash(joined) == deal_text_hash(astral_string)
+              && deal_text_scalar_length(joined) == 1u,
+          "joining lone units preserves equality, hash and pair iteration");
+    check(deal_text_transport_length(high) == 3u
+              && deal_text_unit_length(high) == 1u
+              && deal_text_scalar_length(high) == 1u,
+          "a lone high unit is preserved in storage, iteration and transport");
     check(deal_text_byte_length(empty) == 0u
               && deal_text_scalar_length(empty) == 0u,
           "the empty string has no bytes and no scalars");
@@ -136,6 +162,7 @@ static void check_storage(void) {
           "the empty string hash is deterministic");
     check(deal_text_hash(bmp_string) != deal_text_hash(astral_string),
           "different scalars hash differently");
+    deal_root_scope_pop();
     check(deal_root_frame_depth() == 0u && deal_root_scope_depth() == 0u,
           "the text entries leave the root depth restored");
 }
@@ -145,15 +172,16 @@ static void check_comparison(void) {
     static const char astral[] = "\xF0\x9F\x98\x80";     /* U+1F600 */
     static const char accented[] = "\xC3\xA9";           /* U+00E9 */
     static const char euro[] = "\xE2\x82\xAC";           /* U+20AC */
-    deal_string *empty = deal_text_new(NULL, 0u);
+    deal_root_scope_push();
+    deal_string *empty = string_of("");
     deal_string *letter_a = string_of("a");
     deal_string *letters_ab = string_of("ab");
     deal_string *letter_b = string_of("b");
     deal_string *same_a = string_of("a");
-    deal_string *accented_string = deal_text_new(accented, 2u);
-    deal_string *euro_string = deal_text_new(euro, 3u);
-    deal_string *astral_string = deal_text_new(astral, 4u);
-    deal_string *noncharacter_string = deal_text_new(noncharacter, 3u);
+    deal_string *accented_string = string_of(accented);
+    deal_string *euro_string = string_of(euro);
+    deal_string *astral_string = string_of(astral);
+    deal_string *noncharacter_string = string_of(noncharacter);
 
     check(deal_text_compare(letter_a, same_a) == 0,
           "equal scalar sequences compare equal");
@@ -175,14 +203,13 @@ static void check_comparison(void) {
           "scalar order separates U+00E9 and U+20AC");
     check(deal_text_compare(euro_string, noncharacter_string) == -1,
           "scalar order separates U+20AC and U+FFFF");
-    /* UTF-16 code-unit order would place the astral scalar before U+FFFF
-     * (D83D < FFFF); Unicode scalar order places U+FFFF first. */
-    check(deal_text_compare(noncharacter_string, astral_string) == -1,
-          "the comparison orders by Unicode scalar value, not UTF-16 units");
+    check(deal_text_compare(noncharacter_string, astral_string) == 1,
+          "UTF-16 ordering places D83D before FFFF");
     check(deal_text_compare(astral_string, euro_string) == 1,
           "an astral scalar sorts after a BMP scalar");
     check(deal_text_compare(letters_ab, accented_string) == -1,
           "a byte prefix sorts before a longer scalar sequence");
+    deal_root_scope_pop();
     check(deal_root_frame_depth() == 0u && deal_root_scope_depth() == 0u,
           "the comparison entries leave the root depth restored");
 }

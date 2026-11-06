@@ -149,7 +149,7 @@ public final class DescriptorService {
             module.path(),
             SemanticCapability.DESCRIPTORS,
             DESCRIPTOR_UNREPRESENTABLE,
-            SemanticProfile.DEAL_V1_5_BINARY64,
+            SemanticProfile.DEAL_V1_6_BINARY64,
             LoweredModuleUnit.FORMAT_VERSION,
             "DescriptorService " + DESCRIPTOR_UNREPRESENTABLE
                 + " (" + defect.getMessage() + ")");

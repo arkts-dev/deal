@@ -1,7 +1,7 @@
 // @spec: Standard library declarations — std/math.d.deal
 // @description: Negative sqrt yields NaN while signed zero and positive infinity are preserved
 // @expected: runtime-ok
-// @features: stdlib, math, number, v1.5
+// @features: stdlib, math, number, v1.6
 
 import * as math from "std/math";
 

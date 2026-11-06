@@ -1730,10 +1730,10 @@ final class LlvmFunctionEmitter {
      * The carried canonical signature text of one checked datum, or
      * {@code null} when the presented position can carry no function-tagged
      * datum: a function-typed position carries the interned text of the
-     * carrier the datum references, and an {@code unknown} or function-based
-     * nullish position — whose datum could be any supported data — selects it
-     * on the datum's own tag, so a {@code null}/{@code undefined} singleton or
-     * any other datum is never dereferenced as a carrier. The runtime
+     * carrier the datum references. A function-based nullish position selects
+     * it on the datum's own tag, so a {@code null}/{@code undefined} singleton
+     * is never dereferenced as a carrier. Unknown presentations instead use
+     * the runtime's layout-aware projection before reaching this helper. The runtime
      * classifies every function-tagged datum with this text
      * ({@code deal_check_classify} faults without it) and a function position
      * compares it against the declared signature.
@@ -1766,12 +1766,11 @@ final class LlvmFunctionEmitter {
 
     /**
      * Whether one presented descriptor's datum can carry the function tag: a
-     * function value, an {@code unknown} datum of any supported kind, or a
-     * nullish position whose base is one of those.
+     * function value or a nullish position whose base is a function descriptor.
+     * Unknown datums use the runtime's layout-aware presentation projection.
      */
     private static boolean carriesFunctionDatum(RuntimeDescriptor actual) {
-        if (actual instanceof RuntimeDescriptor.Func
-                || actual instanceof RuntimeDescriptor.Unknown) {
+        if (actual instanceof RuntimeDescriptor.Func) {
             return true;
         }
         return actual instanceof RuntimeDescriptor.Nullable nullable
@@ -5670,6 +5669,22 @@ final class LlvmFunctionEmitter {
      */
     private String checkInputRecordOf(SemanticOp op, RuntimeDescriptor actual,
                                       String datum) {
+        // Unknown reads may carry private managed nondata layouts after a
+        // hostile host mutation. Classify those before any closure-layout
+        // dereference; their FUNCTION/TABLE tag alone is not admission.
+        RuntimeDescriptor base = actual instanceof RuntimeDescriptor.Nullable nullable
+            ? nullable.inner() : actual;
+        if (base instanceof RuntimeDescriptor.Unknown) {
+            session.referenceRuntimeEntry("deal_host_present_datum");
+            String datumSlot = newAlloca(LlvmTypeMapper.DATA, "presentationdatum");
+            emit("store " + LlvmTypeMapper.DATA + " " + datum + ", "
+                + LlvmTypeMapper.DATA + "* " + datumSlot);
+            String inputSlot = newAlloca("%struct.deal_check_input", "presentation");
+            emit("call void @deal_host_present_datum(" + LlvmTypeMapper.DATA
+                + "* byval(" + LlvmTypeMapper.DATA + ") " + datumSlot
+                + ", %struct.deal_check_input* " + inputSlot + ")");
+            return loadQuiet("%struct.deal_check_input", inputSlot);
+        }
         String record = emitTemporary(op, "insertvalue %struct.deal_check_input"
             + " zeroinitializer, %struct.deal_data " + datum + ", 2");
         // A class datum carries its canonical atom beside the datum (R3/R4):

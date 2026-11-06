@@ -3,5 +3,5 @@
 // @expected: runtime-ok
 // @features: boundary-validation
 
-export async function run():Promise<number>{async function f(f:number):Promise<void>{return;}await f(1);return 1;}
+export async function run():Promise<number>{let f: (f:number) => Promise<void> = async function(f:number):Promise<void>{return;};await f(1);return 1;}
 export function main():null{return null;}

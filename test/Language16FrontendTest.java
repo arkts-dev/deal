@@ -7,8 +7,8 @@ import deal.parser.*;
 import deal.types.*;
 import java.util.*;
 
-/** Focused v1.5 frontend contracts, independent of backend execution. */
-public final class Language15FrontendTest {
+/** Focused v1.6 frontend contracts, independent of backend execution. */
+public final class Language16FrontendTest {
     private static void check(String source, boolean accepted) {
         var diagnostics = diagnostics(source);
         if (diagnostics.isEmpty() != accepted) throw new AssertionError(source + "\n" + diagnostics);
@@ -36,10 +36,10 @@ public final class Language15FrontendTest {
     public static void main(String[] args) {
         for (int count = 0; count < 6; count++) {
             String slashes = "\\".repeat(count);
-            for (String template : List.of("`🌍" + slashes + "`",
-                    "`🌍" + slashes + "${\"x\"}`", "`${ `🌍" + slashes + "` }`")) {
+            for (String template : List.of("`🌍" + slashes + "`", "`${ `🌍" + slashes + "` }`")) {
                 check("function f():void{let text=" + template + ";}", count % 2 == 0);
             }
+            check("function f():void{let text=`🌍" + slashes + "${\"x\"}`;}", true);
         }
         check("function f(): void { return; }", true);
         check("function f(): void {}", true);
@@ -121,7 +121,7 @@ public final class Language15FrontendTest {
         }
         check("function f():void {for(let of of [1]){let from=of;}}", true);
         check("function f():void {let from:unknown=1;let as=from as number;as;let async=as;async;}", true);
-        rejectsAt("function f():void {late();function late():void{}}", "late()", "E2001");
+        rejectsAt("function f():void {late();function late():void{}}", "function late", "E1042");
         rejectsAt("class C{x:number;} function f():void{let u:unknown=C;}", "C;", "E3001");
         rejectsAt("function f():void{let a:unknown[]=[1];delete a[0];}", "delete", "E3017");
         check("import * as from from \"std/math\"; function f():number{return from.floor(1.5);}", true);
@@ -134,16 +134,27 @@ public final class Language15FrontendTest {
         check("function f():void {let a:unknown[]=[1];delete a[0];}", false);
         check("function f():void {g();function g():void{}}", false);
         check("function f():void {let h:()=>void=function():void{g();};function g():void{}h();}", false);
-        check("function f():void {function g():void{g();}g();}", true);
-        check("function g():number{return 1;} function f():void {let x=g();function g():number{return 2;}let y=g();}", true);
+        check("function f():void {function g():void{g();}g();}", false);
+        check("function f():void {let g:()=>void=function():void{g();};g();}", true);
+        check("function f():void {let g=function():number{return g();};}", true);
+        check("function f():void {let g=(function():number{return g();});}", true);
+        check("function f():void {let g=async function():Promise<number>{return await g();};}", true);
+        check("function f():void {let g:(ignored:number)=>number=function():number{return g(1);};}", true);
+        check("function f():void {let g=g;}", false);
+        check("function f():void {let g:number=(function():number{return g;})();}", false);
+        check("function f():void {let g:()=>number=[function():number{return g();}][0];}", false);
+        check("function f():void {let g=function():number{return later;};let later=1;}", false);
+        check("function g():number{return 1;} function f():void {let x=g();function g():number{return 2;}let y=g();}", false);
+        check("function g():number{return 1;} function f():void {let x=g();let g=function():number{return 2;};let y=g();}", true);
         check("class C{x:number;} function f():void{let x:unknown=C;}", false);
         check("class C{x:number;} function f():void{let x=typeof C;}", false);
         rejectsAt("function f():number{return 1;} function g():void{f=f;}", "f=f", "E3017");
-        rejectsAt("function g():void{function f():void{}f=f;}", "f=f", "E3017");
+        rejectsAt("function g():void{function f():void{}f=f;}", "function f", "E1042");
         rejectsAt("import * as math from \"std/math\"; function g():void{math.floor=math.floor;}", "math.floor=", "E3017");
         check("function f(f:number):number{return f;}", true);
-        check("function g():void{function f(f:number):number{return f;}let x=f(1);}", true);
+        check("function g():void{function f(f:number):number{return f;}let x=f(1);}", false);
+        check("function g():void{let f=function(f:number):number{return f;};let x=f(1);}", true);
         check("function f():number{return 1;} function g():void{let h:()=>number=f;h=f;}", true);
-        System.out.println("Language15FrontendTest: passed");
+        System.out.println("Language16FrontendTest: passed");
     }
 }

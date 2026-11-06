@@ -166,7 +166,7 @@ public class CheckerTest {
         Path project = root.resolve(name);
         Files.createDirectories(project.resolve("src"));
         Files.writeString(project.resolve("deal.json"),
-            "{\"languageVersion\":\"1.5\",\"backend\":\"js\",\"moduleRoots\":[\"src\"]}\n");
+            "{\"languageVersion\":\"1.6\",\"backend\":\"js\",\"moduleRoots\":[\"src\"]}\n");
         Path entry = project.resolve("src/main.deal");
         Files.writeString(entry, source);
         return entry;
@@ -222,8 +222,8 @@ public class CheckerTest {
                 "E2002", "nested redeclaration");
         }
         assertNoErrors(checkProgram("function f():number{return 1;}function outer():null{"
-            + "let before=f();function f():number{return 2;}let after=f();"
-            + "{function f():number{return 3;}let inner=f();}return null;}"),
+            + "let before=f();let f = function():number{return 2;};let after=f();"
+            + "{let f = function():number{return 3;};let inner=f();}return null;}"),
             "nested shadowing retains declaration order");
     }
 
@@ -396,11 +396,10 @@ public class CheckerTest {
         // ISSUE-0815: the retained corner-case frontend contracts
         testRetainedCornerCaseFrontendContract();
 
-        // The closed direct contextual-read admission: nested literal and
-        // template-interpolation reads reject, the direct positions stay
-        // admitted (v1.3 §Reading table fields).
-        testV13NestedLiteralReadRejected();
-        testV13DirectContextualReadControls();
+        // Unknown Record reads require extraction in every concrete position;
+        // retain independent nested-consumer negatives and asserted controls.
+        testNestedUnknownReadRejected();
+        testExplicitReadAssertionControls();
 
         // F8: Break/continue outside loops
         testBreakOutsideLoop();
@@ -843,7 +842,7 @@ public class CheckerTest {
 
         out = checkProgram(
             "function f(): null {\n"
-            + "  function g(): null { return null; }\n"
+            + "  let g = function(): null { return null; };\n"
             + "  let a: boolean = g === g;\n"
             + "  return null;\n"
             + "}"
@@ -1288,7 +1287,7 @@ public class CheckerTest {
         System.out.println("-- F2: Nested function return type --");
         CheckerOutput out = checkProgram(
             "function outer(): null {\n" +
-            "  function inner(): number { return 42; }\n" +
+            "  let inner = function(): number { return 42; };\n" +
             "  return null;\n" +
             "}"
         );
@@ -1380,11 +1379,12 @@ public class CheckerTest {
         // the mutual-recursion shape republishes the same E5002 at the
         // catch, never the whole-function falloff.
         CheckerOutput recursive = checkProgram(
-            "export function main(): null { function f(): null {try {return null;}"
-                + " catch(e) {g();}} function g(): null {f();} f(); return null; }\n");
+            "export function main(): null {f(); return null;}\n"
+                + "function f(): null {try {return null;} catch(e) {g();}}\n"
+                + "function g(): null {f();}\n");
         assertError(recursive, "E5002",
             "the recursive definitely-returning try rejects E5002");
-        checkExactRange(recursive, "E5002", 1, 80, 1, 86,
+        checkExactRange(recursive, "E5002", 2, 49, 2, 55,
             "the recursive catch carries its own exact range");
 
         // Function expressions carry the same obligation.
@@ -1428,7 +1428,7 @@ public class CheckerTest {
      * forms independently pin array-element, class-property and template
      * diagnostics and exact owner ranges; no contextual-read exception exists.
      */
-    static void testV13NestedLiteralReadRejected() {
+    static void testNestedUnknownReadRejected() {
         System.out.println("-- nested unknown reads reject concrete literal/template consumers --");
 
         // Array literal element (dotted).
@@ -1508,7 +1508,7 @@ public class CheckerTest {
      * consumers, parenthesized/computed forms, array/class intermediates,
      * assignment stores and an ordinary template over a checked string.
      */
-    static void testV13DirectContextualReadControls() {
+    static void testExplicitReadAssertionControls() {
         System.out.println("-- explicit read assertions and typed intermediates stay admitted --");
 
         assertNoErrors(checkProgram(
@@ -1737,7 +1737,7 @@ public class CheckerTest {
 
     /**
      * ISSUE-0717 review: the supported null narrowing is binding-based
-     * only (docs/spec-v1.5.md §Nullable semantics — "No property-path
+     * only (docs/spec-v1.6.md §Nullable semantics — "No property-path
      * narrowing"), so a nullable member-path receiver stays rejected even
      * after a {@code path !== null} test, and an assignment to a narrowed
      * binding invalidates its refinement (the later dereference is
@@ -1779,7 +1779,7 @@ public class CheckerTest {
 
     /**
      * ISSUE-0717 review: only the declaration-owning scope clears its
-     * pending let name (docs/spec-v1.5.md §Name resolution — Declaration order and §Scope),
+     * pending let name (docs/spec-v1.6.md §Name resolution — Declaration order and §Scope),
      * so an inner block's same-name declaration never makes an enclosing
      * block's later declaration visible to an earlier reference.
      */
@@ -1804,7 +1804,7 @@ public class CheckerTest {
     /**
      * ISSUE-0717 review: a shadowing declaration's initializer is checked
      * before the outer refinement is cleared, so it reads the enclosing
-     * binding with its current narrowing (docs/spec-v1.5.md §Name resolution —
+     * binding with its current narrowing (docs/spec-v1.6.md §Name resolution —
      * Declaration order and §Nullable semantics).
      */
     static void testShadowingInitializerReadsEnclosingNarrowing() {
@@ -1825,7 +1825,7 @@ public class CheckerTest {
     /**
      * ISSUE-0717 review: an await inside a shadowing block invalidates the
      * enclosing async function's refinements together with the snapshot a
-     * shadowing declaration removed (docs/spec-v1.5.md §Nullable
+     * shadowing declaration removed (docs/spec-v1.6.md §Nullable
      * semantics): the block exit must not resurrect the invalidated
      * refinement. The no-await block exit still restores it, and an await
      * inside a nested function body stays scoped to that function.
@@ -1957,7 +1957,7 @@ public class CheckerTest {
 
     /**
      * ISSUE-0717 review: an assignment inside a shadowing declaration's
-     * initializer targets the enclosing binding (docs/spec-v1.5.md
+     * initializer targets the enclosing binding (docs/spec-v1.6.md
      * §Name resolution — Declaration order), so its gate is the enclosing binding's
      * declared type — never the not-yet-visible inner declaration's type.
      */
@@ -1992,7 +1992,7 @@ public class CheckerTest {
     /**
      * ISSUE-0717 review: a loop-local declaration of the same name is a
      * distinct binding, so the loop back-edge invalidates only the
-     * bindings actually assigned in the body (docs/spec-v1.5.md §Nullable
+     * bindings actually assigned in the body (docs/spec-v1.6.md §Nullable
      * semantics): the enclosing refinement survives, while an assignment
      * to the enclosing binding still invalidates it.
      */
@@ -2031,7 +2031,7 @@ public class CheckerTest {
     /**
      * ISSUE-0717 review cycle 3: an if without else propagates the
      * invalidation an assignment or an await inside its then arm applied
-     * (docs/spec-v1.5.md §Nullable semantics: an assignment invalidates
+     * (docs/spec-v1.6.md §Nullable semantics: an assignment invalidates
      * the refinement and an await invalidates every refinement of the
      * enclosing async function), while a harmless arm leaves the incoming
      * refinement intact. Both the with-else and the without-else joins
@@ -2116,7 +2116,7 @@ public class CheckerTest {
      * ISSUE-0717 review cycle 3: a shadowing declaration's saved
      * refinement survives an if/else join inside the shadowing block but
      * is never restored when a path invalidated it with an await
-     * (docs/spec-v1.5.md §Nullable semantics).
+     * (docs/spec-v1.6.md §Nullable semantics).
      */
     static void testShadowStateSurvivesBranch() {
         System.out.println("-- the shadow snapshot survives a branch join "
@@ -2166,7 +2166,7 @@ public class CheckerTest {
     /**
      * ISSUE-0717 review cycle 3: the for-of back-edge invalidates every
      * binding assigned in the body exactly like while and C-style for
-     * (docs/spec-v1.5.md §Nullable semantics), and a same-named
+     * (docs/spec-v1.6.md §Nullable semantics), and a same-named
      * iteration binding is a distinct binding that leaves the enclosing
      * refinement intact.
      */
@@ -2204,7 +2204,7 @@ public class CheckerTest {
 
     /**
      * ISSUE-0889: the try/catch revert is binding-identity bookkeeping
-     * (docs/spec-v1.3.md Narrowing across try/catch), so only the
+     * (docs/spec-v1.6.md Narrowing across try/catch), so only the
      * resolved binding the try region actually assigns reverts. A new
      * block-local declaration of the same name is a different binding and
      * neither its declaration nor an assignment to it erases the
@@ -2288,7 +2288,7 @@ public class CheckerTest {
 
     /**
      * ISSUE-0889: declaring a function does not execute its body
-     * (docs/spec-v1.3.md Calls do not invalidate refinements), so a write
+     * (docs/spec-v1.6.md Narrowing and checked assertions), so a write
      * to an enclosing binding inside a function declaration or function
      * expression declared in a try region is the nested function's own
      * flow and never reverts the enclosing refinement. An actual call
@@ -2320,7 +2320,7 @@ public class CheckerTest {
             "  let n: number | null = 1;\n" +
             "  if (n !== null) {\n" +
             "    try {\n" +
-            "      function clear(): null { n = null; return null; }\n" +
+            "      let clear = function(): null { n = null; return null; };\n" +
             "    } catch (e) {}\n" +
             "    let x: number = n;\n" +
             "  }\n" +
@@ -2354,10 +2354,10 @@ public class CheckerTest {
             "  let n: number | null = 1;\n" +
             "  if (n !== null) {\n" +
             "    try {\n" +
-            "      function outer(): null {\n" +
+            "      let outer = function(): null {\n" +
             "        try { n = null; } catch (e) {}\n" +
             "        return null;\n" +
-            "      }\n" +
+            "      };\n" +
             "    } catch (e) {}\n" +
             "    let x: number = n;\n" +
             "  }\n" +
@@ -2373,7 +2373,7 @@ public class CheckerTest {
      * ISSUE-0889: a nested try statement is part of the enclosing try
      * region, so an assignment in the nested try block or its catch block
      * still reverts the binding after the enclosing try, while a
-     * nested-try shadow declaration does not (docs/spec-v1.3.md
+     * nested-try shadow declaration does not (docs/spec-v1.6.md
      * Narrowing across try/catch).
      */
     static void testNestedTryAssignmentCollection() {
@@ -2468,7 +2468,7 @@ public class CheckerTest {
 
     /**
      * ISSUE-0717 review cycle 3: a C-style for's loop-head let is visible
-     * only after its declaration (docs/spec-v1.5.md §Name resolution — Declaration order;
+     * only after its declaration (docs/spec-v1.6.md §Name resolution — Declaration order;
      * the loop desugars to block-local scope plus a while loop): its
      * initializer resolves to an enclosing binding, a self reference is
      * E2001, and the loop-head shadow ends with the loop.
@@ -2520,7 +2520,7 @@ public class CheckerTest {
             Path crossing = root.resolve("crossing");
             Files.createDirectories(crossing.resolve("src"));
             Files.writeString(crossing.resolve("deal.json"),
-                "{\"languageVersion\":\"1.5\",\"backend\":\"js\","
+                "{\"languageVersion\":\"1.6\",\"backend\":\"js\","
                     + "\"moduleRoots\":[\"src\"]}\n");
             Files.writeString(crossing.resolve("src/a.deal"),
                 "export class Item { value: number; }\n"
@@ -2552,7 +2552,7 @@ public class CheckerTest {
             Path control = root.resolve("control");
             Files.createDirectories(control.resolve("src"));
             Files.writeString(control.resolve("deal.json"),
-                "{\"languageVersion\":\"1.5\",\"backend\":\"js\","
+                "{\"languageVersion\":\"1.6\",\"backend\":\"js\","
                     + "\"moduleRoots\":[\"src\"]}\n");
             Files.writeString(control.resolve("src/a.deal"),
                 "export class Item { value: number; }\n"
@@ -5967,7 +5967,7 @@ public class CheckerTest {
         }
         try {
             Files.writeString(root.resolve("deal.json"),
-                "{\"languageVersion\":\"1.5\",\"backend\":\"luajit\","
+                "{\"languageVersion\":\"1.6\",\"backend\":\"luajit\","
                     + "\"moduleRoots\":[\"src\"]}\n");
             Files.createDirectories(root.resolve("src"));
             // z is a's import dependency: buildCheckOrder is

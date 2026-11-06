@@ -749,12 +749,12 @@ public class CompositeTerminatorAnalysisTest {
             new Terminated("nested body's partial transfer", probeProgram("""
                 export function probe(c: boolean): null {
                   while (true) {
-                    function inner(d: boolean): null {
+                    let inner = function(d: boolean): null {
                       while (true) {
                         if (d) { break; }
                         return null;
                       }
-                    }
+                    };
                     return null;
                   }
                 }
@@ -796,9 +796,9 @@ public class CompositeTerminatorAnalysisTest {
         String nestedProbe = probeProgram("""
             export function probe(): null {
               while (true) {
-                function inner(): null {
+                let inner = function(): null {
                   while (true) { return null; }
-                }
+                };
               }
             }
             """);
@@ -865,30 +865,32 @@ public class CompositeTerminatorAnalysisTest {
         System.out.println("-- nested mutual-reference groups reject null falloff and admit void --");
         String group = """
             export function main(): null {
-              function f(n: number): null {
+              let g:(n:number)=>null=function(n:number):null{return null;};
+              let f = function(n: number): null {
                 if (n > 0) { g(n - 1); }
-              }
-              function g(n: number): null {
+              };
+              g = function(n: number): null {
                 if (n > 1) { f(n - 1); }
-              }
+              };
               f(4);
               return null;
             }
             """;
         checkPublicFallOffCount("nested mutual-reference null group", group, 2);
-        String voidGroup = group.replace("function f(n: number): null", "function f(n: number): void")
-            .replace("function g(n: number): null", "function g(n: number): void");
+        String voidGroup = group.replace("=>null", "=>void")
+            .replace("function(n:number):null{return null;}", "function(n:number):void{}")
+            .replace("function(n: number): null", "function(n: number): void");
         checkPublicFallOffCount("nested mutual-reference void group", voidGroup, 0);
 
         String standalone = """
             export function main(): null {
               while (true) {
-                function inner(d: boolean): null {
+                let inner = function(d: boolean): null {
                   while (true) {
                     if (d) { break; }
                     return null;
                   }
-                }
+                };
                 return null;
               }
             }
@@ -1145,7 +1147,7 @@ public class CompositeTerminatorAnalysisTest {
         CheckedModuleInput module = built.input().modules().get(0);
         SemanticLowerer.FullProgramE7Result e7 =
             SemanticLowerer.lowerModuleFullProgramE7(module,
-                SemanticProfile.DEAL_V1_5_BINARY64,
+                SemanticProfile.DEAL_V1_6_BINARY64,
                 manifests.manifests().get(0).constructCoverage(),
                 built.index().interfaceIndexDigest(),
                 productionInvocation().capabilityRegistryHash(),

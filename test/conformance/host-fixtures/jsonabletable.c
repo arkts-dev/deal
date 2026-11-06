@@ -31,7 +31,7 @@ static deal_host_result impl_makeInfinite(const deal_value *args,size_t argc){(v
 static deal_host_result impl_makeNotANumber(const deal_value *args,size_t argc){(void)args;(void)argc;return result(leaf(NAN));}
 static deal_host_result impl_makeNestedInfinite(const deal_value *args,size_t argc){(void)args;(void)argc;deal_value v=table();set(v,"inner",leaf(INFINITY));return result(v);}
 static deal_host_result impl_makeInfiniteElements(const deal_value *args,size_t argc){(void)args;(void)argc;deal_value v=table(),xs=raw_array(2);checked(deal_array_set(xs,0,number(INFINITY)));checked(deal_array_set(xs,1,number(2)));set(v,"xs",xs);return result(v);}
-static deal_value bad_key(void){deal_value v=table();set(v,"key",number(1));fixture_bad_key(v);return v;}
+static deal_value bad_key(void){deal_value v=table();set(v,"\xed\xa0\x80",number(1));return v;}
 static deal_host_result impl_makeBadKey(const deal_value *args,size_t argc){(void)args;(void)argc;return result(bad_key());}
 static deal_host_result impl_makeNestedBadKey(const deal_value *args,size_t argc){(void)args;(void)argc;deal_value v=table();set(v,"inner",bad_key());return result(v);}
 static deal_host_result impl_makeBadString(const deal_value *args,size_t argc){(void)args;(void)argc;deal_value v=table();set(v,"a",bad_string());return result(v);}

@@ -157,14 +157,14 @@ public class StdlibCallLoweringTest {
 
     /** The fixed common-shadow invocation of the carrier tests. */
     private static CompilerInvocation invocation() {
-        return CompilerProfileProvider.resolve(ReleaseState.V1_5_ACTIVE, CapabilityRegistry.releaseRegistry());
+        return CompilerProfileProvider.resolve(ReleaseState.V1_6_ACTIVE, CapabilityRegistry.releaseRegistry());
     }
 
     /** The validated-lowering facts of the checked project (R-PROFILE). */
     private static SemanticIrValidator.ComparisonFacts factsOf(
             CheckedProjectBuildResult checked) {
         return new SemanticIrValidator.ComparisonFacts(
-            checked.index().interfaceIndexDigest(), SemanticProfile.DEAL_V1_5_BINARY64,
+            checked.index().interfaceIndexDigest(), SemanticProfile.DEAL_V1_6_BINARY64,
             CapabilityRegistry.releaseRegistry().capabilityRegistryHash());
     }
 
@@ -209,7 +209,7 @@ public class StdlibCallLoweringTest {
             moduleIds.add(module.moduleId());
         }
         return SemanticLowerer.lowerModuleFullProgram(
-            subject, SemanticProfile.DEAL_V1_5_BINARY64, manifest.constructCoverage(),
+            subject, SemanticProfile.DEAL_V1_6_BINARY64, manifest.constructCoverage(),
             checked.index().interfaceIndexDigest(),
             CapabilityRegistry.releaseRegistry().capabilityRegistryHash(),
             SemanticIdAllocator.over(moduleIds));
@@ -239,7 +239,7 @@ public class StdlibCallLoweringTest {
             moduleIds.add(module.moduleId());
         }
         return SemanticLowerer.lowerModuleFullProgramE7(subject,
-            SemanticProfile.DEAL_V1_5_BINARY64, manifest.constructCoverage(),
+            SemanticProfile.DEAL_V1_6_BINARY64, manifest.constructCoverage(),
             checked.index().interfaceIndexDigest(),
             CapabilityRegistry.releaseRegistry().capabilityRegistryHash(),
             SemanticIdAllocator.over(moduleIds), Map.of(), Set.of());
@@ -312,12 +312,12 @@ public class StdlibCallLoweringTest {
     // 1. The single-source policy table
     // =========================================================================
 
-    /** The pinned 21-id algorithm→policy mapping of the task (an expectation mirror). */
+    /** Independent algorithm-to-policy expectation. */
     private static FailurePolicyId expectedPolicy(StdlibFunctionId function) {
         return switch (function) {
             case CONSOLE_LOG, CONSOLE_ERROR -> FailurePolicyId.INFRASTRUCTURE_ONLY;
             case STRING_LENGTH -> FailurePolicyId.NO_DEAL_FAILURE;
-            case STRING_SUBSTRING -> FailurePolicyId.SUBSTRING_BOUNDS;
+            case STRING_SUBSTRING -> FailurePolicyId.NO_DEAL_FAILURE;
             case JSON_PARSE -> FailurePolicyId.JSON_PARSE_SYNTAX;
             case JSON_STRINGIFY -> FailurePolicyId.JSON_TO_ERROR;
             case MATH_SQRT -> FailurePolicyId.NO_DEAL_FAILURE;
@@ -329,8 +329,7 @@ public class StdlibCallLoweringTest {
         System.out.println("-- Single source: SemanticIrValidator.stdlibPolicy --");
 
         check(StdlibFunctionId.values().length == 18,
-            "the closed StdlibFunctionId enum is exactly 21 values (TIME_NOW_MILLIS is the "
-                + "21st member)");
+            "the closed StdlibFunctionId enum has exactly 18 values");
         for (StdlibFunctionId function : StdlibFunctionId.values()) {
             check(SemanticIrValidator.stdlibPolicy(function) == expectedPolicy(function),
                 "stdlibPolicy(" + function + ") = "
@@ -1054,7 +1053,7 @@ public class StdlibCallLoweringTest {
                         && "STRING_LENGTH".equals(
                             ContractSnapshotCanonicalizer.optionalString(op.payload(),
                                 "function"))) {
-                    modified.add(withStampedPolicy(op, "SQRT_NEGATIVE"));
+                    modified.add(withStampedPolicy(op, "JSON_TO_ERROR"));
                 } else {
                     modified.add(op);
                 }
@@ -1086,7 +1085,7 @@ public class StdlibCallLoweringTest {
                         && "STRING_LENGTH".equals(
                             ContractSnapshotCanonicalizer.optionalString(op.payload(),
                                 "function"))) {
-                    opOnlyModified.add(new RawOp(op.opId(), op.kind(), "SQRT_NEGATIVE",
+                    opOnlyModified.add(new RawOp(op.opId(), op.kind(), "JSON_TO_ERROR",
                         op.parentOpId(), op.resultValue(), op.resultToken(),
                         op.resultType(), op.operands(), op.operandTypes(), op.payload(),
                         op.selector(), op.canonicalDigest(), op.snapshot(), op.origin()));
@@ -1181,12 +1180,12 @@ public class StdlibCallLoweringTest {
                 moduleIds.add(module.moduleId());
             }
             SemanticLowerer.LoweringResult first = SemanticLowerer.lowerModuleFullProgram(
-                main, SemanticProfile.DEAL_V1_5_BINARY64, manifest.constructCoverage(),
+                main, SemanticProfile.DEAL_V1_6_BINARY64, manifest.constructCoverage(),
                 checked.index().interfaceIndexDigest(),
                 CapabilityRegistry.releaseRegistry().capabilityRegistryHash(),
                 SemanticIdAllocator.over(moduleIds));
             SemanticLowerer.LoweringResult second = SemanticLowerer.lowerModuleFullProgram(
-                main, SemanticProfile.DEAL_V1_5_BINARY64, manifest.constructCoverage(),
+                main, SemanticProfile.DEAL_V1_6_BINARY64, manifest.constructCoverage(),
                 checked.index().interfaceIndexDigest(),
                 CapabilityRegistry.releaseRegistry().capabilityRegistryHash(),
                 SemanticIdAllocator.over(moduleIds));

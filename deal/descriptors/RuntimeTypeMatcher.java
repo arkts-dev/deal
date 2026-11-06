@@ -19,11 +19,9 @@ import java.util.Objects;
  *       <td>E8001 {@code expected null, got {actual}}</td></tr>
  *   <tr><td>{@code boolean}</td><td>backend boolean scalar predicate</td>
  *       <td>E8001 {@code expected boolean, got {actual}}</td></tr>
- *   <tr><td>{@code string}</td><td>backend string scalar predicate; the
- *       JVM additionally rejects unpaired surrogate code units</td>
- *       <td>E8001 {@code expected string, got {actual}}; sub-message
- *       {@code expected string, got string with unpaired surrogate code
- *       units}</td></tr>
+ *   <tr><td>{@code string}</td><td>backend string predicate, preserving
+ *       every UTF-16 code unit</td>
+ *       <td>E8001 {@code expected string, got {actual}}</td></tr>
  *   <tr><td>{@code number}</td><td>backend number scalar predicate</td>
  *       <td>E8001 {@code expected number, got {actual}}</td></tr>
  *   <tr><td>{@code table}</td><td>backend table representation</td>
@@ -149,13 +147,6 @@ public final class RuntimeTypeMatcher {
             case "string" -> {
                 if (!model.isString(value)) {
                     return failure("E8001", "expected string, got " + actualKind(value, range), range);
-                }
-                if (hasUnpairedSurrogate(model.stringPayload(value))) {
-                    // JVM-pinned sub-message (the JVM string representation
-                    // contract: java.lang.String with no unpaired surrogate
-                    // code units).
-                    return failure("E8001",
-                        "expected string, got string with unpaired surrogate code units", range);
                 }
                 return value;
             }
@@ -315,7 +306,4 @@ public final class RuntimeTypeMatcher {
         return "unknown";
     }
 
-    private static boolean hasUnpairedSurrogate(String text) {
-        return deal.semantic.ir.UnicodeScalars.carrierDefect(text) != null;
-    }
 }

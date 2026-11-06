@@ -1,1 +1,1 @@
-{"languageVersion": "1.5", "moduleRoots": ["src"], "backend": "luajit"}
+{"languageVersion": "1.6", "moduleRoots": ["src"], "backend": "luajit"}

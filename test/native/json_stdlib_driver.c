@@ -4,11 +4,11 @@
  *
  * It links the published runtime tree and prints one canonical tab-separated
  * observation per case; the Java suite (`deal.test.NativeJsonStdlibTest`)
- * derives every expectation from the shared authorities — the merged v1.5
+ * derives every expectation from the shared authorities — the merged v1.6
  * `SharedStdlibSemantics` (JSON parse/encode and the string, table, math and
  * time operations) and `FailureContractRegistry` (arm text) — and never from
  * the observation itself. The class walks' expectations are authored from
- * docs/spec-v1.5.md's `@jsonable` rules.
+ * docs/spec-v1.6.md's `@jsonable` rules.
  *
  * The driver is also the emitted module for the runtime: it defines the seven
  * export-surface functions and the closed arm table, installs the table from
@@ -132,11 +132,7 @@ static const deal_arm_record arm_records[] = {
     {25U, "E8001", "unsupported type for JSON encoding: {actual}",
      arm_parameters_25, 1U, DEAL_ARM_SCOPE_TOP_LEVEL, 1U, 1U},
     {26U, "E8001", "cyclic value cannot be encoded as JSON", NULL, 0U,
-     DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U},
-    {27U, "E8001", "substring bounds must be finite integers", NULL, 0U,
-     DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U},
-    {28U, "E8001", "sqrt of negative number", NULL, 0U,
-     DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 1U}
+     DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U}
 };
 
 const deal_arm_table deal_project_arm_table = {DEAL_ARM_TABLE_VERSION,
@@ -245,9 +241,22 @@ static deal_data text_datum(const char *text) {
     return deal_data_of_reference(DEAL_DATA_STRING, value);
 }
 
-/* One managed string's exact bytes. */
+/* Lossless observations: ordinary UTF-8 pairs, escaped lone units. */
 static void write_text(const deal_string *text) {
-    printf("%.*s", (int)deal_text_byte_length(text), deal_text_bytes(text));
+    const unsigned char *bytes = deal_text_transport_bytes(text);
+    size_t length = deal_text_transport_length(text);
+    for (size_t index = 0u; index < length; index += 1u) {
+        if (bytes[index] == 0xEDu && index + 2u < length
+                && bytes[index + 1u] >= 0xA0u) {
+            unsigned unit = 0xD000u
+                + ((unsigned)(bytes[index + 1u] & 0x3Fu) << 6u)
+                + (unsigned)(bytes[index + 2u] & 0x3Fu);
+            printf("\\u%04x", unit);
+            index += 2u;
+        } else {
+            putchar(bytes[index]);
+        }
+    }
 }
 
 /* The emitted call origin every observation is rendered at. */
@@ -419,7 +428,7 @@ static deal_table *record_with_text(const char *key, const char *text) {
 static void observe_encode_rules(void) {
     /* A record with an undefined-valued and a function-valued member: both are
      * omitted while the remaining keys keep their creation order, and an
-     * array-index key precedes them (v1.5 own-key order). */
+     * array-index key precedes them (v1.6 own-key order). */
     deal_root_scope_push();
     deal_table *table = deal_container_table_new();
     (void)deal_root_scope_hold(table);
@@ -493,7 +502,7 @@ static void observe_encode_rules(void) {
                    deal_data_of_reference(DEAL_DATA_CLASS, stand_in));
     deal_root_scope_pop();
 
-    /* The v1.5 root rules: an undefined or function root yields undefined. */
+    /* The v1.6 root rules: an undefined or function root yields undefined. */
     observe_encode("root-undefined", deal_data_of_undefined());
     deal_root_scope_push();
     deal_table *root_holder = deal_container_table_new();
@@ -1027,7 +1036,7 @@ static const deal_json_class_plan *test_lookup(const char *class_atom,
 static void define_plans(void) {
     /* Outer: name: string; nick?: string; bio: ?string; tags: [string];
      * props: record; extra?: ?!string; items: [Inner]; label!: ?!string.
-     * `label` is required and admits undefined, which is the v1.5
+     * `label` is required and admits undefined, which is the v1.6
      * required-undefined asymmetry: it must be present in a decoded document
      * and is omitted from the encoding when present-undefined. */
     outer_fields[0].name = "name";
@@ -1398,7 +1407,7 @@ static void observe_class_walks(void) {
     observe_to_class("record-cycle", record_cycle);
     deal_root_scope_pop();
 
-    /* The v1.5 required-undefined asymmetry on the encode side: `label!: ?!string`
+    /* The v1.6 required-undefined asymmetry on the encode side: `label!: ?!string`
      * is required, so a present-undefined value is a present field whose key is
      * omitted, and the encoded text must not carry it. */
     deal_root_scope_push();
@@ -1597,6 +1606,8 @@ static void run_acceptance(void) {
     observe_roundtrip("nested", "{\"a\":{\"b\":{\"c\":[1,[2,[3]]]}}}");
     observe_roundtrip("bmp-scalar", "\"\\u00e9\\u0041\"");
     observe_roundtrip("surrogate-pair", "\"\\ud83d\\ude00\"");
+    observe_roundtrip("lone-high", "\"\\ud800\"");
+    observe_roundtrip("lone-low", "\"\\udfff\"");
     observe_roundtrip("escapes", "\"tab\\there quote\\\" backslash\\\\\"");
     observe_roundtrip("control-scalars", "\"\\u0000\\u001f\"");
     observe_roundtrip("own-key-order", "{\"b\":1,\"2\":2,\"a\":3,\"1\":4}");
@@ -1631,7 +1642,7 @@ static void run_acceptance(void) {
     observe_parse_failure("missing-comma", "[1 2]");
     observe_parse_failure("trailing-content", "{\"a\":1}x");
     observe_parse_failure("invalid-escape", "\"\\q\"");
-    observe_parse_failure("unpaired-surrogate", "\"\\ud800\"");
+    observe_parse_failure("supplementary-offset", "[\"\xf0\x9f\x98\x80\",]");
     observe_parse_failure("raw-control", "\"a\x01b\"");
     observe_parse_failure("empty-input", "");
 

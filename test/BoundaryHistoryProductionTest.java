@@ -31,11 +31,11 @@ public final class BoundaryHistoryProductionTest {
             let a:number[]=[0,99];let alias=a;
             let destination:number[]=[42];let untouched=destination;
             let calls:number=0;host.keep(a);
-            function get():number[]{calls=calls+1;return a;}
+            let get:()=>number[]=function():number[]{calls=calls+1;return a;};
             let effects:string="";
-            function receiver():number[]{effects=effects+"R";return destination;}
-            function index():number{effects=effects+"I";return 9;}
-            function rhs():number{effects=effects+"V";return 7;}
+            let receiver:()=>number[]=function():number[]{effects=effects+"R";return destination;};
+            let index:()=>number=function():number{effects=effects+"I";return 9;};
+            let rhs:()=>number=function():number{effects=effects+"V";return 7;};
             """);
         List<Action> actions = new ArrayList<>(LIFECYCLE);
         actions.addAll(continuation);
@@ -82,7 +82,7 @@ public final class BoundaryHistoryProductionTest {
         try {
             Path host = Files.createDirectories(root.resolve("host"));
             Path fixture = Path.of("test/conformance/host-fixtures/boundaries/boundary_stateful");
-            for (String ext : List.of("d.deal", "java", "js", "lua"))
+            for (String ext : List.of("d.deal", "java", "js", "lua", "c"))
                 Files.copy(Path.of(fixture + "." + ext), host.resolve("probe." + ext));
             // Bound artifact size and subprocess work, not history membership.
             for (int batch = 0; batch < traces.size(); batch += 4) {
@@ -96,9 +96,11 @@ public final class BoundaryHistoryProductionTest {
                 for (int i = batch; i < end; i++) source.append("trace").append(i).append("();");
                 source.append("c.log(\"HISTORIES_OK\");return null;}");
                 CompositionProductionTest.execute(source.toString(), "HISTORIES_OK\n",
-                    root.resolve("batch" + batch), host);
+                    root.resolve("batch" + batch), host,
+                    List.of(deal.codegen.Backend.JS, deal.codegen.Backend.LUAJIT,
+                        deal.codegen.Backend.JVM, deal.codegen.Backend.LLVM));
             }
-            System.out.println("Boundary histories: 43 continuations x 3 executed backends passed");
+            System.out.println("Boundary histories: 43 continuations x 4 executed backends passed (LLVM O0/O2 normal/stress/sanitized)");
         } finally {
             CompositionProductionTest.remove(root);
         }

@@ -763,7 +763,7 @@ public class AsyncExportInvokerProductionTest {
 
     private static final String EXTERNALS_HEADER = """
         {
-          "languageVersion": "1.5",
+          "languageVersion": "1.6",
           "moduleRoots": ["src"],
           "output": "out",
           "backend": "%s",
@@ -775,7 +775,7 @@ public class AsyncExportInvokerProductionTest {
 
     private static final String PLAIN_MANIFEST = """
         {
-          "languageVersion": "1.5",
+          "languageVersion": "1.6",
           "moduleRoots": ["src"],
           "output": "out",
           "backend": "%s"
@@ -799,8 +799,8 @@ public class AsyncExportInvokerProductionTest {
 
         export async function run(): Promise<null> {
           let trace: string = "";
-          async function value(s: string, x: number): Promise<number> { trace = trace + s; return x; }
-          async function small(x: number): Promise<number> { trace = trace + "F"; return x; }
+          let value: (s: string, x: number) => Promise<number> = async function(s: string, x: number): Promise<number> { trace = trace + s; return x; };
+          let small: (x: number) => Promise<number> = async function(x: number): Promise<number> { trace = trace + "F"; return x; };
           let f: (x: number, y: number) => Promise<number> = small;
           let r: number = await f(await value("A", 7), await value("B", 8));
           if (r !== 7 || trace !== "ABF") {
@@ -835,6 +835,7 @@ public class AsyncExportInvokerProductionTest {
         try (JavacPreparation preparation = new JavacPreparation()) {
             javacPreparation = preparation;
             testValueSevenBothTargets();
+            testRecursiveInitializerBothTargets();
             testNullAndContainerCompletionsBothTargets();
             testNumericReadCompletionsBothTargets();
             testEmptyArrayCompletionsBothTargets();
@@ -865,6 +866,43 @@ public class AsyncExportInvokerProductionTest {
             System.exit(1);
         }
         System.out.println("=== Async-Export Invoker Production Tests Passed ===");
+    }
+
+    private static void testRecursiveInitializerBothTargets() throws Exception {
+        String source = """
+            function make(seed:number):(n:number)=>Promise<number> {
+              let recur:(n:number)=>Promise<number> = async function(n:number):Promise<number> {
+                if(n===0){seed=seed+1;return seed;}
+                return (await recur(n-1))+1;
+              };
+              return recur;
+            }
+            export function main():null{return null;}
+            export async function run():Promise<number> {
+              let first=make(10);let other=make(30);
+              if((await first(2))!==13 || (await other(1))!==32 || (await first(0))!==12){
+                throw {code:"TEST",message:"fresh async recursive cells"};
+              }
+              let remaining=2;let trace="";
+              let adapted:(ignored:number)=>Promise<number> = async function():Promise<number> {
+                trace=trace+"A";
+                if(remaining===0){throw {code:"STOP",message:"recursive abrupt"};}
+                remaining=remaining-1;
+                let result=await adapted(99);trace=trace+"B";return result;
+              };
+              let caught=false;
+              try{await adapted(7);}catch(e){if(e instanceof Error){caught=e.code==="STOP";}}
+              if(!caught || trace!=="AAA" || remaining!==0){
+                throw {code:"TEST",message:"adapted async abrupt completion"};
+              }
+              remaining=0;
+              adapted=async function(ignored:number):Promise<number>{return 7;};
+              return (await first(1))+(await adapted(8));
+            }
+            """;
+        for (String backend : List.of("luajit", "jvm")) {
+            checkNumberCompletion(backend, "recursive-initializer", source, "number", "21.0");
+        }
     }
 
     private static void testValueSevenBothTargets() throws Exception {
@@ -2227,19 +2265,19 @@ public class AsyncExportInvokerProductionTest {
           let xs: number[] = [7];
           let alias: number[] = xs;
           let trace: string = "";
-          async function value(): Promise<number> {trace = trace + "V"; return 9;}
-          function index(): number {trace = trace + "I"; return 2;}
-          function receiver(): number[] {trace = trace + "R"; return xs;}
+          let value: () => Promise<number> = async function(): Promise<number> {trace = trace + "V"; return 9;};
+          let index: () => number = function(): number {trace = trace + "I"; return 2;};
+          let receiver: () => number[] = function(): number[] {trace = trace + "R"; return xs;};
           try {receiver()[index()] = await value(); trace = trace + "X";}
           catch (e) {if ((e as Error).code !== "E8002") {return 0;} trace = trace + "C";}
           if (trace !== "RIVC" || alias.length !== 1 || alias[0] !== 7) {return 0;}
           alias[alias.length] = 8;
           if (xs.length !== 2 || xs[1] !== 8) {return 0;}
           let zero: Record<string, unknown> = {value: -0.0};
-          function admitted(x: number): number {
+          let admitted: (x: number) => number = function(x: number): number {
             if (1.0 / x < 0.0) {return 1;}
             return 0;
-          }
+          };
           return admitted(zero.value as number);
         }
         """;

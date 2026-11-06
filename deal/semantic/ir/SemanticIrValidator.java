@@ -103,12 +103,12 @@ public final class SemanticIrValidator {
 
     /**
      * The only admitted unit profile name (S1): derived from the
-     * single-profile owner {@link SemanticProfile#DEAL_V1_5_BINARY64}, never a
+     * single-profile owner {@link SemanticProfile#DEAL_V1_6_BINARY64}, never a
      * duplicated spelling. A carried profile that is not the owner's value
      * rejects; the owner itself is the closed set of supported semantic
      * modes.
      */
-    public static final String ADMITTED_PROFILE = SemanticProfile.DEAL_V1_5_BINARY64.name();
+    public static final String ADMITTED_PROFILE = SemanticProfile.DEAL_V1_6_BINARY64.name();
 
     // =========================================================================
     // Comparison facts (validator contract Input)
@@ -2395,7 +2395,7 @@ public final class SemanticIrValidator {
         return switch (function) {
             case CONSOLE_LOG, CONSOLE_ERROR -> FailurePolicyId.INFRASTRUCTURE_ONLY;
             case STRING_LENGTH -> FailurePolicyId.NO_DEAL_FAILURE;
-            case STRING_SUBSTRING -> FailurePolicyId.SUBSTRING_BOUNDS;
+            case STRING_SUBSTRING -> FailurePolicyId.NO_DEAL_FAILURE;
             case STRING_CONTAINS, STRING_STARTS_WITH, STRING_ENDS_WITH, STRING_REPLACE, STRING_SPLIT, STRING_TRIM, TABLE_KEYS, MATH_FLOOR, MATH_CEIL, MATH_SQRT, MATH_ABS_NUMBER, TIME_NOW_MILLIS ->
                 FailurePolicyId.NO_DEAL_FAILURE;
             case JSON_PARSE -> FailurePolicyId.JSON_PARSE_SYNTAX;

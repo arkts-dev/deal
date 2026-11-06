@@ -1,7 +1,7 @@
 -- Host-module fixture (host-module-abi D6): a host surface whose returned
--- strings exercise the DEAL v1.2 string carrier classes.  The declared
--- string boundary rejects the malformed and surrogate code point encodings
--- and admits the valid ones; the raw carrier decodes at scalar and array
+-- strings distinguish malformed byte transport from legal UTF-16 units.
+-- The declared string boundary rejects malformed bytes and admits lone units;
+-- the raw carrier decodes at scalar and array
 -- element positions (including nested and nullable element positions). The
 -- nullable nested-array export carries one explicit null element, which must
 -- stay the language null, the shared-nested-array export returns the same
@@ -30,14 +30,12 @@ function M.badString()
 end
 
 -- Returns a string containing a UTF-16 surrogate code point encoding
--- (U+D800 as CESU-style bytes ED A0 80) — never a valid scalar value.
+-- (U+D800 as unit bytes ED A0 80), admitted as one lone UTF-16 unit.
 function M.surrogateString()
   return "\xED\xA0\x80"
 end
 
--- Returns "a" .. U+D800 .. "b" — the surrogate code point encoding is
--- embedded mid-string, so the reason selection must follow the offending
--- code point, never the carrier's length.
+-- Returns "a" .. U+D800 .. "b", preserving the embedded lone unit.
 function M.embeddedSurrogateString()
   return "a\xED\xA0\x80b"
 end
@@ -76,7 +74,7 @@ end
 
 -- Returns a declared string[][] whose two elements are the same inner host
 -- array: the projection maps the one raw host table to one DEAL array, so a
--- DEAL identity comparison of the two elements is false and a mutation
+-- DEAL identity comparison of the two elements is true and a mutation
 -- through either alias is observed through the other.
 function M.sharedNestedStringArray()
   local shared = { "ok" }
@@ -91,12 +89,10 @@ function M.badNestedTail()
   return { { "ok" }, "not an array" }
 end
 
--- Returns a declared string[] whose second element is the U+D800 surrogate
--- code point encoding: the raw host array carrier must never stand in for
--- the element check, so the return is rejected with the element arm and the
--- pinned host string-carrier reason as its inner message.
+-- A truncated scalar encoding in element 2 must fail the declared string[]
+-- return. Lone surrogate units are legal controls, not malformed transport.
 function M.nativeBadStringArray()
-  return { "ok", "\xED\xA0\x80" }
+  return { "ok", "\xE2\x82" }
 end
 
 -- Returns a declared string[][] whose first element is a valid nested array

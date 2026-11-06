@@ -119,13 +119,13 @@ public class ErrorRethrowTransportProductionTest {
         export function probe(): number {
           let saved: Error = { code: "seed", message: "seed" };
 
-          function raiseOuter(): number {
+          let raiseOuter: () => number = function(): number {
             try { return inner(); }
             catch (e) {
               saved = e as Error;
               throw { code: "OUTER", message: "outer" };
             }
-          }
+          };
 
           try { return raiseOuter(); }
           catch (o) {
@@ -347,7 +347,7 @@ public class ErrorRethrowTransportProductionTest {
                 checkEq(null, error.actual(), run.consumer()
                     + ": the rethrown failure keeps the absent actual kind");
                 check(String.join(",", error.frames()).matches(
-                        "lib#raiseOuter@F\\d+,lib#probe@F\\d+,app#main@F\\d+"),
+                        "lib#<anonymous>@F\\d+,lib#probe@F\\d+,app#main@F\\d+"),
                     run.consumer() + ": the rethrown failure keeps the frames "
                         + "captured at the raise: " + error.frames());
                 SemanticRuntimeModel.ErrorSnapshot cause = error.cause();
@@ -371,7 +371,7 @@ public class ErrorRethrowTransportProductionTest {
                 checkEq("string", cause.actual(), run.consumer()
                     + ": the linked cause keeps its captured actual kind");
                 check(String.join(",", cause.frames()).matches(
-                        "lib#inner@F\\d+,lib#raiseOuter@F\\d+,lib#probe@F\\d+,"
+                        "lib#inner@F\\d+,lib#<anonymous>@F\\d+,lib#probe@F\\d+,"
                             + "app#main@F\\d+"),
                     run.consumer() + ": the linked cause keeps its captured "
                         + "frames: " + cause.frames());
@@ -478,7 +478,7 @@ public class ErrorRethrowTransportProductionTest {
         export function alias(): boolean { return helper.alias(); }
         export function mutate(): number {
           let saved: Error = { code: "seed", message: "seed" };
-          function step(): number {
+          let step: () => number = function(): number {
             try {
               try { return helper.fail(); }
               catch (e) { saved = e as Error; throw { code: "OUTER", message: "outer" }; }
@@ -487,7 +487,7 @@ public class ErrorRethrowTransportProductionTest {
               saved.message = "changed";
               throw o as Error;
             }
-          }
+          };
           return step();
         }
         """;
@@ -550,7 +550,7 @@ public class ErrorRethrowTransportProductionTest {
             check(cause[4].endsWith("src/lib.deal:3:19"), "saved cause keeps raising origin");
             checkEq("number", cause[5], "saved cause expected");
             checkEq("string", cause[6], "saved cause actual");
-            check(cause[7].matches("lib#inner@F\\d+,lib#fail@F\\d+,app#step@F\\d+,app#mutate@F\\d+"),
+            check(cause[7].matches("lib#inner@F\\d+,lib#fail@F\\d+,app#<anonymous>@F\\d+,app#mutate@F\\d+"),
                 "saved cause keeps captured frames: " + cause[7]);
             checkEq("-", cause[8], "saved cause gains no cause");
         }

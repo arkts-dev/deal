@@ -48,7 +48,7 @@ import java.util.stream.Stream;
  * shorter function value is adapted at every statically typed
  * function-value position, so the position's own boundary validates the
  * adapted value's exact target signature instead of rejecting a
- * source-compatible assignment (docs/spec-v1.5.md Function type
+ * source-compatible assignment (docs/spec-v1.6.md Function type
  * compatibility; Arity extension adapter).
  *
  * <p>The three published artifacts run the corpus fixtures' own exact
@@ -112,7 +112,7 @@ public final class FunctionArityExtensionProductionTest {
      * {@code number} or {@code bytes} shadow is the adapted operand at the
      * parameter, return, class supplied-field, class field-write, array
      * literal and array write positions, using ordinary lexical bindings
-     * with no compiler intrinsic seeds (docs/spec-v1.5.md §Name resolution).
+     * with no compiler intrinsic seeds (docs/spec-v1.6.md §Name resolution).
      */
     private static final String CONVERSION_SHADOW =
         "arity-extension-conversion-shadow";
@@ -305,7 +305,7 @@ public final class FunctionArityExtensionProductionTest {
      * wrapper admits every declared target parameter, so the host that
      * invokes the published adapter value with a wrong-typed ignored
      * (trailing) argument fails closed with the typed-boundary row instead
-     * of silently dropping the argument (docs/spec-v1.5.md Arity extension
+     * of silently dropping the argument (docs/spec-v1.6.md Arity extension
      * adapter: the wrapper checks the parameter it ignores). The declared
      * parameter is {@code table} so the JVM host ABI's declared function
      * wrapper can hand a non-table value to the trailing position.
@@ -685,7 +685,7 @@ public final class FunctionArityExtensionProductionTest {
             externals = combined;
         }
         StringBuilder json = new StringBuilder(
-            "{\"languageVersion\":\"1.5\",\"moduleRoots\":[\"src\"]");
+            "{\"languageVersion\":\"1.6\",\"moduleRoots\":[\"src\"]");
         if (!externals.isEmpty()) {
             json.append(",\"externals\":{");
             boolean first = true;
@@ -1612,7 +1612,7 @@ public final class FunctionArityExtensionProductionTest {
             Path root, String source, java.util.Set<String> callbacks)
             throws Exception {
         writeFile(root, "deal.json",
-            "{\"languageVersion\":\"1.5\",\"moduleRoots\":[\"src\"]}");
+            "{\"languageVersion\":\"1.6\",\"moduleRoots\":[\"src\"]}");
         writeFile(root, "src/" + ENTRY_MODULE + ".deal", source);
         Path src = root.resolve("src");
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(

@@ -139,7 +139,7 @@ public class BindingsValidationTest {
             return null;
         }
         return SemanticLowerer.lowerModuleValidationCore(moduleOf(slice),
-            SemanticProfile.DEAL_V1_5_BINARY64, Map.of(), INTERFACE_HASH, REGISTRY_HASH,
+            SemanticProfile.DEAL_V1_6_BINARY64, Map.of(), INTERFACE_HASH, REGISTRY_HASH,
             SemanticIdAllocator.over(List.of(MODULE)));
     }
 
@@ -210,7 +210,7 @@ public class BindingsValidationTest {
     private static final String IFACE = "interface-digest-1";
     private static final String REGISTRY = "capability-registry-hash-1";
     private static final String LCH =
-        LoweringContextHash.of(SemanticProfile.DEAL_V1_5_BINARY64, REGISTRY);
+        LoweringContextHash.of(SemanticProfile.DEAL_V1_6_BINARY64, REGISTRY);
 
     private static final RuntimeDescriptor INT = RuntimeDescriptor.Number.INSTANCE;
     private static final RuntimeDescriptor.Func SIG0 =
@@ -738,7 +738,7 @@ public class BindingsValidationTest {
             Map<FunctionAllocationIdentity, FunctionExecutionBinding> registry,
             List<SemanticOp> ops) {
         return new LoweredModuleUnit(LoweredModuleUnit.FORMAT_VERSION,
-            SemanticProfile.DEAL_V1_5_BINARY64, MOD, IFACE, LCH, Set.of(), Map.of(), Map.of(),
+            SemanticProfile.DEAL_V1_6_BINARY64, MOD, IFACE, LCH, Set.of(), Map.of(), Map.of(),
             functions, new ModuleInitPlan(List.of(), INIT_BLOCK), ExportPlan.empty(), registry,
             ops, new StructuredBodyTable(Map.of(), Map.of()),
             new ClassFactoryRegistry(Map.of()),
@@ -867,13 +867,13 @@ public class BindingsValidationTest {
               }
             }
             function nestedSelfReference(): void {
-              function g(): void { let copy: () => void = g; }
+              let g: () => void = function(): void { let copy: () => void = g; };
             }
             function nestedCaptureChain(): void {
               let x: number = 1;
-              function make(): void {
+              let make: () => void = function(): void {
                 let inner: () => void = function(): void { let read: number = x; };
-              }
+              };
             }
             function ancestorLoads(): void {
               let x = 1;
@@ -892,6 +892,64 @@ public class BindingsValidationTest {
             """, "the surviving source-level positive shapes");
         testCellKindInvariant(result);
         testAssignmentSnapshotNegatives();
+        testAdaptedSelfInitializerNegatives();
+    }
+
+    private static void testAdaptedSelfInitializerNegatives() {
+        var result = validatedResult("""
+            function outer():void {
+              let recur:(n:number)=>void=function():void{let saved:(n:number)=>void=recur;};
+            }
+            """, "a directly adapted recursive initializer");
+        if (result == null) return;
+        var base = result.lowering().unit();
+        var adapter = base.ops().stream().filter(op -> op.kind()
+            == SemanticOpKind.FUNCTION_ADAPT).findFirst().orElseThrow();
+        var adapt = (KindPayload.FunctionAdaptPayload) adapter.payload();
+        var closure = ((AdaptSourceRef.Value) adapt.source()).value();
+        var init = base.ops().stream().filter(op -> op.payload()
+            instanceof KindPayload.BindingInitPayload p && adapter.result().equals(p.value()))
+            .findFirst().orElseThrow();
+        var boundary = base.ops().stream().filter(op -> op.payload()
+            instanceof KindPayload.BoundaryPayload p && adapter.result().equals(p.input()))
+            .findFirst().orElseThrow();
+        for (String fault : List.of("source", "commit", "intervening")) {
+            var changed = new ArrayList<>(base.ops());
+            SemanticOp victim = fault.equals("source") ? adapter : fault.equals("commit") ? init : boundary;
+            KindPayload payload = switch (fault) {
+                case "source" -> new KindPayload.FunctionAdaptPayload(adapt.sourceSignature(),
+                    adapt.targetSignature(), CaptureMode.VALUE, new AdaptSourceRef.Value(nextValue()), null);
+                case "commit" -> {
+                    var p = (KindPayload.BindingInitPayload) init.payload();
+                    yield new KindPayload.BindingInitPayload(p.binding(), p.generation(), closure);
+                }
+                default -> new KindPayload.ConstPayload(new ScalarValue.Number(1));
+            };
+            var replacement = opWith(victim.opId(), fault.equals("intervening")
+                ? SemanticOpKind.CONST : victim.kind(), payload,
+                victim.result(), victim.resultType(), victim.operandTypes(), victim.operands(),
+                victim.failurePolicy(), victim.origin().parentOpId());
+            changed.set(changed.indexOf(victim), replacement);
+            var mutated = new LoweredModuleUnit(base.formatVersion(), base.semanticProfile(),
+                base.moduleId(), base.interfaceHash(), base.loweringContextHash(),
+                base.requiredCapabilities(), base.constructCoverage(), base.classLayouts(),
+                base.functions(), base.moduleInit(), base.exportPlan(), base.functionBindings(),
+                changed, base.bodyTable(), base.classFactories(), base.classBindingFacts());
+            var raw = deal.semantic.ir.RawUnit.fromTyped(mutated);
+            String text = deal.semantic.ir.SemanticIrValidator.toUnitText(mutated);
+            var reparsed = deal.semantic.ir.ContractSnapshotCanonicalizer.parseUnit(
+                (deal.semantic.ir.CanonicalJson.Obj) deal.semantic.ir.CanonicalJson.parse(text));
+            for (var transported : List.of(mutated,
+                    deal.semantic.ir.RawUnitMaterializer.materialize(raw),
+                    deal.semantic.ir.RawUnitMaterializer.materialize(reparsed))) {
+                var rejected = BindingsProductionValidator.validate(transported, transported.bodyTable());
+                check(rejected.isPresent() && rejected.get().code().equals("E6005")
+                        && rejected.get().message().contains("module 'main'")
+                        && rejected.get().message().contains("validatorRule INIT_DOMINATES_LOAD,")
+                        && rejected.get().message().contains("origin BindingsProductionValidator INIT_DOMINATES_LOAD"),
+                    "adapted self initializer " + fault + " rejects before publication: " + rejected);
+            }
+        }
     }
 
     private static void testAssignmentSnapshotNegatives() {

@@ -1742,8 +1742,9 @@ public final class BindingsProductionValidator {
      * The size-1 SCC own-name terminating arm: the load is of the
      * declared function's own name inside its own body, the detaching
      * op is {@code CLOSURE_NEW(f)} at the declaration, and
-     * {@code BINDING_INIT(f)} is the declaration's immediate commit
-     * after it (B4) — no call can observe the half-published value.
+     * {@code BINDING_INIT(f)} immediately commits it, or its directly
+     * consuming VALUE adapter, through the declaration boundary. No call
+     * can observe the half-published value.
      */
     private static boolean ownNameTerminates(Model model, BlockId root, BindingId binding,
                                              long generation) {
@@ -1756,6 +1757,20 @@ public final class BindingsProductionValidator {
             return false;
         }
         SemanticOp next = model.nextOpInBlock(detaching);
+        if (next != null && next.kind() == SemanticOpKind.FUNCTION_ADAPT
+                && next.payload() instanceof KindPayload.FunctionAdaptPayload adapt
+                && adapt.mode() == CaptureMode.VALUE
+                && adapt.source() instanceof AdaptSourceRef.Value source
+                && closureValue.equals(source.value())
+                && next.result() instanceof ValueId adaptedValue) {
+            closureValue = adaptedValue;
+            next = model.nextOpInBlock(next);
+        }
+        if (next != null && next.payload() instanceof KindPayload.BoundaryPayload boundary
+                && boundary.kind() == BoundaryKind.VARIABLE_DECLARATION
+                && closureValue.equals(boundary.input())) {
+            next = model.nextOpInBlock(next);
+        }
         if (next == null || next.kind() != SemanticOpKind.BINDING_INIT) {
             return false;
         }

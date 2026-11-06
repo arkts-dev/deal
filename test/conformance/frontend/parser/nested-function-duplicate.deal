@@ -1,4 +1,4 @@
 // @spec: Functions — Function declaration; Variables — Redeclaration
-// @description: Nested function declarations validate duplicate without invoking the body.
+// @description: Local function bindings validate duplicate without invoking the body.
 // @expected: compile-error E2002
-export function main():null{function f():number{return 1;}function f():number{return 2;}return null;}
+export function main():null{let f = function():number{return 1;};let f = function():number{return 2;};return null;}

@@ -198,8 +198,8 @@ public class DiagnosticRangeTest {
         // CRLF: the '\r' increments the line (1->2) and resets the column;
         // the following '\n' consumes no further line/column change.
         int[] expectedLine =   {1, 1, 1, 2, 2, 2, 3, 3, 3, 3};
-        int[] expectedColumn = {2, 3, 4, 1, 1, 2, 1, 2, 3, 4};
-        int[] expectedOffset = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+        int[] expectedColumn = {2, 3, 5, 1, 1, 2, 1, 2, 3, 4};
+        int[] expectedOffset = {1, 2, 4, 5, 6, 7, 8, 9, 10, 11};
         int[] expectedScalar = {'a', '\t', 0x1F600, '\r', '\n', 'c', '\r', 'd', 0xD800, 'e'};
 
         int line = 1;
@@ -223,13 +223,11 @@ public class DiagnosticRangeTest {
         check(c.atEnd(), "full walk: atEnd() not true after all scalars");
         check(c.peekScalar() == -1, "full walk: peekScalar() != -1 at end");
         check(c.advance() == -1, "full walk: advance() != -1 at end");
-        checkCursor("full walk after end", c, 3, 4, 10);
+        checkCursor("full walk after end", c, 3, 4, 11);
 
-        // Independent recomputation: the scalar offset must equal the JDK
-        // code-point count of the fixture (unpaired surrogates included).
-        check(c.scalarOffset() == s.codePointCount(0, s.length()),
-            "full walk: final scalarOffset " + c.scalarOffset()
-                + " != codePointCount " + s.codePointCount(0, s.length()));
+        // UTF-16 offsets count both units of a supplementary character.
+        check(c.scalarOffset() == s.length(),
+            "full walk: final offset " + c.scalarOffset() + " != UTF-16 length " + s.length());
 
         // The tab at step 1 increments the column by exactly one scalar.
         check(expectedColumn[1] == 3 && expectedColumn[0] == 2,
@@ -324,30 +322,30 @@ public class DiagnosticRangeTest {
     private static void testCursorSurrogates() {
         System.out.println("-- ScalarSourceCursor: surrogate pairs and unpaired surrogates --");
 
-        // A valid pair is one advance, one column, one offset.
+        // A valid pair is one advance, two UTF-16 columns and offsets.
         ScalarSourceCursor pair = new ScalarSourceCursor("\uD83D\uDE00");
         check(pair.peekScalar() == 0x1F600, "pair: peekScalar() != U+1F600");
         check(pair.advance() == 0x1F600, "pair: advance() != U+1F600");
-        checkCursor("pair after advance", pair, 1, 2, 1);
+        checkCursor("pair after advance", pair, 1, 3, 2);
         check(pair.atEnd(), "pair: atEnd() not true after the pair");
         check(pair.peekScalar() == -1, "pair: peekScalar() != -1 at end");
         check(pair.advance() == -1, "pair: advance() != -1 at end");
-        checkCursor("pair after end", pair, 1, 2, 1);
+        checkCursor("pair after end", pair, 1, 3, 2);
 
         // U+10000 (linear-B syllable) is a supplementary pair as well.
         ScalarSourceCursor pair2 = new ScalarSourceCursor("\uD800\uDC00");
         check(pair2.peekScalar() == 0x10000, "pair2: peekScalar() != U+10000");
         pair2.advance();
-        checkCursor("pair2 after advance", pair2, 1, 2, 1);
+        checkCursor("pair2 after advance", pair2, 1, 3, 2);
 
-        // Pair in the middle of a line: still one column.
+        // Pair in the middle of a line: two columns.
         ScalarSourceCursor mid = new ScalarSourceCursor("a\uD83D\uDE00b");
         mid.advance(); // 'a'
         checkCursor("a pair b after 'a'", mid, 1, 2, 1);
         mid.advance(); // pair
-        checkCursor("a pair b after pair", mid, 1, 3, 2);
+        checkCursor("a pair b after pair", mid, 1, 4, 3);
         mid.advance(); // 'b'
-        checkCursor("a pair b after 'b'", mid, 1, 4, 3);
+        checkCursor("a pair b after 'b'", mid, 1, 5, 4);
 
         // An unpaired high surrogate at end of input is one recovery unit.
         ScalarSourceCursor loneHigh = new ScalarSourceCursor("\uD83D");
@@ -374,9 +372,9 @@ public class DiagnosticRangeTest {
         ScalarSourceCursor recovery = new ScalarSourceCursor("\uD83D\uDC00\uD83D");
         recovery.advance(); // valid pair
         recovery.advance(); // unpaired high at end
-        checkCursor("recovery walk", recovery, 1, 3, 2);
+        checkCursor("recovery walk", recovery, 1, 4, 3);
         recovery.advance(); // no-op at end
-        checkCursor("recovery walk after end", recovery, 1, 3, 2);
+        checkCursor("recovery walk after end", recovery, 1, 4, 3);
     }
 
     private static void testCursorMarkReset() {
@@ -395,32 +393,32 @@ public class DiagnosticRangeTest {
         c.advance();
         c.advance();
         c.advance();
-        checkCursor("before mark", c, 1, 4, 3);
+        checkCursor("before mark", c, 1, 5, 4);
         ScalarSourceCursor.Mark m = c.mark();
-        check(m.line() == 1 && m.column() == 4
-                && m.scalarOffset() == 3 && m.index() == 4,
+        check(m.line() == 1 && m.column() == 5
+                && m.scalarOffset() == 4 && m.index() == 4,
             "mid-walk mark: unexpected snapshot " + m);
 
         // Advance further (CRLF pair) and verify reset restores exactly.
         c.advance();
         c.advance();
-        checkCursor("after further advances", c, 2, 1, 5);
+        checkCursor("after further advances", c, 2, 1, 6);
         c.reset(m);
-        checkCursor("after reset to mid-walk mark", c, 1, 4, 3);
+        checkCursor("after reset to mid-walk mark", c, 1, 5, 4);
         check(c.peekScalar() == '\r', "after reset: peekScalar() != '\\r'");
 
         // Deterministic: the remaining walk reproduces the fresh-cursor state.
         for (int i = 0; i < 7; i++) {
             c.advance();
         }
-        checkCursor("re-walk to end after reset", c, 3, 4, 10);
+        checkCursor("re-walk to end after reset", c, 3, 4, 11);
         check(c.atEnd(), "re-walk: atEnd() not true");
 
         // Mark at end.
         ScalarSourceCursor.Mark end = c.mark();
         c.advance(); // no-op
         c.reset(end);
-        checkCursor("mark at end after reset", c, 3, 4, 10);
+        checkCursor("mark at end after reset", c, 3, 4, 11);
         check(c.atEnd(), "mark at end: atEnd() not true after reset");
 
         // Reset to the start mark restores the initial state exactly.
@@ -452,10 +450,10 @@ public class DiagnosticRangeTest {
 
         String s = "a\t\uD83D\uDE00\r\nc\rd\uD800e";
 
-        check(ScalarSourceCursor.scalarCount(s) == 10,
-            "scalarCount(fixture) " + ScalarSourceCursor.scalarCount(s) + " != 10");
-        check(ScalarSourceCursor.scalarCount(s) == s.codePointCount(0, s.length()),
-            "scalarCount(fixture) != codePointCount(" + s.codePointCount(0, s.length()) + ")");
+        check(ScalarSourceCursor.scalarCount(s) == 11,
+            "source unit count " + ScalarSourceCursor.scalarCount(s) + " != 11");
+        check(ScalarSourceCursor.scalarCount(s) == s.length(),
+            "source unit count != UTF-16 length");
         check(ScalarSourceCursor.scalarCount(s) == ScalarSourceCursor.scalarCount(s, 0, s.length()),
             "scalarCount(s) != scalarCount(s, 0, s.length())");
 
@@ -486,16 +484,16 @@ public class DiagnosticRangeTest {
         }
 
         // Surrogate-pair counting.
-        check(ScalarSourceCursor.scalarCount("\uD83D\uDE00") == 1,
-            "scalarCount(valid pair) != 1");
+        check(ScalarSourceCursor.scalarCount("\uD83D\uDE00") == 2,
+            "source units(valid pair) != 2");
         check(ScalarSourceCursor.scalarCount("\uD83D") == 1,
             "scalarCount(lone high) != 1");
         check(ScalarSourceCursor.scalarCount("\uDC00") == 1,
             "scalarCount(lone low) != 1");
-        check(ScalarSourceCursor.scalarCount("\uD83D\uDE00\uD800") == 2,
-            "scalarCount(pair + lone high) != 2");
-        check(ScalarSourceCursor.scalarCount("\uD800\uD83D\uDE00") == 2,
-            "scalarCount(lone high + pair) != 2");
+        check(ScalarSourceCursor.scalarCount("\uD83D\uDE00\uD800") == 3,
+            "source units(pair + lone high) != 3");
+        check(ScalarSourceCursor.scalarCount("\uD800\uD83D\uDE00") == 3,
+            "source units(lone high + pair) != 3");
         check(ScalarSourceCursor.scalarCount("\uD83D\u0041") == 2,
             "scalarCount(lone high + 'A') != 2");
         check(ScalarSourceCursor.scalarCount("ab") == 2, "scalarCount(\"ab\") != 2");
@@ -505,8 +503,8 @@ public class DiagnosticRangeTest {
         // Substring overload: direct code-point count of the UTF-16 range.
         check(ScalarSourceCursor.scalarCount(s, 0, 1) == 1,
             "scalarCount(s, 0, 1) != 1");
-        check(ScalarSourceCursor.scalarCount(s, 1, 4) == 2,
-            "scalarCount(s, 1, 4) != 2"); // tab + astral pair
+        check(ScalarSourceCursor.scalarCount(s, 1, 4) == 3,
+            "source units(s, 1, 4) != 3"); // tab + astral pair
         check(ScalarSourceCursor.scalarCount(s, 4, 6) == 2,
             "scalarCount(s, 4, 6) != 2"); // CRLF
         check(ScalarSourceCursor.scalarCount(s, 9, 10) == 1,
@@ -520,8 +518,8 @@ public class DiagnosticRangeTest {
             "scalarCount(split low half) != 1");
 
         // Errors: none — degenerate bounds never throw.
-        check(ScalarSourceCursor.scalarCount(s, -5, 100) == 10,
-            "scalarCount clamped bounds != 10");
+        check(ScalarSourceCursor.scalarCount(s, -5, 100) == 11,
+            "source units clamped bounds != 11");
         check(ScalarSourceCursor.scalarCount(s, 100, 200) == 0,
             "scalarCount beyond end != 0");
         check(ScalarSourceCursor.scalarCount(s, 5, 2) == 0,
@@ -567,9 +565,9 @@ public class DiagnosticRangeTest {
         // Independent recomputation: 'a' + U+1F600 + 'b' is three decoded
         // scalars and four UTF-16 units; start + scalarLength must equal the
         // expected half-open end offset.
-        check(ScalarSourceCursor.scalarCount(known.lexeme()) == 3,
-            "scalarCount(known.lexeme()) " + ScalarSourceCursor.scalarCount(known.lexeme())
-                + " != 3");
+        check(ScalarSourceCursor.scalarCount(known.lexeme()) == 4,
+            "source units(known.lexeme()) " + ScalarSourceCursor.scalarCount(known.lexeme())
+                + " != 4");
         check(known.lexeme().length() == 4,
             "known-offset Token UTF-16 length " + known.lexeme().length() + " != 4");
         check(known.startScalarOffset() + known.scalarLength() == 10,
@@ -862,7 +860,7 @@ public class DiagnosticRangeTest {
                                             int expectedLine, int expectedColumn,
                                             String context) {
         ScalarSourceCursor cursor = new ScalarSourceCursor(source);
-        for (int i = 0; i < offset; i++) {
+        while (cursor.scalarOffset() < offset) {
             cursor.advance();
         }
         check(cursor.line() == expectedLine && cursor.column() == expectedColumn,
@@ -926,13 +924,13 @@ public class DiagnosticRangeTest {
         if (e1001 != null) {
             DiagnosticRange r = e1001.range();
             check(r.origin() == RangeOrigin.SOURCE
-                    && r.startLine() == 1 && r.startColumn() == 18
-                    && r.endLine() == 1 && r.endColumn() == 19
-                    && r.startScalarOffset() == 17 && r.endScalarOffset() == 18
+                    && r.startLine() == 1 && r.startColumn() == 19
+                    && r.endLine() == 1 && r.endColumn() == 20
+                    && r.startScalarOffset() == 18 && r.endScalarOffset() == 19
                     && r.scalarLength() == 1,
-                "T3: E1001 at (1,18)-(1,19) offsets (17,18) len 1, got " + r);
+                "T3: E1001 at (1,19)-(1,20) offsets (18,19) len 1, got " + r);
         }
-        checkTemplateCursor(src3, 17, 1, 18, "T3");
+        checkTemplateCursor(src3, 18, 1, 19, "T3");
 
         // 4. Astral content before the interpolation: the supplementary
         //    character counts one scalar in column and offset arithmetic.
@@ -943,13 +941,13 @@ public class DiagnosticRangeTest {
         if (e1037c != null) {
             DiagnosticRange r = e1037c.range();
             check(r.origin() == RangeOrigin.SOURCE
-                    && r.startLine() == 1 && r.startColumn() == 18
-                    && r.endLine() == 1 && r.endColumn() == 18
-                    && r.startScalarOffset() == 17 && r.endScalarOffset() == 17
+                    && r.startLine() == 1 && r.startColumn() == 19
+                    && r.endLine() == 1 && r.endColumn() == 19
+                    && r.startScalarOffset() == 18 && r.endScalarOffset() == 18
                     && r.scalarLength() == 0,
-                "T4: E1037 at (1,18)-(1,18) offsets (17,17) len 0, got " + r);
+                "T4: E1037 at (1,19)-(1,19) offsets (18,18) len 0, got " + r);
         }
-        checkTemplateCursor(src4, 17, 1, 18, "T4");
+        checkTemplateCursor(src4, 18, 1, 19, "T4");
 
         // 5. A tab before the interpolation counts one scalar.
         String src5 = "let x = `\t${foo +}`;";
@@ -978,13 +976,13 @@ public class DiagnosticRangeTest {
         if (e1042 != null) {
             DiagnosticRange r = e1042.range();
             check(r.origin() == RangeOrigin.SOURCE
-                    && r.startLine() == 1 && r.startColumn() == 15
-                    && r.endLine() == 1 && r.endColumn() == 17
-                    && r.startScalarOffset() == 14 && r.endScalarOffset() == 16
+                    && r.startLine() == 1 && r.startColumn() == 16
+                    && r.endLine() == 1 && r.endColumn() == 18
+                    && r.startScalarOffset() == 15 && r.endScalarOffset() == 17
                     && r.scalarLength() == 2,
-                "T6: E1042 at (1,15)-(1,17) offsets (14,16) len 2, got " + r);
+                "T6: E1042 at (1,16)-(1,18) offsets (15,17) len 2, got " + r);
         }
-        checkTemplateCursor(src6, 14, 1, 15, "T6");
+        checkTemplateCursor(src6, 15, 1, 16, "T6");
 
         // 7. Empty expression: E1042 and the D16 placeholder carry zero
         //    scalar length at the expression-start raw position.
@@ -1662,7 +1660,7 @@ public class DiagnosticRangeTest {
             // (the same mapping the gate's Compile Diagnostic comparison
             // applies) and the complete range ends at column 37.
             SourceCoordinatePin pin = new SourceCoordinatePin(corpusPath,
-                headerLines + 3, 30, 37);
+                headerLines + 3, 31, 38);
             Optional<String> mismatch = scalarCoordinateMismatch(name, pin,
                 diagnostic, headerLines);
             check(mismatch.isEmpty(), name + ": the normalized source"
@@ -1676,7 +1674,7 @@ public class DiagnosticRangeTest {
             check(scalarCoordinateMismatch(name,
                     new SourceCoordinatePin(
                         "frontend/v12-snippets/scalar-coordinate-other.deal",
-                        headerLines + 3, 30, 37), diagnostic, headerLines)
+                        headerLines + 3, 31, 38), diagnostic, headerLines)
                     .isPresent(),
                 name + ": the wrong-file control is rejected");
             check(scalarCoordinateMismatch(name, new SourceCoordinatePin(
@@ -3402,15 +3400,15 @@ public class DiagnosticRangeTest {
     /** Cross-checks a lexer range against an independent cursor recomputation. */
     private static void checkRangeAgainstCursor(String label, SourceScalarRange r,
                                                 String source) {
-        ScalarSourceCursor start = new ScalarSourceCursor(source);
-        for (int i = 0; i < r.startScalarOffset(); i++) {
+        ScalarSourceCursor start = new ScalarSourceCursor(source.substring(0, r.startScalarOffset()));
+        while (!start.atEnd()) {
             start.advance();
         }
         check(start.line() == r.startLine() && start.column() == r.startColumn()
                 && start.scalarOffset() == r.startScalarOffset(),
             label + ": start of " + r + " disagrees with cursor start " + start.position());
-        ScalarSourceCursor end = new ScalarSourceCursor(source);
-        for (int i = 0; i < r.endScalarOffset(); i++) {
+        ScalarSourceCursor end = new ScalarSourceCursor(source.substring(0, r.endScalarOffset()));
+        while (!end.atEnd()) {
             end.advance();
         }
         check(end.line() == r.endLine() && end.column() == r.endColumn()
@@ -3437,25 +3435,25 @@ public class DiagnosticRangeTest {
                 "unicode token " + i + " kind " + ts.get(i).kind() + " != " + kinds[i]);
         }
         checkRange("OBJECT_START", ts.get(0).range(), 1, 1, 1, 2, 0, 1);
-        checkRange("KEY", ts.get(1).range(), 2, 2, 2, 7, 4, 9);
+        checkRange("KEY", ts.get(1).range(), 2, 2, 2, 8, 4, 10);
         check(("k\uD83D\uDE00y").equals(ts.get(1).decodedValue()),
             "unicode key decoded value: " + ts.get(1).decodedValue());
-        checkRange("COLON", ts.get(2).range(), 2, 8, 2, 9, 10, 11);
-        checkRange("nested OBJECT_START", ts.get(3).range(), 2, 10, 2, 11, 12, 13);
-        checkRange("nested KEY", ts.get(4).range(), 2, 11, 2, 14, 13, 16);
+        checkRange("COLON", ts.get(2).range(), 2, 9, 2, 10, 11, 12);
+        checkRange("nested OBJECT_START", ts.get(3).range(), 2, 11, 2, 12, 13, 14);
+        checkRange("nested KEY", ts.get(4).range(), 2, 12, 2, 15, 14, 17);
         check("n".equals(ts.get(4).decodedValue()), "nested key decoded value");
-        checkRange("nested COLON", ts.get(5).range(), 2, 15, 2, 16, 17, 18);
-        checkRange("ARRAY_START", ts.get(6).range(), 2, 17, 2, 18, 19, 20);
-        checkRange("NUMBER", ts.get(7).range(), 2, 18, 2, 19, 20, 21);
+        checkRange("nested COLON", ts.get(5).range(), 2, 16, 2, 17, 18, 19);
+        checkRange("ARRAY_START", ts.get(6).range(), 2, 18, 2, 19, 20, 21);
+        checkRange("NUMBER", ts.get(7).range(), 2, 19, 2, 20, 21, 22);
         check(Long.valueOf(1L).equals(ts.get(7).decodedValue()),
             "NUMBER decoded value " + ts.get(7).decodedValue() + " != 1L");
-        checkRange("COMMA", ts.get(8).range(), 2, 19, 2, 20, 21, 22);
-        checkRange("STRING", ts.get(9).range(), 2, 21, 2, 25, 23, 27);
+        checkRange("COMMA", ts.get(8).range(), 2, 20, 2, 21, 22, 23);
+        checkRange("STRING", ts.get(9).range(), 2, 22, 2, 27, 24, 29);
         check(("v\uD83D\uDE00").equals(ts.get(9).decodedValue()),
             "STRING decoded value: " + ts.get(9).decodedValue());
-        checkRange("ARRAY_END", ts.get(10).range(), 2, 25, 2, 26, 27, 28);
-        checkRange("nested OBJECT_END", ts.get(11).range(), 2, 26, 2, 27, 28, 29);
-        checkRange("root OBJECT_END", ts.get(12).range(), 3, 1, 3, 2, 31, 32);
+        checkRange("ARRAY_END", ts.get(10).range(), 2, 27, 2, 28, 29, 30);
+        checkRange("nested OBJECT_END", ts.get(11).range(), 2, 28, 2, 29, 30, 31);
+        checkRange("root OBJECT_END", ts.get(12).range(), 3, 1, 3, 2, 33, 34);
 
         // Members in value-completion order: the nested member completes first.
         List<JsonRangeLexer.JsonMemberRange> ms = r.members();
@@ -3464,16 +3462,16 @@ public class DiagnosticRangeTest {
         check(inner.path().equals(List.of("k\uD83D\uDE00y", "n")),
             "inner member path " + inner.path());
         check("n".equals(inner.keyText()), "inner member keyText");
-        checkRange("inner keyRange", inner.keyRange(), 2, 11, 2, 14, 13, 16);
-        checkRange("inner valueRange", inner.valueRange(), 2, 17, 2, 26, 19, 28);
-        checkRange("inner memberRange", inner.memberRange(), 2, 11, 2, 26, 13, 28);
+        checkRange("inner keyRange", inner.keyRange(), 2, 12, 2, 15, 14, 17);
+        checkRange("inner valueRange", inner.valueRange(), 2, 18, 2, 28, 20, 30);
+        checkRange("inner memberRange", inner.memberRange(), 2, 12, 2, 28, 14, 30);
         JsonRangeLexer.JsonMemberRange outer = ms.get(1);
         check(outer.path().equals(List.of("k\uD83D\uDE00y")),
             "outer member path " + outer.path());
         check(("k\uD83D\uDE00y").equals(outer.keyText()), "outer member keyText");
-        checkRange("outer keyRange", outer.keyRange(), 2, 2, 2, 7, 4, 9);
-        checkRange("outer valueRange", outer.valueRange(), 2, 10, 2, 27, 12, 29);
-        checkRange("outer memberRange", outer.memberRange(), 2, 2, 2, 27, 4, 29);
+        checkRange("outer keyRange", outer.keyRange(), 2, 2, 2, 8, 4, 10);
+        checkRange("outer valueRange", outer.valueRange(), 2, 11, 2, 29, 13, 31);
+        checkRange("outer memberRange", outer.memberRange(), 2, 2, 2, 29, 4, 31);
 
         // Every asserted range is recomputed independently from the source.
         for (int i = 0; i < ts.size(); i++) {
@@ -3835,7 +3833,7 @@ public class DiagnosticRangeTest {
                 && Boolean.FALSE.equals(r2.orderedTokens().get(3).decodedValue()),
             "in-window pair: FALSE token");
         checkRange("in-window pair FALSE", r2.orderedTokens().get(3).range(),
-            1, 7, 1, 11, 6, 10);
+            1, 7, 1, 12, 6, 11);
         check(r2.faults().isEmpty(), "in-window pair: no faults " + r2.faults());
         check(r2.members().size() == 2 && "x".equals(r2.members().get(1).keyText()),
             "in-window pair: post-window member x paired");
@@ -3858,7 +3856,7 @@ public class DiagnosticRangeTest {
                     == JsonRangeLexer.JsonFaultKind.UNEXPECTED_CHARACTER,
             "true window: " + r3.faults());
         checkRange("true window fault", r3.faults().get(0).range(),
-            1, 11, 1, 12, 10, 11);
+            1, 11, 1, 13, 10, 12);
         check(r3.faults().get(0).message().contains("U+1F600"),
             "true window names the astral scalar: "
                 + r3.faults().get(0).message());
@@ -3880,7 +3878,7 @@ public class DiagnosticRangeTest {
                 && r4.faults().get(0).message().contains("U+1D7D8"),
             "astral digit: " + r4.faults());
         checkRange("astral digit fault", r4.faults().get(0).range(),
-            1, 8, 1, 9, 7, 8);
+            1, 8, 1, 10, 7, 9);
     }
 
     private static void testJsonRangeLexerTolerance() {

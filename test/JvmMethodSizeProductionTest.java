@@ -32,7 +32,7 @@ public final class JvmMethodSizeProductionTest {
         for (int i = 0; i < width; i++) {
             source.append("  let a").append(i).append(": number = ").append(i + 1).append(" + depth;\n");
         }
-        source.append("  function captured(): number { return a0; }\n")
+        source.append("  let captured: () => number = function(): number { return a0; };\n")
             .append("  if (captured() !== 1 + depth) { throw {code: \"TEST_FAIL\", message: \"segmented capture\"}; }\n")
             .append("  try { if (depth === 0) { return ");
         for (int i = 0; i < width; i++) {
@@ -86,7 +86,7 @@ public final class JvmMethodSizeProductionTest {
         Path root = Files.createTempDirectory("deal-jvm-method-size-");
         try {
             Files.writeString(root.resolve("deal.json"),
-                "{\"languageVersion\":\"1.5\",\"backend\":\"jvm\"}");
+                "{\"languageVersion\":\"1.6\",\"backend\":\"jvm\"}");
             Path entry = root.resolve("main.deal");
             Files.writeString(entry, source(width, calls, async));
             Path output = root.resolve("out");

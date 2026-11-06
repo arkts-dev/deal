@@ -266,10 +266,18 @@ public final class NativeCompiler {
     public static deal.toolchain.NativeBuildResult build(
             deal.toolchain.NativeBuildRequest request)
             throws deal.toolchain.NativeBuildException {
+        return build(request, List.of());
+    }
+
+    /** The same production build seam with instrumented runtime and host units. */
+    public static deal.toolchain.NativeBuildResult build(
+            deal.toolchain.NativeBuildRequest request, List<String> extraFlags)
+            throws deal.toolchain.NativeBuildException {
         var plan = deal.toolchain.NativeToolchain.plan(request);
         List<Path> objects = NativeRuntimeObjects.prepare(request.publicationRoot(),
-            request.optLevel(), plan.runtimeUnits(), List.of());
+            request.optLevel(), plan.runtimeUnits(), extraFlags);
         List<String> command = new ArrayList<>(plan.command());
+        command.addAll(1, extraFlags);
         for (int index = 0; index < plan.runtimeUnits().size(); index++) {
             String source = plan.runtimeUnits().get(index).toString();
             String object = objects.get(index).toString();

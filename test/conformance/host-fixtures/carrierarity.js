@@ -14,7 +14,7 @@
 module.exports = {
   Target: {
     $kind: "class",
-    $classname: "@$external/host.carrierarity/Target",
+    $classname: "@$external/host/carrierarity/Target",
   },
 
   Target_defaults: {

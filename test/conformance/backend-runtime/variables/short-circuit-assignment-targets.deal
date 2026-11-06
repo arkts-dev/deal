@@ -40,28 +40,28 @@ export function main(): null {
   let order: string = "";
   let array: boolean[] = [false];
 
-  function effect(): boolean { calls = calls + 1; return true; }
-  function markOrder(s: string): null { order = order + s; return null; }
-  function pickReceiver(): boolean[] { markOrder("V"); return array; }
-  function pickIndex(): number { markOrder("K"); return 0; }
-  function pickKey(flag: boolean): number {
+  let effect = function(): boolean { calls = calls + 1; return true; };
+  let markOrder = function(s: string): null { order = order + s; return null; };
+  let pickReceiver = function(): boolean[] { markOrder("V"); return array; };
+  let pickIndex = function(): number { markOrder("K"); return 0; };
+  let pickKey = function(flag: boolean): number {
     if (!flag) {
       throw { code: "TEST_FAIL", message: "key argument lost the logical result" };
     }
     markOrder("k");
     return 0;
-  }
-  function pickWith(flag: boolean): boolean[] {
+  };
+  let pickWith = function(flag: boolean): boolean[] {
     if (!flag) {
       throw { code: "TEST_FAIL", message: "receiver argument lost the logical result" };
     }
     markOrder("v");
     return array;
-  }
-  function rhsValue(): boolean { markOrder("R"); return true; }
-  function falseOperand(): boolean { markOrder("L"); return false; }
-  function trueOperand(): boolean { markOrder("T"); return true; }
-  function idb(value: boolean): boolean { return value; }
+  };
+  let rhsValue = function(): boolean { markOrder("R"); return true; };
+  let falseOperand = function(): boolean { markOrder("L"); return false; };
+  let trueOperand = function(): boolean { markOrder("T"); return true; };
+  let idb = function(value: boolean): boolean { return value; };
 
   // -- variable target: both operators, skipped abrupt + skipped effectful
   let flag: boolean = false;

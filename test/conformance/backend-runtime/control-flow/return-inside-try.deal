@@ -5,14 +5,14 @@
 
 export function test_return_inside_try(): number {
   let catchRan: boolean = false;
-  function attemptReturn(): number {
+  let attemptReturn = function(): number {
     try {
       return 7;
     } catch (e) {
       catchRan = true;
       return 99;
     }
-  }
+  };
   let got: number = attemptReturn();
   if (got !== 7 || catchRan !== false) {
     throw { code: "TEST_FAIL", message: "return inside try: wrong result or catch executed" };

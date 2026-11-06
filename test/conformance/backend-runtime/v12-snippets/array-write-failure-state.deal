@@ -6,9 +6,9 @@
 import * as c from "std/console";
 export function main(): null {
  let trace: string = ""; let xs: number[] = [7]; let alias: number[] = xs;
- function receiver(): number[] {trace = trace + "R"; return xs;}
- function index(): number {trace = trace + "I"; return 2;}
- function value(): number {trace = trace + "V"; return 9;}
+ let receiver = function(): number[] {trace = trace + "R"; return xs;};
+ let index = function(): number {trace = trace + "I"; return 2;};
+ let value = function(): number {trace = trace + "V"; return 9;};
  try {receiver()[index()] = value(); trace = trace + "X";} catch(e) {
   if((e as Error).code !== "E8002") {throw {code:"TEST_FAIL",message:"wrong bounds code"};} trace = trace + "C";
  }

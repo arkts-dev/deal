@@ -231,8 +231,8 @@ test("string.length publishes the shared typed-boundary token for a carrier", fu
 });
 
 test("string.substring rejects a non-number start with E8001 and the forwarded span", function() {
-  const err = assertErrorCode(function() { string.substring.$f("a", 1.5, 2, "t4.deal", 7, 8); }, "E8001");
-  assertEqual(err.message, "substring bounds must be finite integers", "string.substring entry message");
+  const err = assertErrorCode(function() { string.substring.$f("a", "bad", 2, "t4.deal", 7, 8); }, "E8001");
+  assertEqual(err.message, "expected number", "string.substring entry message");
   assertSpan(err, "t4.deal", 7, 8);
 });
 
@@ -265,10 +265,10 @@ test("math.sqrt negative inputs yield NaN; invalid arguments retain their source
 
 test("valid calls return values that re-validate through the $rt checks", function() {
   assertEqual(consoleMod.log.$f("x", "f.js", 1, 1), undefined, "console void result");
-  assertEqual(rt.checkNumber(string.length.$f("aé中😀b", "f.js", 1, 1), "f.js", 1, 1), 5, "length result");
+  assertEqual(rt.checkNumber(string.length.$f("aé中😀b", "f.js", 1, 1), "f.js", 1, 1), 6, "length result");
   assertEqual(rt.checkString(string.substring.$f("abc", 1, 3, "f.js", 1, 1), "f.js", 1, 1), "bc", "substring result");
   assertEqual(rt.checkBoolean(string.contains.$f("abc", "b", "f.js", 1, 1), "f.js", 1, 1), true, "contains result");
-  assertEqual(rt.checkString(string.replace.$f("a-a", "a", "x", "f.js", 1, 1), "f.js", 1, 1), "x-x", "replace result");
+  assertEqual(rt.checkString(string.replace.$f("a-a", "a", "x", "f.js", 1, 1), "f.js", 1, 1), "x-a", "replace result");
   rt.checkArray("[string]", string.split.$f("a,b", ",", "f.js", 1, 1), "f.js", 1, 1);
   assertEqual(rt.checkString(string.trim.$f("  x  ", "f.js", 1, 1), "f.js", 1, 1), "x", "trim result");
   rt.checkArray("[string]", table.keys.$f(rt.makeTable({}), "f.js", 1, 1), "f.js", 1, 1);
@@ -286,29 +286,30 @@ test("valid calls return values that re-validate through the $rt checks", functi
 });
 
 // ===========================================================================
-// std/string parity: scalar semantics, plain-text search/replace, %s trim
+// std/string parity: ECMAScript UTF-16 operations
 // ===========================================================================
 
-test("string.length counts Unicode scalar values", function() {
-  assertEqual(string.length.$f("aé中😀b", "f.js", 1, 1), 5, "length of aé中😀b");
+test("string.length counts UTF-16 units", function() {
+  assertEqual(string.length.$f("aé中😀b", "f.js", 1, 1), 6, "length of aé中😀b");
   assertEqual(string.length.$f("", "f.js", 1, 1), 0, "length of empty");
-  assertEqual(string.length.$f("😀", "f.js", 1, 1), 1, "a supplementary character is one scalar");
+  assertEqual(string.length.$f("😀", "f.js", 1, 1), 2, "a supplementary character is two units");
 });
 
-test("string.substring indexes scalar positions", function() {
+test("string.substring indexes UTF-16 units", function() {
   const s = "aé中😀b";
-  assertEqual(string.substring.$f(s, 1, 4, "f.js", 1, 1), "é中😀", "scalar positions 1..3");
-  assertEqual(string.substring.$f(s, 0, 5, "f.js", 1, 1), s, "the full span");
-  assertEqual(string.substring.$f("😀x", 0, 1, "f.js", 1, 1), "😀", "a supplementary scalar at position 0");
+  assertEqual(string.substring.$f(s, 1, 5, "f.js", 1, 1), "é中😀", "unit positions 1..4");
+  assertEqual(string.substring.$f(s, 0, 6, "f.js", 1, 1), s, "the full span");
+  assertEqual(string.substring.$f("😀x", 0, 1, "f.js", 1, 1), "\ud83d", "exact high unit");
+  assertEqual(string.substring.$f("😀x", 1, 2, "f.js", 1, 1), "\ude00", "exact low unit");
 });
 
-test("string.substring clamps per the v1.2 rules", function() {
+test("string.substring clamps, truncates and swaps bounds", function() {
   const s = "aé中😀b";
   assertEqual(string.substring.$f(s, -1, 3, "f.js", 1, 1), "aé中", "negative start behaves as 0");
-  assertEqual(string.substring.$f(s, 1, -1, "f.js", 1, 1), "", "negative end yields empty");
+  assertEqual(string.substring.$f(s, 1, -1, "f.js", 1, 1), "a", "negative end clamps then swaps");
   assertEqual(string.substring.$f(s, 2, 100, "f.js", 1, 1), "中😀b", "out-of-range end clamps");
   assertEqual(string.substring.$f(s, 3, 3, "f.js", 1, 1), "", "start == end yields empty");
-  assertEqual(string.substring.$f(s, 4, 2, "f.js", 1, 1), "", "start > end yields empty");
+  assertEqual(string.substring.$f(s, 5, 2, "f.js", 1, 1), "中😀", "start > end swaps");
   assertEqual(string.substring.$f(s, 10, 12, "f.js", 1, 1), "", "start beyond the string yields empty");
 });
 
@@ -323,19 +324,19 @@ test("string.contains/startsWith/endsWith are plain-text", function() {
   assertEqual(string.endsWith.$f("hello", "he", "f.js", 1, 1), false, "non-suffix");
 });
 
-test("string.replace replaces every occurrence plain-text", function() {
-  assertEqual(string.replace.$f("a-b-a", "a", "x", "f.js", 1, 1), "x-b-x", "every occurrence");
+test("string.replace replaces the first literal occurrence", function() {
+  assertEqual(string.replace.$f("a-b-a", "a", "x", "f.js", 1, 1), "x-b-a", "first occurrence only");
   assertEqual(string.replace.$f("abc", "z", "q", "f.js", 1, 1), "abc", "no match returns the original");
-  assertEqual(string.replace.$f("abc", "", "q", "f.js", 1, 1), "abc", "empty old returns s unchanged");
+  assertEqual(string.replace.$f("abc", "", "q", "f.js", 1, 1), "qabc", "empty old inserts at start");
   assertEqual(string.replace.$f("a.b", ".", "-", "f.js", 1, 1), "a-b", "dot is literal, never a pattern");
   assertEqual(string.replace.$f("a%b", "%", "x", "f.js", 1, 1), "axb", "% in the replacement is literal");
 });
 
 test("string.split edge cases", function() {
-  assertArrayEqual(string.split.$f("", ",", "f.js", 1, 1), [], "empty s -> empty array whatever the separator");
+  assertArrayEqual(string.split.$f("", ",", "f.js", 1, 1), [""], "empty s with nonempty separator");
   assertArrayEqual(string.split.$f("", "", "f.js", 1, 1), [], "empty s with empty separator");
-  assertArrayEqual(string.split.$f("aé中😀", "", "f.js", 1, 1), ["a", "é", "中", "😀"],
-    "empty separator -> one scalar per part");
+  assertArrayEqual(string.split.$f("aé中😀", "", "f.js", 1, 1), ["a", "é", "中", "\ud83d", "\ude00"],
+    "empty separator -> one UTF-16 unit per part");
   assertArrayEqual(string.split.$f("a,b,", ",", "f.js", 1, 1), ["a", "b", ""],
     "trailing separator -> empty last element");
   assertArrayEqual(string.split.$f("a,,b", ",", "f.js", 1, 1), ["a", "", "b"],
@@ -346,7 +347,7 @@ test("string.split edge cases", function() {
   assertArrayEqual(string.split.$f("a,b", ",", "f.js", 1, 1), ["a", "b"], "plain split");
 });
 
-test("string.trim strips exactly the Lua %s set at both ends", function() {
+test("string.trim strips ECMAScript whitespace at both ends", function() {
   const set = " \t\n\v\f\r";
   assertEqual(string.trim.$f(set + "x" + set, "f.js", 1, 1), "x", "all six chars at both ends");
   assertEqual(string.trim.$f(" \t\n\v\f\r", "f.js", 1, 1), "", "all-whitespace input");
@@ -354,8 +355,8 @@ test("string.trim strips exactly the Lua %s set at both ends", function() {
   assertEqual(string.trim.$f("a\tb c\nd", "f.js", 1, 1), "a\tb c\nd", "internal whitespace preserved");
   assertEqual(string.trim.$f("  x", "f.js", 1, 1), "x", "leading only");
   assertEqual(string.trim.$f("x  ", "f.js", 1, 1), "x", "trailing only");
-  assertEqual(string.trim.$f("\u00A0x\u00A0", "f.js", 1, 1), "\u00A0x\u00A0",
-    "NBSP is outside the %s set and preserved");
+  assertEqual(string.trim.$f("\u00A0x\u00A0", "f.js", 1, 1), "x",
+    "NBSP is ECMAScript whitespace");
 });
 
 // ===========================================================================
@@ -435,32 +436,37 @@ test("the decoded JSON null is language null at every null-admitting boundary", 
   assertEqual(arrayTable.actual, "array", "the array carrier's table-descriptor token");
 });
 
-test("json.parse rejects a lone high surrogate \\uD834 with E8001", function() {
-  assertErrorMessage(function() { json.parse.$f('"\\uD834"', "f.js", 1, 1); }, "E8001",
-    "unpaired surrogate escape");
+test("json.parse admits a lone high surrogate in a Record", function() {
+  const t = json.parse.$f('{"v":"\\uD834"}', "f.js", 1, 1);
+  assertEqual(t.get("v"), "\ud834", "exact high unit");
+  assertErrorMessage(() => json.parse.$f('"\\uD834"', "f.js", 1, 1), "E8001", "expected table");
 });
 
-test("json.parse rejects a lone low surrogate \\uDD1E with E8001", function() {
-  assertErrorMessage(function() { json.parse.$f('"\\uDD1E"', "f.js", 1, 1); }, "E8001",
-    "unpaired surrogate escape");
+test("json.parse admits a lone low surrogate in a Record", function() {
+  const t = json.parse.$f('{"v":"\\uDD1E"}', "f.js", 1, 1);
+  assertEqual(t.get("v"), "\udd1e", "exact low unit");
+  assertErrorMessage(() => json.parse.$f('"\\uDD1E"', "f.js", 1, 1), "E8001", "expected table");
 });
 
-test("json.parse rejects a surrogate pair mismatch \\uD834\\u0041 with E8001", function() {
-  assertErrorMessage(function() { json.parse.$f('"\\uD834\\u0041"', "f.js", 1, 1); }, "E8001",
-    "unpaired surrogate escape");
+test("json.parse decodes each Unicode escape independently", function() {
+  const t = json.parse.$f('{"v":"\\uD834\\u0041"}', "f.js", 1, 1);
+  assertEqual(t.get("v"), "\ud834A", "high unit followed by ordinary unit");
+  assertErrorMessage(() => json.parse.$f('"\\uD834\\u0041"', "f.js", 1, 1), "E8001", "expected table");
 });
 
-test("json.parse rejects lone surrogate escapes in an object key and a nested array element", function() {
-  assertErrorMessage(function() { json.parse.$f('{"\\uD834":1}', "f.js", 1, 1); }, "E8001",
-    "unpaired surrogate escape");
-  assertErrorMessage(function() { json.parse.$f('["\\uDD1E"]', "f.js", 1, 1); }, "E8001",
-    "unpaired surrogate escape");
+test("json.parse preserves lone units in keys and nested array elements", function() {
+  const keyed = json.parse.$f('{"\\uD834":1}', "f.js", 1, 1);
+  assertEqual(keyed.get("\ud834"), 1, "exact lone key");
+  const nested = json.parse.$f('{"a":["\\uDD1E"]}', "f.js", 1, 1);
+  assertEqual(nested.get("a").get("1"), "\udd1e", "exact nested unit");
+  assertErrorMessage(() => json.parse.$f('["\\uDD1E"]', "f.js", 1, 1), "E8001", "expected table");
 });
 
 test("json.parse accepts valid surrogate pairs (the combined U+1D11E pin)", function() {
   const t = json.parse.$f('{"v":"\\uD834\\uDD1E"}', "f.js", 1, 1);
   assertEqual(t.get("v"), "\uD834\uDD1E", "the pair combines to U+1D11E");
-  assertEqual(rt.scalarLength(t.get("v")), 1, "the combined pair is one scalar value");
+  assertEqual(t.get("v").length, 2, "the pair retains two UTF-16 units");
+  assertEqual(rt.scalars(t.get("v")).length, 1, "iteration combines the pair");
   const t2 = json.parse.$f('{"v":"\\uD800\\uDC00"}', "f.js", 1, 1);
   assertEqual(t2.get("v"), "\uD800\uDC00", "boundary pair U+10000");
   const t3 = json.parse.$f('{"v":"\\uDBFF\\uDFFF"}', "f.js", 1, 1);
@@ -555,26 +561,20 @@ test("json.stringify omits undefined members and yields undefined for the root",
   assertEqual(json.stringify.$f(rt.makeTable({ m: rt.MISSING }), "f.js", 1, 1), "{}", "undefined member");
 });
 
-test("json.stringify rejects unpaired-surrogate string values with the closed unsupported tuple", function() {
-  const err = assertErrorMessage(function() {
-    json.stringify.$f(rt.makeTable({ v: "\uD800" }), "f.js", 1, 1);
-  }, "E8001", "expected string, got UTF-16 surrogate code point");
-  assertEqual(err.actual, "invalid UTF-8 string", "unread malformed leaf rejected at ingress");
+test("json.stringify preserves lone-surrogate string values", function() {
+  const encoded = json.stringify.$f(rt.makeTable({ v: "\uD800" }), "f.js", 1, 1);
+  assertEqual(JSON.parse(encoded).v, "\ud800", "exact lone unit roundtrip");
 });
 
-test("json.stringify rejects unpaired-surrogate Map keys with E8001 (plain and mixed-key array-marked)", function() {
+test("json.stringify preserves lone-surrogate Map keys (plain and mixed-key array-marked)", function() {
   const plain = rt.makeTable({ ["\uD800"]: 1 });
-  const err = assertErrorMessage(function() { json.stringify.$f(plain, "f.js", 1, 1); },
-    "E8001", "expected string, got UTF-16 surrogate code point");
-  assertEqual(err.actual, "invalid UTF-8 string", "malformed key rejected at ingress");
-  // The array-marked Map comes from the shared decode conversion (the
-  // declared parse exit rejects a top-level array, so the decode
-  // producer is the runtime member). Generic stringify admits this carrier;
-  // the shared encode row independently exercises malformed-key rejection.
+  assertEqual(JSON.parse(json.stringify.$f(plain, "f.js", 1, 1))["\ud800"], 1, "exact lone key");
   const marked = rt.jsonParseValue([1, 2], "f.js", 1, 1);
   marked.set("\uD800", 3);
-  assertUnsupportedStringifyTuple(function() { rt.jsonStringifyText(marked, [], "f.js", 1, 1); },
-    "string", "array-marked invalid scalar key");
+  const decoded = JSON.parse(rt.jsonStringifyText(marked, [], "f.js", 1, 1));
+  assertEqual(decoded["\ud800"], 3, "array-marked lone key");
+  assertEqual(decoded["1"], 1, "existing first element retained");
+  assertEqual(decoded["2"], 2, "existing second element retained");
 });
 
 // ===========================================================================

@@ -366,7 +366,7 @@ public class JsSemanticEmitterTest {
 
     private static CompilerInvocation invocation() {
         return CompilerProfileProvider.resolve(
-            deal.semantic.ir.ReleaseState.V1_5_ACTIVE,
+            deal.semantic.ir.ReleaseState.V1_6_ACTIVE,
             CapabilityRegistry.releaseRegistry());
     }
 
@@ -780,7 +780,8 @@ public class JsSemanticEmitterTest {
             .filter(a -> a.moduleId().equals(new ModuleId("app")))
             .findFirst().orElseThrow();
         check(unmappedApp.source().contains(
-                fixture.sourceId(new ModuleId("app"))),
+                deal.semantic.SemanticRuntimeModel.escapeString(
+                    fixture.sourceId(new ModuleId("app")))),
             "the map-off artifact still embeds its runtime source metadata");
         // Mapping adds comments and nothing else: removing exactly the
         // source-comment lines reproduces the map-off bytes, so no generated
@@ -875,7 +876,7 @@ public class JsSemanticEmitterTest {
 
             export function attempt(c: Counter, value: number | null): number {
               c.n = c.n + 1;
-              function clear(): void { value = null; }
+              let clear = function(): void { value = null; };
               if (value !== null) {
                 clear();
                 return lib.need(value);
@@ -2595,9 +2596,9 @@ public class JsSemanticEmitterTest {
             }
 
             export function aliasReassign(): number {
-              function inner(): number {
+              let inner: () => number = function(): number {
                 return 1;
-              }
+              };
               let g: () => number = inner;
               let first: number = inner();
               g = nine;
@@ -2610,18 +2611,18 @@ public class JsSemanticEmitterTest {
             }
 
             export function nestedGroup(): number {
-              function left(n: number): number {
+              let left: (n: number) => number = function(n: number): number {
                 if (n <= 0) {
                   return 0;
                 }
                 return left(n - 1) + 1;
-              }
-              function right(n: number): number {
+              };
+              let right: (n: number) => number = function(n: number): number {
                 if (n <= 0) {
                   return 0;
                 }
                 return left(n - 1) + 1;
-              }
+              };
               return right(6);
             }
 
@@ -2658,10 +2659,10 @@ public class JsSemanticEmitterTest {
               let bag: Bag = {items: [], p: {x: 0, y: 0}};
               bag.items = [{ x: 1, y: 0 }];
               let notes: number[] = [];
-              function note(n: number): number {
+              let note: (n: number) => number = function(n: number): number {
                 notes[notes.length] = n;
                 return n;
-              }
+              };
               bag.items[note(0)] = { y: note(2), x: 0 };
               let after: string = b(bag.items[0].x === 0)
                 + b(bag.items[0].y === 2) + b(notes.length === 2);
@@ -2803,6 +2804,9 @@ public class JsSemanticEmitterTest {
             const originalEncode = app.Item$toJson.$f;
             app.Item$toJson.$f = function(value, ...origin) {
               runtime.tableSet(value.data, "f", String.fromCharCode(0xD800));
+              const legal = originalEncode(value, ...origin);
+              if (!legal.includes('\\\\ud800')) throw new Error("lone unit was not escaped");
+              runtime.tableSet(value.data, "f", Symbol("invalid-json-value"));
               return originalEncode(value, ...origin);
             };
             try {
@@ -2880,8 +2884,8 @@ public class JsSemanticEmitterTest {
             "a 600-link finite table chain inside a class table field"
                 + " encodes and re-decodes with no depth bound and the exact"
                 + " same text: " + report);
-        check(report.contains("\"walk\":\"E8001:unsupported type for JSON encoding: string:at="),
-            "fixture-only malformed Unicode in a declared Record field raises the closed"
+        check(report.contains("\"walk\":\"E8001:unsupported type for JSON encoding: table:at="),
+            "a fixture-only symbol in a declared Record field raises the closed"
                 + " walk tuple: " + report);
         check(report.contains("app.deal:" + failureLine + ":" + failureColumn),
             "the walk failure keeps the invoking call expression's own"

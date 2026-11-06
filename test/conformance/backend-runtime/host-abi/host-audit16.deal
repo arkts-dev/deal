@@ -2,14 +2,16 @@
 // @description: Eager class validation, recursive ingress, live arrays, callbacks and catchable native failures.
 // @expected: runtime-ok
 // @features: host-abi, unknown, undefined, arrays, functions, async
-import * as host from "host/audit15";
+import * as host from "host/audit16";
 import * as json from "std/json";
 function check(ok:boolean):void { if(!ok){throw {code:"FAIL",message:"host audit contract"};} }
 function callback():void {}
 function thrown():void { throw {code:"CALLBACK",message:"callback"}; }
 export function test_sync():void {
   check(host.nullish()===undefined);
-  for(let kind of [0,1,2,3]) {
+  let lone=host.badClass(1);
+  check(lone.x===`\uD800`);
+  for(let kind of [0,2,3]) {
     let caught=false;
     try { let invalid=host.badClass(kind); } catch(e) {if(e instanceof Error){caught=e.code==="E8010";}}
     check(caught);
@@ -40,7 +42,13 @@ export function test_sync():void {
   caught=false;try{host.echoError(original);}catch(e){if(e instanceof Error){caught=e===original && e.code==="ORIGINAL";}}check(caught);
   for(let kind of [0,1]){
     let graph:unknown[]=[1];host.keepUnknown(graph);host.corrupt(kind);
-    caught=false;try{let invalid:unknown=graph;}catch(e){if(e instanceof Error){caught=e.code==="E8001";}}check(caught);
+    if(kind===0){
+      let admitted:unknown=graph;
+      check(admitted===(graph as unknown));
+      check((graph[0] as string)===`\uD800`);
+    }else{
+      caught=false;try{let invalid:unknown=graph;}catch(e){if(e instanceof Error){caught=e.code==="E8001";}}check(caught);
+    }
   }
   caught=false;try{host.opaqueArray();}catch(e){if(e instanceof Error){caught=e.code==="E8010";}}check(caught);
 }

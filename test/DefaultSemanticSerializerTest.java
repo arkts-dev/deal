@@ -236,7 +236,7 @@ public class DefaultSemanticSerializerTest {
     }
 
     private static final String MANIFEST = """
-        {"languageVersion":"1.5","moduleRoots":["src"],"backend":"luajit","output":"build"}
+        {"languageVersion":"1.6","moduleRoots":["src"],"backend":"luajit","output":"build"}
         """;
 
     private static String digestOf(String content) {
@@ -312,7 +312,7 @@ public class DefaultSemanticSerializerTest {
                   delete t.k;
                   try { if (total < 0) { throw {code: "BAD", message: "bad"}; } }
                   catch (e) { total = 0; }
-                  function innerFn(v: number): number { return v + 1; }
+                  let innerFn: (v: number) => number = function(v: number): number { return v + 1; };
                   let nested: (x: number) => number = function(x: number): number {
                     let shadow: number = x; return shadow;
                   };
@@ -328,7 +328,7 @@ public class DefaultSemanticSerializerTest {
             successful(body);
             String all = body.providerContentOf("lib.deal", "allStatements");
             for (String kind : List.of("BLOCK", "BREAK", "CONTINUE", "DELETE", "EXPRESSION_STATEMENT",
-                    "FOR_OF", "FUNCTION_DECLARATION", "IF", "RETURN", "THROW", "TRY", "VARIABLE_DECLARATION", "WHILE")) {
+                    "FOR_OF", "IF", "RETURN", "THROW", "TRY", "VARIABLE_DECLARATION", "WHILE")) {
                 check(all.contains("\"kind\":\"" + kind + "\""), "ordinary statement grammar covers " + kind);
             }
             for (String misplaced : List.of("function bad(): null { class Local { n: number; } return null; }",
@@ -532,7 +532,7 @@ public class DefaultSemanticSerializerTest {
 
     private static void testHostAndJsonWrapperProviders() throws Exception {
         String manifest = """
-            {"languageVersion":"1.5","moduleRoots":["src"],"backend":"luajit","output":"build",
+            {"languageVersion":"1.6","moduleRoots":["src"],"backend":"luajit","output":"build",
              "externals":{"host/cfg":{"declaration":"bindings/cfg.d.deal"}}}
             """;
         Compile compile = new Compile(Map.of("deal.json", manifest, "src/main.deal", """
@@ -571,7 +571,7 @@ public class DefaultSemanticSerializerTest {
             class Row {n: number;}
             export function nested(n: number): number {
               let value: number = n;
-              function inner(value: number): number { return value + 1; }
+              let inner: (value: number) => number = function(value: number): number { return value + 1; };
               let f: (value: number) => number = function(value: number): number {
                 let copy: number = value; return inner(copy);
               };
@@ -582,8 +582,9 @@ public class DefaultSemanticSerializerTest {
         try {
             successful(compile);
             String content = compile.providerContentOf("lib.deal", "nested");
-            check(content.contains("FUNCTION_DECLARATION") && content.contains("FUNCTION_EXPRESSION"),
-                "nested declarations and expression bodies serialize inline in defining scope");
+            check(content.contains("VARIABLE_DECLARATION") && content.contains("FUNCTION_EXPRESSION")
+                    && !content.contains("FUNCTION_DECLARATION"),
+                "local function cells and expression bodies serialize inline in defining scope");
             check(content.contains("@src/lib.deal/Row") && !content.contains("@src/main.deal/Row"),
                 "same-spelled class target resolves the function provider's own declaration");
             var result = compile.serializationSnapshot();

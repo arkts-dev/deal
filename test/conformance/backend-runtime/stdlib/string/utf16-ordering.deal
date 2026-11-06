@@ -1,0 +1,21 @@
+// @spec: Type system — Equality and comparison operand rules
+// @description: Relational string operators compare UTF-16 units, including isolated surrogates.
+// @expected: runtime-ok
+// @features: string, comparison
+function check(ok:boolean):void { if(!ok){throw {code:"ORDER",message:"UTF-16 ordering"};} }
+export function main():null {
+  let high:string=`\uD800`;
+  let low:string=`\uDC00`;
+  let pair:string="😀";
+  let privateUse:string=`\uE000`;
+  check(high < low);
+  check(high <= high && high <= low);
+  check(low > high && low >= low && low >= high);
+  check(pair < privateUse && pair <= privateUse);
+  check(privateUse > pair && privateUse >= pair);
+  check(!(pair > privateUse) && !(pair >= privateUse));
+  check(!(low < high) && !(low <= high));
+  check("a" < "aa" && "aa" > "a");
+  check("a" <= "aa" && "aa" >= "a");
+  return null;
+}

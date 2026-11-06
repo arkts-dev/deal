@@ -37,10 +37,10 @@ function testNestedDeclaration(): null {
   let read: () => string = function(): string { return ""; };
   try { throw { code: "E_DECL", message: "declared" }; }
   catch (e) {
-    function readCatch(): string { return errorOf(e).message; }
+    let readCatch = function(): string { return errorOf(e).message; };
     read = readCatch;
   }
-  expectTrue("a nested function declaration captures the catch binding", read() === "declared");
+  expectTrue("a local function expression captures the catch binding", read() === "declared");
   return null;
 }
 

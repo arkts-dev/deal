@@ -1,13 +1,8 @@
 // Host-module fixture (host-module-abi D6): a host surface whose
-// returned strings exercise the DEAL v1.2 string carrier classes. A JVM
-// host is byte-oriented at a raw string boundary, so the malformed-encoding
-// export returns the same raw UTF-8 bytes the Lua host returns ("a\x80b" —
-// a stray continuation byte); the surrogate exports return the UTF-16
-// surrogate code unit (the JVM carrier's surrogate code point, the analog
-// of the Lua host's CESU-style ED A0 80 encoding, embedded mid-string in
-// the embedded case). The declared (string) boundary must reject both
-// classes with E8010 and select the pinned reason from the carrier's
-// encoding class, never from its length. The valid exports exercise the
+// returned strings distinguish legal UTF-16 units from malformed bytes.
+// badString returns the same stray continuation byte as the Lua host;
+// the surrogate exports preserve legal lone units, including embedded ones.
+// Only malformed transport rejects with the owning E8010 reason. The valid exports exercise the
 // admitted carriers: the decoded raw UTF-8 byte carrier at a scalar
 // position, the decoded element results inside the production array
 // carriers (the element projection must land them back in the array so
@@ -23,8 +18,8 @@
 //
 // The native-* exports return the declared shapes through this host's own
 // `$DealRt` array carriers (the classes the deployed host compiles
-// against): nativeBadStringArray's second element is the unpaired U+D800
-// surrogate, nativeBadNestedTail's later element is not an array while its
+// against): nativeBadStringArray uses the dynamic array carrier to expose
+// truncated bytes in element 2; nativeBadNestedTail's later element is not an array while its
 // earlier nested carrier is valid (the retained accessor observes both
 // carriers after the rejected return), and the valid controls must land as
 // usable DEAL arrays at every nesting level (nativeSharedNestedStringArray
@@ -124,7 +119,11 @@ final class HostBad_string {
   }
 
   public static Object nativeBadStringArray() {
-    return new $DealRt.__StringArray(new String[] { "ok", "\uD800" });
+    deal.codegen.jvm.JvmRuntime.Array array =
+        new deal.codegen.jvm.JvmRuntime.Array(2);
+    array.elements.add("ok");
+    array.elements.add(new byte[] { (byte) 0xE2, (byte) 0x82 });
+    return array;
   }
 
   public static Object nativeBadNestedTail() {

@@ -12,16 +12,16 @@ package deal.semantic.ir;
  * contiguous append is visited; the first position that reads absent (a
  * deleted slot or a position past the live end) stops the iteration, and a
  * present element (including a wrong one) is still checked — never skipped.
- * {@code FOR_EACH(STRING_SCALARS)} validates the complete scalar sequence
- * before the first binding and yields one single-scalar string per
- * iteration; invalid UTF-8 or an unpaired surrogate uses
- * {@code TYPE_DESCRIPTOR} with actual kind {@code invalid-unicode}.</p>
+ * {@code FOR_EACH(STRING_SCALARS)} combines valid UTF-16 surrogate pairs
+ * and yields isolated units unchanged. Malformed transport encodings use
+ * {@code TYPE_DESCRIPTOR} with actual kind {@code invalid-unicode}; lone
+ * surrogate units are legal string data.</p>
  */
 public enum IterationMode {
 
     /** Iterate array values in increasing index order. */
     ARRAY_VALUES,
 
-    /** Iterate Unicode scalar values of a string. */
+    /** Iterate strings pair-aware, preserving isolated UTF-16 units. */
     STRING_SCALARS
 }

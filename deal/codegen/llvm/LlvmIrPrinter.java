@@ -1,6 +1,5 @@
 package deal.codegen.llvm;
 
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 /**
@@ -55,7 +54,26 @@ public final class LlvmIrPrinter {
 
     /** The UTF-8 bytes of one text. */
     public static byte[] utf8(String text) {
-        return text.getBytes(StandardCharsets.UTF_8);
+        var bytes = new java.io.ByteArrayOutputStream();
+        for (int i = 0; i < text.length(); ) {
+            int cp = text.codePointAt(i);
+            i += Character.charCount(cp);
+            if (cp < 0x80) bytes.write(cp);
+            else if (cp < 0x800) {
+                bytes.write(0xc0 | (cp >> 6));
+                bytes.write(0x80 | (cp & 63));
+            } else if (cp < 0x10000) {
+                bytes.write(0xe0 | (cp >> 12));
+                bytes.write(0x80 | ((cp >> 6) & 63));
+                bytes.write(0x80 | (cp & 63));
+            } else {
+                bytes.write(0xf0 | (cp >> 18));
+                bytes.write(0x80 | ((cp >> 12) & 63));
+                bytes.write(0x80 | ((cp >> 6) & 63));
+                bytes.write(0x80 | (cp & 63));
+            }
+        }
+        return bytes.toByteArray();
     }
 
     /**

@@ -154,6 +154,12 @@ deal_status deal_class_atom(const char *descriptorText, deal_value *out); /* int
 deal_status deal_class_new(deal_value atom, deal_value *out);     /* every field absent */
 deal_status deal_function_new(deal_host_function fn, const char *signatureDescriptor,
                               deal_value *out);
+/* Unwrapped host callable: inspectable as function, but never DEAL data.
+ * A declared function position requires deal_function_new's signature wrapper. */
+deal_status deal_function_raw(deal_host_function fn, deal_value *out);
+/* Unsupported host object. Its nonnull identity is borrowed, never dereferenced
+ * or traced; it is inspectable but rejects all DEAL data admission. */
+deal_status deal_opaque(const void *identity, deal_value *out);
 deal_status deal_async_operation(deal_async_token token, deal_value *out);
 
 /* inspection and scalar access */
@@ -169,6 +175,10 @@ deal_status deal_array_get(deal_value array, int64_t index, deal_value *out);
 deal_status deal_array_set(deal_value array, int64_t index, deal_value element);
 deal_status deal_table_get(deal_value table, const void *key, size_t keyLength, deal_value *out);
 deal_status deal_table_set(deal_value table, const void *key, size_t keyLength, deal_value value);
+/* Host-built record key carrier. Strings use the ordinary unit-key path;
+ * nonstrings remain host keys and reject recursive admission, never coerce.
+ * Incompatible writes to already admitted live views return KIND unchanged. */
+deal_status deal_table_set_key(deal_value table, deal_value key, deal_value value);
 deal_status deal_table_has(deal_value table, const void *key, size_t keyLength, int *present);
 deal_status deal_table_delete(deal_value table, const void *key, size_t keyLength);
 
@@ -205,7 +215,7 @@ deal_status deal_async_post(deal_async_token token, const deal_host_completion *
  * entries of this ABI.
  * ========================================================================= */
 
-typedef struct deal_string deal_string;          /* immutable UTF-8 buffer + cached facts */
+typedef struct deal_string deal_string;          /* immutable UTF-16 units + cached WTF-8 transport */
 typedef struct deal_array deal_array;            /* zero-based typed element storage */
 typedef struct deal_table deal_table;            /* insertion-ordered string-keyed store */
 typedef struct deal_object deal_object;          /* per-layout class instance */
@@ -328,9 +338,10 @@ typedef void (*deal_reference_visit)(void *referent, void *context);
 /* The closed presentations of one checked value (R3). `missing` is the
  * internal absent marker (a raw read of an absent slot), `nothing` the
  * no-value production of a result-only position, `async-operation` an
- * operation handle, and `invalid-unicode` a string carrier that is not a
- * Unicode scalar sequence. A raw callable has no DEAL signature. None of
- * these presentations is `unknown` data. */
+ * operation handle, `invalid-unicode` an explicitly invalid encoding
+ * presentation (not legal lone UTF-16 units), a raw callable without a DEAL
+ * signature, and an opaque unsupported host object. None of these
+ * presentations is `unknown` data. */
 typedef enum {
     DEAL_PRESENT_DATUM = 0,
     DEAL_PRESENT_MISSING = 1,
@@ -341,9 +352,9 @@ typedef enum {
     DEAL_PRESENT_OPAQUE = 6 /* retained unsupported host object; never data */
 } deal_presentation;
 
-/* The closed encoding defects of an `invalid-unicode` presentation: the two
- * pinned host-string inner reasons distinguish a UTF-16 surrogate code point
- * sequence from every other malformed encoding. */
+/* Closed reasons of an explicitly invalid encoding presentation. Ordinary
+ * host transport accepts lone UTF-16 units; SURROGATE is explicit defect
+ * metadata, never inferred from a legal surrogate-unit byte sequence. */
 typedef enum {
     DEAL_UNICODE_MALFORMED = 0,
     DEAL_UNICODE_SURROGATE = 1

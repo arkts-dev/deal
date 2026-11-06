@@ -206,17 +206,19 @@ test("malformed JSON returns null and never throws", function() {
   assertNull(rt.jsonFromJson("@m/User", fields, "  ", ...LOC), "whitespace input");
 });
 
-test("surrogate strings never escape as exceptions from jsonFromJson", function() {
+test("JSON class fields preserve lone UTF-16 units", function() {
   const fields = [f("name", "string", false, false)];
-  const thunk = () => ({ name: "" });
-  // A JSON-escaped lone high surrogate inside a string field.
-  assertNull(rt.jsonFromJson("@m/User", fields, '{"name":"\\ud800"}', ...LOC),
-    "escaped lone high surrogate in a field");
-  assertNull(rt.jsonFromJson("@m/User", fields, '{"name":"\\udc00"}', ...LOC),
-    "escaped lone low surrogate in a field");
-  // A raw unpaired surrogate in the input text itself.
-  assertNull(rt.jsonFromJson("@m/User", fields, '{"name":"\ud800"}', ...LOC),
-    "raw lone high surrogate in the input text");
+  for (const [source, expected] of [
+    ['{"name":"\\ud800"}', "\ud800"],
+    ['{"name":"\\udc00"}', "\udc00"],
+    ['{"name":"\ud800"}', "\ud800"]
+  ]) {
+    const value = rt.jsonFromJson("@m/User", fields, source, ...LOC);
+    assert(value !== null, "lone unit decoded");
+    assertEqual(value.name, expected, "exact unit preserved");
+    assertEqual(JSON.parse(rt.jsonToJson("@m/User", value, fields, ...LOC)).name,
+      expected, "lone unit JSON roundtrip");
+  }
   // A valid supplementary pair round-trips.
   const u = rt.jsonFromJson("@m/User", fields, '{"name":"\\ud83d\\ude00"}', ...LOC);
   assert(u !== null, "valid pair decoded");

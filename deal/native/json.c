@@ -217,8 +217,6 @@ static const char *const deal_json_reason_unterminated_object =
 static const char *const deal_json_reason_unterminated_array =
     "unterminated array";
 static const char *const deal_json_reason_invalid_escape = "invalid escape";
-static const char *const deal_json_reason_unpaired_surrogate =
-    "unpaired surrogate escape";
 static const char *const deal_json_reason_invalid_number = "invalid number";
 static const char *const deal_json_reason_leading_zero = "leading zero";
 static const char *const deal_json_reason_missing_key = "missing key";
@@ -337,10 +335,8 @@ static int deal_json_parse_hex4(deal_json_cursor *cursor,
 }
 
 /*
- * Scans one JSON string token into a scalar-valid `deal_string`: the escapes
- * decode to their scalar values, a high surrogate escape requires its paired
- * low surrogate escape, a lone surrogate escape and an unknown escape are the
- * closed defect reasons, and a raw control scalar is an unexpected character.
+ * Scans a JSON string into UTF-16 units. Each Unicode escape appends one unit;
+ * lone surrogates are data. Unknown escapes and raw controls reject.
  */
 static int deal_json_parse_string(deal_json_cursor *cursor,
                                   deal_json_failure *failure,
@@ -392,44 +388,6 @@ static int deal_json_parse_string(deal_json_cursor *cursor,
                 if (deal_json_parse_hex4(cursor, failure, &first)) {
                     deal_json_buffer_release(&text);
                     return 1;
-                }
-                if (first >= 0xD800 && first <= 0xDBFF) {
-                    if (deal_json_at_end(cursor) || deal_json_peek(cursor) != '\\') {
-                        deal_json_buffer_release(&text);
-                        return deal_json_fail(failure,
-                            deal_json_reason_unpaired_surrogate,
-                            deal_json_offset_of_current(cursor));
-                    }
-                    deal_json_advance(cursor);
-                    if (deal_json_at_end(cursor) || deal_json_peek(cursor) != 'u') {
-                        deal_json_buffer_release(&text);
-                        return deal_json_fail(failure,
-                            deal_json_reason_unpaired_surrogate,
-                            deal_json_offset_of_current(cursor));
-                    }
-                    deal_json_advance(cursor);
-                    int second = 0;
-                    if (deal_json_parse_hex4(cursor, failure, &second)) {
-                        deal_json_buffer_release(&text);
-                        return 1;
-                    }
-                    if (second < 0xDC00 || second > 0xDFFF) {
-                        deal_json_buffer_release(&text);
-                        return deal_json_fail(failure,
-                            deal_json_reason_unpaired_surrogate,
-                            deal_json_offset_of_current(cursor));
-                    }
-                    uint32_t scalar = 0x10000u
-                        + (((uint32_t)first - 0xD800u) << 10)
-                        + ((uint32_t)second - 0xDC00u);
-                    deal_json_buffer_scalar(&text, scalar);
-                    continue;
-                }
-                if (first >= 0xDC00 && first <= 0xDFFF) {
-                    deal_json_buffer_release(&text);
-                    return deal_json_fail(failure,
-                        deal_json_reason_unpaired_surrogate,
-                        deal_json_offset_of_current(cursor));
                 }
                 deal_json_buffer_scalar(&text, (uint32_t)first);
                 continue;
@@ -916,14 +874,14 @@ static int deal_json_parse_document(deal_json_parser *parser,
 static void deal_json_decode_input(deal_string *text, uint32_t **code_points,
                                    size_t **byte_offsets, size_t *count,
                                    size_t *total_bytes) {
-    size_t scalar_count = deal_text_scalar_length(text);
-    const unsigned char *bytes = deal_text_bytes(text);
-    size_t byte_length = deal_text_byte_length(text);
+    size_t scalar_count = deal_text_unit_length(text);
+    const unsigned char *bytes = deal_text_transport_bytes(text);
+    size_t byte_length = deal_text_transport_length(text);
     uint32_t *points = NULL;
     size_t *offsets = NULL;
     if (scalar_count != 0u) {
-        points = deal_platform_allocate(scalar_count * sizeof(*points));
-        offsets = deal_platform_allocate(scalar_count * sizeof(*offsets));
+        points = deal_platform_allocate(deal_platform_checked_multiply(scalar_count, sizeof(*points)));
+        offsets = deal_platform_allocate(deal_platform_checked_multiply(scalar_count, sizeof(*offsets)));
         if (points == NULL || offsets == NULL) {
             deal_platform_fault("json: input decoding allocation failed");
         }
@@ -1104,7 +1062,21 @@ typedef struct {
     deal_descriptor *descriptor;
 } deal_json_position;
 
-/* 1 when the v1.5 rules omit this value: a present `undefined` datum at a
+/* Private host nondatum layouts retain their closed presentations at every
+ * JSON position. A FUNCTION/TABLE tag alone cannot authorize omission or
+ * container traversal. Ordinary admitted DEAL functions keep the v1.6 rules. */
+static void deal_json_present_private(deal_check_input *input) {
+    if (input->presentation != DEAL_PRESENT_DATUM) return;
+    void *referent = deal_data_referent(&input->datum);
+    if (referent == NULL) return;
+    uint32_t layout = deal_object_layout(referent);
+    if (layout == DEAL_LAYOUT_HOST_RAW_FUNCTION)
+        input->presentation = DEAL_PRESENT_RAW_FUNCTION;
+    else if (layout == DEAL_LAYOUT_HOST_OPAQUE)
+        input->presentation = DEAL_PRESENT_OPAQUE;
+}
+
+/* 1 when the v1.6 rules omit this value: a present `undefined` datum at a
  * declared position whose type admits `undefined` (a nullish member or a
  * result-only `void`). Function values are omitted at descriptor-less object
  * members and encode as `null` array elements; a declared position that admits
@@ -1279,6 +1251,23 @@ static void deal_json_escape_bytes(deal_json_buffer *out,
     deal_json_buffer_byte(out, '"');
     for (size_t index = 0; index < length; index += 1u) {
         unsigned char byte = bytes[index];
+        if (byte == 0xEDu && index + 2u < length && bytes[index + 1u] >= 0xA0u) {
+            uint32_t unit = 0xD000u | ((uint32_t)(bytes[index + 1u] & 63u) << 6)
+                | (bytes[index + 2u] & 63u);
+            if (unit <= 0xDBFFu && index + 5u < length && bytes[index + 3u] == 0xEDu
+                    && bytes[index + 4u] >= 0xB0u) {
+                uint32_t low = 0xD000u | ((uint32_t)(bytes[index + 4u] & 63u) << 6)
+                    | (bytes[index + 5u] & 63u);
+                deal_json_buffer_scalar(out, 0x10000u + ((unit - 0xD800u) << 10) + low - 0xDC00u);
+                index += 5u;
+            } else {
+                char escape[6] = {'\\', 'u', hex_digits[(unit >> 12) & 15u],
+                    hex_digits[(unit >> 8) & 15u], hex_digits[(unit >> 4) & 15u], hex_digits[unit & 15u]};
+                deal_json_buffer_append(out, escape, sizeof(escape));
+                index += 2u;
+            }
+            continue;
+        }
         switch (byte) {
         case '"':
             deal_json_buffer_append(out, "\\\"", 2u);
@@ -1636,6 +1625,7 @@ static void deal_json_element_at(deal_array *array, size_t index,
     if (input->datum.tag == DEAL_DATA_CLASS) {
         input->class_atom = deal_json_class_atom_of(element_descriptor);
     }
+    deal_json_present_private(input);
 }
 
 /* The walk token of one descriptor-less position: the typed-boundary token, and
@@ -1658,6 +1648,7 @@ static const char *deal_json_walk_token(const deal_check_input *input) {
 /* The generic encoder's carrier-kind token of one value (the std/json row's
  * closed vocabulary). */
 static const char *deal_json_carrier_token(const deal_check_input *input) {
+    if (input->presentation == DEAL_PRESENT_RAW_FUNCTION) return "function";
     if (input->presentation == DEAL_PRESENT_MISSING) {
         return "nil";
     }
@@ -1829,7 +1820,7 @@ static int deal_json_emit(deal_json_encoder *encoder,
         position.descriptor = NULL;
     }
     if (tag == DEAL_DATA_UNDEFINED || tag == DEAL_DATA_FUNCTION) {
-        /* The v1.5 rules: an undefined/function-valued object member is
+        /* The v1.6 rules: an undefined/function-valued object member is
          * omitted and such an array element encodes as `null`. A declared
          * position that does not admit `undefined` reaches the check below
          * instead. */
@@ -1940,8 +1931,10 @@ static int deal_json_encode_frames(deal_json_encoder *encoder) {
             memset(&position, 0, sizeof(position));
             position.input.presentation = DEAL_PRESENT_DATUM;
             position.input.datum = deal_container_table_read(frame->table, key);
-            if (position.input.datum.tag == DEAL_DATA_UNDEFINED
-                    || position.input.datum.tag == DEAL_DATA_FUNCTION) {
+            deal_json_present_private(&position.input);
+            if (position.input.presentation == DEAL_PRESENT_DATUM
+                    && (position.input.datum.tag == DEAL_DATA_UNDEFINED
+                        || position.input.datum.tag == DEAL_DATA_FUNCTION)) {
                 continue;
             }
             const unsigned char *name = deal_text_bytes(key);
@@ -2049,10 +2042,11 @@ static int deal_json_encode_frames(deal_json_encoder *encoder) {
         deal_json_position position;
         memset(&position, 0, sizeof(position));
         position.input = input;
+        deal_json_present_private(&position.input);
         position.descriptor = field->descriptor;
         if (deal_json_omitted(position)) {
             /* A present undefined-valued field of an undefined-admitting type
-             * is omitted (v1.5): the key never reaches the text. */
+             * is omitted (v1.6): the key never reaches the text. */
             continue;
         }
         if (frame->emitted > 0u) {
@@ -2407,7 +2401,7 @@ typedef union {
 
 /* Opens one array position: the declared element descriptor is the rebuilt
  * array's recorded one and the source's recorded descriptor types its elements
- * (spec v1.5 `T[]`: the fields receive `T` descriptors after validation). The
+ * (spec v1.6 `T[]`: the fields receive `T` descriptors after validation). The
  * rebuilt array also records the runtime-owned *storage* layout the emitted
  * element access reads, so a decoded `T[]` is a value of its declared type
  * (C3, R2). */
@@ -2607,7 +2601,7 @@ static int deal_json_decode_advance(deal_json_decode_frame *frame,
         }
         if (frame->phase == DEAL_JSON_DECODE_UNKNOWN) {
             /* An unknown key is rejected: every present key must name a
-             * declared field (spec v1.5 `@jsonable` fromJson). */
+             * declared field (spec v1.6 `@jsonable` fromJson). */
             size_t present = deal_container_table_count(frame->document);
             for (size_t index = 0; index < present; index += 1u) {
                 deal_string *key =
@@ -2778,9 +2772,14 @@ deal_outcome_data deal_json_stringify(deal_data value,
     if (origin == NULL) {
         deal_platform_fault("json: missing stringify origin");
     }
-    /* The v1.5 omission rule at the root: an undefined or function-valued root
-     * yields undefined and no text at all. */
-    if (value.tag == DEAL_DATA_UNDEFINED || value.tag == DEAL_DATA_FUNCTION) {
+    deal_check_input input = {0};
+    input.presentation = DEAL_PRESENT_DATUM;
+    input.datum = value;
+    deal_json_present_private(&input);
+    /* Only admitted DEAL functions follow the omission rule; a raw host
+     * callable retains its unsupported nondata presentation. */
+    if (input.presentation == DEAL_PRESENT_DATUM
+            && (value.tag == DEAL_DATA_UNDEFINED || value.tag == DEAL_DATA_FUNCTION)) {
         outcome.value = deal_data_of_undefined();
         return outcome;
     }
@@ -2792,9 +2791,8 @@ deal_outcome_data deal_json_stringify(deal_data value,
     encoder.lookup_context = deal_json_project_context;
     deal_json_position position;
     memset(&position, 0, sizeof(position));
-    position.input.presentation = DEAL_PRESENT_DATUM;
+    position.input = input;
     position.input.unicode_defect = DEAL_UNICODE_MALFORMED;
-    position.input.datum = value;
     /* The generic walk resolves an ordinary class's own atom and installed
      * plan when it reaches that datum; no target descriptor is imposed. */
     position.input.class_atom = NULL;

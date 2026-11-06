@@ -143,7 +143,7 @@ public class ClosureLoweringTest {
             return null;
         }
         return SemanticLowerer.lowerModuleClosureCore(moduleOf(slice),
-            SemanticProfile.DEAL_V1_5_BINARY64, Map.of(), INTERFACE_HASH, REGISTRY_HASH,
+            SemanticProfile.DEAL_V1_6_BINARY64, Map.of(), INTERFACE_HASH, REGISTRY_HASH,
             SemanticIdAllocator.over(List.of(MODULE)));
     }
 
@@ -398,11 +398,11 @@ public class ClosureLoweringTest {
         SemanticLowerer.ClosureCoreResult result = lowerSlice("""
             function test_nested_closure_mutation(): void {
               let x: number = 1;
-              function make(): void {
+              let make = function(): void {
                 let inner: () => void = function(): void {
                   let y: number = x;
                 };
-              }
+              };
               x = 9;
             }
             """);
@@ -524,13 +524,13 @@ public class ClosureLoweringTest {
         SemanticLowerer.ClosureCoreResult result = lowerSlice("""
             function outer(): void {
               let x: number = 1;
-              function mid(): void {
+              let mid = function(): void {
                 let z: number = 2;
-                function inner(): void {
+                let inner = function(): void {
                   let a: number = x;
                   let b: number = z;
-                }
-              }
+                };
+              };
               x = 9;
             }
             """);
@@ -622,7 +622,7 @@ public class ClosureLoweringTest {
 
     /**
      * A closure capturing a later-declared module function: the capture
-     * resolves to the hoisted module-init ALLOC (B1; docs/spec-v1.5.md
+     * resolves to the hoisted module-init ALLOC (B1; docs/spec-v1.6.md
      * §Name resolution — Declaration order), the hoisted ALLOC upgrades
      * to {@code SHARED_CELL}, and the function-typed load inside the earlier closure body
      * publishes the pre-allocated hoist-time identity that the
@@ -774,7 +774,7 @@ public class ClosureLoweringTest {
      * the generation-0 store of that loaded value, before the update chain
      * and the condition re-production — so a body store reaches the
      * iteration's update and the subsequent test (the spec's
-     * {@code for}-to-{@code while} desugaring, docs/spec-v1.5.md
+     * {@code for}-to-{@code while} desugaring, docs/spec-v1.6.md
      * §Control flow — For (C-style)). The update-less row carries the same
      * transfer before its condition re-production, and the body's own
      * incarnation stays the captured generation-1 cell.
@@ -806,7 +806,7 @@ public class ClosureLoweringTest {
      * signature descriptor only, and a load of a nullable binding inside
      * the body carries the declared nullable descriptor (never a
      * narrowed one — {@code NullNarrowing} state is checker-local,
-     * docs/spec-v1.5.md §Closures and captured variables).
+     * docs/spec-v1.6.md §Closures and captured variables).
      */
     static void testNarrowedFlowTypesNeverCaptured() {
         System.out.println("-- narrowed flow types: capture entries are BindingIds, declared "
@@ -973,9 +973,9 @@ public class ClosureLoweringTest {
         // body) and upgrades it.
         SemanticLowerer.ClosureCoreResult nestedSelf = lowerSlice("""
             function outer(): void {
-              function g(): void {
+              let g: () => void = function(): void {
                 let copy: () => void = g;
-              }
+              };
             }
             """);
         if (nestedSelf != null && !nestedSelf.lowering().hasErrors()) {
@@ -1027,7 +1027,7 @@ public class ClosureLoweringTest {
         CheckedSlice slice = checkSlice("let h: () => void = function(): void {};");
         if (slice != null) {
             SemanticLowerer.BindingCoreResult foreign = SemanticLowerer.lowerModuleBindingCore(
-                moduleOf(slice), SemanticProfile.DEAL_V1_5_BINARY64, Map.of(), INTERFACE_HASH,
+                moduleOf(slice), SemanticProfile.DEAL_V1_6_BINARY64, Map.of(), INTERFACE_HASH,
                 REGISTRY_HASH, SemanticIdAllocator.over(List.of(MODULE)));
             check(foreign != null && foreign.lowering().hasErrors()
                     && foreign.lowering().unit() == null,
@@ -1108,7 +1108,7 @@ public class ClosureLoweringTest {
             variableSlice.checks().symbolTable().define("x",
                 new Symbol.VariableSymbol("x", Type.Error.INSTANCE, false));
             SemanticLowerer.BindingCoreResult result = SemanticLowerer.lowerModuleBindingCore(
-                moduleOf(variableSlice), SemanticProfile.DEAL_V1_5_BINARY64, Map.of(),
+                moduleOf(variableSlice), SemanticProfile.DEAL_V1_6_BINARY64, Map.of(),
                 INTERFACE_HASH, REGISTRY_HASH, SemanticIdAllocator.over(List.of(MODULE)));
             check(result != null && result.lowering().hasErrors()
                     && result.lowering().unit() == null,
@@ -1206,7 +1206,7 @@ public class ClosureLoweringTest {
                 Path.of("writer.deal"), program, checks, List.of(), List.of(),
                 CheckedModuleKind.IMPLEMENTATION);
             SemanticLowerer.ClosureCoreResult result = SemanticLowerer.lowerModuleClosureCore(
-                module, SemanticProfile.DEAL_V1_5_BINARY64, Map.of(), INTERFACE_HASH,
+                module, SemanticProfile.DEAL_V1_6_BINARY64, Map.of(), INTERFACE_HASH,
                 REGISTRY_HASH, SemanticIdAllocator.over(List.of(MODULE)));
             check(result != null && result.lowering().hasErrors()
                     && result.lowering().unit() == null,
@@ -1237,7 +1237,7 @@ public class ClosureLoweringTest {
             throw new AssertionError("group source must check");
         }
         return SemanticLowerer.lowerModuleGroupCore(moduleOf(slice),
-            SemanticProfile.DEAL_V1_5_BINARY64, Map.of(), INTERFACE_HASH, REGISTRY_HASH,
+            SemanticProfile.DEAL_V1_6_BINARY64, Map.of(), INTERFACE_HASH, REGISTRY_HASH,
             SemanticIdAllocator.over(List.of(MODULE)));
     }
 
@@ -1262,8 +1262,8 @@ public class ClosureLoweringTest {
             function b(): void { let aRef: () => void = a; }
             function outer(): void {
               let before = 1;
-              function n(): void { let nRef: () => void = n; }
-              function m(): void { let nRef: () => void = n; }
+              let n: () => void = function(): void { let nRef: () => void = n; };
+              let m = function(): void { let nRef: () => void = n; };
               let after = 2;
             }
             """;

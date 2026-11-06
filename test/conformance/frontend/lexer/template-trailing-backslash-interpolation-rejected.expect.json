@@ -5,6 +5,6 @@
     "code": "E1042",
     "line": 8,
     "column": 26,
-    "message": "Invalid template literal: trailing backslashes before '${' must form pairs"
+    "message": "Invalid template literal: malformed numeric, hexadecimal or Unicode escape spelling"
   }
 }

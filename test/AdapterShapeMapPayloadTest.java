@@ -48,7 +48,7 @@ public class AdapterShapeMapPayloadTest {
                 ExternalModuleKind.IMPLEMENTATION, List.of(), List.of(), List.of(),
                 InitializationMode.ONCE_AFTER_DEPENDENCIES))).interfaceIndexDigest();
         var result = SemanticLowerer.lowerModuleShapeMapCore(input,
-            SemanticProfile.DEAL_V1_5_BINARY64, Map.of(), digest,
+            SemanticProfile.DEAL_V1_6_BINARY64, Map.of(), digest,
             CapabilityRegistry.releaseRegistry().capabilityRegistryHash(),
             SemanticIdAllocator.over(List.of(module)));
         check(!result.lowering().hasErrors(), "lower: " + result.lowering().diagnostics());
@@ -73,7 +73,7 @@ public class AdapterShapeMapPayloadTest {
             instanceof KindPayload.BindingInitPayload init
             && init.value().equals(op.result())), "declaration commits adapter identity");
         var repeated = SemanticLowerer.lowerModuleShapeMapCore(input,
-            SemanticProfile.DEAL_V1_5_BINARY64, Map.of(), digest,
+            SemanticProfile.DEAL_V1_6_BINARY64, Map.of(), digest,
             CapabilityRegistry.releaseRegistry().capabilityRegistryHash(),
             SemanticIdAllocator.over(List.of(module)));
         check(ContractSnapshotCanonicalizer.serializeText(

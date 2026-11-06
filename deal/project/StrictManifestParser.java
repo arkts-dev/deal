@@ -508,10 +508,8 @@ public final class StrictManifestParser {
     // =========================================================================
 
     /**
-     * The scalar→UTF-16 index mapping (plus per-offset line/column)
-     * re-derived with {@link ScalarSourceCursor}: {@code utf16[k]} is the
-     * UTF-16 index of decoded scalar {@code k}, so a token's original
-     * source slice is {@code source.substring(utf16[start], utf16[end])}.
+     * UTF-16 source indices and per-unit line/column positions derived
+     * with {@link ScalarSourceCursor}, including both supplementary units.
      */
     private static final class ScalarIndex {
         private final String source;
@@ -528,13 +526,19 @@ public final class StrictManifestParser {
             ScalarSourceCursor cursor = new ScalarSourceCursor(source);
             int i = 0;
             while (!cursor.atEnd()) {
-                utf16[i] = cursor.index();
+                i = cursor.index();
+                utf16[i] = i;
                 line[i] = cursor.line();
                 column[i] = cursor.column();
+                if (Character.charCount(cursor.peekScalar()) == 2) {
+                    utf16[i + 1] = i + 1;
+                    line[i + 1] = cursor.line();
+                    column[i + 1] = cursor.column() + 1;
+                }
                 cursor.advance();
-                i++;
             }
-            utf16[i] = cursor.index();
+            i = cursor.index();
+            utf16[i] = i;
             line[i] = cursor.line();
             column[i] = cursor.column();
         }

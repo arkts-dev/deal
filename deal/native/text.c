@@ -1,9 +1,9 @@
 /*
  * deal/native/text.c — the `text` service group implementation.
  *
- * Immutable UTF-8 string storage with its cached byte length, scalar count and
- * hash, the strict Unicode scalar-sequence validation every untyped boundary
- * runs, the one scalar-sequence comparison and the data `===` relation of
+ * Immutable UTF-16-unit storage with cached host WTF-8, unit count and hash,
+ * structural encoding validation, code-unit comparison, JavaScript iteration
+ * and the data `===` relation of
  * `text.h` (`llvm-native-runtime-value-model` R2/R8, `llvm-native-codegen-
  * cfg-ssa` C6).
  */
@@ -19,14 +19,15 @@
  * ========================================================================= */
 
 /*
- * A string is one managed object: the three cached facts followed by the exact
- * UTF-8 bytes. The bytes are never NUL-terminated (the byte length is
+ * A string is one managed object: cached facts followed by canonical unit
+ * bytes and the host transport cache. The bytes are never NUL-terminated (the byte length is
  * authoritative), the buffer is never written after construction, and the
  * layout declares no managed-reference slot.
  */
 struct deal_string {
     size_t byte_length;
-    size_t scalar_count;
+    size_t unit_count;
+    size_t transport_length;
     uint64_t hash;
     unsigned char bytes[];
 };
@@ -49,8 +50,7 @@ static uint64_t deal_text_hash_bytes(const unsigned char *bytes,
     return hash;
 }
 
-/* The scalar count of one validated sequence: every non-continuation byte
- * starts exactly one scalar value. */
+/* Every non-continuation byte starts one canonical UTF-16 unit. */
 static size_t deal_text_count_scalars(const unsigned char *bytes,
                                       size_t length) {
     size_t count = 0u;
@@ -76,7 +76,8 @@ static int deal_text_continuations(const unsigned char *bytes, size_t length,
     return 1;
 }
 
-int deal_text_is_scalar_sequence(const void *bytes, size_t length) {
+static int deal_text_encoding_valid(const void *bytes, size_t length,
+                                     int allow_surrogates) {
     if (length == 0u) {
         return 1;
     }
@@ -106,7 +107,7 @@ int deal_text_is_scalar_sequence(const void *bytes, size_t length) {
             if (lead == 0xE0u && second < 0xA0u) {
                 return 0;   /* overlong */
             }
-            if (lead == 0xEDu && second >= 0xA0u) {
+            if (!allow_surrogates && lead == 0xEDu && second >= 0xA0u) {
                 return 0;   /* surrogate code unit */
             }
             index += 3u;
@@ -131,28 +132,87 @@ int deal_text_is_scalar_sequence(const void *bytes, size_t length) {
     return 1;
 }
 
+int deal_text_is_scalar_sequence(const void *bytes, size_t length) {
+    return deal_text_encoding_valid(bytes, length, 0);
+}
+
+int deal_text_is_code_units(const void *bytes, size_t length) {
+    return deal_text_encoding_valid(bytes, length, 1);
+}
+
+/* Three-byte encodings preserve every UTF-16 unit, including lone units. */
+static void deal_text_encode_unit(unsigned char *out, uint32_t unit) {
+    out[0] = (unsigned char)(0xE0u | (unit >> 12));
+    out[1] = (unsigned char)(0x80u | ((unit >> 6) & 0x3Fu));
+    out[2] = (unsigned char)(0x80u | (unit & 0x3Fu));
+}
+
+/* Cache host WTF-8: pairs use four bytes, lone units retain three bytes.
+ * Both caches live inside the immutable managed object. */
+static void deal_text_cache_transport(deal_string *text) {
+    unsigned char *out = text->bytes + text->byte_length;
+    size_t n = 0u;
+    for (size_t i = 0u; i < text->byte_length; ) {
+        const unsigned char *b = text->bytes + i;
+        if (text->byte_length - i >= 6u && b[0] == 0xEDu
+                && b[1] >= 0xA0u && b[1] <= 0xAFu && b[3] == 0xEDu && b[4] >= 0xB0u) {
+            uint32_t high = ((uint32_t)(b[1] & 15u) << 6) | (b[2] & 63u);
+            uint32_t low = ((uint32_t)(b[4] & 15u) << 6) | (b[5] & 63u);
+            uint32_t cp = 0x10000u + (high << 10) + low;
+            out[n++] = (unsigned char)(0xF0u | (cp >> 18));
+            out[n++] = (unsigned char)(0x80u | ((cp >> 12) & 63u));
+            out[n++] = (unsigned char)(0x80u | ((cp >> 6) & 63u));
+            out[n++] = (unsigned char)(0x80u | (cp & 63u));
+            i += 6u;
+        } else {
+            out[n++] = text->bytes[i++];
+        }
+    }
+    text->transport_length = n;
+}
+
 deal_string *deal_text_new(const void *bytes, size_t length) {
     if (bytes == NULL && length != 0u) {
         deal_platform_fault("text: null bytes with a non-zero length");
     }
-    if (!deal_text_is_scalar_sequence(bytes, length)) {
-        deal_platform_fault("text: bytes are not a Unicode scalar sequence");
+    if (!deal_text_is_code_units(bytes, length)) {
+        deal_platform_fault("text: malformed string encoding");
     }
-    if (length > SIZE_MAX - sizeof(struct deal_string)) {
-        deal_platform_fault("text: string size overflow");
+    const unsigned char *source = bytes;
+    size_t stored_length = length;
+    for (size_t i = 0; i < length; i += 1u) {
+        if (source[i] >= 0xF0u) {
+            stored_length = deal_platform_checked_add(stored_length, 2u);
+        }
     }
+    size_t allocation = deal_platform_checked_add(sizeof(struct deal_string),
+        deal_platform_checked_multiply(stored_length, 2u));
     deal_layout_define(&deal_string_layout);
-    deal_string *string = deal_alloc(DEAL_LAYOUT_STRING,
-                                     sizeof(struct deal_string) + length);
-    string->byte_length = length;
-    string->scalar_count = 0u;
+    deal_string *string = deal_alloc(DEAL_LAYOUT_STRING, allocation);
+    string->byte_length = stored_length;
+    string->unit_count = 0u;
     string->hash = DEAL_TEXT_HASH_OFFSET_BASIS;
     if (length != 0u) {
-        const unsigned char *source = bytes;
-        memcpy(string->bytes, source, length);
-        string->scalar_count = deal_text_count_scalars(string->bytes, length);
-        string->hash = deal_text_hash_bytes(string->bytes, length);
+        size_t out = 0u;
+        for (size_t i = 0; i < length; ) {
+            if (source[i] >= 0xF0u) {
+                uint32_t cp = ((uint32_t)(source[i] & 7u) << 18)
+                    | ((uint32_t)(source[i + 1u] & 63u) << 12)
+                    | ((uint32_t)(source[i + 2u] & 63u) << 6)
+                    | (uint32_t)(source[i + 3u] & 63u);
+                cp -= 0x10000u;
+                deal_text_encode_unit(string->bytes + out, 0xD800u + (cp >> 10));
+                deal_text_encode_unit(string->bytes + out + 3u, 0xDC00u + (cp & 1023u));
+                out += 6u;
+                i += 4u;
+            } else {
+                string->bytes[out++] = source[i++];
+            }
+        }
+        string->unit_count = deal_text_count_scalars(string->bytes, stored_length);
+        string->hash = deal_text_hash_bytes(string->bytes, stored_length);
     }
+    deal_text_cache_transport(string);
     return string;
 }
 
@@ -175,14 +235,23 @@ size_t deal_text_byte_length(const deal_string *string) {
     return deal_text_of(string)->byte_length;
 }
 
-size_t deal_text_scalar_length(const deal_string *string) {
-    return deal_text_of(string)->scalar_count;
+const unsigned char *deal_text_transport_bytes(const deal_string *string) {
+    const deal_string *text = deal_text_of(string);
+    return text->bytes + text->byte_length;
 }
 
-size_t deal_text_scalar_offset(const deal_string *string, size_t scalar_index) {
+size_t deal_text_transport_length(const deal_string *string) {
+    return deal_text_of(string)->transport_length;
+}
+
+size_t deal_text_unit_length(const deal_string *string) {
+    return deal_text_of(string)->unit_count;
+}
+
+size_t deal_text_unit_offset(const deal_string *string, size_t scalar_index) {
     const deal_string *text = deal_text_of(string);
-    if (scalar_index > text->scalar_count) {
-        deal_platform_fault("text: scalar position outside the scalar count");
+    if (scalar_index > text->unit_count) {
+        deal_platform_fault("text: unit position outside the unit count");
     }
     size_t scalar = 0u;
     size_t index = 0u;
@@ -202,15 +271,47 @@ size_t deal_text_scalar_offset(const deal_string *string, size_t scalar_index) {
     return index;
 }
 
+/* A JavaScript iteration step combines a high/low unit pair only. */
+static size_t deal_text_iteration_width(const deal_string *text, size_t index) {
+    const unsigned char *b = text->bytes;
+    if (b[index] < 0x80u) return 1u;
+    if (b[index] < 0xE0u) return 2u;
+    if (index + 5u < text->byte_length && b[index] == 0xEDu
+            && b[index + 1u] >= 0xA0u && b[index + 1u] <= 0xAFu
+            && b[index + 3u] == 0xEDu && b[index + 4u] >= 0xB0u) {
+        return 6u;
+    }
+    return 3u;
+}
+
+size_t deal_text_scalar_length(const deal_string *string) {
+    const deal_string *text = deal_text_of(string);
+    size_t count = 0u;
+    for (size_t i = 0u; i < text->byte_length; count += 1u) {
+        i += deal_text_iteration_width(text, i);
+    }
+    return count;
+}
+
+size_t deal_text_scalar_offset(const deal_string *string, size_t scalar_index) {
+    const deal_string *text = deal_text_of(string);
+    size_t index = 0u;
+    for (size_t scalar = 0u; scalar < scalar_index; scalar += 1u) {
+        if (index == text->byte_length) deal_platform_fault("text: iteration position outside string");
+        index += deal_text_iteration_width(text, index);
+    }
+    return index;
+}
+
 uint64_t deal_text_hash(const deal_string *string) {
     return deal_text_of(string)->hash;
 }
 
 /* =========================================================================
- * Scalar-sequence comparison (C6, R8)
+ * UTF-16-unit comparison (C6, R8)
  * ========================================================================= */
 
-/* Decodes one scalar value at `index` of a validated sequence. */
+/* Decodes one unit at `index` of canonical unit storage. */
 static uint32_t deal_text_scalar_at(const unsigned char *bytes, size_t index,
                                     size_t *advance) {
     unsigned char lead = bytes[index];
@@ -239,18 +340,13 @@ static uint32_t deal_text_scalar_at(const unsigned char *bytes, size_t index,
 deal_string *deal_text_concat(deal_string *left, deal_string *right) {
     const deal_string *first = deal_text_of(left);
     const deal_string *second = deal_text_of(right);
-    if (first->byte_length > SIZE_MAX - second->byte_length) {
-        deal_platform_fault("text: concatenation size overflow");
-    }
-    size_t length = first->byte_length + second->byte_length;
-    if (length > SIZE_MAX - sizeof(struct deal_string)) {
-        deal_platform_fault("text: concatenation size overflow");
-    }
+    size_t length = deal_platform_checked_add(first->byte_length, second->byte_length);
+    size_t allocation = deal_platform_checked_add(sizeof(struct deal_string),
+        deal_platform_checked_multiply(length, 2u));
     deal_layout_define(&deal_string_layout);
-    deal_string *joined = deal_alloc(DEAL_LAYOUT_STRING,
-                                     sizeof(struct deal_string) + length);
+    deal_string *joined = deal_alloc(DEAL_LAYOUT_STRING, allocation);
     joined->byte_length = length;
-    joined->scalar_count = first->scalar_count + second->scalar_count;
+    joined->unit_count = first->unit_count + second->unit_count;
     if (first->byte_length != 0u) {
         memcpy(joined->bytes, first->bytes, first->byte_length);
     }
@@ -259,6 +355,7 @@ deal_string *deal_text_concat(deal_string *left, deal_string *right) {
                second->byte_length);
     }
     joined->hash = deal_text_hash_bytes(joined->bytes, length);
+    deal_text_cache_transport(joined);
     return joined;
 }
 

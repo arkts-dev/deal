@@ -116,7 +116,7 @@ public final class Main {
             return 1;
         }
 
-        // Exact-v1.5 location (D1): entry validation, ancestor-manifest
+        // Exact-v1.6 location (D1): entry validation, ancestor-manifest
         // discovery, strict UTF-8 read/decode, strict parse, override
         // validation, root/externals conversion, effective backend and
         // output, the pinned stdlib surface, and the deployment identity.
@@ -156,7 +156,7 @@ public final class Main {
             if (dumpIr) {
                 System.out.println("IR dump: enabled");
             }
-            // The v1.5 default debugging artifacts: source comments and
+            // The v1.6 default debugging artifacts: source comments and
             // per-source map sidecars are emitted by every successful
             // compile, and the accepted --source-map spelling selects
             // nothing.

@@ -344,8 +344,12 @@ public final class Parser {
         List<StatementNode> statements = new ArrayList<>();
         while (!isAtEnd() && peek().type() != TokenType.RBRACE) {
             int diagCountBefore = diagnostics.size();
+            Token statementStart = peek();
             StatementNode stmt = parseStatement();
             if (stmt != null) {
+                if (stmt instanceof FunctionDeclaration || stmt instanceof ExportDeclaration) {
+                    error(DiagnosticCode.E1042, "Function declarations and exports are module-level only", statementStart);
+                }
                 checkStatementTerminator(stmt, diagCountBefore);
                 statements.add(stmt);
             }
@@ -1464,7 +1468,7 @@ public final class Parser {
     private LiteralExpr textPart(String raw, int baseLine, int baseCol,
                                  int templateTokenStartScalarOffset,
                                  int utf16Start, int utf16End) {
-        String value = raw.substring(utf16Start, utf16End);
+        String value = TemplateScanner.decodeText(raw.substring(utf16Start, utf16End));
         int startRaw = ScalarSourceCursor.scalarCount(raw, 0, utf16Start);
         int endRaw = ScalarSourceCursor.scalarCount(raw, 0, utf16End);
         int[] startPosition = TemplateScalarMap.positionAt(raw, baseLine, baseCol,
@@ -1644,7 +1648,7 @@ public final class Parser {
         diagnostics.addAll(subParser.diagnostics);
 
         // 7. v1.4: an interpolation contains exactly one complete
-        //    expression (docs/spec-v1.5.md lexical grammar). A leftover
+        //    expression (docs/spec-v1.6.md lexical grammar). A leftover
         //    token after the parsed expression is E1042 at that token's
         //    rebased position.
         if (expr != null && subParser.peek().type() != TokenType.EOF) {

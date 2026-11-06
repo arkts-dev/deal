@@ -2,7 +2,7 @@
 # tools/build-release.sh — build the DEAL distribution the compiler runs from.
 #
 # Self-locates, so it runs from any cwd. The distribution is exactly the
-# compiled production classes plus the matched v1.5 resource set: the two
+# compiled production classes plus the matched v1.6 resource set: the two
 # runtime libraries, the LuaJIT async-export driver, the complete C11 runtime
 # deployment set, the six spec-listed stdlib modules' declarations and target
 # implementations, and the launcher. Packaging requires every one of those

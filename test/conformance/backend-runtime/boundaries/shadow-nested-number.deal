@@ -4,4 +4,4 @@
 // @features: boundary-validation
 import * as console from "std/console";
 
-export function main():null{function f(f:number):number{return f;}f(1);console.log("OK");return null;}
+export function main():null{let f = function(f:number):number{return f;};f(1);console.log("OK");return null;}

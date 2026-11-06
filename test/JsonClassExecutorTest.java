@@ -278,7 +278,7 @@ public class JsonClassExecutorTest {
         check(JsonClassAlgorithmAdapter.stringifier(Map.of(POINT, pointLayout)).stringify(
             rawTable(Map.of("k", instanceOf(pointLayout, Map.of("x", new Value.Number(1))))), "data")
             instanceof JsonStringify.Success s && s.text().carrier().equals("{\"k\":{\"x\":1.0}}"), "nested class JSON");
-        assertStringifyFailure(rawTable(Map.of("k", Value.string("\uD800"))), "data", "data.k", "invalid-unicode", false);
+        assertStringifyFailure(rawTable(Map.of("k", invalidValue())), "data", "data.k", "invalid-unicode", false);
         SemanticTable<Value> cycle = new SemanticTable<>();
         cycle.put("self", new Value.Table(cycle));
         assertStringifyFailure(new Value.Table(cycle), "data", "data.self", "table", true);
@@ -665,7 +665,7 @@ public class JsonClassExecutorTest {
             "generated Record JSON encodes nested class fields");
 
         SemanticTable<Value> badInvalidData = new SemanticTable<>();
-        badInvalidData.put("k", Value.string("\uD800"));
+        badInvalidData.put("k", invalidValue());
         Value.Class invalidInTable = instanceOf(point, Map.of(
             "name", Value.string("n"),
             "age", new Value.Number(1),
@@ -688,7 +688,7 @@ public class JsonClassExecutorTest {
                 + "as actual, no expected field, and the call origin)");
 
         SemanticTable<Value> badMissingData = new SemanticTable<>();
-        badMissingData.put("k", Value.string("\uD800"));
+        badMissingData.put("k", invalidValue());
         Value.Class missingInTable = instanceOf(point, Map.of(
             "name", Value.string("n"),
             "age", new Value.Number(1),
@@ -718,7 +718,7 @@ public class JsonClassExecutorTest {
         // data.a.0 (a table key always appends .key) at the call origin.
         SemanticTable<Value> dottedData = new SemanticTable<>();
         dottedData.put("a", new Value.Array(SemanticArray.of(new Value.Number(1))));
-        dottedData.put("a.0", Value.string("\uD800"));
+        dottedData.put("a.0", invalidValue());
         Value.Class dottedInTable = instanceOf(point, Map.of(
             "name", Value.string("n"),
             "age", new Value.Number(1),
@@ -740,7 +740,7 @@ public class JsonClassExecutorTest {
         // sibling key "a.0" also exists, the pinned path stays data.a[0]
         // (the segment spelling is the parent container's kind).
         SemanticTable<Value> dottedArrayWalkData = new SemanticTable<>();
-        dottedArrayWalkData.put("a", new Value.Array(SemanticArray.of(Value.string("\uD800"))));
+        dottedArrayWalkData.put("a", new Value.Array(SemanticArray.of(invalidValue())));
         dottedArrayWalkData.put("a.0", new Value.Number(1));
         Value.Class dottedArrayInTable = instanceOf(point, Map.of(
             "name", Value.string("n"),
@@ -767,7 +767,7 @@ public class JsonClassExecutorTest {
         for (String key : List.of("{bad}", "{actual}", "{fieldPath}", "a}b", "a{b")) {
             String bracePath = "data." + key;
             SemanticTable<Value> braceData = new SemanticTable<>();
-            braceData.put(key, Value.string("\uD800"));
+            braceData.put(key, invalidValue());
             Value.Class braceInTable = instanceOf(point, Map.of(
                 "name", Value.string("n"),
                 "age", new Value.Number(1),
@@ -1025,7 +1025,7 @@ public class JsonClassExecutorTest {
         // and whose second key holds a 600-deep chain fails at the
         // earlier malformed string.
         SemanticTable<Value> earlierFailureThenDeep = new SemanticTable<>();
-        earlierFailureThenDeep.put("bad", Value.string("\uD800"));
+        earlierFailureThenDeep.put("bad", invalidValue());
         earlierFailureThenDeep.put("k", nestedTableChain(600));
         Value.Class shallowFailure = instanceOf(tableLayout,
             Map.of("data", new Value.Table(earlierFailureThenDeep)));
@@ -1053,7 +1053,7 @@ public class JsonClassExecutorTest {
         // depth failure to precede the later malformed Unicode string.
         SemanticTable<Value> deepThenLaterFailure = new SemanticTable<>();
         deepThenLaterFailure.put("k", nestedTableChain(600));
-        deepThenLaterFailure.put("zbad", Value.string("\uD800"));
+        deepThenLaterFailure.put("zbad", invalidValue());
         Value.Class deepFirst = instanceOf(tableLayout,
             Map.of("data", new Value.Table(deepThenLaterFailure)));
         ValueId deepFirstClassId = nextValue();
@@ -1474,9 +1474,9 @@ public class JsonClassExecutorTest {
         return carrier;
     }
 
-    /** Malformed Unicode remains a rejected leaf after v1.5 JSON omission rules. */
+    /** Malformed Unicode remains a rejected leaf after v1.6 JSON omission rules. */
     private static Value invalidValue() {
-        return Value.string("\uD800");
+        return new Value.String(UnicodeScalars.Invalid.INSTANCE);
     }
 
     private static Value.Class emptyNode() {

@@ -37,10 +37,10 @@ import java.util.Map;
  *
  * <ol>
  *   <li>the JSON parse/encode round trip, the parse-side numeric tokens and
- *       every closed parse defect against the merged v1.5
+ *       every closed parse defect against the merged v1.6
  *       {@link SharedStdlibSemantics} ({@code jsonParse}/{@code jsonStringify}),
  *       including the one-based UTF-8 byte position each defect reports;</li>
- *   <li>the v1.5 stringify rules — omission of undefined/function members, the
+ *   <li>the v1.6 stringify rules — omission of undefined/function members, the
  *       array substitution, non-finite to null, own-key order, the top-level
  *       undefined result, a path-local cycle versus shared acyclic children and
  *       the closed std/json rejection arm — against the specification's rules
@@ -119,7 +119,7 @@ public final class NativeJsonStdlibTest {
     // =========================================================================
 
     /**
-     * The published operation ids are the merged v1.5 {@code StdlibFunctionId}
+     * The published operation ids are the merged v1.6 {@code StdlibFunctionId}
      * ordinals, in canonical order: the emitted {@code STDLIB_CALL} payload's id
      * and the runtime's closed operation table can never drift.
      */
@@ -390,6 +390,23 @@ public final class NativeJsonStdlibTest {
         return valid.carrier();
     }
 
+    /** Independent lossless observation of lone units over UTF-8 stdout. */
+    private static String observedText(String value) {
+        StringBuilder result = new StringBuilder();
+        for (int index = 0; index < value.length(); index++) {
+            char unit = value.charAt(index);
+            if (Character.isHighSurrogate(unit) && index + 1 < value.length()
+                    && Character.isLowSurrogate(value.charAt(index + 1))) {
+                result.append(unit).append(value.charAt(++index));
+            } else if (Character.isSurrogate(unit)) {
+                result.append(String.format("\\u%04x", (int) unit));
+            } else {
+                result.append(unit);
+            }
+        }
+        return result.toString();
+    }
+
     private static String numberBits(double value) {
         if (Double.isNaN(value)) {
             return "NaN";
@@ -398,7 +415,7 @@ public final class NativeJsonStdlibTest {
     }
 
     private static String stdText(String label, String value) {
-        return "STD\t" + label + "\tTEXT\t" + value;
+        return "STD\t" + label + "\tTEXT\t" + observedText(value);
     }
 
     private static String stdNumber(String label, double value) {
@@ -438,6 +455,8 @@ public final class NativeJsonStdlibTest {
         inputs.put("nested", "{\"a\":{\"b\":{\"c\":[1,[2,[3]]]}}}");
         inputs.put("bmp-scalar", "\"\\u00e9\\u0041\"");
         inputs.put("surrogate-pair", "\"\\ud83d\\ude00\"");
+        inputs.put("lone-high", "\"\\ud800\"");
+        inputs.put("lone-low", "\"\\udfff\"");
         inputs.put("escapes", "\"tab\\there quote\\\" backslash\\\\\"");
         inputs.put("control-scalars", "\"\\u0000\\u001f\"");
         inputs.put("own-key-order", "{\"b\":1,\"2\":2,\"a\":3,\"1\":4}");
@@ -462,7 +481,7 @@ public final class NativeJsonStdlibTest {
         inputs.put("missing-comma", "[1 2]");
         inputs.put("trailing-content", "{\"a\":1}x");
         inputs.put("invalid-escape", "\"\\q\"");
-        inputs.put("unpaired-surrogate", "\"\\ud800\"");
+        inputs.put("supplementary-offset", "[\"😀\",]");
         inputs.put("raw-control", "\"a\u0001b\"");
         inputs.put("empty-input", "");
         return inputs;
@@ -520,7 +539,7 @@ public final class NativeJsonStdlibTest {
         // stack-safe traversal has no nesting cap.
         expected.add("DEEP\tnested-2000\t2000\t4000\tmatch");
 
-        // 4. The v1.5 encoding rules from the specification's JSON encoding
+        // 4. The v1.6 encoding rules from the specification's JSON encoding
         // section, and the two closed arms from their own authority.
         expected.add("ENC\trecord-omission\tTEXT\t{\"0\":0,\"kept\":1.0}");
         expected.add("ENC\tarray-substitution\tTEXT\t[1.0,null,null,null]");
@@ -569,7 +588,7 @@ public final class NativeJsonStdlibTest {
             Double.POSITIVE_INFINITY));
         // 7b. Integrality holds over the whole finite binary64 domain: every
         // value of magnitude at least 2^52 is integral, so these bounds clamp
-        // instead of raising the SUBSTRING_BOUNDS arm.
+        // without an algorithm failure.
         expected.add(substringExpectation("substring-two-to-53", "hello",
             9007199254740992.0, 3));
         expected.add(substringExpectation("substring-above-two-to-53", "hello",
@@ -752,7 +771,7 @@ public final class NativeJsonStdlibTest {
         expected.add(stdFailure("stringify-nothing-failure",
             kindArm("string", "undefined")));
 
-        // 17. The class walks: authored from docs/spec-v1.5.md's @jsonable rules.
+        // 17. The class walks: authored from docs/spec-v1.6.md's @jsonable rules.
         expected.add("FROM\tcomplete\tTEXT\t" + "{\"name\":\"Ada\",\"bio\":null,"
             + "\"tags\":[\"x\",\"y\"],\"props\":{\"k\":[1.0,2.0]},"
             + "\"items\":[{\"id\":2.0}],\"label\":null}");
@@ -858,7 +877,7 @@ public final class NativeJsonStdlibTest {
         lines.add("STD\t" + label + "\tARRAY\t" + array.elements().size());
         for (int index = 0; index < array.elements().size(); index += 1) {
             lines.add("ARR\t" + label + "\t" + index + "\t"
-                + text(array.elements().elementAt(index), label + "[" + index + "]"));
+                + observedText(text(array.elements().elementAt(index), label + "[" + index + "]")));
         }
         return lines;
     }

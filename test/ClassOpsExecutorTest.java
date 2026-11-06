@@ -2,6 +2,7 @@ package deal.test;
 
 import deal.diagnostics.DiagnosticCode;
 import deal.semantic.ir.ActualKind;
+import deal.semantic.ir.UnicodeScalars;
 import deal.semantic.ir.AnchorId;
 import deal.semantic.ir.AsyncTokenId;
 import deal.semantic.ir.AsyncTokenOwner;
@@ -377,9 +378,10 @@ public class ClassOpsExecutorTest {
             "Number renders NUMBER");
         check(Value.string("x").actualKind() == ActualKind.STRING,
             "a valid String renders STRING");
-        check(Value.string("\uD800").actualKind() == ActualKind.INVALID_UNICODE,
-            "a lone-surrogate String renders INVALID_UNICODE (the classification "
-                + "travels with the value)");
+        check(Value.string("\uD800").actualKind() == ActualKind.STRING,
+            "a lone UTF-16 unit renders STRING");
+        check(new Value.String(UnicodeScalars.Invalid.INSTANCE).actualKind() == ActualKind.INVALID_UNICODE,
+            "an explicit invalid carrier renders INVALID_UNICODE");
         check(new Value.Table(new SemanticTable<>()).actualKind() == ActualKind.TABLE,
             "Table renders TABLE");
         check(new Value.Array(SemanticArray.of(List.of())).actualKind() == ActualKind.ARRAY,

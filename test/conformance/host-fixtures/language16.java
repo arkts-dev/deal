@@ -1,5 +1,12 @@
-final class HostLanguage15 {
+final class HostLanguage16 {
   public static Object echo(Object value) { return value; }
+  public static boolean inspectText(Object input) {
+    var value=(deal.codegen.jvm.JvmRuntime.Table)input;
+    var a=(deal.codegen.jvm.JvmRuntime.Array)value.read("a");
+    return value.read("self")==value && value.read("a")==value.read("b")
+      && "\ud800".equals(value.read("😀")) && "😀".equals(a.elements.get(0))
+      && "\ud800".equals(a.elements.get(1));
+  }
   public static Object undefinedValue() { return deal.codegen.jvm.JvmRuntime.UNDEFINED; }
   public static void nothing() {}
   public static Object maybeNumber(Object value) { return value; }

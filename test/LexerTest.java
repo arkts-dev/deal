@@ -217,7 +217,7 @@ public class LexerTest {
     static void testKeywords() {
         System.out.println("-- Keywords --");
 
-        // Active v1.5 keyword set.
+        // Active v1.6 keyword set.
         String[] keywords = {
             "let", "class", "function", "async", "await",
             "return", "if", "else",
@@ -486,20 +486,11 @@ public class LexerTest {
         assertNoDiagnostics(r.diagnostics(), "template leading interpolation");
         assertToken(r.tokens().get(0), TokenType.TEMPLATE_LITERAL, "${greeting} world", 1, 1);
 
-        // TemplateText has no escape mechanism — a backslash is ordinary
-        // text and does not shield a following backtick — and the trailing
-        // backslash run before a delimiter must form pairs, so the closed
-        // form with an odd run is rejected while the recovery shape (the
-        // backtick still closes the token) is unchanged.
+        // Scanning preserves raw spelling; the escaped backtick is content.
         r = tokenize("`a\\`b`");
-        assertToken(r.tokens().get(0), TokenType.TEMPLATE_LITERAL, "a\\", 1, 1);
-        assertToken(r.tokens().get(1), TokenType.IDENTIFIER, "b", 1, 5);
-        assertDiagnosticCode(r.diagnostics(), "E1003",
-            "the backtick after b opens an unterminated template");
-        assertDiagnosticCode(r.diagnostics(), "E1042",
-            "the odd trailing backslash run before the closing backtick is rejected");
-        assertRange(findDiag(r, "E1042"), "test.deal", 1, 3, 1, 5,
-            2, 4, "odd run before the closing backtick");
+        assertToken(r.tokens().get(0), TokenType.TEMPLATE_LITERAL, "a\\`b", 1, 1);
+        assertToken(r.tokens().get(1), TokenType.EOF, "", 1, 7);
+        assertNoDiagnostics(r.diagnostics(), "escaped backtick is legal");
 
         // A raw backslash is TemplateText content.
         r = tokenize("`a\\$b`");
@@ -605,45 +596,18 @@ public class LexerTest {
             "world token on line 2 after CRLF (got " + worldToken.line() + ")");
 
         // =====================================================================
-        // Backslash is ordinary TemplateText: a backslash before a line
-        // terminator stays in the lexeme and the terminator still ends the
-        // text run with E1003.
+        // Escaped line terminators continue one token, with raw ranges intact.
         // =====================================================================
-        r = tokenize("`hello\\\nworld`");
-        assertDiagnosticCode(r.diagnostics(), "E1003",
-            "backslash before newline in template");
-        check(r.tokens().get(0).type() == TokenType.TEMPLATE_LITERAL,
-            "template with backslash+LF produces TEMPLATE_LITERAL");
-        check(r.tokens().get(0).lexeme().equals("hello\\"),
-            "template lexeme keeps the raw backslash (got '"
-                + r.tokens().get(0).lexeme() + "')");
-        boolean hasWorldAfterBackslashN = r.tokens().stream()
-            .anyMatch(t -> t.type() == TokenType.IDENTIFIER && t.lexeme().equals("world"));
-        check(hasWorldAfterBackslashN,
-            "'world' found after template with backslash+newline");
-
-        r = tokenize("`hello\\\rworld`");
-        assertDiagnosticCode(r.diagnostics(), "E1003",
-            "backslash+CR in template");
-        check(r.tokens().get(0).lexeme().equals("hello\\"),
-            "template lexeme keeps the raw backslash before CR");
-
-        r = tokenize("`hello\\\r\nworld`");
-        assertDiagnosticCode(r.diagnostics(), "E1003",
-            "backslash+CRLF in template");
-        check(r.tokens().get(0).lexeme().equals("hello\\"),
-            "template lexeme keeps the raw backslash before CRLF");
-        Token wToken = null;
-        for (Token t : r.tokens()) {
-            if (t.type() == TokenType.IDENTIFIER && t.lexeme().equals("world")) {
-                wToken = t;
-                break;
-            }
+        for (String newline : List.of("\n", "\r", "\r\n")) {
+            String raw = "hello\\" + newline + "world";
+            r = tokenize("`" + raw + "` let x = 1;");
+            assertNoDiagnostics(r.diagnostics(), "escaped line continuation");
+            assertToken(r.tokens().get(0), TokenType.TEMPLATE_LITERAL, raw, 1, 1);
+            check(r.tokens().get(1).type() == TokenType.LET,
+                "continuation does not expose a world identifier");
+            check(r.tokens().get(1).line() == 2 && r.tokens().get(1).column() == 8,
+                "following token has physical line and column");
         }
-        check(wToken != null,
-            "world token found after template with backslash+CRLF");
-        check(wToken.line() == 2,
-            "world token on line 2 after backslash+CRLF (got " + wToken.line() + ")");
 
         // =====================================================================
         // After \r\n in template, subsequent tokens report correct line numbers
@@ -698,7 +662,7 @@ public class LexerTest {
     }
 
     /**
-     * TemplateText trailing backslashes form pairs (docs/spec-v1.5.md): the
+     * TemplateText trailing backslashes form pairs (docs/spec-v1.6.md): the
      * backslash run that ends a text run immediately before its delimiter
      * (the closing backtick or a {@code ${} opener) must be even. An odd run
      * is E1042 over the run and its delimiter, with no escape semantics:
@@ -723,14 +687,12 @@ public class LexerTest {
 
     static void testTemplateTrailingBackslashPairs() {
         System.out.println("-- TemplateText trailing backslash pairs --");
-        String closingMessage = "Invalid template literal: trailing"
-            + " backslashes before the closing backtick must form pairs";
-        String openerMessage = "Invalid template literal: trailing"
-            + " backslashes before '${' must form pairs";
+        String closingMessage = "Invalid template literal: malformed numeric, hexadecimal or Unicode escape spelling";
+        String openerMessage = closingMessage;
 
         // Odd run before the closing backtick: rejected; the backtick still
         // closes the token, so the lexeme is the raw text before it.
-        LexResult r = tokenize("`a\\`");
+        LexResult r = tokenize("`a\\u{}`");
         assertDiagnosticCount(r.diagnostics(), 1, "odd run before closing backtick");
         CompilerDiagnostic odd = findDiag(r, "E1042");
         check(odd != null && odd.message().equals(closingMessage),
@@ -740,8 +702,8 @@ public class LexerTest {
             assertRange(odd, "test.deal", 1, 3, 1, 5, 2, 4,
                 "odd run before the closing backtick");
         }
-        assertToken(r.tokens().get(0), TokenType.TEMPLATE_LITERAL, "a\\", 1, 1);
-        check(r.tokens().get(0).scalarLength() == 4,
+        assertToken(r.tokens().get(0), TokenType.TEMPLATE_LITERAL, "a\\u{}", 1, 1);
+        check(r.tokens().get(0).scalarLength() == 7,
             "the rejected template token still spans both backticks");
 
         // Even control: two trailing backslashes are admitted verbatim.
@@ -750,13 +712,13 @@ public class LexerTest {
         assertToken(r.tokens().get(0), TokenType.TEMPLATE_LITERAL, "a\\\\", 1, 1);
 
         // Three backslashes are odd again.
-        r = tokenize("`\\\\\\`");
+        r = tokenize("`\\u{}`");
         assertDiagnosticCount(r.diagnostics(), 1, "three backslashes");
         CompilerDiagnostic three = findDiag(r, "E1042");
         if (three != null) {
-            assertRange(three, "test.deal", 1, 2, 1, 6, 1, 5, "three backslashes");
+            assertRange(three, "test.deal", 1, 2, 1, 4, 1, 3, "malformed Unicode escape");
         }
-        assertToken(r.tokens().get(0), TokenType.TEMPLATE_LITERAL, "\\\\\\", 1, 1);
+        assertToken(r.tokens().get(0), TokenType.TEMPLATE_LITERAL, "\\u{}", 1, 1);
 
         r = tokenize("`a\\\\\\\\`");
         assertNoDiagnostics(r.diagnostics(), "four backslashes");
@@ -764,17 +726,17 @@ public class LexerTest {
 
         // Odd run before the '${' interpolation boundary: rejected, and the
         // interpolation still opens so the token keeps the raw content.
-        r = tokenize("`a\\${x}`");
+        r = tokenize("`a\\xG1${x}`");
         assertDiagnosticCount(r.diagnostics(), 1, "odd run before '${'");
         CompilerDiagnostic opener = findDiag(r, "E1042");
         check(opener != null && opener.message().equals(openerMessage),
             "odd run before '${': exact message, got "
                 + (opener == null ? "none" : opener.message()));
         if (opener != null) {
-            assertRange(opener, "test.deal", 1, 3, 1, 6, 2, 5,
+            assertRange(opener, "test.deal", 1, 3, 1, 5, 2, 4,
                 "odd run before '${'");
         }
-        assertToken(r.tokens().get(0), TokenType.TEMPLATE_LITERAL, "a\\${x}", 1, 1);
+        assertToken(r.tokens().get(0), TokenType.TEMPLATE_LITERAL, "a\\xG1${x}", 1, 1);
 
         // Even control at the same boundary.
         r = tokenize("`a\\\\${x}`");
@@ -785,18 +747,18 @@ public class LexerTest {
         // before the nested closing backtick is a chain fragment for the
         // expression lexer, so the scanner records no violation at this level
         // and the nested literal still ends there.
-        r = tokenize("`[${ `in\\` }]`");
+        r = tokenize("`[${ `in\\`text` }]`");
         assertNoDiagnostics(r.diagnostics(),
             "a nested template scans one level deep for text runs");
         assertToken(r.tokens().get(0), TokenType.TEMPLATE_LITERAL,
-            "[${ `in\\` }]", 1, 1);
+            "[${ `in\\`text` }]", 1, 1);
         r = tokenize("`[${ `in\\\\` }]`");
         assertNoDiagnostics(r.diagnostics(), "nested even run");
         assertToken(r.tokens().get(0), TokenType.TEMPLATE_LITERAL,
             "[${ `in\\\\` }]", 1, 1);
 
         // The rule also applies to the text run after an interpolation.
-        r = tokenize("`${x}b\\`");
+        r = tokenize("`${x}b\\u{}`");
         assertDiagnosticCount(r.diagnostics(), 1, "odd run after interpolation");
         CompilerDiagnostic after = findDiag(r, "E1042");
         if (after != null) {
@@ -806,25 +768,25 @@ public class LexerTest {
 
         // Several broken delimiters in one template are separate diagnostics in
         // source order.
-        r = tokenize("`a\\${x}b\\`");
+        r = tokenize("`a\\xG1${x}b\\u{}`");
         assertDiagnosticCount(r.diagnostics(), 2, "two broken delimiters");
         List<CompilerDiagnostic> both = r.diagnostics();
         if (both.size() == 2) {
-            assertRange(both.get(0), "test.deal", 1, 3, 1, 6, 2, 5,
+            assertRange(both.get(0), "test.deal", 1, 3, 1, 5, 2, 4,
                 "first broken delimiter");
-            assertRange(both.get(1), "test.deal", 1, 9, 1, 11, 8, 10,
+            assertRange(both.get(1), "test.deal", 1, 12, 1, 14, 11, 13,
                 "second broken delimiter");
         }
 
         // Line/column tracking through an interpolation stays scalar-exact.
-        r = tokenize("`a${x\n}y\\`");
+        r = tokenize("`a${x\n}y\\u{}`");
         assertDiagnosticCount(r.diagnostics(), 1, "odd run on line 2");
         CompilerDiagnostic second = findDiag(r, "E1042");
         if (second != null) {
             assertRange(second, "test.deal", 2, 3, 2, 5, 8, 10,
                 "odd run on line 2");
         }
-        check(r.tokens().get(0).lexeme().equals("a${x\n}y\\"),
+        check(r.tokens().get(0).lexeme().equals("a${x\n}y\\u{}"),
             "multi-line template keeps its raw text");
     }
 
@@ -1610,8 +1572,8 @@ public class LexerTest {
         // (quote, x, astral, y, quote).
         check(str.startScalarOffset() == 8,
             "astral: string start offset 8, got " + str.startScalarOffset());
-        check(str.scalarLength() == 5,
-            "astral: string scalar length 5, got " + str.scalarLength());
+        check(str.scalarLength() == 6,
+            "astral: string UTF-16 length 6, got " + str.scalarLength());
         check(str.startScalarOffset()
                 == ScalarSourceCursor.scalarCount(src, 0, src.indexOf("\"x")),
             "astral: recomputed string start offset");
@@ -1619,8 +1581,8 @@ public class LexerTest {
             "astral: recomputed string scalar length");
         // The astral scalar counts one column: semicolon at column 14.
         check(tokens.get(4).type() == TokenType.SEMICOLON
-                && tokens.get(4).column() == 14,
-            "astral: semicolon at column 14 (astral = one column), got "
+                && tokens.get(4).column() == 15,
+            "astral: semicolon at column 15 (astral = two units), got "
                 + tokens.get(4).column());
 
         // Tab counts one scalar.

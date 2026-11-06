@@ -110,10 +110,10 @@ public final class LlvmCallClosureEmissionTest {
           let second: number = c();
           let g: (a: number, b: number) => number = one;
           let adapted: number = use(g);
-          function count(n: number): boolean {
+          let count: (n: number) => boolean = function(n: number): boolean {
             if (n === 0) { return true; }
             return count(n - 1);
-          }
+          };
           if (first === 2 && second === 3 && adapted === 1 && count(4)) {
             let observed: string = (first as unknown) as string;
             return null;
@@ -142,7 +142,7 @@ public final class LlvmCallClosureEmissionTest {
 
     /**
      * The pinned IEEE {@code std/math.sqrt} semantics: a negative input yields
-     * NaN (the specification's v1.5 rule), so the executed {@code !==} test is
+     * NaN (the specification's v1.6 rule), so the executed {@code !==} test is
      * true and the fixture reaches its E8001 arm.
      */
     private static final String SQRT_SOURCE = """
@@ -194,7 +194,7 @@ public final class LlvmCallClosureEmissionTest {
           return g(f);
         }
         export function main(): null {
-          function passthrough(value: unknown): number { return 7; }
+          let passthrough = function(value: unknown): number { return 7; };
           let applied: number = callFunction(apply1);
           let g: (v: unknown) => number = passthrough;
           let carried: number = callUnknown(g, one);
@@ -472,7 +472,7 @@ public final class LlvmCallClosureEmissionTest {
 
     /**
      * Closures over a for-of iteration binding: each iteration owns a fresh
-     * heap cell (C5, docs/spec-v1.5.md "For a for-of loop, each iteration
+     * heap cell (C5, docs/spec-v1.6.md "For a for-of loop, each iteration
      * creates a fresh iteration binding for variables captured by closures").
      *
      * <p>The executed fixture discriminates the two behaviors exactly: the
@@ -1216,8 +1216,8 @@ public final class LlvmCallClosureEmissionTest {
         function ident(n: number): number { return n; }
         export function main(): null {
           let calls: number = 0;
-          function tick(): number { calls = calls + 1; return calls; }
-          function maker(): (n: number) => number { tick(); return ident; }
+          let tick = function(): number { calls = calls + 1; return calls; };
+          let maker = function(): (n: number) => number { tick(); return ident; };
           let fromCall: (a: number, b: number) => number = maker();
           let before: number = calls;
           let first: number = fromCall(1, 2);
@@ -1235,7 +1235,7 @@ public final class LlvmCallClosureEmissionTest {
      */
     private static final String ADAPTER_FACTORY_CAPTURE_SOURCE = """
         function maker(k: number): (n: number) => number {
-          function add(n: number): number { return n + k; }
+          let add = function(n: number): number { return n + k; };
           return add;
         }
         export function main(): null {
@@ -1335,10 +1335,10 @@ public final class LlvmCallClosureEmissionTest {
                 let saved: (ignored: number) => number = source;
                 source = two;
                 check(saved(0) === 1);
-                function take(value: (ignored: number) => number): number {
+                let take = function(value: (ignored: number) => number): number {
                     source = two;
                     return value(0);
-                }
+                };
                 source = one;
                 check(take(source) === 1);
                 let state: State = {calls: 0};
@@ -1922,7 +1922,7 @@ public final class LlvmCallClosureEmissionTest {
             throws IOException {
         Files.createDirectories(root.resolve("src"));
         Files.writeString(root.resolve("deal.json"),
-            "{\"languageVersion\": \"1.5\", \"moduleRoots\": [\"src\"],"
+            "{\"languageVersion\": \"1.6\", \"moduleRoots\": [\"src\"],"
                 + " \"backend\": \"llvm\"}", StandardCharsets.UTF_8);
         for (Map.Entry<String, String> entry : sources.entrySet()) {
             Path file = root.resolve(entry.getKey());

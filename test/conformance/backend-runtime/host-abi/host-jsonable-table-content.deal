@@ -1,7 +1,7 @@
 // @spec: Classes — JSON serialization (@jsonable)
-// @description: Generated Record content uses ordinary JSON omission, substitution and ordering rules; cycles fail encoding and malformed nested host data fails ingress.
+// @description: Generated Record content preserves lone UTF-16 units, omission, substitution and ordering; cycles fail encoding.
 // @expected: runtime-ok
-// @features: classes, jsonable, toJson, tables, host-abi, v1.5
+// @features: classes, jsonable, toJson, tables, host-abi, v1.6
 
 import * as host from "host/jsonabletable";
 import * as json from "std/json";
@@ -108,15 +108,16 @@ export function test_host_table_non_finite(): null {
 }
 
 export function test_host_table_invalid_key(): null {
-  let rejected: boolean = false;
-  try { host.makeBadKey(); } catch (e) { if (e instanceof Error) { rejected = e.code === "E8010"; } }
-  check(rejected, "invalid root key rejects the host return");
-  rejected = false;
-  try { host.makeNestedBadKey(); } catch (e) { if (e instanceof Error) { rejected = e.code === "E8010"; } }
-  check(rejected, "invalid nested key rejects the host return");
-  rejected = false;
-  try { host.makeBadString(); } catch (e) { if (e instanceof Error) { rejected = e.code === "E8010"; } }
-  check(rejected, "invalid unread nested string rejects the host return");
+  let root: TableField = {data:host.makeBadKey()};
+  let rootDecoded=json.parse(TableField$toJson(root)).data as Record<string,unknown>;
+  check((rootDecoded[`\uD800`] as number)===1,"lone root key survives generated JSON");
+  let nested: TableField = {data:host.makeNestedBadKey()};
+  let nestedDecoded=json.parse(TableField$toJson(nested)).data as Record<string,unknown>;
+  let inner=nestedDecoded.inner as Record<string,unknown>;
+  check((inner[`\uD800`] as number)===1,"lone nested key survives generated JSON");
+  let leaf: TableField = {data:host.makeBadString()};
+  let leafDecoded=json.parse(TableField$toJson(leaf)).data as Record<string,unknown>;
+  check((leafDecoded.a as string)===`\uD800`,"lone nested string survives generated JSON");
   return null;
 }
 

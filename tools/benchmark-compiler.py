@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare cold compiler invocations over generated v1.5 projects (no test runner)."""
+"""Compare cold compiler invocations over generated v1.6 projects (no test runner)."""
 import argparse
 import json
 import os
@@ -37,8 +37,8 @@ def main():
         for name, modules, functions, statements in cases:
             project = work / name
             (project / "src").mkdir(parents=True)
-            (project / "deal.json").write_text(json.dumps({"languageVersion": "1.5",
-                "stdlib": "1.5", "moduleRoots": ["src"]}), encoding="utf-8")
+            (project / "deal.json").write_text(json.dumps({"languageVersion": "1.6",
+                "stdlib": "1.6", "moduleRoots": ["src"]}), encoding="utf-8")
             for module in range(modules):
                 lines = [f'import * as next from "./m{module + 1}";'] if module + 1 < modules else []
                 if name == "classes-100":

@@ -1319,7 +1319,6 @@ public class BoundaryExecutorTest {
             FailurePolicyId.HOST_LOAD,
             FailurePolicyId.CLASS_CONSTRUCTION,
             FailurePolicyId.JSON_PARSE_SYNTAX,
-            FailurePolicyId.SQRT_NEGATIVE,
             FailurePolicyId.THROW_TRANSFER,
             FailurePolicyId.INFRASTRUCTURE_ONLY);
         for (FailurePolicyId policy : outside) {

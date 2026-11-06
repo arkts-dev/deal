@@ -84,14 +84,14 @@ public class ComparisonExecutorTest {
             new Ordered("STRING", s("abd"), s("abd"), true, false, false),
             new Ordered("STRING", s("ab"), s("abc"), false, true, false),
             new Ordered("STRING", s("abc"), s("ab"), false, false, true),
-            new Ordered("STRING", s("\uE000"), s("\uD83D\uDE00"), false, true, false),
-            new Ordered("STRING", s("\uD83D\uDE00"), s("\uE000"), false, false, true),
+            new Ordered("STRING", s("\uE000"), s("\uD83D\uDE00"), false, false, true),
+            new Ordered("STRING", s("\uD83D\uDE00"), s("\uE000"), false, true, false),
             new Ordered("STRING", s("\uD83D\uDE00"), s("\uD83D\uDE00"), true, false, false),
-            new Ordered("STRING", s("a\uE000"), s("a\uD83D\uDE00"), false, true, false),
-            new Ordered("STRING", s("\uFFFF"), s("\uD83D\uDE00"), false, true, false),
+            new Ordered("STRING", s("a\uE000"), s("a\uD83D\uDE00"), false, false, true),
+            new Ordered("STRING", s("\uFFFF"), s("\uD83D\uDE00"), false, false, true),
             new Ordered("STRING", s("\uD83D\uDE00"), s("a"), false, false, true));
         rows.forEach(row -> relation(row.family(), row.left(), row.right(), row.equal(), row.less(), row.greater()));
-        check("\uE000".compareTo("\uD83D\uDE00") > 0, "Unicode seed diverges from UTF-16 ordering");
+        check("\uE000".compareTo("\uD83D\uDE00") > 0, "supplementary seed pins UTF-16 ordering");
         for (ComparisonOperandView[] pair : List.of(new ComparisonOperandView[]{n(Double.NaN), n(Double.NaN)},
                 new ComparisonOperandView[]{n(Double.NaN), n(1.0)}, new ComparisonOperandView[]{n(1.0), n(Double.NaN)})) {
             for (String name : List.of("EQ", "NE", "LT", "LE", "GT", "GE")) {
@@ -233,8 +233,8 @@ public class ComparisonExecutorTest {
         check(b(true).equals(b(true)) && i(7).equals(i(7)) && n(1.5).equals(n(1.5)), "scalar views compare by value");
         check(s("a\uD83D\uDE00b").equals(new ComparisonOperandView.String(new UnicodeScalars.Valid("a\uD83D\uDE00b"))), "validated scalar carrier");
         Object identity = new Object(); check(ref(identity).allocationIdentity() == identity, "reference preserves allocation token");
-        expectException(IllegalArgumentException.class, () -> new UnicodeScalars.Valid("\uD800"));
-        expectException(IllegalArgumentException.class, () -> new UnicodeScalars.Valid("\uDC00"));
+        relation("STRING", s("\uD800"), s("\uDC00"), false, true, false);
+        relation("STRING", s("\uD800"), s("\uD800"), true, false, false);
         expectException(NullPointerException.class, () -> new ComparisonOperandView.String(null));
         expectException(NullPointerException.class, () -> new ComparisonOperandView.Ref(null));
     }

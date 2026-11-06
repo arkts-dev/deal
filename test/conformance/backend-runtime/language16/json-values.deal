@@ -25,9 +25,9 @@ function parsedArray(text: string): void {
 }
 export function main(): null {
   let paired = `🌍\\`;
-  check(paired === "🌍\\\\");
+  check(paired === "🌍\\");
   let interpolated = `🌍\\${"x"}`;
-  check(interpolated === "🌍\\\\x");
+  check(interpolated === "🌍\\x");
   let nestedTemplate = `${`🌍\\`}`;
   check(nestedTemplate === paired);
   parsedArray("[]"); parsedArray("[1]"); parsedArray("[null]");

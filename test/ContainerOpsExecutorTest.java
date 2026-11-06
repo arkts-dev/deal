@@ -325,9 +325,8 @@ public class ContainerOpsExecutorTest {
             "Number renders NUMBER");
         check(Value.string("x").actualKind() == ActualKind.STRING,
             "a valid String renders STRING");
-        check(Value.string("\uD800").actualKind() == ActualKind.INVALID_UNICODE,
-            "a lone-surrogate String renders INVALID_UNICODE (the classification "
-                + "travels with the value)");
+        check(Value.string("\uD800").actualKind() == ActualKind.STRING,
+            "a lone UTF-16 unit is STRING data");
         check(Value.string(UnicodeScalars.Invalid.INSTANCE).actualKind()
                 == ActualKind.INVALID_UNICODE,
             "an explicit Invalid classification renders INVALID_UNICODE");
@@ -408,7 +407,7 @@ public class ContainerOpsExecutorTest {
                 Map.of()),
             "executing a CONST op as TABLE_NEW (wrong kind)");
         expectDefect(() -> ContainerOpsExecutor.executeTableNew(
-                tableNewOp(List.of(), FailurePolicyId.SQRT_NEGATIVE), Map.of()),
+                tableNewOp(List.of(), FailurePolicyId.JSON_TO_ERROR), Map.of()),
             "a TABLE_NEW carrying a non-pinned policy");
         expectDefect(() -> ContainerOpsExecutor.executeTableNew(
                 tableNewOp(List.of(new KindPayload.TableEntry("k", new ValueId(9000))),
@@ -675,7 +674,7 @@ public class ContainerOpsExecutorTest {
         expectDefect(() -> ContainerOpsExecutor.executeArrayNew(
                 opWithId(nextOpId(), SemanticOpKind.ARRAY_NEW,
                     new KindPayload.ArrayNewPayload(INT, List.of(), List.of()), nextValue(),
-                    new RuntimeDescriptor.Array(INT), FailurePolicyId.SQRT_NEGATIVE, null),
+                    new RuntimeDescriptor.Array(INT), FailurePolicyId.JSON_TO_ERROR, null),
                 Map.of(), Map.of(), pass),
             "an ARRAY_NEW carrying a non-pinned policy");
 
@@ -884,7 +883,7 @@ public class ContainerOpsExecutorTest {
             BoundaryKind.CONTEXTUAL_TABLE_READ, INT, FailurePolicyId.TYPE_DESCRIPTOR);
         SemanticOp wrongPolicy = opWithId(wrongPolicyId, SemanticOpKind.MEMBER_READ,
             new KindPayload.MemberReadPayload(receiver, "k"), nextValue(), INT,
-            FailurePolicyId.SQRT_NEGATIVE, null);
+            FailurePolicyId.JSON_TO_ERROR, null);
         expectDefect(() -> ContainerOpsExecutor.executeMemberRead(wrongPolicy, values,
                 wrongPolicyChild, pass),
             "a MEMBER_READ carrying a non-pinned policy");
@@ -991,7 +990,7 @@ public class ContainerOpsExecutorTest {
                 concatOp(List.of(f1), FailurePolicyId.NO_DEAL_FAILURE), intFragment),
             "a fragment that resolves to a non-string value");
         Map<ValueId, Value> invalidFragment = new LinkedHashMap<>();
-        invalidFragment.put(f1, Value.string("\uDC00"));
+        invalidFragment.put(f1, Value.string(UnicodeScalars.Invalid.INSTANCE));
         expectDefect(() -> ContainerOpsExecutor.executeStringConcat(
                 concatOp(List.of(f1), FailurePolicyId.NO_DEAL_FAILURE), invalidFragment),
             "an Invalid operand is a producer defect, never a second projection");
@@ -1020,7 +1019,7 @@ public class ContainerOpsExecutorTest {
         BindingId binding = new BindingId(1);
         ValueId iterable = nextValue();
         Map<ValueId, Value> values = new LinkedHashMap<>();
-        values.put(iterable, Value.string("\uD800"));
+        values.put(iterable, Value.string(UnicodeScalars.Invalid.INSTANCE));
         List<String> log = new ArrayList<>();
         SemanticOp forOf = forOfOp(iterable, binding, 10, IterationMode.STRING_SCALARS,
             FailurePolicyId.TYPE_DESCRIPTOR);

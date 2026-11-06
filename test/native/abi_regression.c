@@ -87,7 +87,8 @@ static deal_host_result error_fields(const deal_value *args, size_t argc) {
     (void)argc;
     deal_host_result result = {0};
     deal_value text, borrowed, wrong, absent, invalid;
-    const unsigned char surrogate[] = {0xed, 0xa0, 0x80};
+    const unsigned char malformed[] = {0xe2, 0x82};
+    const unsigned char lone[] = {0xed, 0xa0, 0x80};
     REQUIRE(deal_string_new("B", 1, &text));
     REQUIRE(deal_field_set(args[0], "code", text));
     REQUIRE(deal_field_set(args[0], "message", text));
@@ -95,7 +96,17 @@ static deal_host_result error_fields(const deal_value *args, size_t argc) {
     REQUIRE(deal_field_set(args[0], "code", borrowed));
     REQUIRE(deal_number(3, &wrong));
     REQUIRE(deal_absent(&absent));
-    REQUIRE(deal_string_new(surrogate, sizeof surrogate, &invalid));
+    REQUIRE(deal_string_new(lone, sizeof lone, &text));
+    REQUIRE(deal_field_set(args[0], "message", text));
+    REQUIRE(deal_field_get(args[0], "message", &borrowed));
+    {
+        int same = 0;
+        REQUIRE(deal_same(text, borrowed, &same));
+        EXPECT(same == 1);
+    }
+    REQUIRE(deal_string_new("B", 1, &text));
+    REQUIRE(deal_field_set(args[0], "message", text));
+    REQUIRE(deal_string_new(malformed, sizeof malformed, &invalid));
     EXPECT(deal_field_set(args[0], "code", wrong) == DEAL_STATUS_KIND);
     EXPECT(deal_field_set(args[0], "message", absent) == DEAL_STATUS_KIND);
     EXPECT(deal_field_set(args[0], "message", invalid) == DEAL_STATUS_KIND);

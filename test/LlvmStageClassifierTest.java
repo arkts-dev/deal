@@ -270,7 +270,7 @@ public final class LlvmStageClassifierTest {
                 + " metadata");
         checkEq(StageSupport.REJECTED,
             LlvmStageClassifier.deleteTarget(DeleteTargetKind.ARRAY_SLOT),
-            "an array element has no delete (spec v1.5)");
+            "an array element has no delete (spec v1.6)");
         checkEq(StageSupport.STAGED,
             LlvmStageClassifier.assignTarget(AssignTargetKind.VARIABLE),
             "a binding assignment is staged");
@@ -374,7 +374,7 @@ public final class LlvmStageClassifierTest {
             Path supported = scratch.resolve("supported");
             Files.createDirectories(supported.resolve("src"));
             Files.writeString(supported.resolve("deal.json"),
-                "{\"languageVersion\": \"1.5\", \"moduleRoots\": [\"src\"],"
+                "{\"languageVersion\": \"1.6\", \"moduleRoots\": [\"src\"],"
                     + " \"backend\": \"llvm\"}",
                 StandardCharsets.UTF_8);
             for (Map.Entry<String, String> source : SUPPORTED_SOURCE.entrySet()) {
@@ -423,7 +423,7 @@ public final class LlvmStageClassifierTest {
             throws IOException {
         Files.createDirectories(root.resolve("src"));
         Files.writeString(root.resolve("deal.json"),
-            "{\"languageVersion\": \"1.5\", \"moduleRoots\": [\"src\"],"
+            "{\"languageVersion\": \"1.6\", \"moduleRoots\": [\"src\"],"
                 + " \"backend\": \"llvm\", \"externals\":"
                 + " {\"host/probe\": {\"declaration\":"
                 + " \"src/probe.d.deal\"}}}",
@@ -437,7 +437,7 @@ public final class LlvmStageClassifierTest {
     private static void writeProject(Path root, String source) throws IOException {
         Files.createDirectories(root.resolve("src"));
         Files.writeString(root.resolve("deal.json"),
-            "{\"languageVersion\": \"1.5\", \"moduleRoots\": [\"src\"],"
+            "{\"languageVersion\": \"1.6\", \"moduleRoots\": [\"src\"],"
                 + " \"backend\": \"llvm\"}", StandardCharsets.UTF_8);
         Files.writeString(root.resolve("src/main.deal"), source,
             StandardCharsets.UTF_8);

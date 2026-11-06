@@ -1832,7 +1832,7 @@ private void emitBindingLoad(SemanticOp op) {
             // return value the body's own RETURN cell checked.
             String keyword = function.descriptor().isAsync() ? "async " : "";
             // The emitted function expression keeps the lowered function's
-            // original source name (docs/spec-v1.5.md §Source maps and
+            // original source name (docs/spec-v1.6.md §Source maps and
             // debugging: a stack trace names both the generated function and
             // the original source function). The generated half is the
             // deterministic "<sourceName>$f" spelling of the retained JS
@@ -1963,7 +1963,7 @@ private void emitBindingLoad(SemanticOp op) {
             // target signature — the ignored trailing parameters of an
             // arity extension included — before it resolves the source
             // and before the leading-M projection
-            // (docs/spec-v1.3.md Arity extension adapter: the wrapper
+            // (docs/spec-v1.6.md Function values, calls, and wrappers: the wrapper
             // checks the ignored parameter too). A DEAL call site's
             // parameter cells already admitted the same values, so the
             // repeated check is idempotent; a host that invokes the
@@ -4647,7 +4647,7 @@ private void emitBindingLoad(SemanticOp op) {
                     case '\u2028' -> sb.append("\\u2028");
                     case '\u2029' -> sb.append("\\u2029");
                     default -> {
-                        if (c < 0x20) {
+                        if (c < 0x20 || Character.isSurrogate(c)) {
                             sb.append(String.format("\\u%04x", (int) c));
                         } else {
                             sb.append(c);

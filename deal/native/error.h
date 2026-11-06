@@ -79,11 +79,9 @@
 #define DEAL_ARM_ID_JSON_TO_WALK                   24u
 #define DEAL_ARM_ID_JSON_STRINGIFY_UNSUPPORTED     25u
 #define DEAL_ARM_ID_JSON_TO_WALK_CYCLE             26u
-#define DEAL_ARM_ID_SUBSTRING_BOUNDS               27u
-#define DEAL_ARM_ID_SQRT_NEGATIVE                  28u
 
 /* The number of arms the compiled closed repertoire declares. */
-#define DEAL_ARM_REPERTOIRE_COUNT 29U
+#define DEAL_ARM_REPERTOIRE_COUNT 27U
 
 /* The two closed render scopes. */
 #define DEAL_ARM_SCOPE_TOP_LEVEL 0U
@@ -159,7 +157,7 @@ deal_error *deal_error_materialize(uint32_t arm_id,
                                    const char *actual, const deal_origin *origin,
                                    deal_error *cause);
 
-/* The canonical floating-point text of one arm actual (`SQRT_NEGATIVE` spells
+/* The canonical floating-point text of one numeric actual (the runtime spells
  * its failing value): Java `Double.toHexString` parity, so `NaN`, both
  * infinities, both zeros, a subnormal's fixed-exponent spelling and every
  * other value's shortest exact `0x1.<digits>p<exp>` form. The text is written

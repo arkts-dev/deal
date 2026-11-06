@@ -550,7 +550,7 @@ public class HostModuleLoadEmissionTest {
         """;
 
     private static final String CARRIER_METADATA_DEAL_JSON = """
-        {"languageVersion": "1.5", "backend": "luajit",
+        {"languageVersion": "1.6", "backend": "luajit",
          "moduleRoots": ["src"], "output": "out",
          "externals": {
            "host/carrier": {"declaration": "bindings/carrier.d.deal"},
@@ -597,7 +597,7 @@ public class HostModuleLoadEmissionTest {
 
     private static CompilerInvocation harnessInvocation() {
         return CompilerProfileProvider.resolve(
-            deal.semantic.ir.ReleaseState.V1_5_ACTIVE,
+            deal.semantic.ir.ReleaseState.V1_6_ACTIVE,
             deal.semantic.CapabilityRegistry.releaseRegistry());
     }
 
@@ -686,7 +686,7 @@ public class HostModuleLoadEmissionTest {
     /** The corpus host-fixture stems whose implementations name records. */
     private static final List<String> CARRIER_HOST_STEMS = List.of(
         "carrierasync", "carriertable", "carrierarity", "carrieruntyped",
-        "carrierclass", "language15", "audit15");
+        "carrierclass", "language16", "audit16");
 
     /**
      * The corpus host-fixture declaration source with its classification
@@ -724,14 +724,8 @@ public class HostModuleLoadEmissionTest {
         app.append("import * as cfg from \"host/cfg\";\n");
         for (String stem : CARRIER_HOST_STEMS) {
             sources.put("src/" + stem + ".d.deal", corpusHostDeclaration(stem));
-            // The corpus lane materializes every host declaration with the
-            // dotted class-identity key first, so the corpus host
-            // implementations name their instances and function wrappers
-            // with the dotted external identity. The scope project imports
-            // the same declarations under the same identity form, or the
-            // deployed implementations would compile against a different
-            // identity text than the one the corpus lane runs them with.
-            externals.put("host." + stem, "src/" + stem + ".d.deal");
+            // Use only the raw import key, matching the production manifest
+            // and corpus nominal identity (not the dotted deployment name).
             externals.put("host/" + stem, "src/" + stem + ".d.deal");
             app.append("import * as ").append(stem).append(" from \"host/")
                 .append(stem).append("\";\n");
@@ -6167,7 +6161,6 @@ public class HostModuleLoadEmissionTest {
                     String stem = fileName.substring(0, fileName.length() - ".java".length());
                     String deployed = JvmBackend.classNameFor("host/" + stem) + ".java";
                     String hostSource = Files.readString(file);
-                    if (stem.equals("cfg")) hostSource = hostSource.replace("@$external/host.cfg/", "@$external/host/cfg/");
                     Files.writeString(workspace.resolve(deployed), hostSource);
                     corpusHostSources.add(deployed);
                 }
@@ -6206,7 +6199,7 @@ public class HostModuleLoadEmissionTest {
             RuntimeDescriptor.parseCanonicalText("[string]"),
             BoundaryValueView.ofArray(BoundaryValueView.of(ActualKind.STRING),
                 BoundaryValueView.ofInvalidUnicode(
-                    UnicodeScalars.Defect.SURROGATE)),
+                    UnicodeScalars.Defect.MALFORMED)),
             BoundaryContext.none());
         if (!(outcome instanceof BoundaryOutcome.Fail fail)) {
             fail("the oracle's declared-array return cell rejects a failing element: "
@@ -6307,20 +6300,26 @@ public class HostModuleLoadEmissionTest {
                         "probe.deal", 1, 1);
                 check("ok".equals(good.elements.get(0)),
                     "the valid declared array element is projected: " + good.elements);
-                // The failing element of the declared parameter carrier is
-                // the element cell, projected through the host parameter cell.
-                expect("E8010",
-                    "parameter 1 type mismatch: array element 2 type mismatch",
-                    "[string]", "table", () -> App.__host$%s$echoArray(
-                        new $DealRt.__StringArray(
-                            new String[] { "ok", loneSurrogate() }),
-                        "probe.deal", 1, 1));
-                // The same element failure on the declared return carrier is
-                // projected through the host return cell.
-                expect("E8010",
-                    "return value 1 type mismatch: array element 2 type mismatch",
-                    "[string]", "table", () -> App.__host$%s$badArray(
-                        "probe.deal", 2, 1));
+                // Deployed string-array carriers preserve legal lone units at
+                // both parameter and return cells, without replacement.
+                deal.codegen.jvm.JvmRuntime.Array units =
+                    (deal.codegen.jvm.JvmRuntime.Array) App.__host$%s$echoArray(
+                        new $DealRt.__StringArray(new String[] { "ok", loneSurrogate() }),
+                        "probe.deal", 1, 1);
+                check(loneSurrogate().equals(units.elements.get(1)), "parameter lone unit");
+                deal.codegen.jvm.JvmRuntime.Array returned =
+                    (deal.codegen.jvm.JvmRuntime.Array) App.__host$%s$badArray("probe.deal", 2, 1);
+                check(loneSurrogate().equals(returned.elements.get(1)), "return lone unit");
+                // A raw malformed byte carrier independently reaches element 2.
+                deal.codegen.jvm.JvmRuntime.Array malformed = new deal.codegen.jvm.JvmRuntime.Array(2);
+                malformed.elements.add("ok");
+                malformed.elements.add(new byte[] {(byte)0xE2, (byte)0x82});
+                expect("E8010", "parameter 1 type mismatch: array element 2 type mismatch",
+                    "[string]", "table", () -> App.__hostParamCheck(1, "[string]", malformed,
+                        "probe.deal", 3, 1));
+                expect("E8010", "return value 1 type mismatch: array element 2 type mismatch",
+                    "[string]", "table", () -> App.__hostCheck("[string]", malformed, false,
+                        "probe.deal", 4, 1));
                 if (failed != 0) {
                   throw new IllegalStateException("FAIL: " + failed
                       + " declared-array probe failures");
@@ -6607,7 +6606,7 @@ public class HostModuleLoadEmissionTest {
             String app, String host, String label,
             Map<String, String> extraSources) throws Exception {
         writeFileIn(root, "deal.json", """
-            {"languageVersion": "1.5", "backend": "luajit",
+            {"languageVersion": "1.6", "backend": "luajit",
              "moduleRoots": ["src"], "output": "out",
              "externals": {"host/%s":
                {"declaration": "bindings/%s.d.deal"}}}

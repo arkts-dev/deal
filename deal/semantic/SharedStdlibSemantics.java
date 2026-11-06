@@ -631,7 +631,7 @@ public final class SharedStdlibSemantics {
     // =========================================================================
 
     /**
-     * {@code CONSOLE_LOG}: appends the argument's exact scalar UTF-8
+     * {@code CONSOLE_LOG}: appends the argument's UTF-8 display
      * bytes plus one {@code \n} to {@code STDOUT} as exactly one ordered
      * effect through the injected {@link ConsoleSink}, then publishes
      * the null result. The effect is byte-exact, the {@code \n} suffix
@@ -648,7 +648,7 @@ public final class SharedStdlibSemantics {
     }
 
     /**
-     * {@code CONSOLE_ERROR}: appends the argument's exact scalar UTF-8
+     * {@code CONSOLE_ERROR}: appends the argument's UTF-8 display
      * bytes plus one {@code \n} to {@code STDERR} as exactly one ordered
      * effect through the injected {@link ConsoleSink}, then publishes
      * the null result. The same one-effect, byte-exact,
@@ -674,8 +674,9 @@ public final class SharedStdlibSemantics {
                 + " — the channel identity is part of the operation-level effect "
                 + "contract");
         }
-        byte[] scalarUtf8 = text.carrier().getBytes(StandardCharsets.UTF_8);
-        byte[] effectBytes = Arrays.copyOf(scalarUtf8, scalarUtf8.length + 1);
+        byte[] displayUtf8 = deal.semantic.ir.StringSemantics.consoleDisplay(text.carrier())
+            .getBytes(StandardCharsets.UTF_8);
+        byte[] effectBytes = Arrays.copyOf(displayUtf8, displayUtf8.length + 1);
         effectBytes[effectBytes.length - 1] = (byte) '\n';
         // Exactly one ordered effect before terminal SUCCESS. The
         // primitive catches nothing: a sink exception is infrastructure
@@ -686,23 +687,21 @@ public final class SharedStdlibSemantics {
     }
 
     // =========================================================================
-    // String family (Unicode scalar domain)
+    // String family (UTF-16 units)
     // =========================================================================
 
-    /** {@code STRING_LENGTH}: Unicode scalar count as a binary64 number. */
+    /** {@code STRING_LENGTH}: UTF-16 unit count as a binary64 number. */
     public static Outcome<Value> stringLength(SourceOrigin origin,
                                               UnicodeScalars.Valid input) {
         Objects.requireNonNull(origin, "origin must not be null");
         Objects.requireNonNull(input, "input must not be null");
         return new Outcome.Success<>(new Value.Number(
-            input.carrier().codePointCount(0, input.carrier().length())));
+            input.carrier().length()));
     }
 
     /**
-     * {@code STRING_SUBSTRING}: scalar indices;
-     * {@code lo=max(0,start)}, {@code hi=min(max(0,end),length)}; empty
-     * when {@code lo>=hi}; the result is the scalar slice
-     * {@code [lo,hi)}. Policy {@code NO_DEAL_FAILURE} — never fails.
+     * {@code STRING_SUBSTRING}: ECMAScript unit slicing with truncation,
+     * clamping and endpoint swapping. Policy {@code NO_DEAL_FAILURE}.
      *
      */
     public static Outcome<Value> stringSubstring(SourceOrigin origin,
@@ -710,24 +709,13 @@ public final class SharedStdlibSemantics {
                                                  double start, double end) {
         Objects.requireNonNull(origin, "origin must not be null");
         Objects.requireNonNull(input, "input must not be null");
-        if (!Double.isFinite(start) || start != Math.rint(start)
-                || !Double.isFinite(end) || end != Math.rint(end)) {
-            return failOf(FailurePolicyId.SUBSTRING_BOUNDS, 0, null, null,
-                new LinkedHashMap<>(), origin);
-        }
-        int[] codePoints = input.carrier().codePoints().toArray();
-        int lo = (int) Math.min(Math.max(0, start), codePoints.length);
-        int hi = (int) Math.min(Math.max(0, end), codePoints.length);
-        if (lo >= hi) {
-            return new Outcome.Success<>(Value.string(""));
-        }
-        return new Outcome.Success<>(
-            Value.string(new java.lang.String(codePoints, lo, hi - lo)));
+        return new Outcome.Success<>(Value.string(
+            deal.semantic.ir.StringSemantics.substring(input.carrier(), start, end)));
     }
 
     /**
-     * {@code STRING_CONTAINS}: literal scalar-subsequence comparison —
-     * true iff {@code part} occurs as a scalar subsequence of
+     * {@code STRING_CONTAINS}: literal UTF-16 unit-subsequence comparison —
+     * true iff {@code part} occurs as a unit subsequence of
      * {@code input}; an empty part is contained. Policy
      * {@code NO_DEAL_FAILURE} — never fails.
      *
@@ -738,13 +726,12 @@ public final class SharedStdlibSemantics {
         Objects.requireNonNull(origin, "origin must not be null");
         Objects.requireNonNull(input, "input must not be null");
         Objects.requireNonNull(part, "part must not be null");
-        return new Outcome.Success<>(new Value.Bool(indexOfSubsequence(
-            codePointsOf(input), codePointsOf(part), 0) >= 0));
+        return new Outcome.Success<>(new Value.Bool(input.carrier().contains(part.carrier())));
     }
 
     /**
-     * {@code STRING_STARTS_WITH}: literal scalar-subsequence comparison —
-     * true iff {@code input} starts with the scalar sequence
+     * {@code STRING_STARTS_WITH}: literal UTF-16 unit-subsequence comparison —
+     * true iff {@code input} starts with the unit sequence
      * {@code part}; an empty part is a prefix. Policy
      * {@code NO_DEAL_FAILURE} — never fails.
      *
@@ -755,16 +742,12 @@ public final class SharedStdlibSemantics {
         Objects.requireNonNull(origin, "origin must not be null");
         Objects.requireNonNull(input, "input must not be null");
         Objects.requireNonNull(part, "part must not be null");
-        int[] inputCodePoints = codePointsOf(input);
-        int[] partCodePoints = codePointsOf(part);
-        return new Outcome.Success<>(new Value.Bool(
-            partCodePoints.length <= inputCodePoints.length
-                && matchAt(inputCodePoints, partCodePoints, 0)));
+        return new Outcome.Success<>(new Value.Bool(input.carrier().startsWith(part.carrier())));
     }
 
     /**
-     * {@code STRING_ENDS_WITH}: literal scalar-subsequence comparison —
-     * true iff {@code input} ends with the scalar sequence
+     * {@code STRING_ENDS_WITH}: literal UTF-16 unit-subsequence comparison —
+     * true iff {@code input} ends with the unit sequence
      * {@code part}; an empty part is a suffix. Policy
      * {@code NO_DEAL_FAILURE} — never fails.
      *
@@ -775,20 +758,13 @@ public final class SharedStdlibSemantics {
         Objects.requireNonNull(origin, "origin must not be null");
         Objects.requireNonNull(input, "input must not be null");
         Objects.requireNonNull(part, "part must not be null");
-        int[] inputCodePoints = codePointsOf(input);
-        int[] partCodePoints = codePointsOf(part);
-        return new Outcome.Success<>(new Value.Bool(
-            partCodePoints.length <= inputCodePoints.length
-                && matchAt(inputCodePoints, partCodePoints,
-                    inputCodePoints.length - partCodePoints.length)));
+        return new Outcome.Success<>(new Value.Bool(input.carrier().endsWith(part.carrier())));
     }
 
     /**
-     * {@code STRING_REPLACE}: replace all non-overlapping occurrences of
-     * {@code from} in {@code input}, left-to-right; an empty
-     * {@code from} returns the input unchanged; the replacement
-     * {@code to} is literal — never pattern-interpreted. Policy
-     * {@code NO_DEAL_FAILURE} — never fails.
+     * {@code STRING_REPLACE}: replace the first literal match, including an
+     * empty needle, with ECMAScript replacement substitutions. Policy
+     * {@code NO_DEAL_FAILURE}.
      *
      */
     public static Outcome<Value> stringReplace(SourceOrigin origin,
@@ -799,35 +775,14 @@ public final class SharedStdlibSemantics {
         Objects.requireNonNull(input, "input must not be null");
         Objects.requireNonNull(from, "from must not be null");
         Objects.requireNonNull(to, "to must not be null");
-        int[] inputCodePoints = codePointsOf(input);
-        int[] fromCodePoints = codePointsOf(from);
-        int[] toCodePoints = codePointsOf(to);
-        if (fromCodePoints.length == 0) {
-            return new Outcome.Success<>(Value.string(input));
-        }
-        StringBuilder result = new StringBuilder();
-        int cursor = 0;
-        while (cursor <= inputCodePoints.length - fromCodePoints.length) {
-            if (matchAt(inputCodePoints, fromCodePoints, cursor)) {
-                appendCodePoints(result, toCodePoints);
-                cursor += fromCodePoints.length;
-            } else {
-                result.appendCodePoint(inputCodePoints[cursor]);
-                cursor++;
-            }
-        }
-        for (int i = cursor; i < inputCodePoints.length; i++) {
-            result.appendCodePoint(inputCodePoints[i]);
-        }
-        return new Outcome.Success<>(Value.string(result.toString()));
+        return new Outcome.Success<>(Value.string(deal.semantic.ir.StringSemantics.replace(
+            input.carrier(), from.carrier(), to.carrier())));
     }
 
     /**
-     * {@code STRING_SPLIT}: empty input → {@code []} (regardless of the
-     * separator); empty separator → one single-scalar string per
-     * element; otherwise split at every non-overlapping literal
-     * separator occurrence with leading/internal/trailing empty parts
-     * preserved. Policy {@code NO_DEAL_FAILURE} — never fails.
+     * {@code STRING_SPLIT}: an empty separator yields UTF-16 units;
+     * otherwise preserve empty parts around literal separators, including
+     * the single empty part for empty input. Policy {@code NO_DEAL_FAILURE}.
      *
      */
     public static Outcome<Value> stringSplit(SourceOrigin origin,
@@ -836,62 +791,24 @@ public final class SharedStdlibSemantics {
         Objects.requireNonNull(origin, "origin must not be null");
         Objects.requireNonNull(input, "input must not be null");
         Objects.requireNonNull(separator, "separator must not be null");
-        int[] inputCodePoints = codePointsOf(input);
-        int[] separatorCodePoints = codePointsOf(separator);
-        if (inputCodePoints.length == 0) {
-            return new Outcome.Success<>(Value.array());
-        }
-        if (separatorCodePoints.length == 0) {
-            List<Value> singles = new ArrayList<>(inputCodePoints.length);
-            for (int codePoint : inputCodePoints) {
-                singles.add(Value.string(UnicodeScalars.scalarString(codePoint)));
-            }
-            return new Outcome.Success<>(Value.array(singles));
-        }
         List<Value> parts = new ArrayList<>();
-        int cursor = 0;
-        int occurrence;
-        while ((occurrence = indexOfSubsequence(inputCodePoints, separatorCodePoints,
-                cursor)) >= 0) {
-            parts.add(Value.string(
-                new java.lang.String(inputCodePoints, cursor, occurrence - cursor)));
-            cursor = occurrence + separatorCodePoints.length;
+        for (String part : deal.semantic.ir.StringSemantics.split(input.carrier(), separator.carrier())) {
+            parts.add(Value.string(part));
         }
-        // The trailing part is always appended — an empty remainder after
-        // a separator at the end is preserved exactly.
-        parts.add(Value.string(new java.lang.String(inputCodePoints, cursor,
-            inputCodePoints.length - cursor)));
         return new Outcome.Success<>(Value.array(parts));
     }
 
     /**
-     * {@code STRING_TRIM}: remove leading/trailing characters in exactly
-     * the closed set U+0009–U+000D and U+0020 (tab, LF, VT, FF, CR, and
-     * space — U+000B/U+000C are trimmed; U+00A0 is not). Interior
-     * characters are never removed. Policy {@code NO_DEAL_FAILURE} —
-     * never fails.
+     * {@code STRING_TRIM}: remove ECMAScript whitespace and line terminators
+     * at both ends, preserving interior units. Policy {@code NO_DEAL_FAILURE}.
      *
      */
     public static Outcome<Value> stringTrim(SourceOrigin origin,
                                             UnicodeScalars.Valid input) {
         Objects.requireNonNull(origin, "origin must not be null");
         Objects.requireNonNull(input, "input must not be null");
-        int[] codePoints = codePointsOf(input);
-        int first = 0;
-        while (first < codePoints.length && isTrimScalar(codePoints[first])) {
-            first++;
-        }
-        int last = codePoints.length;
-        while (last > first && isTrimScalar(codePoints[last - 1])) {
-            last--;
-        }
         return new Outcome.Success<>(Value.string(
-            new java.lang.String(codePoints, first, last - first)));
-    }
-
-    /** The closed trim set: U+0009–U+000D and U+0020, exactly. */
-    private static boolean isTrimScalar(int codePoint) {
-        return (codePoint >= 0x09 && codePoint <= 0x0D) || codePoint == 0x20;
+            deal.semantic.ir.StringSemantics.trim(input.carrier())));
     }
 
     // =========================================================================
@@ -935,7 +852,6 @@ public final class SharedStdlibSemantics {
     /** The defect class: an unknown escape or a malformed {@code \\uXXXX} escape. */
     public static final String REASON_INVALID_ESCAPE = "invalid escape";
     /** The defect class: a {@code \\uXXXX} surrogate escape not paired with its counterpart. */
-    public static final String REASON_UNPAIRED_SURROGATE_ESCAPE = "unpaired surrogate escape";
     /** The defect class: a number violating the RFC-8259 grammar (not a leading-zero defect). */
     public static final String REASON_INVALID_NUMBER = "invalid number";
     /** The defect class: an integer part with a leading zero followed by another digit. */
@@ -1033,8 +949,8 @@ public final class SharedStdlibSemantics {
      *
      * <p>Offset rule (owned here): the 1-based UTF-8 byte offset of the
      * defect position — the offending character for a character-class
-     * defect (unexpected character, invalid escape, unpaired surrogate
-     * escape, invalid number, leading zero, missing key/colon/comma,
+     * defect (unexpected character, invalid escape, invalid number,
+     * leading zero, missing key/colon/comma,
      * trailing content), and one past the last input byte for an
      * end-of-input defect (unterminated string/object/array, unexpected
      * end of input). Multi-byte scalars count their full UTF-8 length.</p>
@@ -1331,7 +1247,7 @@ public final class SharedStdlibSemantics {
                 case '\r' -> out.append("\\r");
                 case '\t' -> out.append("\\t");
                 default -> {
-                    if (codePoint < 0x20) {
+                    if (codePoint < 0x20 || codePoint >= 0xd800 && codePoint <= 0xdfff) {
                         out.append(String.format("\\u%04x", codePoint));
                     } else {
                         out.appendCodePoint(codePoint);
@@ -1637,36 +1553,6 @@ public final class SharedStdlibSemantics {
         Objects.requireNonNull(origin, "origin must not be null");
         Objects.requireNonNull(clock, "clock must not be null");
         return new Outcome.Success<>(new Value.Number((double) clock.nowMillis()));
-    }
-
-    // =========================================================================
-    // Scalar-sequence helpers
-    // =========================================================================
-
-    /** The code points of a valid scalar sequence in scalar order. */
-    private static int[] codePointsOf(UnicodeScalars.Valid valid) {
-        return valid.carrier().codePoints().toArray();
-    }
-
-    /** True iff {@code needle} occurs at {@code offset} of {@code haystack}. */
-    private static boolean matchAt(int[] haystack, int[] needle, int offset) {
-        return UnicodeScalars.matchAt(haystack, needle, offset);
-    }
-
-    /**
-     * The first occurrence of {@code needle} in {@code haystack} at or
-     * after {@code fromIndex}, or {@code -1} — a literal scalar
-     * subsequence search.
-     */
-    private static int indexOfSubsequence(int[] haystack, int[] needle, int fromIndex) {
-        return UnicodeScalars.indexOfSubsequence(haystack, needle, fromIndex);
-    }
-
-    /** Appends code points to the builder in order. */
-    private static void appendCodePoints(StringBuilder builder, int[] codePoints) {
-        for (int codePoint : codePoints) {
-            builder.appendCodePoint(codePoint);
-        }
     }
 
 }

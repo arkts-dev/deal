@@ -82,7 +82,7 @@ public final class CompilationOrchestrator {
     private final Backend backend;
 
     /**
-     * The single immutable v1.5 project context governing this
+     * The single immutable v1.6 project context governing this
      * compilation (design source
      * {@code strict-project-context-resolution-identity} D1/D7): the
      * production constructor consumes the context published by
@@ -127,7 +127,7 @@ public final class CompilationOrchestrator {
     /**
      * The release-owned compiler invocation resolved at compile start
      * (foundation F1/F8): every compile carries the one
-     * {@code DEAL_V1_5_BINARY64} profile, the release state, and the derived
+     * {@code DEAL_V1_6_BINARY64} profile, the release state, and the derived
      * release-state hash, resolved through {@link CompilerProfileProvider};
      * the verbose report prints the recorded facts but the recording
      * location is the invocation's immutable {@code releaseStateHash}
@@ -520,7 +520,7 @@ public final class CompilationOrchestrator {
      * {@link CompilerProfileProvider} from
      * {@link ReleaseConfiguration#CURRENT_RELEASE_STATE} and the release
      * capability registry (A2 — the single release-owned selection point;
-     * the profile is the sole {@code DEAL_V1_5_BINARY64}, foundation F1/F4).
+     * the profile is the sole {@code DEAL_V1_6_BINARY64}, foundation F1/F4).
      * It is the only invocation constructor — the orchestrator never
      * constructs an invocation itself.
      */
@@ -812,7 +812,7 @@ public final class CompilationOrchestrator {
                 continue;
             }
 
-            // Phase-0 parsing uses the sole v1.5 grammar and binary64
+            // Phase-0 parsing uses the sole v1.6 grammar and binary64
             // literal admission. The lexer's directive events reach the
             // same declaration-binding path as every production parse.
             Parser parser = new Parser(lex.tokens(), sourcePath,

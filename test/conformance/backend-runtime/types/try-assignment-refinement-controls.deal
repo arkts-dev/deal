@@ -1,5 +1,5 @@
 // @spec: Error handling — try / catch narrowing revert by binding
-// @description: The try/catch refinement join is per assigned binding. A try-local shadow declaration (before or after an assignment to that shadow) leaves the enclosing refinement and value of the non-null and the null branch intact; an uncalled nested function expression or declaration that writes the enclosing binding inside the try never reverts it, while a predeclared closure actually called inside the try keeps the static refinement and the cleared binding raises the catchable canonical E8001 at the later typed read; a genuine direct write, a nested try block write and a nested try catch write still revert the binding after the try, so the re-narrowed read observes the assigned null. The controls assert each result, so an over-invalidating revert or a lost refinement fails instead of silently returning the other branch.
+// @description: The try/catch refinement join is per assigned binding. A try-local shadow declaration (before or after an assignment to that shadow) leaves the enclosing refinement and value of the non-null and the null branch intact; an uncalled inferred or explicitly typed nested function expression that writes the enclosing binding inside the try never reverts it, while a predeclared closure actually called inside the try keeps the static refinement and the cleared binding raises the catchable canonical E8001 at the later typed read; a genuine direct write, a nested try block write and a nested try catch write still revert the binding after the try, so the re-narrowed read observes the assigned null. The controls assert each result, so an over-invalidating revert or a lost refinement fails instead of silently returning the other branch.
 // @expected: runtime-ok
 // @features: type-system, nullable, narrowing, try, closures
 
@@ -92,15 +92,15 @@ function shadowDeclarationKeepsStringRefinement(): number {
   return 0;
 }
 
-// The issue's second snippet: declaring an uncalled function expression or
-// declaration whose body writes the enclosing binding executes nothing, so
+// Declaring an uncalled inferred or explicitly typed function expression
+// whose body writes the enclosing binding executes nothing, so
 // the refinement and the value survive the try.
 function uncalledFunctionWritesDoNotRevert(): number {
   let n: number | null = 1;
   if (n !== null) {
     try {
       let f: () => null = function(): null { n = null; return null; };
-      function clear(): null { n = null; return null; }
+      let clear = function(): null { n = null; return null; };
     } catch (e) {
       return 0;
     }
@@ -116,14 +116,14 @@ function nestedFunctionTryDoesNotRevert(): number {
   let n: number | null = 1;
   if (n !== null) {
     try {
-      function attempt(): null {
+      let attempt = function(): null {
         try {
           n = null;
         } catch (e) {
           return null;
         }
         return null;
-      }
+      };
     } catch (e) {
       return 0;
     }
@@ -212,17 +212,17 @@ function callInducedMutationIsCatchable(): number {
   return 0;
 }
 
-// The same control with a nested function declaration.
+// The same control with an inferred function-expression binding.
 function declarationCallIsCatchable(): number {
   let n: number | null = 1;
-  function clear(): null { n = null; return null; }
+  let clear = function(): null { n = null; return null; };
   if (n !== null) {
     try {
       clear();
       let x: number = n;
       return x + 100;
     } catch (e) {
-      expectCode("function declaration", (e as Error).code, "E8001");
+      expectCode("inferred function expression", (e as Error).code, "E8001");
       return 1;
     }
   }

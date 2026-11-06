@@ -4,7 +4,7 @@
   "diagnostic": {
     "code": "E2001",
     "line": 7,
-    "column": 30,
+    "column": 31,
     "message": "Undeclared identifier 'missing'"
   }
 }

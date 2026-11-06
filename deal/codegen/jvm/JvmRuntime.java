@@ -441,7 +441,7 @@ public final class JvmRuntime {
      * arity/spec, the target signature carried for boundary checks, and
      * the target signature's parameter cells the invocation protocol
      * admits (the ignored trailing parameters of an arity extension
-     * included — docs/spec-v1.3.md Arity extension adapter).
+     * included — docs/spec-v1.6.md Function values, calls, and wrappers).
      */
     public static final class AdapterValue extends FunctionValue {
         public final Object value;
@@ -643,7 +643,7 @@ public final class JvmRuntime {
                 case ';' -> out.append("\\u003b");
                 case '|' -> out.append("\\u007c");
                 default -> {
-                    if (c < 0x20 || c == 0x7f) {
+                    if (c < 0x20 || c == 0x7f || Character.isSurrogate(c)) {
                         out.append(String.format("\\u%04x", (int) c));
                     } else {
                         out.append(c);
@@ -872,10 +872,15 @@ public final class JvmRuntime {
         err.println(line);
     }
 
+    /** UTF-8 display replaces lone units, without altering values or trace transport. */
+    private static String consoleDisplay(String text) {
+        return deal.semantic.ir.StringSemantics.consoleDisplay(text);
+    }
+
     /** Records one console effect (real stdout bytes + the protocol record). */
     public static void console(String text) {
         PrintStream out = new PrintStream(System.out, true, StandardCharsets.UTF_8);
-        out.println(text);
+        out.println(consoleDisplay(text));
         if (!traceEnabled) {
             return;
         }
@@ -886,17 +891,17 @@ public final class JvmRuntime {
 
     /**
      * Records one console error effect. {@code CONSOLE_ERROR} appends the
-     * exact scalar bytes plus one {@code \n} to {@code STDERR} — the
+     * UTF-8 display bytes plus one {@code \n} to {@code STDERR} — the
      * channel identity is part of the closed one-effect contract. The
      * STDERR channel shares the trace stream, so the trace protocol stays
      * decode-clean: trace mode publishes only the protocol record (the
-     * effect's exact scalar text plus its channel), production mode (no
+     * effect's lossless UTF-16 text plus its channel), production mode (no
      * protocol) publishes the exact effect bytes.
      */
     public static void consoleError(String text) {
         PrintStream err = new PrintStream(System.err, true, StandardCharsets.UTF_8);
         if (!traceEnabled) {
-            err.println(text);
+            err.println(consoleDisplay(text));
             err.flush();
             return;
         }
@@ -1003,22 +1008,6 @@ public final class JvmRuntime {
     }
 
     /**
-     * The host string-carrier reason of one UTF-16 host carrier, or
-     * {@code null} when the carrier is a scalar sequence: a carrier with a
-     * lone surrogate code unit selects the surrogate code point reason at
-     * any position. The choice is the carrier's scalar validity, never its
-     * length (the pinned {@code host-surrogate-utf8-e8010} selection).
-     */
-    public static String hostStringReason(String carrier) {
-        if (carrier == null) {
-            throw new IllegalArgumentException(
-                "the host string carrier must not be null");
-        }
-        return deal.semantic.ir.UnicodeScalars.carrierDefect(carrier) == null
-            ? null : stringCarrierReason(true);
-    }
-
-    /**
      * The host string-carrier reason of one raw UTF-8 host carrier (the
      * backend-native byte carrier), or {@code null} when the sequence is
      * scalar-valid: the closed defect class of the first malformed
@@ -1110,12 +1099,8 @@ public final class JvmRuntime {
         if (v instanceof Number) {
             return "number";
         }
-        if (v instanceof String string) {
-            // The typed-boundary projection classifies a string carrier by
-            // its contents: a sequence that is not valid Unicode scalar
-            // text projects invalid-unicode, exactly as the oracle and the
-            // emitted Lua prelude's projection do.
-            return JvmJson.validScalars(string) ? "string" : "invalid-unicode";
+        if (v instanceof String) {
+            return "string";
         }
         if (v instanceof Table) {
             return "table";
@@ -1405,10 +1390,7 @@ public final class JvmRuntime {
         while (!pending.isEmpty()) {
             Object value = pending.removeLast();
             if (value == null || value == UNDEFINED || value == MISSING || value instanceof Boolean || value instanceof Number) continue;
-            if (value instanceof String text) {
-                if (!JvmJson.validScalars(text)) throw kindFailure("string", "invalid-unicode", completion);
-                continue;
-            }
+            if (value instanceof String) continue;
             if (!seen.add(value)) continue;
             if (value instanceof Table table) {
                 for (var entry : ((java.util.Map<?, ?>) table.entries).entrySet()) {
@@ -1466,24 +1448,7 @@ public final class JvmRuntime {
             throw kindFailure("number", actual, completion);
         }
         if ("string".equals(desc)) {
-            if (v instanceof String string) {
-                // The DEAL string boundary's scalar validation (the
-                // oracle's TYPED_BOUNDARY_INVALID_UNICODE selection): a
-                // valid Unicode scalar sequence admits unchanged, while
-                // an invalid one renders the declared invalid-Unicode arm
-                // (the completion cell keeps its own pinned kind arm).
-                // The classification is the same one {@link #actualOf}
-                // and the oracle's value view use, so no consumer admits
-                // an invalid scalar the others reject.
-                if (!JvmJson.validScalars(string)) {
-                    if (completion) {
-                        throw kindFailure("string", actual, true);
-                    }
-                    throw arm(deal.semantic.ir.FailureArmId.TYPED_BOUNDARY_INVALID_UNICODE,
-                        java.util.Map.of(), "-", "string", "invalid-unicode");
-                }
-                return v;
-            }
+            if (v instanceof String) return v;
             throw kindFailure("string", actual, completion);
         }
         if ("record".equals(desc)) {
@@ -1621,7 +1586,7 @@ public final class JvmRuntime {
     /**
      * The D15 adapter invocation: the target signature's parameter cells
      * (the ignored trailing parameters of an arity extension included —
-     * docs/spec-v1.3.md Arity extension adapter), the source resolution
+     * docs/spec-v1.6.md Function values, calls, and wrappers), the source resolution
      * from its retained value, the
      * source-signature check, then the source invocation with the
      * leading M arguments only. A DEAL-body source owns its own stack
@@ -1643,7 +1608,7 @@ public final class JvmRuntime {
         Object[] leading = new Object[adapter.arity];
         System.arraycopy(admitted, 0, leading, 0, adapter.arity);
         // An adapter-valued source is an ordinary function value of its
-        // declared signature (docs/spec-v1.3.md Function type
+        // declared signature (docs/spec-v1.6.md Function type
         // compatibility): runtime provenance as an adapter is not part of
         // the type. Descend the nested adapter's own source resolution and
         // source-signature check, keeping its own leading-M projection, so
@@ -1694,7 +1659,7 @@ public final class JvmRuntime {
      * The adapter's target-signature parameter admission: every declared
      * target parameter is checked at its own descriptor before the
      * leading-M projection, the ignored trailing parameters of an arity
-     * extension included (docs/spec-v1.3.md Arity extension adapter — the
+     * extension included (docs/spec-v1.6.md Function values, calls, and wrappers — the
      * wrapper checks the parameter it ignores). The admitted values replace
      * the received ones exactly like a parameter cell's admitted value, so
      * an {@code int} position's normalization reaches the projection. A
@@ -2343,17 +2308,9 @@ case "NUMBER_EQ" -> {
         }
     }
 
-    /** Unicode-scalar (code point) order — never String.compareTo. */
+    /** UTF-16 code-unit ordering. */
     static int codePointCompare(String left, String right) {
-        int[] leftPoints = left.codePoints().toArray();
-        int[] rightPoints = right.codePoints().toArray();
-        int n = Math.min(leftPoints.length, rightPoints.length);
-        for (int i = 0; i < n; i++) {
-            if (leftPoints[i] != rightPoints[i]) {
-                return Integer.compare(leftPoints[i], rightPoints[i]);
-            }
-        }
-        return Integer.compare(leftPoints.length, rightPoints.length);
+        return left.compareTo(right);
     }
 
     static boolean nullableEquals(String kindL, Object l, String kindR, Object r) {
@@ -2509,104 +2466,35 @@ case "NUMBER_ADD" -> {
             switch (fn) {
                 case "STRING_LENGTH" -> {
                     String text = (String) args[0];
-                    return Double.valueOf(text.codePointCount(0, text.length()));
+                    return Double.valueOf(text.length());
                 }
                 case "STRING_SUBSTRING" -> {
-                    int[] codePoints = ((String) args[0]).codePoints().toArray();
-                    double start = ((Number) args[1]).doubleValue();
-                    double end = ((Number) args[2]).doubleValue();
-                    if (!Double.isFinite(start) || start != Math.rint(start)
-                            || !Double.isFinite(end) || end != Math.rint(end)) {
-                        throw new StdlibFailure(deal.semantic.ir.FailureArmId.SUBSTRING_BOUNDS,
-                            java.util.Map.of(), null, null);
-                    }
-                    int lo = (int) Math.min(Math.max(0, start), codePoints.length);
-                    int hi = (int) Math.min(Math.max(0, end), codePoints.length);
-                    if (lo >= hi) {
-                        return "";
-                    }
-                    return new String(codePoints, lo, hi - lo);
+                    return deal.semantic.ir.StringSemantics.substring((String) args[0],
+                        ((Number) args[1]).doubleValue(), ((Number) args[2]).doubleValue());
                 }
                 case "STRING_CONTAINS" -> {
-                    return indexOfSubsequence(codePointsOf((String) args[0]),
-                        codePointsOf((String) args[1]), 0) >= 0;
+                    return ((String) args[0]).contains((String) args[1]);
                 }
                 case "STRING_STARTS_WITH" -> {
-                    int[] input = codePointsOf((String) args[0]);
-                    int[] part = codePointsOf((String) args[1]);
-                    return part.length <= input.length && matchAt(input, part, 0);
+                    return ((String) args[0]).startsWith((String) args[1]);
                 }
                 case "STRING_ENDS_WITH" -> {
-                    int[] input = codePointsOf((String) args[0]);
-                    int[] part = codePointsOf((String) args[1]);
-                    return part.length <= input.length
-                        && matchAt(input, part, input.length - part.length);
+                    return ((String) args[0]).endsWith((String) args[1]);
                 }
                 case "STRING_REPLACE" -> {
-                    int[] input = codePointsOf((String) args[0]);
-                    int[] from = codePointsOf((String) args[1]);
-                    int[] to = codePointsOf((String) args[2]);
-                    if (from.length == 0) {
-                        return args[0];
-                    }
-                    StringBuilder result = new StringBuilder();
-                    int cursor = 0;
-                    while (cursor <= input.length - from.length) {
-                        if (matchAt(input, from, cursor)) {
-                            appendCodePoints(result, to);
-                            cursor += from.length;
-                        } else {
-                            result.appendCodePoint(input[cursor]);
-                            cursor++;
-                        }
-                    }
-                    for (int i = cursor; i < input.length; i++) {
-                        result.appendCodePoint(input[i]);
-                    }
-                    return result.toString();
+                    return deal.semantic.ir.StringSemantics.replace(
+                        (String) args[0], (String) args[1], (String) args[2]);
                 }
                 case "STRING_SPLIT" -> {
-                    int[] input = codePointsOf((String) args[0]);
-                    int[] separator = codePointsOf((String) args[1]);
-                    if (input.length == 0) {
-                        Array empty = new Array(0);
-                        empty.elementDescriptor = "string";
-                        return empty;
-                    }
-                    if (separator.length == 0) {
-                        Array singles = new Array(input.length);
-                        singles.elementDescriptor = "string";
-                        for (int codePoint : input) {
-                            singles.elements.add(new String(
-                                new int[] {codePoint}, 0, 1));
-                        }
-                        return singles;
-                    }
-                    Array parts = new Array(0);
+                    var values = deal.semantic.ir.StringSemantics.split((String) args[0], (String) args[1]);
+                    Array parts = new Array(values.size());
                     parts.elementDescriptor = "string";
-                    int cursor = 0;
-                    int occurrence;
-                    while ((occurrence = indexOfSubsequence(input, separator, cursor))
-                            >= 0) {
-                        parts.elements.add(new String(input, cursor, occurrence - cursor));
-                        parts.length++;
-                        cursor = occurrence + separator.length;
-                    }
-                    parts.elements.add(new String(input, cursor, input.length - cursor));
-                    parts.length++;
+                    parts.elements.addAll(values);
+                    parts.length = values.size();
                     return parts;
                 }
                 case "STRING_TRIM" -> {
-                    int[] codePoints = codePointsOf((String) args[0]);
-                    int first = 0;
-                    while (first < codePoints.length && isTrimScalar(codePoints[first])) {
-                        first++;
-                    }
-                    int last = codePoints.length;
-                    while (last > first && isTrimScalar(codePoints[last - 1])) {
-                        last--;
-                    }
-                    return new String(codePoints, first, last - first);
+                    return deal.semantic.ir.StringSemantics.trim((String) args[0]);
                 }
                 case "TABLE_KEYS" -> {
                     Table table = (Table) args[0];
@@ -2733,37 +2621,6 @@ case "NUMBER_ADD" -> {
         return ((Number) value).doubleValue();
     }
 
-    /** The closed trim set: U+0009-U+000D and U+0020, exactly. */
-    private static boolean isTrimScalar(int codePoint) {
-        return (codePoint >= 0x09 && codePoint <= 0x0D) || codePoint == 0x20;
-    }
-
-    /** The code points of a scalar-valid string in scalar order. */
-    private static int[] codePointsOf(String text) {
-        return text.codePoints().toArray();
-    }
-
-    /** True iff {@code needle} occurs at {@code offset} of {@code haystack}. */
-    private static boolean matchAt(int[] haystack, int[] needle, int offset) {
-        return deal.semantic.ir.UnicodeScalars.matchAt(haystack, needle, offset);
-    }
-
-    /**
-     * The first occurrence of {@code needle} in {@code haystack} at or
-     * after {@code fromIndex}, or {@code -1} — a literal scalar
-     * subsequence search.
-     */
-    private static int indexOfSubsequence(int[] haystack, int[] needle, int fromIndex) {
-        return deal.semantic.ir.UnicodeScalars.indexOfSubsequence(haystack, needle, fromIndex);
-    }
-
-    /** Appends code points to the builder in order. */
-    private static void appendCodePoints(StringBuilder builder, int[] codePoints) {
-        for (int codePoint : codePoints) {
-            builder.appendCodePoint(codePoint);
-        }
-    }
-
     // =========================================================================
     // The RFC-8259 JSON reader (JSON_PARSE realization)
     // =========================================================================
@@ -2774,7 +2631,6 @@ case "NUMBER_ADD" -> {
     private static final String REASON_UNTERMINATED_OBJECT = "unterminated object";
     private static final String REASON_UNTERMINATED_ARRAY = "unterminated array";
     private static final String REASON_INVALID_ESCAPE = "invalid escape";
-    private static final String REASON_UNPAIRED_SURROGATE_ESCAPE = "unpaired surrogate escape";
     private static final String REASON_INVALID_NUMBER = "invalid number";
     private static final String REASON_LEADING_ZERO = "leading zero";
     private static final String REASON_MISSING_KEY = "missing key";
@@ -3208,14 +3064,6 @@ case "NUMBER_ADD" -> {
             if (frame.index < frame.keys.size()) {
                 int i = frame.index++;
                 String key = frame.keys.get(i);
-                // RFC 8259 output must be UTF-8: an invalid scalar
-                // sequence is still a string carrier, so an invalid key
-                // rejects through the closed JSON_STRINGIFY_UNSUPPORTED
-                // arm (actual string) before any text is appended,
-                // exactly like the shipped std/json and JS walks.
-                if (!JvmJson.validScalars(key)) {
-                    throw jsonEncodingFailure(key);
-                }
                 if (frame.instance != null && !frame.instance.isPresent(key)) continue;
                 Object member = frame.instance != null ? frame.instance.read(key) : frame.table.entries.get(key);
                 if (member == UNDEFINED || member == MISSING || member instanceof FunctionValue) continue;
@@ -3248,13 +3096,6 @@ case "NUMBER_ADD" -> {
             double d = numeric.doubleValue();
             out.append(!Double.isFinite(d) ? "null" : d == 0 ? "0" : Double.toString(d));
         } else if (value instanceof String string) {
-            // An invalid scalar sequence is still a string carrier: it
-            // rejects through the closed JSON_STRINGIFY_UNSUPPORTED arm
-            // (actual string), never as escaped invalid bytes that the
-            // STDLIB_RETURN cell would reject after the walk.
-            if (!JvmJson.validScalars(string)) {
-                throw jsonEncodingFailure(string);
-            }
             appendJsonString(out, string);
         } else if (value instanceof Table table) {
             if (!path.add(table)) {
@@ -3302,7 +3143,7 @@ case "NUMBER_ADD" -> {
                 case '\r' -> out.append("\\r");
                 case '\t' -> out.append("\\t");
                 default -> {
-                    if (codePoint < 0x20) {
+                    if (codePoint < 0x20 || codePoint >= 0xd800 && codePoint <= 0xdfff) {
                         out.append(String.format("\\u%04x", codePoint));
                     } else {
                         out.appendCodePoint(codePoint);

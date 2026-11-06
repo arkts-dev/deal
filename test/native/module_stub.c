@@ -174,10 +174,7 @@ static const char *const arm_parameters_25[] = {"actual"};
      DEAL_ARM_SCOPE_TOP_LEVEL, 1U, 1U}, \
     {26U, "E8001", "cyclic value cannot be encoded as JSON", NULL, 0U, \
      DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U}, \
-    {27U, "E8001", "substring bounds must be finite integers", NULL, 0U, \
-     DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U}, \
-    {28U, "E8001", "sqrt of negative number", NULL, 0U, \
-     DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 1U},
+
 
 #if DEAL_STUB_CASE == 8
 static const deal_arm_record arm_records[] = {

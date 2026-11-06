@@ -20,16 +20,16 @@ export function main(): null {
   check((function(): number { return 1; })() === 1);
   (function(): number { return 1; });
   check(1- -2 === 3 && 1-/*gap*/-2 === 3);
-  function f(): number { return 1; }
+  let f = function(): number { return 1; };
   check(f() === 1);
-  check(`\\u{}` === "\\\\u{}");
-  check(`\\xG1` === "\\\\xG1");
-  check(`\\uZZZZ` === "\\\\uZZZZ");
-  // Valid TypeScript spellings are still literal text, never decoded.
-  check(`\x41` === "\\x41");
-  check(`\u0041` === "\\u0041");
-  check(`\u{10FFFF}` === "\\u{10FFFF}");
-  check(`\0` === "\\0");
+  check(`\\u{}` === "\\u{}");
+  check(`\\xG1` === "\\xG1");
+  check(`\\uZZZZ` === "\\uZZZZ");
+  // Untagged TypeScript templates decode escapes exactly once.
+  check(`\x41` === "A");
+  check(`\u0041` === "A");
+  check(`\u{10FFFF}` === "􏿿");
+  check(`\0` === `\x00`);
   c.log("SYNTAX_OK");
   return null;
 }

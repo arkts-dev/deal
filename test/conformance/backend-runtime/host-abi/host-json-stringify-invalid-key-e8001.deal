@@ -1,11 +1,15 @@
 // @spec: Modules, declarations, standard library, and host ABI
-// @description: Malformed nested host keys reject ingress before json.stringify can observe them.
+// @description: Lone UTF-16 host keys survive ingress and JSON roundtrip.
 // @expected: runtime-ok
-// @features: stdlib, json, host-abi, unicode, v1.5
+// @features: stdlib, json, host-abi, unicode, v1.6
 import * as host from "host/jsonabletable";
+import * as json from "std/json";
 export function test_json_stringify_invalid_key(): void {
-  let rejected: boolean = false;
-  try { host.makeBadKey(); } catch (e) { if (e instanceof Error) { rejected = e.code === "E8010"; } }
-  if (!rejected) { throw {code: "FAIL", message: "malformed key published"}; }
+  let value = host.makeBadKey();
+  let text = json.stringify(value) as string;
+  let decoded = json.parse(text);
+  if((value[`\uD800`] as number)!==1 || (decoded[`\uD800`] as number)!==1) {
+    throw {code:"FAIL",message:"lone key lost during host or JSON crossing"};
+  }
 }
 export function main(): null { return null; }

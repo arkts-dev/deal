@@ -118,9 +118,9 @@ export async function test_awaited_error_identity(): Promise<string> {
   let original: Error = { code: "A", message: "a" };
   let alias: Error = original;
 
-  async function asyncThrow(): Promise<number> {
+  let asyncThrow = async function(): Promise<number> {
     throw original;
-  }
+  };
 
   let caught: boolean = false;
   try {

@@ -1,4 +1,5 @@
 export function echo(value: unknown): unknown;
+export function inspectText(value: Record<string,unknown>): boolean;
 export function undefinedValue(): undefined;
 export function nothing(): void;
 export function maybeNumber(value: number | undefined): number | undefined;

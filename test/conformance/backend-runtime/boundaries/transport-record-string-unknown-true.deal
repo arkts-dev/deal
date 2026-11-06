@@ -5,4 +5,4 @@
 import * as console from "std/console";
 import * as host from "host/probe";
 
-export function main():null{try{let u=host.f();console.log("OK");}catch(e){if(e instanceof Error){console.log(e.code);}else{console.log("NOT_ERROR");}}return null;}
+export function main():null{let u=host.f();if((u.x as string)!==`\uD800`){throw {code:"TEST",message:"lone Record string lost at host ingress"};}console.log("OK");return null;}

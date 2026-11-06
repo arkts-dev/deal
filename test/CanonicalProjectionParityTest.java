@@ -82,8 +82,8 @@ import java.util.stream.Stream;
  *       through the release-owned production invocation with the
  *       lane-equivalent materialization (the corpus-relative mirror, the
  *       header-stripped compilation set, the host declaration files and
- *       the corpus externals map with the dotted class-identity key
- *       first, and the drive's own entry module for a probe export) and
+ *       the corpus externals map keyed by raw import specifier,
+ *       and the drive's own entry module for a probe export) and
  *       every capture is rebased onto raw corpus coordinates. Each of the
  *       three consumers reproduces its sidecar's pinned {@code code},
  *       {@code message}, span group, {@code expected}, and {@code actual}
@@ -601,6 +601,8 @@ public class CanonicalProjectionParityTest {
      * validated by the on-disk host-fixture triplet gate there.
      */
     private static final List<Case> HOST_CARRIER_RUNTIME_OK = List.of(
+        mainEntry("host-abi/host-invalid-utf8-e8010"),
+        mainEntry("host-abi/host-surrogate-utf8-e8010"),
         mainEntry("host-abi/host-carrier-async-class"),
         mainEntry("host-abi/host-carrier-table-members"),
         mainEntry("host-abi/host-carrier-async-arity"),
@@ -625,9 +627,6 @@ public class CanonicalProjectionParityTest {
             "empty_return"),
         host("host-abi/host-nullable-return-bad", "test_host_nullable_return_bad",
             "nullable_return"),
-        host("host-abi/host-invalid-utf8-e8010", "test_host_bad_utf8", "bad_string"),
-        host("host-abi/host-surrogate-utf8-e8010", "test_host_surrogate_utf8",
-            "bad_string"),
         host("host-abi/host-nullable-function-param-bad",
             "test_host_nullable_function_param_bad", "nullable_fn"),
         host("host-abi/host-rest-bad", "test_host_rest_bad", "rest_join"),
@@ -865,7 +864,6 @@ public class CanonicalProjectionParityTest {
                 : ConformanceHarnessMetadata.stripClassificationHeaders(
                     Files.readString(Path.of("test", "conformance",
                         "host-fixtures", stem + ".d.deal"))));
-            externals.put("host." + stem, declaration.toAbsolutePath().toString());
             externals.put("host/" + stem, declaration.toAbsolutePath().toString());
         }
         CompilerInvocation invocation = productionInvocation();
@@ -887,8 +885,13 @@ public class CanonicalProjectionParityTest {
         Map<ModuleId, CanonicalModuleIdentity> identities = new LinkedHashMap<>();
         for (ModuleId declaration
                 : orchestrator.hostDeclarationSurface().moduleIds()) {
-            identities.put(declaration, new CanonicalModuleIdentity.ExternalModule(
-                declaration.path().replace('/', '.')));
+            String specifier = externals.keySet().stream()
+                .filter(key -> key.equals(declaration.path())
+                    || key.replace('/', '.').equals(declaration.path()))
+                .findFirst().orElseThrow(() -> new IllegalStateException(
+                    "no raw external specifier for " + declaration));
+            identities.put(declaration,
+                new CanonicalModuleIdentity.ExternalModule(specifier));
         }
 
         SemanticLowerer.ProjectLoweringResult lowering = SemanticLowerer.lowerProject(
@@ -1136,17 +1139,17 @@ public class CanonicalProjectionParityTest {
                                 new SemanticOracle.Value.StrValue("not an array")),
                                 RuntimeDescriptor.parseCanonicalText("[string]"),
                                 false));
-                        // The native declared-carrier surface: the invalid
-                        // second element (the same unpaired surrogate the
-                        // scalar export returns), the nested carrier with a
-                        // rejected later element, and the valid
+                        // The native declared-carrier surface: a malformed
+                        // second element, the nested carrier with a rejected
+                        // later element, and the valid
                         // declared-carrier controls (the shared inner
                         // carrier at both positions of the declared
                         // string[][] stays one oracle array).
                         case "nativeBadStringArray" -> new SyncOutcome.Returned(
                             new SemanticOracle.Value.ArrayValue(List.of(
                                 new SemanticOracle.Value.StrValue("ok"),
-                                new SemanticOracle.Value.StrValue("\uD800")),
+                                new SemanticOracle.Value.StrValue("malformed",
+                                    UnicodeScalars.Defect.MALFORMED)),
                                 RuntimeDescriptor.String.INSTANCE, false));
                         case "nativeBadNestedTail" -> new SyncOutcome.Returned(
                             new SemanticOracle.Value.ArrayValue(List.of(
@@ -5382,17 +5385,12 @@ public class CanonicalProjectionParityTest {
      * closed string-carrier arm and the artifact renders its template.
      */
     private static void wrapperStringCarrierSite(Compiled compiled) throws Exception {
-        SidecarExpectations.ErrorExpectation pin = luajitPin(compiled.spec());
-        check(pin != null, "host-abi/host-invalid-utf8-e8010: the sidecar pins "
-            + "an error");
-        if (pin == null) {
-            return;
-        }
-        String drive = "";
+        String origin = compiled.mirror().resolve("app.deal") + ":4:19";
+        String drive = "return __dealMain()";
         WrapperPin valid = wrapperPin(FailureArmId.HOST_SYNC_RETURN_CELL,
             Map.of("inner", FailureContractRegistry.renderInner(
                 FailureArmId.HOST_STRING_INVALID_UTF8, Map.of())),
-            "string", "string", artifactOrigin(compiled, pin), null, false,
+            "string", "string", origin, null, false,
             FailureArmId.HOST_STRING_INVALID_UTF8, null);
         checkOutput(runWrapperProbe(compiled, Map.of(), artifactPath(compiled),
             wrapperRecorder(), drive, wrapperTuple(valid)),
@@ -5512,7 +5510,8 @@ public class CanonicalProjectionParityTest {
         // the drive is the entry main itself; every other entry runs its
         // module init first (the artifact publishes the host surface there)
         // and the drive body triggers the site explicitly.
-        boolean entryDrives = compiled.spec().entry() == Entry.DRIVER;
+        boolean entryDrives = compiled.spec().entry() == Entry.DRIVER
+            || "return __dealMain()".equals(drive);
         String init = entryDrives ? "" : """
             local ok, err = __dealMain()
             if not ok then
@@ -6396,6 +6395,9 @@ public class CanonicalProjectionParityTest {
     /** The invalid-Unicode callback seed: one declared {@code string[]} parameter. */
     private static final String INVALID_UNICODE_CALLBACK_SOURCE = """
         export function cb(x: number, values: string[]): number {
+          if (values[1] !== `\\uD800`) {
+            throw {code: "LOST_UNIT", message: "callback lost the lone unit"};
+          }
           return x + 1;
         }
 
@@ -6405,12 +6407,11 @@ public class CanonicalProjectionParityTest {
         """;
 
     /**
-     * The invalid-Unicode arm end-to-end (P1/P4, ISSUE-0705): the callback
-     * entry's declared {@code string[]} parameter slot receives an
-     * unpaired-surrogate element, and every consumer's boundary producer
-     * renders the element tuple selected by its own scalar validation at
-     * the invoking unit's program span — the boundary supplies the origin,
-     * never a fabricated one. The valid array is the admission control; the
+     * The callback entry's declared {@code string[]} parameter rejects a
+     * nonstring element with the complete element tuple at the invoking
+     * unit's program span. The admission control consumes the exact lone
+     * UTF-16 unit. Malformed-byte and explicit invalid-presentation controls
+     * retain their separate authority in FailureArmAuthorityTest; the
      * registered direct producer drives (the oracle's
      * {@code BoundaryExecutor}, the JVM {@code bcheck}, and the emitted
      * {@code __bcheck}, including the string cell, the nested element
@@ -6454,7 +6455,8 @@ public class CanonicalProjectionParityTest {
                     List.of(new SemanticDifferentialHarness.CallbackArg.Int(1),
                         new SemanticDifferentialHarness.CallbackArg.Array(List.of(
                             new SemanticDifferentialHarness.CallbackArg.Str("ok"),
-                            new SemanticDifferentialHarness.CallbackArg.Str("\uD800")))),
+                            new SemanticDifferentialHarness.CallbackArg.Number(7)),
+                            RuntimeDescriptor.String.INSTANCE)),
                     SemanticDifferentialHarness.Expectation.failure(
                         "the callback array slot", List.of(), "E8003", origin),
                     workspace);
@@ -6483,7 +6485,7 @@ public class CanonicalProjectionParityTest {
                     + "boundary origin (the invoking unit's program span)");
                 checkEq("string", error.expected(), run.consumer()
                     + ": the expected token");
-                checkEq("invalid-unicode", error.actual(), run.consumer()
+                checkEq("number", error.actual(), run.consumer()
                     + ": the actual token");
             }
         } finally {
@@ -6499,7 +6501,7 @@ public class CanonicalProjectionParityTest {
                     List.of(new SemanticDifferentialHarness.CallbackArg.Int(1),
                         new SemanticDifferentialHarness.CallbackArg.Array(List.of(
                             new SemanticDifferentialHarness.CallbackArg.Str("ok"),
-                            new SemanticDifferentialHarness.CallbackArg.Str("two")))),
+                            new SemanticDifferentialHarness.CallbackArg.Str("\uD800")))),
                     SemanticDifferentialHarness.Expectation.success(
                         "the callback array slot control", List.of(), "num:0x1.0p1"),
                     control);
@@ -6799,13 +6801,22 @@ public class CanonicalProjectionParityTest {
         System.out.println("-- the host string-carrier producers: the closed reason "
             + "selection and the decoded element results from the oracle, the "
             + "LuaJIT artifact, and the JVM artifact --");
-        safely("the lone surrogate host return", () -> driveHostCarrierFailure(
-            FailureArmId.HOST_STRING_SURROGATE, "surrogateString"));
-        safely("the embedded surrogate host return", () -> driveHostCarrierFailure(
-            FailureArmId.HOST_STRING_SURROGATE, "embeddedSurrogateString"));
-        safely("the malformed non-surrogate host return", () ->
-            driveHostCarrierFailure(FailureArmId.HOST_STRING_INVALID_UTF8,
-                "badString"));
+        safely("the lone-unit host returns", () -> driveHostCarrierSuccessBatch(
+            new LinkedHashMap<>(Map.of(
+                "test_lone", HOST_CARRIER_VALID_DRIVER.replace("validString()",
+                    "surrogateString()").replace("s !== \"ok\"", "s !== `\\uD800`"),
+                "test_embedded", HOST_CARRIER_VALID_DRIVER.replace("validString()",
+                    "embeddedSurrogateString()").replace("s !== \"ok\"", "s !== `a\\uD800b`")))));
+        safely("the malformed non-surrogate host return", () -> {
+            driveHostCarrierFailure(FailureArmId.HOST_STRING_INVALID_UTF8, "badString");
+            Compiled compiled = compile(hostCarrierCase(),
+                HOST_CARRIER_DRIVER.formatted("badString"));
+            try {
+                wrapperStringCarrierSite(compiled);
+            } finally {
+                deleteRecursively(compiled.root());
+            }
+        });
         safely("the valid host string carriers", () -> driveHostCarrierSuccessBatch(
             new LinkedHashMap<>(Map.of(
                 "test_scalar", HOST_CARRIER_VALID_DRIVER,
@@ -6823,7 +6834,7 @@ public class CanonicalProjectionParityTest {
     /**
      * The declared native array carriers (the JVM host's own
      * {@code $DealRt} wrapper classes): a declared {@code string[]}
-     * returned as {@code $DealRt.__StringArray} with an unpaired surrogate
+     * returned through a dynamic array with truncated byte transport
      * in its second slot fails the element arm like every other element —
      * the complete tuple from the oracle's host seam, the LuaJIT artifact,
      * and the JVM artifact — the nested carrier's later non-array element
@@ -7510,7 +7521,7 @@ public class CanonicalProjectionParityTest {
         deal.semantic.ir.LoweredModuleUnit unit =
             new deal.semantic.ir.LoweredModuleUnit(
                 deal.semantic.ir.LoweredModuleUnit.FORMAT_VERSION,
-                deal.semantic.ir.SemanticProfile.DEAL_V1_5_BINARY64, entry, "hash",
+                deal.semantic.ir.SemanticProfile.DEAL_V1_6_BINARY64, entry, "hash",
                 "context", Set.of(), Map.of(), Map.of(), Map.of(),
                 new deal.semantic.ir.ModuleInitPlan(List.of(),
                     new deal.semantic.ir.BlockId(0)),
@@ -7528,7 +7539,7 @@ public class CanonicalProjectionParityTest {
                 deal.semantic.ir.ExternalModuleKind.IMPLEMENTATION, List.of(), List.of(),
                 List.of(), deal.semantic.ir.InitializationMode.ONCE_AFTER_DEPENDENCIES)));
         ExecutableLoweredProject project = new ExecutableLoweredProject(
-            deal.semantic.ir.SemanticProfile.DEAL_V1_5_BINARY64, index, modules, entry,
+            deal.semantic.ir.SemanticProfile.DEAL_V1_6_BINARY64, index, modules, entry,
             deal.semantic.ClassRegistrationSeeds.builtinErrorOnly());
         Map<ModuleId, StructuredBodyTable> tables = new LinkedHashMap<>();
         tables.put(entry, new StructuredBodyTable(
@@ -7728,7 +7739,7 @@ public class CanonicalProjectionParityTest {
         expectDefect(() -> FailureContractRegistry.render(
             FailureArmId.TYPED_BOUNDARY_KIND, Map.of(), "number",
             "string", null), "a missing named parameter");
-        expectDefect(() -> FailureContractRegistry.render(FailureArmId.SUBSTRING_BOUNDS,
+        expectDefect(() -> FailureContractRegistry.render(FailureArmId.JSON_TO_WALK_CYCLE,
             Map.of(), "number", null, null), "a fabricated expected token on a "
             + "field-less arm");
         expectDefect(() -> FailureContractRegistry.render(
@@ -7770,8 +7781,8 @@ public class CanonicalProjectionParityTest {
                 "CELL|kind|expected boolean",
                 "CELL|range|PASS",
                 "CELL|utf8|expected string, got invalid UTF-8 encoding",
-                "CELL|surrogate|expected string, got UTF-16 surrogate code point",
-                "CELL|surrogate-embedded|expected string, got UTF-16 surrogate code point",
+                "CELL|surrogate|PASS",
+                "CELL|surrogate-embedded|PASS",
                 "CELL|valid|PASS",
                 "CELL|element|array element 2 type mismatch"), rows,
                 "the deployed check_type selects each inner reason and admits a valid string");
@@ -7783,20 +7794,16 @@ public class CanonicalProjectionParityTest {
     private static void testJvmHostStringReasonSelection() {
         System.out.println("-- the JVM host string-carrier reason selection --");
 
-        // The JVM producer's own selection (the emitted seam delegates to it):
-        // a lone surrogate at any position is the surrogate class, the raw
-        // byte carrier's first defect class selects the reason, and valid
-        // carriers are admitted — never the carrier's length.
+        // Java strings admit every UTF-16 unit. Strict raw byte transport
+        // selects the first encoding defect independently of carrier length.
         String surrogateText = FailureContractRegistry.renderInner(
             FailureArmId.HOST_STRING_SURROGATE, Map.of());
         String invalidText = FailureContractRegistry.renderInner(
             FailureArmId.HOST_STRING_INVALID_UTF8, Map.of());
-        checkEq(surrogateText, deal.codegen.jvm.JvmRuntime.hostStringReason("\uD800"),
-            "the JVM host carrier selector renders the surrogate reason for a lone "
-                + "surrogate");
-        checkEq(surrogateText, deal.codegen.jvm.JvmRuntime.hostStringReason("a\uD800b"),
-            "the JVM host carrier selector renders the surrogate reason for an "
-                + "embedded lone surrogate (never the invalid-UTF-8 reason)");
+        checkEq("\uD800", deal.codegen.jvm.JvmRuntime.bcheck("string", "string", "\uD800"),
+            "the JVM boundary preserves a lone surrogate unit");
+        checkEq("a\uD800b", deal.codegen.jvm.JvmRuntime.bcheck("string", "string", "a\uD800b"),
+            "the JVM boundary preserves an embedded lone surrogate unit");
         checkEq(invalidText, deal.codegen.jvm.JvmRuntime.hostStringReason(
             RAW_MALFORMED_STRING),
             "the JVM host carrier selector renders the invalid-UTF-8 reason for a "
@@ -7805,8 +7812,8 @@ public class CanonicalProjectionParityTest {
             new byte[] { 0x61, (byte) 0xED, (byte) 0xA0, (byte) 0x80, 0x62 }),
             "the JVM host carrier selector renders the surrogate reason for an "
                 + "embedded surrogate code point encoding");
-        checkEq(null, deal.codegen.jvm.JvmRuntime.hostStringReason("ok"),
-            "the JVM host carrier selector admits the valid string carrier");
+        checkEq("ok", deal.codegen.jvm.JvmRuntime.bcheck("string", "string", "ok"),
+            "the JVM boundary preserves the valid string carrier");
         checkEq(null, deal.codegen.jvm.JvmRuntime.hostStringReason(
             new byte[] { 0x6F, 0x6B }),
             "the JVM host carrier selector admits the valid byte carrier");
@@ -8343,7 +8350,7 @@ public class CanonicalProjectionParityTest {
 
     private static Seed lowerSeed(String source, String what) {
         CompilerInvocation invocation = CompilerProfileProvider.resolve(
-            deal.semantic.ir.ReleaseState.V1_5_ACTIVE,
+            deal.semantic.ir.ReleaseState.V1_6_ACTIVE,
             deal.semantic.CapabilityRegistry.releaseRegistry());
         CheckedSeed seed = checkedSeed(source, what, invocation);
         if (seed == null) {
@@ -8770,7 +8777,7 @@ public class CanonicalProjectionParityTest {
      * the second literal position are each driven through the three
      * consumers, and the admitted element and the absent nullable element
      * stay successes. Every seed reaches its runtime value through a
-     * specification-admitted shape (docs/spec-v1.3.md §Reading table
+     * specification-admitted shape (docs/spec-v1.6.md §Reading and writing
      * fields): a table read nested in a literal is E3003 at the read, so
      * the array carrier is a typed binding whose slot was deleted.
      */

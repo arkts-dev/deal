@@ -1,5 +1,5 @@
 // @spec: Runtime execution model
-// @description: Invalid live Error code rejects unknown graph admission and permits repair
+// @description: Lone UTF-16 Error code survives unknown graph admission with live aliases
 // @expected: runtime-ok
 // @features: boundary-validation, host-abi
 import * as console from "std/console";
@@ -11,14 +11,17 @@ export function main():null {
   let original:unknown=null;
   let destination=original;
   host.edit(e);
-  try {
-    destination=e;
-    console.log("BAD");
-  } catch(x) {
-    if(x instanceof Error) { console.log(x.code); }
+  destination=e;
+  let admitted=destination as Error;
+  if(admitted!==alias || admitted.code!==`\uD800`) {
+    throw {code:"TEST",message:"unknown admission lost lone code or identity"};
   }
+  console.log("ACCEPT");
   host.repair();
-  if(e===alias && destination===original) { console.log("UNCHANGED"); }
+  if(e!==alias || admitted.code!=="repaired") {
+    throw {code:"TEST",message:"unknown alias did not observe repair"};
+  }
+  console.log("IDENTITY");
   destination=e;
   console.log("RECOVERED");
   return null;

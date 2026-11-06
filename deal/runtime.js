@@ -1,6 +1,6 @@
 "use strict";
 
-// DEAL Runtime Library v1.5 — JavaScript backend (deal/runtime.js).
+// DEAL Runtime Library v1.6 — JavaScript backend (deal/runtime.js).
 // The single hand-written CommonJS runtime module exporting $rt, the JS
 // analog of deal/runtime.lua (js-backend-runtime D1-D9, pinned by
 // js-backend-runtime-artifact), plus the shared D9 JSON conversion and
@@ -26,7 +26,7 @@
 // generated code spells none of them bare (js-backend-architecture D2). Object and
 // String are not in the capture list and may be spelled bare inside this
 // trusted file. The native JSON object is not captured: the conforming
-// scanner and the canonical text encoder are the runtime's own (DEAL v1.5
+// scanner and the canonical text encoder are the runtime's own (DEAL v1.6
 // exact JSON).
 const $process = process;
 const $console = console;
@@ -445,24 +445,6 @@ function $parseClass($d, $cps, $st) {
   }
 }
 
-// $stringBoundaryMessage: the reason split of the string boundary
-// message — the JS analog of the reference's byte-walk reason split
-// (__rt.utf8_status, deal/runtime.lua:239-296, ISSUE-0598). JS strings
-// are UTF-16, so an unpaired surrogate code unit is the only malformed
-// content the walk can see: a string whose entire content is one lone
-// surrogate code unit is the analog of the reference's CESU-style
-// surrogate-code-point encoding ("expected string, got UTF-16 surrogate
-// code point", the host-surrogate-utf8-e8010 sidecar); an unpaired
-// surrogate embedded in a longer string is the analog of a malformed
-// encoding and keeps the general message ("expected string, got invalid
-// UTF-8 encoding", the host-invalid-utf8-e8010 sidecar).
-function $stringBoundaryMessage($v) {
-  if ($v.length === 1) {
-    return "expected string, got UTF-16 surrogate code point";
-  }
-  return "expected string, got invalid UTF-8 encoding";
-}
-
 // The pinned component alphabet: forbidden scalars end the maximal run.
 function $forbiddenInComponent($cp) {
   if ($cp < 0x20 || $cp === 0x7F) return true; // U+0000, C0/DEL controls
@@ -543,31 +525,6 @@ function $isPlainObject($v) {
 // dependency is forbidden — js-backend-runtime D9). The walks are pure:
 // fresh Maps/Arrays/objects only, no input mutation.
 
-// $scanSurrogates: the decode-side unpaired-surrogate scan — the same
-// surrogate-pair unit walk as checkString's loop but raising the
-// parse-side needle. checkString is deliberately not reused: its message
-// is the boundary needle ("expected string, got invalid UTF-8
-// encoding"), not the parse-side one. The scan is faithful: the entry
-// checkString already rejected unpaired surrogates in the raw input
-// text, so any unpaired surrogate in a converted string necessarily came
-// from a \uXXXX escape — exactly the case the reference rejects
-// (std/json.lua lone-low/lone-high/uncombined-high arms); valid pairs
-// pass.
-function $scanSurrogates($s, $file, $line, $column) {
-  for (let $i = 0; $i < $s.length; $i++) {
-    const $c = $s.charCodeAt($i);
-    if ($c >= 0xd800 && $c <= 0xdbff) {
-      const $next = $i + 1 < $s.length ? $s.charCodeAt($i + 1) : -1;
-      if ($next < 0xdc00 || $next > 0xdfff) {
-        $rt.fail("E8001", "JSON parse error: unpaired surrogate code unit in unicode escape", $file, $line, $column);
-      }
-      $i++; // skip the low surrogate of a valid pair
-    } else if ($c >= 0xdc00 && $c <= 0xdfff) {
-      $rt.fail("E8001", "JSON parse error: unpaired surrogate code unit in unicode escape", $file, $line, $column);
-    }
-  }
-}
-
 // $fromJsonConvert: stack-safe conversion of a native $JSON.parse result
 // into the runtime's table representation. JSON null -> a fresh empty
 // Map registered via $rt.markJsonNullTable at every depth (the
@@ -578,9 +535,7 @@ function $scanSurrogates($s, $file, $line, $column) {
 // (Object.keys — never for...in, which walks the prototype chain;
 // $JSON.parse creates __proto__ as an own data property, so a __proto__
 // key converts like any other); number/boolean/string scalars pass
-// through. Every converted string — object keys and nested values at
-// every depth — crosses $scanSurrogates first, so a lone-surrogate
-// \uXXXX escape reports the parse-side needle. Maps are constructed via
+// through, preserving every UTF-16 unit in keys and values. Maps use
 // $rt.makeTable({}) plus .set calls — the only Map construction path —
 // so the products are the runtime's own Map shapes and the mark members
 // accept them by construction; the boundary members read the marks — a
@@ -598,7 +553,6 @@ function $fromJsonConvert($value, $file, $line, $column) {
       return;
     }
     if (typeof $input === "string") {
-      $scanSurrogates($input, $file, $line, $column);
       $completed = $input;
       $haveCompleted = true;
       return;
@@ -665,7 +619,6 @@ function $fromJsonConvert($value, $file, $line, $column) {
       continue;
     }
     const $key = $frame.keys[$frame.index];
-    $scanSurrogates($key, $file, $line, $column);
     $start($frame.source[$key]);
   }
 }
@@ -1134,25 +1087,6 @@ function $clearNumberVariant($container, $key) {
   }
 }
 
-// $isValidScalars: true when $s contains no unpaired surrogate unit (every
-// JS string the parser produces is scalar-valid by construction, so this
-// is the boundary predicate of hand-supplied strings).
-function $isValidScalars($s) {
-  for (let $i = 0; $i < $s.length; $i++) {
-    const $c = $s.charCodeAt($i);
-    if ($c >= 0xd800 && $c <= 0xdbff) {
-      const $next = $i + 1 < $s.length ? $s.charCodeAt($i + 1) : -1;
-      if ($next < 0xdc00 || $next > 0xdfff) {
-        return false;
-      }
-      $i++;
-    } else if ($c >= 0xdc00 && $c <= 0xdfff) {
-      return false;
-    }
-  }
-  return true;
-}
-
 // $jsonUtf8Length: the UTF-8 byte length of one Unicode scalar value.
 function $jsonUtf8Length($cp) {
   return $cp < 0x80 ? 1 : $cp < 0x800 ? 2 : $cp < 0x10000 ? 3 : 4;
@@ -1246,35 +1180,13 @@ function $parseJsonText($text, $file, $line, $column) {
           $out.push("\t");
         } else if ($e === 0x75) {
           $advance();
-          let $cp = $parseHex4();
-          if ($cp >= 0xd800 && $cp <= 0xdbff) {
-            if ($atEnd() || $peek() !== 0x5c) $fail("unpaired surrogate escape");
-            $advance();
-            if ($atEnd() || $peek() !== 0x75) $fail("unpaired surrogate escape");
-            $advance();
-            const $lo = $parseHex4();
-            if ($lo < 0xdc00 || $lo > 0xdfff) $fail("unpaired surrogate escape");
-            $cp = 0x10000 + ($cp - 0xd800) * 0x400 + ($lo - 0xdc00);
-          } else if ($cp >= 0xdc00 && $cp <= 0xdfff) {
-            $fail("unpaired surrogate escape");
-          }
-          $out.push(String.fromCodePoint($cp));
+          $out.push(String.fromCharCode($parseHex4()));
         } else {
           $fail("invalid escape");
         }
       } else if ($c < 0x20) {
         $fail("unexpected character");
-      } else if ($c >= 0xd800 && $c <= 0xdfff) {
-        if ($c <= 0xdbff && $pos + 1 < $text.length) {
-          const $next = $text.charCodeAt($pos + 1);
-          if ($next >= 0xdc00 && $next <= 0xdfff) {
-            $out.push($text.slice($pos, $pos + 2));
-            $pos += 2;
-            $bytes += 4;
-            continue;
-          }
-        }
-        $fail("unpaired surrogate escape");
+
       } else {
         $advance();
         $out.push(String.fromCodePoint($c));
@@ -1656,10 +1568,8 @@ function $carrierToken($v) {
   return "table";
 }
 
-// $walkToken: the typed-boundary projection of one failing walk value
-// (the walk arm's actual): an integral finite number is the int carrier,
-// every other number the number carrier, an invalid scalar sequence
-// invalid-unicode, and a class instance its carried canonical atom.
+// $walkToken: the typed-boundary projection of one failing walk value.
+// Numbers and UTF-16 strings retain their kinds; classes carry canonical atoms.
 function $walkToken($v) {
   if ($v === $undefined || $v === $MISSING) return "undefined";
   if ($v === null) return "null";
@@ -1668,9 +1578,7 @@ function $walkToken($v) {
   // Value.Int/Value.Number typed-boundary tokens).
   if ($isNumCarrier($v)) return $v.k;
   if (typeof $v === "number") return "number";
-  if (typeof $v === "string") {
-    return $isValidScalars($v) ? "string" : "invalid-unicode";
-  }
+  if (typeof $v === "string") return "string";
   if (typeof $v === "function" || $v.$kind === "function") return "function";
   if ($Array.isArray($v)) return "array";
   if ($v.$kind === "class") {
@@ -1679,9 +1587,7 @@ function $walkToken($v) {
   return "table";
 }
 
-// $jsonEscapeText: RFC-8259 string escaping (quote and backslash escaped,
-// the named short escapes, every other control scalar as a lowercase
-// four-hex-digit escape, every other scalar raw).
+// $jsonEscapeText: RFC-8259 escaping with lossless lone UTF-16 unit escapes.
 function $jsonEscapeText($s) {
   let $out = "\"";
   for (let $i = 0; $i < $s.length; $i++) {
@@ -1693,7 +1599,10 @@ function $jsonEscapeText($s) {
     else if ($c === 0x0a) $out += "\\n";
     else if ($c === 0x0d) $out += "\\r";
     else if ($c === 0x09) $out += "\\t";
-    else if ($c < 0x20) {
+    else if ($c < 0x20 || ($c >= 0xd800 && $c <= 0xdbff
+        ? !($s.charCodeAt($i + 1) >= 0xdc00 && $s.charCodeAt($i + 1) <= 0xdfff)
+        : $c >= 0xdc00 && $c <= 0xdfff
+          && !($i > 0 && $s.charCodeAt($i - 1) >= 0xd800 && $s.charCodeAt($i - 1) <= 0xdbff))) {
       const $hex = $c.toString(16);
       $out += "\\u" + "0".repeat(4 - $hex.length) + $hex;
     } else {
@@ -1780,7 +1689,6 @@ function $encodeJsonText($v, $active, $file, $line, $column, $typed, $path, $var
       return;
     }
     if ($type === "string") {
-      if (!$isValidScalars($value)) $unsupported($value, $valuePath);
       $out.push($jsonEscapeText($value));
       return;
     }
@@ -1887,10 +1795,8 @@ function $encodeJsonText($v, $active, $file, $line, $column, $typed, $path, $var
         }
         const $i = $frame.index++;
         const $key = $frame.keys[$i];
-        if (typeof $key !== "string" || !$isValidScalars($key)) {
-          // An invalid scalar sequence is still a string carrier on the
-          // carrier-kind projection (and invalid-unicode on the typed
-          // one).
+        if (typeof $key !== "string") {
+          // Record keys must be strings; every UTF-16 string is legal.
           if ($typed) {
             $rt.fail("E8001", "value at " + $frame.path
               + " is not JSON serializable: invalid-unicode",
@@ -2051,8 +1957,7 @@ function $jsonFromDocument($identity, $doc, $fields, $file, $line, $column) {
 // descriptor. Throws on every failure (jsonFromJson collapses throws to
 // the DEAL null); a JSON null is present-null on a nullable entry or a
 // null-typed entry and a shape violation everywhere else. Primitives
-// route through the pinned typed-boundary checks (int range E8004,
-// string surrogate E8001); class entries re-run the full instance
+// route through the pinned typed-boundary kind checks; class entries re-run the full instance
 // decode with the nested fields; array entries decode element-wise via
 // element; table entries accept only a JSON object and convert it to
 // the D9 Map shape (nested arrays as the array-marked Maps).
@@ -2219,7 +2124,7 @@ function $jsonToValue($entry, $value, $path, $fieldPath, $file, $line, $column,
       }
       return $value ? "true" : "false";
     case "string":
-      if (typeof $value !== "string" || !$isValidScalars($value)) {
+      if (typeof $value !== "string") {
         $walkFail();
       }
       return $jsonEscapeText($value);
@@ -2397,7 +2302,7 @@ function $executionRecord($id) {
 // by exact power-of-two scaling (no rounding: every intermediate keeps
 // the value's own 52 fraction bits), so the digits never drift from the
 // value. The single renderer of the stdlib closed-arm actuals that spell
-// a number (SQRT_NEGATIVE).
+// a number.
 function $numberHex($v) {
   if ($v !== $v) return "NaN";
   if ($v === $Infinity) return "Infinity";
@@ -2441,7 +2346,7 @@ const $rt = {
   undefined: $undefined,
 
   // numberHex: the canonical hex-float spelling (the member the shipped
-  // std/math realization's SQRT_NEGATIVE actual goes through).
+  // numeric runtime observations go through).
   numberHex: function $numberHexPublic(v) {
     return $numberHex(v);
   },
@@ -2710,30 +2615,10 @@ const $rt = {
     return v;
   },
 
-  // checkString: boundary validation rejects unpaired UTF-16 surrogates —
-  // a high surrogate (U+D800..U+DBFF) not followed by a low surrogate
-  // (U+DC00..U+DFFF), or a lone low surrogate — with the reference's
-  // boundary message split (deal/runtime.lua:288-296, ISSUE-0598): a
-  // string that is exactly one lone surrogate code unit is the JS analog
-  // of the reference's CESU-style surrogate-code-point encoding ("got
-  // UTF-16 surrogate code point"); every other lone-surrogate defect is
-  // the JS analog of a malformed encoding and keeps the general message.
-  // Valid supplementary pairs pass; the string is returned unchanged.
+  // Every UTF-16 string passes unchanged, including lone surrogate units.
   checkString: function $checkString(v, file, line, column) {
     if (typeof v !== "string") {
       $rt.fail("E8001", "expected string", file, line, column, "string", $kindOf(v));
-    }
-    for (let $i = 0; $i < v.length; $i++) {
-      const $c = v.charCodeAt($i);
-      if ($c >= 0xd800 && $c <= 0xdbff) {
-        const $next = $i + 1 < v.length ? v.charCodeAt($i + 1) : -1;
-        if ($next < 0xdc00 || $next > 0xdfff) {
-          $rt.fail("E8001", $stringBoundaryMessage(v), file, line, column, "string", "invalid UTF-8 string");
-        }
-        $i++; // skip the low surrogate of a valid pair
-      } else if ($c >= 0xdc00 && $c <= 0xdfff) {
-        $rt.fail("E8001", $stringBoundaryMessage(v), file, line, column, "string", "invalid UTF-8 string");
-      }
     }
     return v;
   },
@@ -3047,7 +2932,7 @@ const $rt = {
   },
 
   // arrayElementCheck: the ARRAY_ELEMENT_DESCRIPTOR cell of one array
-  // literal element (docs/spec-v1.5.md Runtime diagnostics: E8003 is
+  // literal element (docs/spec-v1.6.md Runtime diagnostics: E8003 is
   // "array element type check failed"). The element's descriptor check
   // runs first and its admitted value is the element the literal stores;
   // a failing element is reported as the E8003 row with the 1-based
@@ -3430,8 +3315,7 @@ const $rt = {
   // 3. Each parameter checks against the declared parameter descriptor
   //    through the canonical matcher rows (checkType); every failure —
   //    wrong kind, array carrier/element mismatches, function $sig
-  //    deltas, class nominal identity, E8004 int range, unpaired
-  //    string surrogates — re-raises E8010 "parameter {i} type
+  //    deltas and class nominal identity — re-raises E8010 "parameter {i} type
   //    mismatch: {inner}" with the declared descriptor as expected and
   //    $kindOf(arg) as actual (the reference's pcall composition).
   // 4. f is invoked exactly once with the user arguments; a declared
@@ -3551,7 +3435,7 @@ const $rt = {
   // contract, host-async-bad; a valid completion delivers the checked
   // value, host-async-ok). A rejected operation propagates natively at
   // the await site. Source code can only observe the operation through
-  // await (spec-v1.5.md, async export invocation).
+  // await (spec-v1.6.md, async export invocation).
   //
   // Converged awaited-call span (ISSUE-0599): an awaited emitted call
   // appends a second trailing span triplet — the await expression's
@@ -3874,67 +3758,19 @@ const $rt = {
     }
   },
 
-  // ===== String scalar-value helpers (js-backend-runtime-artifact D9) =====
-  // Code-point measures and ordering. Native JS string iteration walks one
-  // Unicode scalar per step (spec §For-of), so these operate over code
-  // points, not UTF-16 units. The helpers do not re-validate — checkString
-  // above is the boundary (D9) — and assume validated strings (no unpaired
-  // surrogates). Pure, deterministic, no mutation, no I/O.
+  // ===== String iteration helpers =====
+  // Iteration combines valid pairs and yields lone units individually;
+  // string length, slicing and ordering independently use UTF-16 units.
 
-  // scalarLength: the code-point count.
-  scalarLength: function $scalarLength(s) {
-    let $n = 0;
-    for (const $c of s) {
-      $n++;
-    }
-    return $n;
-  },
-
-  // scalarAt: the 0-based i-th scalar as a one-code-point string (the
-  // std/string.substring convention, std/string.lua); the captured
-  // nil-equivalent $undefined for any i outside [0, scalarLength(s)).
-  scalarAt: function $scalarAt(s, i) {
-    let $n = 0;
-    for (const $c of s) {
-      if ($n === i) return $c;
-      $n++;
-    }
-    return $undefined;
-  },
-
-  // scalars: the array of one-code-point strings in order. Materialized
-  // through the T1 $Array capture — $Array.from on a string iterates one
-  // code point per element, so the result is a real native Array of
-  // one-scalar strings.
+  // Materialize iteration elements through the captured Array.from:
+  // one pair or lone unit per element, independently of string length.
   scalars: function $scalars(s) {
     return $Array.from(s);
   },
 
-  // strCompare: scalar-value (code-point) ordering for </<=/>/>=. JS
-  // relational operators compare UTF-16 code units, which diverges from
-  // scalar order for supplementary characters (strCompare('\uE000',
-  // '\u{10000}') < 0 while ('\uE000' < '\u{10000}') === false). Mirrors
-  // the JVM emitter's emitted scalarCompare: a codePointAt walk with
-  // per-scalar advancement, returning a negative number / 0 / a positive
-  // number.
+  // Relational ordering compares UTF-16 units, independently of iteration.
   strCompare: function $strCompare(a, b) {
-    let $ia = 0;
-    let $ib = 0;
-    const $la = a.length;
-    const $lb = b.length;
-    while ($ia < $la && $ib < $lb) {
-      const $ca = a.codePointAt($ia);
-      const $cb = b.codePointAt($ib);
-      if ($ca !== $cb) {
-        return $ca < $cb ? -1 : 1;
-      }
-      $ia += $ca > 0xffff ? 2 : 1;
-      $ib += $cb > 0xffff ? 2 : 1;
-    }
-    if ($ia >= $la) {
-      return $ib >= $lb ? 0 : -1;
-    }
-    return 1;
+    return a === b ? 0 : a < b ? -1 : 1;
   },
 
   // throwValue: the recorded THROW transport. A tagged Error value that

@@ -32,13 +32,13 @@ import java.util.stream.Stream;
  * <ol>
  *   <li>every published translation unit compiles with zero diagnostics under
  *       {@code -std=c11 -Wall -Werror -Wextra -pedantic};</li>
- *   <li>H2 record conformance, enum discriminants (including the v1.5
+ *   <li>H2 record conformance, enum discriminants (including the v1.6
  *       appended undefined carrier and completion discriminants), field order
  *       and the count-zero registry sentinel from a consumer that includes only
  *       the published headers, plus the pinned C signature of every declared
  *       entry in a compile-only consumer (including the entries this task
  *       declares without implementing);</li>
- *   <li>the C3 v1.5 nullish representation authority: `null` and `undefined`
+ *   <li>the C3 v1.6 nullish representation authority: `null` and `undefined`
  *       are distinct immutable singletons and neither is C `NULL`;</li>
  *   <li>type opacity: pointer use compiles, {@code sizeof(deal_module)} and a
  *       {@code deal_export_entry} layout use do not;</li>
@@ -283,7 +283,7 @@ public final class NativeRuntimeAbiTest {
     }
 
     // =========================================================================
-    // 3. The C3 v1.5 nullish representation authority
+    // 3. The C3 v1.6 nullish representation authority
     // =========================================================================
 
     private static void testNullishRepresentation() throws IOException {

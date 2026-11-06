@@ -21,7 +21,7 @@ final class NativeCorpusAccounting {
     void runtimeBoundary(BoundaryKind boundary) { runtimeBoundaries.add(boundary); }
 
     /** Compare every field of a real C arm materialization with its independent registry tuple.
-     * This is ABI contract coverage, never a claim that sqrt throws or C loads JS tables. */
+     * This is ABI contract coverage, never a claim that C loads JS tables. */
     void materializedArm(FailureArmId id, Map<String, String> parameters,
             String code, String message, String expected, String actual) {
         var tuple = FailureContractRegistry.render(id, parameters, expected, actual, null);
@@ -30,7 +30,7 @@ final class NativeCorpusAccounting {
             throw new AssertionError("native materialized tuple mismatch: " + id);
         // Only retained, source-inapplicable ABI contracts can use this channel.
         // Every ordinary failure arm still requires its case-local execution pin.
-        if (id == FailureArmId.SQRT_NEGATIVE || id == FailureArmId.HOST_LOAD_RAW_SHAPE
+        if (id == FailureArmId.HOST_LOAD_RAW_SHAPE
                 || id == FailureArmId.HOST_LOAD_NOT_A_MODULE) materializedArms.add(id);
     }
 
@@ -137,7 +137,7 @@ final class NativeCorpusAccounting {
             throw new AssertionError("ABI materialization substituted for a source failure-site pin");
     }
 
-    void verify() {
+    void verify(NativeKnownSkips skips) {
         Set<SemanticOpKind> missingOps = EnumSet.allOf(SemanticOpKind.class); missingOps.removeAll(operations);
         Set<BoundaryKind> missingBoundaries = EnumSet.allOf(BoundaryKind.class);
         missingBoundaries.removeAll(boundaries); missingBoundaries.removeAll(runtimeBoundaries);
@@ -156,7 +156,9 @@ final class NativeCorpusAccounting {
         System.out.println("Native accounting missing: ops=" + missingOps + "; boundaries=" + missingBoundaries
             + "; stdlib=" + missingStdlib + "; binary=" + missingBinary + "; unary=" + missingUnary + "; arms=" + missingArms);
         System.out.println("Native accounting selectors: binary=" + binary + "; unary=" + unary);
-        if (cases == 0 || !missingOps.isEmpty() || !missingBoundaries.isEmpty()
+        Set<SemanticOpKind> unexpectedOps = skips.remaining("operation", missingOps);
+        Set<BoundaryKind> unexpectedBoundaries = skips.remaining("boundary", missingBoundaries);
+        if (cases == 0 || !unexpectedOps.isEmpty() || !unexpectedBoundaries.isEmpty()
                 || !missingStdlib.isEmpty() || !missingBinary.isEmpty() || !missingUnary.isEmpty() || !missingArms.isEmpty())
             throw new AssertionError("HARNESS_DEFECT: unevidenced native runtime requirements");
     }

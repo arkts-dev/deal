@@ -5,6 +5,6 @@
     "code": "E1042",
     "line": 7,
     "column": 30,
-    "message": "Invalid template literal: trailing backslashes before the closing backtick must form pairs"
+    "message": "Invalid template literal: malformed numeric, hexadecimal or Unicode escape spelling"
   }
 }

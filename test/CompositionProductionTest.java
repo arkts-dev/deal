@@ -24,6 +24,11 @@ public final class CompositionProductionTest {
 
     static void execute(String source, String expected, Path root, Path host,
                         List<Backend> backends) throws Exception {
+        execute(source, expected, "", root, host, backends);
+    }
+
+    static void execute(String source, String expected, String expectedStderr,
+                        Path root, Path host, List<Backend> backends) throws Exception {
         for (Backend backend : backends) {
             Path project = root.resolve(backend.name());
             Path src = project.resolve("src");
@@ -45,6 +50,42 @@ public final class CompositionProductionTest {
             compiler.compile();
             if (!compiler.diagnostics().isEmpty() || compiler.semanticEmissionCount() != 1)
                 throw new AssertionError("SOURCE_REJECTION " + backend + ": " + compiler.diagnostics());
+            if (backend == Backend.LLVM) {
+                List<Path> hostUnits = new ArrayList<>();
+                if (host != null) {
+                    Path nativeHost = project.resolve("hosts");
+                    Files.createDirectories(nativeHost);
+                    Path unit = nativeHost.resolve("probe.c");
+                    Files.copy(host.resolve("probe.c"), unit);
+                    for (String helper : List.of("native_helpers.h", "native_hostile.h"))
+                        Files.copy(Path.of("test/conformance/host-fixtures/" + helper), nativeHost.resolve(helper));
+                    hostUnits.add(unit);
+                }
+                boolean[] instrumentation = host == null
+                    ? new boolean[] {false} : new boolean[] {false, true};
+                for (int level : new int[] {0, 2}) {
+                    for (boolean sanitized : instrumentation) {
+                        Path product = project.resolve("native" + level + (sanitized ? "-sanitized" : ""));
+                        NativeCompiler.build(new deal.toolchain.NativeBuildRequest(
+                            out, product, level, hostUnits, null),
+                            sanitized ? NativeCompiler.SANITIZER_FLAGS : List.of());
+                        for (boolean stress : new boolean[] {false, true}) {
+                            var environment = new java.util.HashMap<String, String>();
+                            environment.put("DEAL_GC_STRESS", stress ? "1" : "0");
+                            if (sanitized) environment.putAll(NativeCompiler.sanitizerEnvironment());
+                            var result = sanitized
+                                ? NativeCompiler.runSanitized(product, project, environment).result()
+                                : NativeCompiler.execute(product, project, environment);
+                            if (result.exitCode() != 0 || !result.stderr().equals(expectedStderr)
+                                    || !result.stdout().equals(expected))
+                                throw new AssertionError("RUNTIME_OR_RESULT_FAILURE LLVM O" + level
+                                    + " stress=" + stress + " sanitized=" + sanitized + ": " + result.describe()
+                                    + " expected stdout=" + expected + " source=" + entry);
+                        }
+                    }
+                }
+                continue;
+            }
             List<String> launch;
             if (backend == Backend.JVM) {
                 if (host != null) Files.copy(host.resolve("probe.java"), out.resolve("HostProbe.java"));
@@ -71,7 +112,7 @@ public final class CompositionProductionTest {
             }
             var result = BoundedProcess.runCaptured(launch, out, Map.of());
             if (result.stdoutTruncated() || result.stderrTruncated() || result.exitCode() != 0
-                    || !result.stderr().isEmpty() || !result.stdout().equals(expected))
+                    || !result.stderr().equals(expectedStderr) || !result.stdout().equals(expected))
                 throw new AssertionError("RUNTIME_OR_RESULT_FAILURE " + backend + ": " + result
                     + " expected stdout=" + expected + " source=" + entry);
         }

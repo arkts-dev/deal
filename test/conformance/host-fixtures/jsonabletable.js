@@ -7,9 +7,8 @@
 // array member, the deployment's own std/json decode (makeParsed,
 // ISSUE-0900: the marked-Map graph with its per-slot number-variant marks),
 // and a self-referential table for the closed cycle arm. The closed arms'
-// returns carry a non-finite numeric leaf, an invalid (unpaired-surrogate)
-// object value and an invalid (unpaired-surrogate) object key, the content
-// shapes the finite acyclic JSON domain excludes.
+// returns carry non-finite leaves (JSON null) and lone UTF-16 units in
+// object values and keys (losslessly escaped JSON data).
 
 const $rt = require("../deal/runtime");
 const $json = require("../std/json");

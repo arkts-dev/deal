@@ -415,26 +415,7 @@ public final class JvmJson {
                             }
                             int cp = Integer.parseInt(hex, 16);
                             pos += 4;
-                            if (cp >= 0xD800 && cp <= 0xDBFF) {
-                                if (pos + 6 <= s.length() && s.charAt(pos) == '\\'
-                                        && s.charAt(pos + 1) == 'u') {
-                                    String hex2 = s.substring(pos + 2, pos + 6);
-                                    if (hex2.matches("[0-9a-fA-F]{4}")) {
-                                        int lo = Integer.parseInt(hex2, 16);
-                                        if (lo >= 0xDC00 && lo <= 0xDFFF) {
-                                            pos += 6;
-                                            cp = 0x10000 + (cp - 0xD800) * 0x400
-                                                + (lo - 0xDC00);
-                                        }
-                                    }
-                                }
-                                if (cp >= 0xD800 && cp <= 0xDFFF) {
-                                    return null;
-                                }
-                            } else if (cp >= 0xDC00 && cp <= 0xDFFF) {
-                                return null;
-                            }
-                            out.appendCodePoint(cp);
+                            out.append((char) cp);
                         }
                         default -> {
                             return null;
@@ -519,11 +500,9 @@ public final class JvmJson {
         return value == 0 ? "0" : Double.toString(value);
     }
 
-    /** The RFC-8259 string body of a scalar-valid string (invalid → null). */
+    /** The RFC-8259 string body; lone UTF-16 units are escaped losslessly. */
     public static String escapeString(String text) {
-        if (!validScalars(text)) {
-            return null;
-        }
+        java.util.Objects.requireNonNull(text, "text");
         StringBuilder out = new StringBuilder();
         for (int i = 0; i < text.length(); i++) {
             char c = text.charAt(i);
@@ -536,7 +515,11 @@ public final class JvmJson {
                 case '\r' -> out.append("\\r");
                 case '\t' -> out.append("\\t");
                 default -> {
-                    if (c < 0x20) {
+                    boolean unpaired = Character.isHighSurrogate(c)
+                        ? i + 1 == text.length() || !Character.isLowSurrogate(text.charAt(i + 1))
+                        : Character.isLowSurrogate(c)
+                            && (i == 0 || !Character.isHighSurrogate(text.charAt(i - 1)));
+                    if (c < 0x20 || unpaired) {
                         out.append(String.format("\\u%04x", (int) c));
                     } else {
                         out.append(c);
@@ -545,15 +528,6 @@ public final class JvmJson {
             }
         }
         return out.toString();
-    }
-
-    /**
-     * The scalar-validity check of the closed Unicode scalar domain: no
-     * unpaired surrogate and no U+10FFFF-exceeding pair (the Java
-     * carrier is UTF-8-decoded by the runtime already).
-     */
-    public static boolean validScalars(String text) {
-        return deal.semantic.ir.UnicodeScalars.carrierDefect(text) == null;
     }
 
     // =========================================================================
@@ -701,11 +675,11 @@ public final class JvmJson {
                 return raw instanceof Double ? raw : FAIL;
             }
             case "string" -> {
-                return raw instanceof String string && validScalars(string) ? raw : FAIL;
+                return raw instanceof String ? raw : FAIL;
             }
             case "table" -> {
                 // A table field accepts only a JSON object
-                // (docs/spec-v1.5.md:695): an array-shaped value of any
+                // (docs/spec-v1.6.md:695): an array-shaped value of any
                 // length, the empty array included, is a rejection —
                 // never an empty table.
                 return raw instanceof JvmRuntime.Table ? toLanguage(raw) : FAIL;
@@ -863,7 +837,7 @@ public final class JvmJson {
             case "null" -> value == null;
             case "boolean" -> value instanceof Boolean;
             case "number" -> value instanceof Number;
-            case "string" -> value instanceof String string && validScalars(string);
+            case "string" -> value instanceof String;
             case "table" -> value instanceof JvmRuntime.Table;
             default -> true;
         };

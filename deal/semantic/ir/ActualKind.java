@@ -5,10 +5,10 @@ import java.util.Objects;
 /**
  * The closed canonical actual-kind tokens of the parent's "Closed failure
  * policies and canonical visible errors" section, owned by the failure
- * contract registry (schema S5): exactly the 14 pinned values
+ * contract registry (schema S5): the pinned values
  *
  * <pre>{@code
- * null, missing, boolean, int, number, string, table, array, function,
+ * null, undefined, missing, boolean, number, string, table, array, function,
  * class:<ClassId>, async-operation, nothing, invalid-unicode
  * }</pre>
  *
@@ -35,7 +35,7 @@ public enum ActualKind {
     BOOLEAN("boolean"),
     /** IEEE-754 number. */
     NUMBER("number"),
-    /** Unicode scalar string. */
+    /** UTF-16 unit string, including lone surrogates. */
     STRING("string"),
     /** Table. */
     TABLE("table"),
@@ -49,7 +49,7 @@ public enum ActualKind {
     ASYNC_OPERATION("async-operation"),
     /** No value produced. */
     NOTHING("nothing"),
-    /** A string scalar sequence that is not valid Unicode. */
+    /** An explicit invalid encoding presentation, never legal lone UTF-16 units. */
     INVALID_UNICODE("invalid-unicode");
 
     private final String token;

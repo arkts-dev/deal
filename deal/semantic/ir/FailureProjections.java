@@ -36,8 +36,8 @@ public final class FailureProjections {
         /** A boolean carrier. */
         BOOLEAN,
         /**
-         * A string carrier: a valid Unicode scalar sequence and an invalid
-         * one alike project the Lua {@code type()} spelling {@code string}.
+         * A string carrier: ordinary UTF-16 units and an explicitly invalid
+         * encoding presentation alike project the carrier spelling {@code string}.
          */
         STRING,
         /** Every numeric carrier. */
@@ -102,8 +102,8 @@ public final class FailureProjections {
     /**
      * The carrier-kind projection's token (P2 item 2): the Lua-{@code type()}
      * shape of the unchanged runtimes — the absent marker is {@code nil},
-     * the DEAL-null sentinel is {@code table}, a string carrier (a valid or
-     * invalid Unicode scalar sequence) is {@code string}, and every other
+     * the DEAL-null sentinel is {@code table}, a string carrier (ordinary units
+     * or an explicitly invalid encoding presentation) is {@code string}, and every other
      * table-carried value is {@code table} while a raw host-facing function
      * stays {@code function}. A DEAL function also projects {@code function}.
      */

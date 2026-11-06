@@ -2722,7 +2722,7 @@ public final class JvmSemanticEmitter {
          * {@code JvmRuntime.invokeAdapter} admits before the leading-M
          * projection. The ignored trailing parameters of an arity extension
          * are checked exactly like the forwarded leading ones
-         * (docs/spec-v1.3.md Arity extension adapter), so a host that
+         * (docs/spec-v1.6.md Function values, calls, and wrappers), so a host that
          * invokes the published adapter value directly enforces the whole
          * declared target signature.
          */
@@ -2855,7 +2855,7 @@ public final class JvmSemanticEmitter {
          * op executes, so an earlier declaration's closure captures the
          * cell by identity even when the publishing group op runs later
          * in the same module init — the declaration-order-independent
-         * forward reference of docs/spec-v1.5.md §Name resolution
+         * forward reference of docs/spec-v1.6.md §Name resolution
          * (Declaration order) and C1's body
          * coverage. A nested group's cells are still created per
          * execution by its own op ({@link #emitRecursiveGroupInit}).

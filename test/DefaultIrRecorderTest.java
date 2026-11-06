@@ -600,7 +600,7 @@ public final class DefaultIrRecorderTest {
     /**
      * The shadowed-local-callee body probe (review cycle 4): the module
      * scope carries the top-level {@code consume} function symbol and a
-     * body block scope carries the nested same-named declaration's
+     * body block scope carries the local same-named function cell's
      * symbol (exactly the checker's scope shape); the body's call
      * passes a class literal. The resolved symbol's own declaration —
      * never the top-level declaration of that name — owns the literal's
@@ -618,8 +618,9 @@ public final class DefaultIrRecorderTest {
         source.append("function consume(x: ").append(topLevel.alias())
             .append(".Ir): number { return x.v; }\n")
             .append("function outer(): number {\n")
-            .append("  function consume(x: ").append(nested.alias())
-            .append(".Ir): number { return x.v; }\n")
+            .append("  let consume: (x: ").append(nested.alias())
+            .append(".Ir) => number = function(x: ").append(nested.alias())
+            .append(".Ir): number { return x.v; };\n")
             .append("  return consume({ v: 7 });\n")
             .append("}\n");
         LexResult lex = new Lexer(source.toString(), "main.deal")
@@ -638,10 +639,13 @@ public final class DefaultIrRecorderTest {
                 outer = fd;
             }
         }
-        FunctionDeclaration nestedDeclaration = outer == null ? null
-            : directFunctionOf(outer.body(), "consume");
+        deal.ast.VariableDeclaration nestedDeclaration = outer == null ? null
+            : outer.body().statements().stream()
+                .filter(s -> s instanceof deal.ast.VariableDeclaration vd
+                    && vd.name().equals("consume"))
+                .map(s -> (deal.ast.VariableDeclaration) s).findFirst().orElse(null);
         check(outer != null && nestedDeclaration != null,
-            "the shadowed-callee fixture declares the nested consume");
+            "the shadowed-callee fixture declares the local consume cell");
         if (outer == null || nestedDeclaration == null) {
             return List.of();
         }
@@ -673,13 +677,14 @@ public final class DefaultIrRecorderTest {
                 .ModuleSymbol(provider.alias(), planImport.exports(),
                     new Span("main.deal", 1, 1, 1, 5)));
         }
-        // The checker defines the module-level function in the module
-        // scope and each nested declaration in its body block scope.
+        // The checked local function cell shadows the module declaration
+        // and carries its own exact parameter annotation.
         root.define("consume", new deal.checker.Symbol.FunctionSymbol(
             "consume", (Type.Func) callableType(topLevel)));
         SymbolTable bodyScope = root.enterScope();
-        bodyScope.define("consume", new deal.checker.Symbol.FunctionSymbol(
-            "consume", (Type.Func) callableType(nested)));
+        bodyScope.define("consume", new deal.checker.Symbol.VariableSymbol(
+            "consume", callableType(nested), false, null,
+            nestedDeclaration.typeAnnotation().orElseThrow()));
         Map<StatementNode, SymbolTable> scopeMap =
             Map.of(outer.body(), bodyScope);
         DefaultIrRecorder recorder = new DefaultIrRecorder(
@@ -689,18 +694,6 @@ public final class DefaultIrRecorderTest {
             Map.of());
         recorder.recordFunctionBody(outer, root);
         return recorder.occurrences();
-    }
-
-    /** The direct function declaration of the given name in a block. */
-    private static FunctionDeclaration directFunctionOf(Block block,
-            String name) {
-        for (StatementNode statement : block.statements()) {
-            if (statement instanceof FunctionDeclaration fd
-                    && fd.name().equals(name)) {
-                return fd;
-            }
-        }
-        return null;
     }
 
     /**
@@ -796,6 +789,9 @@ public final class DefaultIrRecorderTest {
         for (ExpressionNode node : collectAll(root)) {
             if (node instanceof ObjectLiteralExpr) {
                 typeMap.put(node, literalType);
+            }
+            if (node instanceof deal.ast.FunctionExpr function) {
+                pinBodyLiterals(function.body().statements(), literalType, typeMap);
             }
         }
     }
@@ -1471,10 +1467,10 @@ public final class DefaultIrRecorderTest {
                     ir.classType()), ir,
                 "the array-annotation collision probe ir.Ir[]");
             checkSiblingClassOccurrence(
-                siblingBodyRun(order, "function outer(): ir.Ir { function"
-                    + " inner(): codec.Ir { return { v: 7 }; } return"
+                siblingBodyRun(order, "function outer(): ir.Ir { let"
+                    + " inner: () => codec.Ir = function(): codec.Ir { return { v: 7 }; }; return"
                     + " inner(); }", codec.classType()), codec,
-                "the nested-declaration collision probe inner():"
+                "the local-expression collision probe inner():"
                     + " codec.Ir");
         }
     }
@@ -1571,7 +1567,7 @@ public final class DefaultIrRecorderTest {
      * The shadowing-initializer assignment collision (review 0005): the
      * assignment inside a shadowing let's own initializer targets the
      * enclosing binding — the pending declaration is not visible there
-     * (docs/spec-v1.5.md &sect;Name resolution — Declaration order), exactly like the
+     * (docs/spec-v1.6.md &sect;Name resolution — Declaration order), exactly like the
      * checker's {@code resolveVisibleBinding} — so the literal keeps
      * the enclosing binding's declared provider, never the
      * not-yet-visible inner declaration's annotation and never the

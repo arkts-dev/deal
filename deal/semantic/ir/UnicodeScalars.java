@@ -33,9 +33,8 @@ public final class UnicodeScalars {
     // =========================================================================
 
     /**
-     * The closed string classification: {@link Valid} (a Unicode scalar
-     * sequence carried by a Java UTF-16 string with no lone surrogate
-     * units) or {@link Invalid} (classified actual kind
+     * The closed string classification: {@link Valid} (Java UTF-16 units,
+     * including lone surrogates) or {@link Invalid} (classified actual kind
      * {@link ActualKind#INVALID_UNICODE}). No other shape exists.
      */
     public sealed interface ScalarString permits UnicodeScalars.Valid, UnicodeScalars.Invalid {
@@ -49,23 +48,14 @@ public final class UnicodeScalars {
     }
 
     /**
-     * A valid scalar sequence. The carrier is a Java UTF-16 string with
-     * no lone surrogate units (a surrogate pair is exactly one scalar);
-     * construction fails closed for a carrier that violates the
-     * invariant, so a {@code Valid} value always denotes a valid scalar
-     * sequence.
+     * Admitted UTF-16 units. Construction preserves every unit, including
+     * lone surrogates; byte/source transport validates separately.
      *
      */
     public record Valid(String carrier) implements ScalarString {
 
         public Valid {
             Objects.requireNonNull(carrier, "carrier must not be null");
-            int offset = UnicodeScalars.loneSurrogateOffset(carrier);
-            if (offset >= 0) {
-                throw new IllegalArgumentException(
-                    "carrier contains a lone UTF-16 surrogate unit at offset " + offset
-                        + "; Valid carries a Unicode scalar sequence");
-            }
         }
 
         @Override
@@ -85,8 +75,8 @@ public final class UnicodeScalars {
      * {@code Invalid} the same way). The closed {@link Defect} class of
      * the first malformed sequence stays available beside the single
      * classification for the host string-carrier reason selection
-     * ({@link #utf8Defect(byte[])} / {@link #carrierDefect(String)}); it
-     * never changes this classification.
+     * ({@link #utf8Defect(byte[])}); it never changes this classification.
+     * Ordinary Java strings admit every UTF-16 unit without an encoding check.
      */
     public enum Invalid implements ScalarString {
 
@@ -104,31 +94,20 @@ public final class UnicodeScalars {
     // =========================================================================
 
     /**
-     * Classifies a UTF-16 carrier: the complete sequence decodes to
-     * {@link Valid} when it contains no lone surrogate unit, and to
-     * {@link Invalid} when it contains a lone high surrogate (a high
-     * surrogate not followed by a low surrogate, including a high
-     * surrogate at the end) or a lone low surrogate (a low surrogate not
-     * preceded by a high surrogate). A valid surrogate pair is one
-     * scalar and passes unchanged.
+     * Admits Java UTF-16 units without normalization. Malformed byte
+     * transport uses the byte overload or an explicit invalid presentation.
      *
      */
     public static ScalarString validate(String carrier) {
         Objects.requireNonNull(carrier, "carrier must not be null");
-        return loneSurrogateOffset(carrier) >= 0 ? Invalid.INSTANCE : new Valid(carrier);
+        return new Valid(carrier);
     }
 
     /**
-     * Classifies a raw UTF-8 byte sequence as materialized at a host
-     * boundary (D5): the complete sequence is validated against the
-     * pinned defect-class set of {@code deal/runtime.lua:164-206} —
-     * truncated, overlong, bad continuation, surrogate, and above
-     * U+10FFFF — and any defect classifies {@link Invalid}, the single
-     * invalid classification (never a per-defect projection). Only a
-     * fully validated sequence decodes to its {@link Valid} carrier
-     * (strictly, exactly once — the JDK's lenient replacement-characters
-     * decoder is never reached by malformed input), so no normalization
-     * ever occurs in the component.
+     * Decodes strict scalar UTF-8 transport, not the runtime's WTF-8 unit
+     * representation. Truncated, overlong, bad-continuation, surrogate and
+     * above-U+10FFFF byte sequences classify {@link Invalid}. Only a fully
+     * validated sequence reaches the JDK decoder, without replacement.
      *
      */
     public static ScalarString validate(byte[] utf8) {
@@ -158,11 +137,9 @@ public final class UnicodeScalars {
     /**
      * The defect class of the <em>first</em> malformed sequence of a raw
      * UTF-8 byte sequence, or {@code null} when the complete sequence is
-     * scalar-valid. The walk mirrors the Lua reference's
-     * {@code __rt.utf8_status} (deal/runtime.lua): the surrogate class is
-     * selected only for a syntactically well-formed three-byte sequence
-     * encoding U+D800..U+DFFF, and the walk stops at the first defect, so
-     * the class is deterministic.
+     * scalar-valid. The surrogate class belongs to this strict transport
+     * channel only: runtime UTF-16 units are admitted separately. The walk
+     * stops at the first defect.
      */
     public static Defect utf8Defect(byte[] utf8) {
         Objects.requireNonNull(utf8, "utf8 must not be null");
@@ -222,46 +199,13 @@ public final class UnicodeScalars {
         return null;
     }
 
-    /**
-     * The defect class of one UTF-16 carrier: a carrier with a lone
-     * surrogate unit is the surrogate class, a scalar sequence carries no
-     * defect. A UTF-16 carrier has no other malformed class, so the
-     * selection is scalar validity itself, never the carrier's length.
-     */
-    public static Defect carrierDefect(String carrier) {
-        Objects.requireNonNull(carrier, "carrier must not be null");
-        return loneSurrogateOffset(carrier) >= 0 ? Defect.SURROGATE : null;
-    }
-
-    /**
-     * Returns the offset of the first lone UTF-16 surrogate unit, or
-     * {@code -1} when the carrier is a scalar sequence: a high surrogate
-     * must be followed by a low surrogate (a pair is one scalar) and a
-     * low surrogate must be preceded by a high surrogate.
-     */
-    static int loneSurrogateOffset(String carrier) {
-        for (int i = 0; i < carrier.length(); i++) {
-            char c = carrier.charAt(i);
-            if (Character.isHighSurrogate(c)) {
-                if (i + 1 >= carrier.length() || !Character.isLowSurrogate(carrier.charAt(i + 1))) {
-                    return i;
-                }
-                i++;
-            } else if (Character.isLowSurrogate(c)) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
     // =========================================================================
     // Scalar iteration
     // =========================================================================
 
     /**
-     * Yields the code points of a valid scalar sequence in order: a
-     * surrogate pair is one code point, and the iteration walks the
-     * complete sequence (an empty carrier yields zero code points).
+     * Iterates the complete unit sequence, combining valid pairs into code
+     * points and yielding lone units individually; empty text yields none.
      *
      */
     public static List<Integer> scalars(Valid valid) {
@@ -278,17 +222,14 @@ public final class UnicodeScalars {
     }
 
     /**
-     * Returns the one-single-scalar string for a code point: one UTF-16
-     * {@code char} for a BMP scalar and one surrogate pair for a
-     * supplementary scalar. The result is always exactly one Unicode
-     * scalar value.
+     * Materializes one iteration item: a BMP unit (including a surrogate)
+     * or the UTF-16 pair of a supplementary code point.
      *
      */
     public static String scalarString(int codePoint) {
-        if (codePoint < 0 || codePoint > 0x10FFFF
-                || (codePoint >= 0xD800 && codePoint <= 0xDFFF)) {
+        if (codePoint < 0 || codePoint > 0x10FFFF) {
             throw new IllegalArgumentException(
-                "not a Unicode scalar value: " + codePoint);
+                "outside Unicode code point range: " + codePoint);
         }
         return new String(Character.toChars(codePoint));
     }
@@ -298,13 +239,10 @@ public final class UnicodeScalars {
     // =========================================================================
 
     /**
-     * Concatenates scalar sequences in source order
-     * (representation-agnostic: byte-level UTF-8/UTF-16 layout is never
-     * observable). An {@link Invalid} fragment propagates
-     * {@link Invalid} — exposed for the consuming op's named
-     * {@code TYPE_DESCRIPTOR} failure, never normalized, truncated, or
-     * repaired (fail-closed); an empty fragment list concatenates to the
-     * empty scalar sequence.
+     * Concatenates UTF-16 units in source order without repair or
+     * normalization. An explicit {@link Invalid} fragment propagates for
+     * the consuming op's {@code TYPE_DESCRIPTOR} failure; no fragments
+     * produce empty text.
      *
      */
     public static ScalarString concat(List<? extends ScalarString> fragments) {

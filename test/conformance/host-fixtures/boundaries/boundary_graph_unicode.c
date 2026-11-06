@@ -6,9 +6,7 @@ static deal_host_result corrupt(const deal_value *args, size_t argc) {
     (void)argc;
     if (saved != 0u) checked(deal_release(saved));
     checked(deal_retain(args[0], &saved));
-    deal_value string = text("bad");
-    set(args[0], "bad", string);
-    fixture_surrogate_string(get(args[0], "bad"));
+    set(args[0], "bad", text("\xed\xa0\x80"));
     return result(undefined_value());
 }
 static deal_host_result repair(const deal_value *args, size_t argc) {

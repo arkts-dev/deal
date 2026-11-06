@@ -96,7 +96,7 @@ public class ProductionDispatchTest {
 
     private static final String DEAL_JSON_LUA = """
         {
-          "languageVersion": "1.5",
+          "languageVersion": "1.6",
           "moduleRoots": ["src"],
           "output": "out",
           "backend": "luajit"
@@ -105,7 +105,7 @@ public class ProductionDispatchTest {
 
     private static final String DEAL_JSON_JVM = """
         {
-          "languageVersion": "1.5",
+          "languageVersion": "1.6",
           "moduleRoots": ["src"],
           "output": "out",
           "backend": "jvm"
@@ -280,7 +280,7 @@ public class ProductionDispatchTest {
         import * as ir from "./m/ir";
         function consume(x: codec.Ir): number { return x.a; }
         export function main(): null {
-          function consume(x: ir.Ir): number { return x.a; }
+          let consume: (x: ir.Ir) => number = function(x: ir.Ir): number { return x.a; };
           if (consume({a: 7}) === 7) { console.log("ok"); }
           else { console.log("wrong"); }
           return null;
@@ -448,7 +448,7 @@ public class ProductionDispatchTest {
      * The shadowing-initializer assignment collision (review 0005): the
      * assignment inside a shadowing let's own initializer targets the
      * enclosing binding — the pending declaration is not visible there
-     * (docs/spec-v1.5.md §Name resolution — Declaration order) — so the constructed
+     * (docs/spec-v1.6.md §Name resolution — Declaration order) — so the constructed
      * literal keeps the enclosing binding's declared provider. The
      * pre-fix recorder resolved the not-yet-visible inner declaration,
      * so the same-named sibling's class was constructed and the
@@ -484,7 +484,7 @@ public class ProductionDispatchTest {
 
     private static final String DEAL_JSON_JS = """
         {
-          "languageVersion": "1.5",
+          "languageVersion": "1.6",
           "moduleRoots": ["src"],
           "output": "out",
           "backend": "js"
@@ -493,7 +493,7 @@ public class ProductionDispatchTest {
 
     private static final String HOST_DEAL_JSON_LUA = """
         {
-          "languageVersion": "1.5",
+          "languageVersion": "1.6",
           "moduleRoots": ["src"],
           "output": "out",
           "backend": "luajit",
@@ -623,7 +623,7 @@ public class ProductionDispatchTest {
      */
     private static final String DEAL_JSON_NEWLINE_ROOT = """
         {
-          "languageVersion": "1.5",
+          "languageVersion": "1.6",
           "moduleRoots": ["src\\nline"],
           "output": "out",
           "backend": "luajit"
@@ -637,7 +637,7 @@ public class ProductionDispatchTest {
      */
     private static final String DEAL_JSON_UNICODE_ROOT = """
         {
-          "languageVersion": "1.5",
+          "languageVersion": "1.6",
           "moduleRoots": ["src\\\\u000aline"],
           "output": "out",
           "backend": "luajit"
@@ -652,7 +652,7 @@ public class ProductionDispatchTest {
      */
     private static final String DEAL_JSON_CONTROL_ROOT = """
         {
-          "languageVersion": "1.5",
+          "languageVersion": "1.6",
           "moduleRoots": ["src\\u0007\\u000b\\u000c\\u001fline"],
           "output": "out",
           "backend": "luajit"
@@ -1099,13 +1099,13 @@ public class ProductionDispatchTest {
             "the harness metadata resolves the one release-owned production "
                 + "invocation (no purpose or profile selection)");
         checkEq(productionInvocation(),
-            CompilerProfileProvider.resolve(ReleaseState.V1_5_ACTIVE,
+            CompilerProfileProvider.resolve(ReleaseState.V1_6_ACTIVE,
                 CapabilityRegistry.releaseRegistry()),
             "every resolution over the one release state and registry "
                 + "produces the same record");
         check(productionInvocation().semanticProfile()
-                == SemanticProfile.DEAL_V1_5_BINARY64,
-            "the production invocation carries the single DEAL_V1_5_BINARY64 "
+                == SemanticProfile.DEAL_V1_6_BINARY64,
+            "the production invocation carries the single DEAL_V1_6_BINARY64 "
                 + "profile");
     }
 
@@ -1278,6 +1278,7 @@ public class ProductionDispatchTest {
             // chunk; a runner probe asserts both per-module surfaces and
             // their declaration-order entries after execution.
             write(project, "probe.lua", """
+                package.path = './out/?.lua;' .. package.path
                 local surfaces = dofile("out/main.lua")
                 assert(type(surfaces) == "table", "the chunk returns the entry surface")
                 assert(type(surfaces.label) == "table", "the entry surface carries label")
@@ -1658,8 +1659,8 @@ public class ProductionDispatchTest {
         try {
             write(project, "deal.json", """
                 {
-                  "languageVersion": "1.5",
-                  "stdlib": "1.5",
+                  "languageVersion": "1.6",
+                  "stdlib": "1.6",
                   "moduleRoots": ["src"],
                   "dependencies": {},
                   "externals": {},
@@ -1746,8 +1747,8 @@ public class ProductionDispatchTest {
             try {
                 write(project, "deal.json", """
                     {
-                      "languageVersion": "1.5",
-                      "stdlib": "1.5",
+                      "languageVersion": "1.6",
+                      "stdlib": "1.6",
                       "moduleRoots": ["src"],
                       "dependencies": {},
                       "externals": {"model": {"declaration": "bindings/model.d.deal"}},
@@ -1834,8 +1835,8 @@ public class ProductionDispatchTest {
                 String label = name + " " + backend;
                 write(project, "deal.json", """
                     {
-                      "languageVersion": "1.5",
-                      "stdlib": "1.5",
+                      "languageVersion": "1.6",
+                      "stdlib": "1.6",
                       "moduleRoots": ["src"],
                       "dependencies": {},
                       "externals": {},
@@ -2151,7 +2152,7 @@ public class ProductionDispatchTest {
      * The shadowing-initializer crossing (review 0005; ISSUE-0809 review
      * cycle 2): the assignment inside a shadowing let's own initializer
      * targets the enclosing binding (the pending declaration is not
-     * visible there, docs/spec-v1.5.md §Name resolution — Declaration
+     * visible there, docs/spec-v1.6.md §Name resolution — Declaration
      * order), so the constructed literal carries that binding's declared
      * provider — the enclosing annotation names {@code ir} even when the
      * not-yet-visible inner declaration names the same-named sibling
@@ -2617,7 +2618,7 @@ public class ProductionDispatchTest {
 
         Path removed = Files.createTempDirectory("production-dispatch-native-rejected-");
         try {
-            write(removed, "deal.json", "{\"languageVersion\":\"1.5\",\"moduleRoots\":[\"src\"],\"output\":\"out\"}");
+            write(removed, "deal.json", "{\"languageVersion\":\"1.6\",\"moduleRoots\":[\"src\"],\"output\":\"out\"}");
             write(removed, "src/main.deal", "// @extern-c\nexport function main(): null { return null; }\n");
             for (String backend : List.of("js", "luajit", "jvm")) {
                 ProjectOutcome rejected = runProductionCli("compile",
@@ -2674,7 +2675,7 @@ public class ProductionDispatchTest {
         checkPreservedLoweringOrigin("supplementary scalar and tab indentation",
             Map.of("src/main.deal", SUPPLEMENTARY_TAB_CAPTURE_SOURCE), "main", "src/main.deal",
             "FRONTEND", "E1057", "Local class declaration 'Local' is not allowed; classes are module-level",
-            4, 2, 4, 28, 57, 83, 26);
+            4, 2, 4, 28, 58, 84, 26);
         checkPreservedLoweringOrigin("CRLF line endings",
             Map.of("src/main.deal", DEFAULT_CAPTURE_SOURCE.replace("\n", "\r\n")),
             "main", "src/main.deal", "FRONTEND", "E1057",
@@ -2731,7 +2732,7 @@ public class ProductionDispatchTest {
             String expectedMessage = "FRONTEND".equals(capability) ? originText : "Common semantic lowering failed: module '"
                 + offendingModule + "', capability " + capability
                 + ", validatorRule " + rule
-                + ", semanticProfile DEAL_V1_5_BINARY64, irVersion deal.semantic-ir/2"
+                + ", semanticProfile DEAL_V1_6_BINARY64, irVersion deal.semantic-ir/2"
                 + ", origin " + originText;
             String humanLine = offending + ":" + startLine + ":" + startColumn
                 + "-" + endLine + ":" + endColumn + ": ERROR " + expectedCode + ": "
@@ -4685,6 +4686,7 @@ public class ProductionDispatchTest {
         if ("luajit".equals(backend)) {
             Path probe = project.resolve("carrier-tuple.lua");
             Files.writeString(probe, """
+                package.path = arg[1]:match('^(.*[/])') .. '?.lua;' .. package.path
                 local surface = dofile(arg[1])
                 local ok, err = __dealMain()
                 if not ok then error(err, 0) end
@@ -4811,7 +4813,7 @@ public class ProductionDispatchTest {
                 // {@code conformance} at the corpus-relative path the
                 // sidecar pins, so the artifact's own source coordinate and
                 // the class identity are the published fixture's.
-                write(project, "deal.json", "{\n  \"languageVersion\": \"1.5\","
+                write(project, "deal.json", "{\n  \"languageVersion\": \"1.6\","
                     + "\n  \"moduleRoots\": [\"conformance\"],"
                     + "\n  \"output\": \"out\","
                     + "\n  \"backend\": \"" + backend + "\"\n}\n");
@@ -5141,7 +5143,7 @@ public class ProductionDispatchTest {
                 "boundary-corpus-" + export + "-" + backend + "-");
             try {
                 write(project, entryRel, source);
-                write(project, "deal.json", "{\n  \"languageVersion\": \"1.5\","
+                write(project, "deal.json", "{\n  \"languageVersion\": \"1.6\","
                     + "\n  \"moduleRoots\": [\"conformance\"],"
                     + "\n  \"output\": \"out\","
                     + "\n  \"backend\": \"" + backend + "\"\n}\n");
@@ -5707,12 +5709,15 @@ public class ProductionDispatchTest {
             new Injection("legacy profile", "// @profile: legacy-safe-number\n"
                 + raw, "legacy-safe-number",
                 "non-production @profile 'legacy-safe-number'"),
+            new Injection("retired profile", "// @profile: deal-v1.5-binary64\n"
+                + raw, "deal-v1.5-binary64",
+                "non-production @profile 'deal-v1.5-binary64'"),
             new Injection("unknown profile",
                 "// @profile: no-such-profile\n" + raw, "no-such-profile",
                 "non-production @profile 'no-such-profile'"),
             new Injection("duplicate metadata",
-                "// @profile: deal-v1.4-int32\n// @profile: deal-v1.4-int32\n"
-                    + raw, "deal-v1.4-int32",
+                "// @profile: deal-v1.6-binary64\n// @profile: deal-v1.6-binary64\n"
+                    + raw, "deal-v1.6-binary64",
                 "duplicate corpus classification metadata"),
             new Injection("removed v1.2 profile",
                 "// @profile: deal-v1.2-int32\n" + raw, "deal-v1.2-int32",
@@ -6284,7 +6289,7 @@ public class ProductionDispatchTest {
             if (produced == null) {
                 return;
             }
-            checkEq(SemanticProfile.DEAL_V1_5_BINARY64,
+            checkEq(SemanticProfile.DEAL_V1_6_BINARY64,
                 produced.semanticProfile(),
                 "the produced project is the sole v1.4 profile");
             check(produced.modules().containsKey(produced.entryModule()),
@@ -6323,7 +6328,7 @@ public class ProductionDispatchTest {
         try {
             write(js, "deal.json", """
                 {
-                  "languageVersion": "1.5",
+                  "languageVersion": "1.6",
                   "moduleRoots": ["src"],
                   "output": "out",
                   "backend": "js"
@@ -6499,7 +6504,7 @@ public class ProductionDispatchTest {
         function shared(xs: number[]): () => number[] {return function(): number[] {return xs;};}
         export function main(): null {
          let original: number[] = [1]; let provider: () => number[] = shared(original); let calls: number = 0;
-         function provide(): number[] {calls = calls + 1; return provider();}
+         let provide: () => number[] = function(): number[] {calls = calls + 1; return provider();};
          class Box {xs: number[];}
          let a: Box = {}; let b: Box = {};
          a.xs[0] = 9;
@@ -6537,7 +6542,7 @@ public class ProductionDispatchTest {
 
     /**
      * The nested-literal table read of the closed direct contextual-read
-     * admission (docs/spec-v1.3.md §Reading table fields): an array
+     * admission (docs/spec-v1.6.md §Reading and writing fields): an array
      * literal element is not the position's own expression.
      */
     private static final String NESTED_ARRAY_LITERAL_READ_REJECT =
@@ -6605,8 +6610,8 @@ public class ProductionDispatchTest {
         """;
 
     /**
-     * The direct contextual table-read admission (docs/spec-v1.3.md
-     * §Reading table fields) on all three production backends: a table
+     * The direct contextual table-read admission (docs/spec-v1.6.md
+     * §Reading and writing fields) on all three production backends: a table
      * read nested in an array literal element, a class literal field
      * value or a template interpolation part is E3003 at the read — the
      * dotted and computed forms alike — and the compile fails closed
@@ -6804,7 +6809,7 @@ public class ProductionDispatchTest {
                     declaration);
                 write(project, "deal.json", """
                     {
-                      "languageVersion": "1.5",
+                      "languageVersion": "1.6",
                       "moduleRoots": ["src"],
                       "output": "out",
                       "backend": "%s",
@@ -7077,7 +7082,7 @@ public class ProductionDispatchTest {
                 try {
                     write(project, "deal.json", """
                         {
-                          "languageVersion": "1.5",
+                          "languageVersion": "1.6",
                           "moduleRoots": ["src"],
                           "output": "out",
                           "backend": "%s",
@@ -7294,7 +7299,7 @@ public class ProductionDispatchTest {
                     }
                     write(project, "deal.json", """
                         {
-                          "languageVersion": "1.5",
+                          "languageVersion": "1.6",
                           "moduleRoots": ["src"],
                           "output": "out",
                           "backend": "%s"%s

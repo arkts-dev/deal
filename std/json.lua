@@ -1,11 +1,9 @@
 -- DEAL Standard Library: std/json
 -- Provides JSON encoding and decoding (simple pure-Lua implementation).
 --
--- Unicode conformance (v1.5, RFC 8259): parse accepts exactly the section 7
--- escape set (" \ / b f n r t u), \uXXXX must carry exactly four hex digits
--- and decodes to UTF-8, surrogate pairs combine to one supplementary scalar,
--- lone surrogates and raw control characters (U+0000-U+001F) are rejected,
--- and stringify refuses to emit strings that are not scalar-valid UTF-8.
+-- Parse accepts RFC 8259 escapes; each four-digit Unicode escape appends
+-- one UTF-16 unit, including lone surrogates. Malformed byte encodings and raw
+-- controls reject. Stringify escapes lone units and preserves valid pairs.
 --
 -- Parsing rounds numeric tokens to binary64, preserving negative zero;
 -- duplicate decoded keys reject at the second key's opening quote.
@@ -29,7 +27,7 @@
 -- decoded array or null never masquerades as a table return. Nested
 -- containers and the top-level scalar results keep their representation.
 --
--- Decoded arrays keep their array shape (DEAL v1.5 JSON containers): every
+-- Decoded arrays keep their array shape: every
 -- array the parser completes carries the private array carrier pair — the
 -- array mark and the array's logical length — that the emitted chunk and
 -- the LuaJIT host projection write, so a nested array, empty arrays
@@ -69,10 +67,7 @@ local __K = __rt.__keys
 
 local json = {}
 
--- Encode a Unicode code point as its UTF-8 byte sequence (1-4 bytes).
--- Inputs are Unicode scalar values only: callers never pass surrogates
--- (parse rejects them) or values above U+10FFFF (surrogate-pair math caps
--- at 0x10FFFF).
+-- Encode one decoded UTF-16 unit in the lossless internal byte carrier.
 local function utf8_encode(cp)
   if cp < 0x80 then
     return string.char(cp)
@@ -142,30 +137,13 @@ end
 -- (U+0000–U+001F) as well as the required escapes for \", \\, and the
 -- common whitespace escapes.
 --
--- RFC 8259 section 8.1/10: generated JSON text must be UTF-8 and strictly
--- conform, so strings that are not scalar-valid UTF-8 are not encoded: an
--- invalid scalar sequence is still a string carrier and rejects through
--- the closed JSON_STRINGIFY_UNSUPPORTED arm with the string token (the
--- emitted chunk's, the JS runtime's and the JVM runtime's projection),
--- never a private text composition.
+-- Malformed byte sequences reject; lone UTF-16 units encode as Unicode
+-- escapes, while paired units remain a string pair.
 local function escape(s, file, line, column)
   if not __rt.utf8_valid(s) then
     unsupported(s, file, line, column)
   end
-  return (string.gsub(s, '[%c\\"]', function(c)
-    local byte = string.byte(c)
-    if c == '"'  then return '\\"'
-    elseif c == '\\' then return '\\\\'
-    elseif c == '\b' then return '\\b'
-    elseif c == '\f' then return '\\f'
-    elseif c == '\n' then return '\\n'
-    elseif c == '\r' then return '\\r'
-    elseif c == '\t' then return '\\t'
-    else
-      -- Other control character: encode as \u00XX
-      return string.format('\\u%04x', byte)
-    end
-  end))
+  return __rt.string_json_body(s)
 end
 
 -- The canonical decimal spelling (Java Double.toString parity) of one
@@ -899,7 +877,7 @@ json.parse = __rt.function_("(string)->record", function(s, file, line, column)
       local c = s:sub(pos, pos)
       if c == '"' then
         pos = pos + 1
-        return table.concat(parts)
+        return __rt.string_normalize(table.concat(parts))
       elseif c == '\\' then
         pos = pos + 1
         if pos > len then
@@ -926,32 +904,7 @@ json.parse = __rt.function_("(string)->record", function(s, file, line, column)
             parse_error("invalid unicode escape: expected 4 hex digits")
           end
           pos = pos + 4
-          if v >= 0xDC00 and v <= 0xDFFF then
-            -- Lone low surrogate: not a Unicode scalar value.
-            parse_error("unpaired surrogate code unit in unicode escape")
-          elseif v >= 0xD800 and v <= 0xDBFF then
-            -- High surrogate: must combine with an immediately following
-            -- \uXXXX escape in the low-surrogate range; the pair decodes
-            -- to one supplementary scalar (RFC 8259 section 7).
-            local combined = false
-            if pos + 1 <= len and s:sub(pos+1, pos+2) == '\\u' then
-              local lo_hex = s:sub(pos+3, pos+6)
-              if #lo_hex == 4 then
-                local lo = read_hex4(lo_hex)
-                if lo ~= nil and lo >= 0xDC00 and lo <= 0xDFFF then
-                  pos = pos + 6
-                  parts[#parts+1] = utf8_encode(0x10000 + (v - 0xD800) * 0x400 + (lo - 0xDC00))
-                  combined = true
-                end
-              end
-            end
-            if not combined then
-              parse_error("unpaired surrogate code unit in unicode escape")
-            end
-          else
-            -- BMP scalar: append its 1-3 byte UTF-8 form.
-            parts[#parts+1] = utf8_encode(v)
-          end
+          parts[#parts+1] = utf8_encode(v)
         else
           parse_error("unknown escape sequence '\\" .. esc .. "'")
         end

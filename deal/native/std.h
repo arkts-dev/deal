@@ -20,10 +20,9 @@
  * typed-boundary arm at the call origin. Console effects commit before the
  * result is checked and no operation mutates an argument.
  *
- * String operations are defined over Unicode scalar values (R8): `length` is
- * the exact scalar count, `substring` validates both bounds through the
- * `SUBSTRING_BOUNDS` arm before clamping to `0..scalar count` and yields the
- * empty string for a reversed range, and `split`/`trim` follow R8 exactly.
+ * String operations use UTF-16 units and ECMAScript algorithms: `length`
+ * counts units, `substring` truncates/clamps and swaps bounds, replacement
+ * changes the first literal match, and split/trim preserve unit semantics.
  * `nowMillis` reads the platform realtime clock as binary64 epoch
  * milliseconds; it is never a fixed timestamp.
  */
@@ -33,7 +32,7 @@
 #include "deal/native/deal_rt.h"
 
 /*
- * The closed operation ids: the `StdlibFunctionId` ordinals of the merged v1.5
+ * The closed operation ids: the `StdlibFunctionId` ordinals of the merged v1.6
  * registry, in canonical order. The emitted `STDLIB_CALL` payload carries one of
  * them and an id outside the set is a producer defect.
  */

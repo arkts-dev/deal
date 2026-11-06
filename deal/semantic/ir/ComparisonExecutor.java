@@ -294,23 +294,8 @@ case NUMBER_EQ -> numberView(left).value() == numberView(right).value();
             refView(right).allocationIdentity());
     }
 
-    /**
-     * Unicode scalar (code point) lexicographic order of two validated
-     * scalar sequences — never byte order, locale, or UTF-16 code-unit
-     * order: a surrogate pair is one scalar, and every supplementary
-     * scalar code point orders above every BMP scalar code point.
-     *
-     */
+    /** UTF-16 code-unit ordering. */
     private static int stringCompare(ComparisonOperandView left, ComparisonOperandView right) {
-        List<Integer> leftScalars = UnicodeScalars.scalars(stringView(left).scalars());
-        List<Integer> rightScalars = UnicodeScalars.scalars(stringView(right).scalars());
-        int common = Math.min(leftScalars.size(), rightScalars.size());
-        for (int i = 0; i < common; i++) {
-            int compared = Integer.compare(leftScalars.get(i), rightScalars.get(i));
-            if (compared != 0) {
-                return compared;
-            }
-        }
-        return Integer.compare(leftScalars.size(), rightScalars.size());
+        return stringView(left).scalars().carrier().compareTo(stringView(right).scalars().carrier());
     }
 }

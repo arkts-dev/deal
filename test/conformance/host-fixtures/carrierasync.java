@@ -11,9 +11,9 @@ import java.util.concurrent.CompletableFuture;
 // whose completions are the declared class/array values.
 
 final class HostCarrierasync {
-  public static final String Endpoint = "@$external/host.carrierasync/Endpoint";
-  public static final String ServerConfig = "@$external/host.carrierasync/ServerConfig";
-  public static final String Farm = "@$external/host.carrierasync/Farm";
+  public static final String Endpoint = "@$external/host/carrierasync/Endpoint";
+  public static final String ServerConfig = "@$external/host/carrierasync/ServerConfig";
+  public static final String Farm = "@$external/host/carrierasync/Farm";
   // Transcript formatting belongs to the fixture, not the DEAL numeric kind.
   static String numericText(Object value) {
     if (value instanceof Number n) {
@@ -22,9 +22,9 @@ final class HostCarrierasync {
     return String.valueOf(value);
   }
 
-  static final String EP = "@$external/host.carrierasync/Endpoint";
-  static final String SC = "@$external/host.carrierasync/ServerConfig";
-  static final String FARM = "@$external/host.carrierasync/Farm";
+  static final String EP = "@$external/host/carrierasync/Endpoint";
+  static final String SC = "@$external/host/carrierasync/ServerConfig";
+  static final String FARM = "@$external/host/carrierasync/Farm";
 
   public static final Object Endpoint_defaults =
       java.util.Map.of("path", "/");

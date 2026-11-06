@@ -128,6 +128,37 @@ static deal_host_result construct_case(const deal_value *args, size_t argc) {
     if (deal_table_has(record, "absent", 6, &present) != DEAL_OK || present != 0) {
         return fail("the absent member is not absent");
     }
+    /* Pair spellings and lone units are equal data before and after graph
+     * materialization. Malformed transport never enters a key decoder. */
+    static const char pair[] = "\xF0\x9F\x98\x80";
+    static const char units[] = "\xED\xA0\xBD\xED\xB8\x80";
+    static const char lone[] = "\xED\xA0\x80";
+    static const char malformed[] = "\xED\xA0";
+    deal_value pair_value;
+    deal_value unit_value;
+    deal_value lone_value;
+    int equal = 0;
+    if (deal_string_new(pair, 4u, &pair_value) != DEAL_OK
+            || deal_string_new(units, 6u, &unit_value) != DEAL_OK
+            || deal_string_new(lone, 3u, &lone_value) != DEAL_OK
+            || deal_same(pair_value, unit_value, &equal) != DEAL_OK || !equal
+            || deal_table_set(record, pair, 4u, total) != DEAL_OK
+            || deal_table_get(record, units, 6u, &read) != DEAL_OK
+            || deal_as_number(read, &number) != DEAL_OK || number != 42.0
+            || deal_table_set(record, units, 6u, null_value) != DEAL_OK
+            || deal_table_get(record, pair, 4u, &read) != DEAL_OK
+            || deal_kind_of(read, &kind) != DEAL_OK || kind != DEAL_KIND_NULL
+            || deal_table_has(record, units, 6u, &present) != DEAL_OK || !present
+            || deal_table_delete(record, units, 6u) != DEAL_OK
+            || deal_table_has(record, pair, 4u, &present) != DEAL_OK || present
+            || deal_table_set(record, pair, 4u, pair_value) != DEAL_OK
+            || deal_table_set(record, lone, 3u, lone_value) != DEAL_OK
+            || deal_table_get(record, malformed, 2u, &read) != DEAL_STATUS_KIND
+            || deal_table_set(record, malformed, 2u, total) != DEAL_STATUS_KIND
+            || deal_table_has(record, malformed, 2u, &present) != DEAL_STATUS_KIND
+            || deal_table_delete(record, malformed, 2u) != DEAL_STATUS_KIND) {
+        return fail("UTF-16 host strings or boxed keys differ");
+    }
     /* A fresh key written through a managed view must survive the entry
      * allocation safepoint. Use scalar values to isolate key lifetime from
      * graph materialization, and check replacement and deletion too. */
@@ -148,6 +179,17 @@ static deal_host_result construct_case(const deal_value *args, size_t argc) {
             || deal_table_has(view, "fresh", 5, &present) != DEAL_OK
             || present != 0 || deal_release(record_handle) != DEAL_OK) {
         return fail("managed record keys did not survive publication");
+    }
+    if (deal_table_get(view, units, 6u, &read) != DEAL_OK
+            || deal_same(read, unit_value, &equal) != DEAL_OK || !equal
+            || deal_table_get(view, lone, 3u, &read) != DEAL_OK
+            || deal_same(read, lone_value, &equal) != DEAL_OK || !equal
+            || deal_table_set(view, units, 6u, total) != DEAL_OK
+            || deal_table_get(view, pair, 4u, &read) != DEAL_OK
+            || deal_as_number(read, &number) != DEAL_OK || number != 42.0
+            || deal_table_delete(view, pair, 4u) != DEAL_OK
+            || deal_table_has(view, units, 6u, &present) != DEAL_OK || present) {
+        return fail("UTF-16 managed keys differ from host keys");
     }
     /* A typed array with two slots naming one host-built record. */
     deal_value array;
@@ -309,10 +351,297 @@ static deal_host_result function_surface_case(const deal_value *args,
                                              size_t argc) {
     (void)args;
     (void)argc;
+    /* An executable raw host callable is not a wrapped DEAL function. It is
+     * classified as function but fails data/signature admission without ever
+     * invoking its entry or publishing a retained/aggregate identity. */
+    deal_value raw;
+    if (deal_function_raw(NULL, &raw) != DEAL_STATUS_PROTOCOL
+            || deal_function_raw(inner_entry, &raw) != DEAL_OK) {
+        return fail("raw function construction statuses");
+    }
+    deal_value_kind raw_kind = DEAL_KIND_NULL;
+    const char *raw_signature = "unchanged";
+    deal_handle raw_handle = 0;
+    deal_host_result raw_result;
+    if (deal_kind_of(raw, &raw_kind) != DEAL_OK || raw_kind != DEAL_KIND_FUNCTION
+            || deal_function_signature(raw, &raw_signature) != DEAL_STATUS_KIND
+            || strcmp(raw_signature, "unchanged") != 0
+            || deal_retain(raw, &raw_handle) != DEAL_STATUS_KIND || raw_handle != 0
+            || deal_apply(raw, NULL, 0u, &raw_result) != DEAL_STATUS_KIND) {
+        return fail("raw callable must not become a DEAL function");
+    }
+    deal_check_input raw_input;
+    deal_error *raw_cause = NULL;
+    if (deal_host_value_presentation(raw, &raw_input, &raw_cause) != DEAL_OK
+            || raw_cause != NULL || raw_input.presentation != DEAL_PRESENT_RAW_FUNCTION
+            || strcmp(deal_check_token(&raw_input), "function") != 0) {
+        return fail("raw callable presentation");
+    }
+    deal_check_context raw_context = {&probe_origin, 0};
+    const char *raw_descriptors[] = {"unknown", "(number)->number", "?(number)->number"};
+    for (size_t index = 0u; index < sizeof raw_descriptors / sizeof raw_descriptors[0]; index++) {
+        deal_outcome rejected = deal_check_value(deal_descriptor_intern(raw_descriptors[index]),
+            raw_input, DEAL_BOUNDARY_HOST_SYNC_RETURN, &raw_context);
+        const char *code = NULL, *actual = NULL, *expected = NULL, *message = NULL;
+        if (rejected.error == NULL
+                || !deal_error_code(rejected.error, &code) || strcmp(code, "E8010") != 0
+                || !deal_error_actual(rejected.error, &actual) || strcmp(actual, "function") != 0
+                || !deal_error_expected(rejected.error, &expected) || strcmp(expected, raw_descriptors[index]) != 0
+                || !deal_error_message(rejected.error, &message) || strcmp(message, index == 0u
+                    ? "return value 1 type mismatch: expected unknown"
+                    : "return value 1 type mismatch: expected function") != 0) {
+            return fail("raw callable exact rejection");
+        }
+    }
+    static const unsigned char opaque_identity = 0u, other_identity = 0u;
+    deal_value opaque, opaque_alias, opaque_other;
+    int opaque_same = 0;
+    deal_check_input opaque_input;
+    deal_error *opaque_cause = NULL;
+    if (deal_opaque(NULL, &opaque) != DEAL_STATUS_PROTOCOL
+            || deal_opaque(&opaque_identity, &opaque) != DEAL_OK
+            || deal_opaque(&opaque_identity, &opaque_alias) != DEAL_OK
+            || deal_opaque(&other_identity, &opaque_other) != DEAL_OK
+            || deal_same(opaque, opaque_alias, &opaque_same) != DEAL_OK || !opaque_same
+            || deal_same(opaque, opaque_other, &opaque_same) != DEAL_OK || opaque_same
+            || deal_kind_of(opaque, &raw_kind) != DEAL_OK || raw_kind != DEAL_KIND_TABLE
+            || deal_retain(opaque, &raw_handle) != DEAL_STATUS_KIND || raw_handle != 0
+            || deal_host_value_presentation(opaque, &opaque_input, &opaque_cause) != DEAL_OK
+            || opaque_cause != NULL || opaque_input.presentation != DEAL_PRESENT_OPAQUE) {
+        return fail("opaque identity and nondata statuses");
+    }
+    const char *opaque_descriptors[] = {"unknown", "record", "?(number)->number"};
+    for (size_t index = 0u; index < sizeof opaque_descriptors / sizeof opaque_descriptors[0]; index++) {
+        deal_outcome rejected = deal_check_value(deal_descriptor_intern(opaque_descriptors[index]),
+            opaque_input, DEAL_BOUNDARY_HOST_SYNC_RETURN, &raw_context);
+        const char *code = NULL, *actual = NULL, *expected = NULL, *message = NULL;
+        const char *messages[] = {"return value 1 type mismatch: expected unknown",
+            "return value 1 type mismatch: expected table", "return value 1 type mismatch: expected function"};
+        if (rejected.error == NULL || !deal_error_code(rejected.error, &code)
+                || strcmp(code, "E8010") != 0 || !deal_error_actual(rejected.error, &actual)
+                || strcmp(actual, "table") != 0 || !deal_error_expected(rejected.error, &expected)
+                || strcmp(expected, opaque_descriptors[index]) != 0
+                || !deal_error_message(rejected.error, &message) || strcmp(message, messages[index]) != 0) {
+            return fail("opaque exact rejection");
+        }
+    }
+    /* The precise managed storage of a hostile retained leaf still carries a
+     * nondata presentation. Never reinterpret it as a table or DEAL closure. */
+    deal_root_scope_push();
+    void *opaque_storage = deal_alloc(DEAL_LAYOUT_HOST_OPAQUE, sizeof(void *));
+    deal_root_scope_hold(opaque_storage);
+    void *raw_storage = deal_alloc(DEAL_LAYOUT_HOST_RAW_FUNCTION, sizeof(deal_host_function));
+    deal_root_scope_hold(raw_storage);
+    const void *view_identity = &opaque_identity;
+    deal_host_function raw_entry = inner_entry;
+    memcpy(opaque_storage, &view_identity, sizeof(view_identity));
+    memcpy(raw_storage, &raw_entry, sizeof(raw_entry));
+    deal_value opaque_view, raw_view, ignored_value;
+    int ignored_presence = 0;
+    if (deal_value_crossing_issue(deal_value_crossing_active(), opaque_storage, &opaque_view) != DEAL_OK
+            || deal_value_crossing_issue(deal_value_crossing_active(), raw_storage, &raw_view) != DEAL_OK
+            || deal_kind_of(opaque_view, &raw_kind) != DEAL_OK || raw_kind != DEAL_KIND_TABLE
+            || deal_same(opaque_view, opaque, &opaque_same) != DEAL_OK || !opaque_same
+            || deal_same(opaque_alias, opaque_view, &opaque_same) != DEAL_OK || !opaque_same
+            || deal_same(opaque_view, opaque_other, &opaque_same) != DEAL_OK || opaque_same
+            || deal_table_get(opaque_view, "x", 1u, &ignored_value) != DEAL_STATUS_KIND
+            || deal_table_set(opaque_view, "x", 1u, raw) != DEAL_STATUS_KIND
+            || deal_table_has(opaque_view, "x", 1u, &ignored_presence) != DEAL_STATUS_KIND
+            || deal_table_delete(opaque_view, "x", 1u) != DEAL_STATUS_KIND
+            || deal_retain(opaque_view, &raw_handle) != DEAL_STATUS_KIND || raw_handle != 0
+            || deal_kind_of(raw_view, &raw_kind) != DEAL_OK || raw_kind != DEAL_KIND_FUNCTION
+            || deal_function_signature(raw_view, &raw_signature) != DEAL_STATUS_KIND
+            || strcmp(raw_signature, "unchanged") != 0
+            || deal_apply(raw_view, NULL, 0u, &raw_result) != DEAL_STATUS_KIND
+            || deal_retain(raw_view, &raw_handle) != DEAL_STATUS_KIND || raw_handle != 0) {
+        return fail("managed nondata views retain closed statuses");
+    }
+    deal_check_input managed_nondata;
+    deal_error *managed_cause = NULL;
+    if (deal_host_value_presentation(raw_view, &managed_nondata, &managed_cause) != DEAL_OK
+            || managed_cause != NULL || managed_nondata.presentation != DEAL_PRESENT_RAW_FUNCTION
+            || deal_host_value_presentation(opaque_view, &managed_nondata, &managed_cause) != DEAL_OK
+            || managed_cause != NULL || managed_nondata.presentation != DEAL_PRESENT_OPAQUE) {
+        return fail("managed nondata views retain closed presentations");
+    }
+    /* The JSON entry and its nested positions must classify these private
+     * layouts before ordinary function omission or Record traversal. A raw
+     * callable is not a signed DEAL function; an opaque object is no Record. */
+    deal_data nondata[] = {
+        deal_data_of_reference(DEAL_DATA_FUNCTION, raw_storage),
+        deal_data_of_reference(DEAL_DATA_TABLE, opaque_storage)
+    };
+    for (size_t kind = 0u; kind < 2u; kind++) {
+        deal_array *json_array = deal_container_array_new_typed(
+            DEAL_LAYOUT_ELEMENT_DATUM,
+            deal_descriptor_reference(deal_descriptor_intern("unknown")), 0u);
+        deal_root_scope_hold(json_array);
+        deal_container_array_append(json_array, &nondata[kind]);
+        deal_table *json_record = deal_container_table_new();
+        deal_root_scope_hold(json_record);
+        deal_string *key = deal_text_new("unread", 6u);
+        deal_root_scope_hold(key);
+        deal_container_table_write(json_record, key, &nondata[kind]);
+        deal_data positions[] = {nondata[kind],
+            deal_data_of_reference(DEAL_DATA_ARRAY, json_array),
+            deal_data_of_reference(DEAL_DATA_TABLE, json_record)};
+        for (size_t position = 0u; position < 3u; position++) {
+            deal_outcome_data encoded = deal_json_stringify(positions[position], &probe_origin);
+            const char *code = NULL, *actual = NULL, *expected = NULL, *message = NULL;
+            if (encoded.error == NULL || !deal_error_code(encoded.error, &code)
+                    || strcmp(code, "E8001") != 0
+                    || !deal_error_actual(encoded.error, &actual)
+                    || strcmp(actual, kind == 0u ? "function" : "table") != 0
+                    || !deal_error_expected(encoded.error, &expected)
+                    || strcmp(expected, "string, number, boolean, or table") != 0
+                    || !deal_error_message(encoded.error, &message)
+                    || strcmp(message, kind == 0u
+                        ? "unsupported type for JSON encoding: function"
+                        : "unsupported type for JSON encoding: table") != 0) {
+                return fail("JSON must reject private nondata before omission or traversal");
+            }
+        }
+        deal_data repaired = deal_data_of_number(7.0);
+        deal_container_array_store(json_array, 0u, &repaired);
+        deal_container_table_write(json_record, key, &repaired);
+        for (size_t position = 1u; position < 3u; position++) {
+            deal_outcome_data encoded = deal_json_stringify(positions[position], &probe_origin);
+            if (encoded.error != NULL || encoded.value.tag != DEAL_DATA_STRING)
+                return fail("JSON repaired aggregate must encode");
+            deal_root_scope_hold(encoded.value.reference);
+            deal_outcome_data decoded = deal_json_parse(encoded.value.reference, &probe_origin);
+            if (decoded.error != NULL || decoded.value.tag != positions[position].tag)
+                return fail("JSON repaired aggregate must decode structurally");
+            deal_data leaf;
+            if (position == 1u) {
+                if (deal_container_array_count(decoded.value.reference) != 1u)
+                    return fail("JSON repaired array count");
+                leaf = *(const deal_data *)deal_container_array_element(decoded.value.reference, 0u);
+            } else {
+                if (deal_container_table_count(decoded.value.reference) != 1u)
+                    return fail("JSON repaired Record count");
+                leaf = deal_container_table_read(decoded.value.reference, key);
+            }
+            if (leaf.tag != DEAL_DATA_NUMBER || leaf.number != 7.0)
+                return fail("JSON repaired aggregate value");
+        }
+    }
+    deal_value managed_record;
+    if (deal_table_new(&managed_record) != DEAL_OK
+            || deal_table_set(managed_record, "unread", 6u, opaque_view) != DEAL_OK
+            || deal_retain(managed_record, &raw_handle) != DEAL_STATUS_KIND || raw_handle != 0
+            || deal_table_set(managed_record, "unread", 6u, raw_view) != DEAL_OK
+            || deal_retain(managed_record, &raw_handle) != DEAL_STATUS_KIND || raw_handle != 0
+            || deal_table_delete(managed_record, "unread", 6u) != DEAL_OK
+            || deal_retain(managed_record, &raw_handle) != DEAL_OK
+            || deal_release(raw_handle) != DEAL_OK) {
+        return fail("managed nondata Record leaves reject before publication");
+    }
+    raw_handle = 0;
+    deal_gc_collect_full();
+    deal_root_scope_pop();
+    deal_value opaque_record;
+    if (deal_table_new(&opaque_record) != DEAL_OK
+            || deal_table_set(opaque_record, "unread", 6u, opaque) != DEAL_OK
+            || deal_retain(opaque_record, &raw_handle) != DEAL_STATUS_KIND || raw_handle != 0
+            || deal_table_set(opaque_record, "unread", 6u, opaque_other) != DEAL_OK
+            || deal_retain(opaque_record, &raw_handle) != DEAL_STATUS_KIND || raw_handle != 0
+            || deal_table_delete(opaque_record, "unread", 6u) != DEAL_OK
+            || deal_retain(opaque_record, &raw_handle) != DEAL_OK || raw_handle == 0
+            || deal_release(raw_handle) != DEAL_OK) {
+        return fail("opaque unread Record rejection and retry");
+    }
+    raw_handle = 0;
+    /* A key is independently typed: legal lone text or a raw callable hidden
+     * beneath a boolean key cannot change which first rejection owns it. */
+    deal_value key_record, false_key, lone_text, key_marker, key_read;
+    static const unsigned char lone_bytes[] = {0xed, 0xa0, 0x80};
+    int key_present = 1;
+    if (deal_table_new(&key_record) != DEAL_OK
+            || deal_boolean(0, &false_key) != DEAL_OK
+            || deal_string_new(lone_bytes, sizeof lone_bytes, &lone_text) != DEAL_OK
+            || deal_number(19.0, &key_marker) != DEAL_OK
+            || deal_table_set(key_record, "good", 4u, key_marker) != DEAL_OK
+            || deal_table_set_key(key_record, false_key, lone_text) != DEAL_OK
+            || deal_table_has(key_record, "", 0u, &key_present) != DEAL_OK || key_present
+            || deal_table_get(key_record, "good", 4u, &key_read) != DEAL_OK
+            || deal_same(key_marker, key_read, &opaque_same) != DEAL_OK || !opaque_same) {
+        return fail("nonstring key must retain unrelated entries without coercion");
+    }
+    for (int hidden = 0; hidden < 2; hidden++) {
+        deal_check_input key_input;
+        deal_error *key_cause = NULL;
+        const char *code = NULL, *actual = NULL, *expected = NULL, *message = NULL;
+        if (hidden && deal_table_set_key(key_record, false_key, raw) != DEAL_OK)
+            return fail("replace same nonstring key");
+        if (deal_host_value_presentation(key_record, &key_input, &key_cause) != DEAL_STATUS_KIND
+                || key_cause == NULL || !deal_error_code(key_cause, &code)
+                || strcmp(code, "E8010") != 0
+                || !deal_error_actual(key_cause, &actual) || strcmp(actual, "boolean") != 0
+                || !deal_error_expected(key_cause, &expected) || strcmp(expected, "string") != 0
+                || !deal_error_message(key_cause, &message)
+                || strcmp(message, "return value 1 type mismatch: expected string") != 0
+                || deal_retain(key_record, &raw_handle) != DEAL_STATUS_KIND || raw_handle != 0) {
+            return fail("nonstring key rejects before hidden value without publication");
+        }
+    }
+    deal_value live_record;
+    if (deal_table_new(&live_record) != DEAL_OK
+            || deal_table_set_key(live_record, lone_text, key_marker) != DEAL_OK
+            || deal_retain(live_record, &raw_handle) != DEAL_OK || raw_handle == 0
+            || deal_table_set_key(live_record, false_key, raw) != DEAL_STATUS_KIND
+            || deal_table_get(live_record, lone_bytes, sizeof lone_bytes, &key_read) != DEAL_OK
+            || deal_same(key_read, key_marker, &opaque_same) != DEAL_OK || !opaque_same
+            || deal_release(raw_handle) != DEAL_OK) {
+        return fail("string key carrier transport and checked live key rejection");
+    }
+    raw_handle = 0;
+    deal_value raw_record;
+    if (deal_table_new(&raw_record) != DEAL_OK
+            || deal_table_set(raw_record, "unread", 6u, raw) != DEAL_OK
+            || deal_retain(raw_record, &raw_handle) != DEAL_STATUS_KIND
+            || raw_handle != 0) {
+        return fail("unread raw callable must reject before record publication");
+    }
     deal_value function;
     if (deal_function_new(inner_entry, "(number)->number", &function)
             != DEAL_OK) {
         return fail("function value construction failed");
+    }
+    /* Repair the very same uncommitted Record and publish it only after all
+     * descendants are data. Failed admission must not poison the identity memo. */
+    deal_value repaired_record;
+    int same_record = 0;
+    if (deal_table_set(raw_record, "unread", 6u, function) != DEAL_OK
+            || deal_retain(raw_record, &raw_handle) != DEAL_OK || raw_handle == 0
+            || deal_handle_value(raw_handle, "record", &repaired_record) != DEAL_OK
+            || deal_same(raw_record, repaired_record, &same_record) != DEAL_OK
+            || !same_record || deal_release(raw_handle) != DEAL_OK) {
+        return fail("raw Record repair must retain its original identity");
+    }
+    raw_handle = 0;
+    deal_value rejected_array;
+    deal_check_input array_input;
+    deal_error *array_cause = NULL;
+    const char *array_code = NULL, *array_message = NULL, *leaf_code = NULL;
+    if (deal_array_new_typed(1u, "(number)->number", &rejected_array) != DEAL_OK
+            || deal_array_set(rejected_array, 0u, raw) != DEAL_OK
+            || deal_host_value_presentation(rejected_array, &array_input, &array_cause)
+                != DEAL_STATUS_KIND
+            || array_cause == NULL || !deal_error_code(array_cause, &array_code)
+            || strcmp(array_code, "E8010") != 0
+            || !deal_error_message(array_cause, &array_message)
+            || strcmp(array_message, "return value 1 type mismatch: array element 1 type mismatch") != 0) {
+        return fail("raw array element exact outer rejection");
+    }
+    if (!deal_error_cause_code(array_cause, &leaf_code)
+            || strcmp(leaf_code, "E8003") != 0) {
+        return fail("raw array element wrapper cause");
+    }
+    if (deal_array_set(rejected_array, 0u, function) != DEAL_OK
+            || deal_retain(rejected_array, &raw_handle) != DEAL_OK || raw_handle == 0
+            || deal_release(raw_handle) != DEAL_OK) {
+        return fail("raw array element must reject with its own arm and remain repairable");
     }
     /* A retained function value is re-validated against its own canonical
      * descriptor inside the current crossing (H3). */
@@ -559,6 +888,11 @@ int main(void) {
             deal_error_code(result.error, &code);
             report("the crossing answered a failure: ");
             report(code == NULL ? "" : code);
+            const char *message = NULL;
+            if (deal_error_message(result.error, &message) && message != NULL) {
+                report(": ");
+                report(message);
+            }
             report("\n");
             return 1;
         }

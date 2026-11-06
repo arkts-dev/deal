@@ -984,10 +984,9 @@ final class JvmHostAbiEmission {
      * reflective invocation. A declared {@code string} position admits the
      * UTF-16 {@code java.lang.String} carrier and the backend-native raw
      * UTF-8 {@code byte[]} carrier (decoded strictly); the carrier's closed
-     * encoding defect selects the pinned string-carrier reason
-     * ({@link JvmRuntime#hostStringReason(String)} /
-     * {@link JvmRuntime#hostStringReason(byte[])}), never the carrier's
-     * length.
+     * byte-encoding defect selects the pinned string-carrier reason
+     * ({@link JvmRuntime#hostStringReason(byte[])}), never the carrier's
+     * length. Every UTF-16 String unit sequence is admitted directly.
      */
     private void emitSeams(StringBuilder out) {
         out.append("  // ---- The emitted host boundary-check seam (host-module-abi; "
@@ -1046,14 +1045,10 @@ final class JvmHostAbiEmission {
         out.append("    if (d.startsWith(\"(\") || d.startsWith(\"async(\")) return \"function\";\n");
         out.append("    return d;\n");
         out.append("  }\n\n");
-        out.append("  static java.lang.String __hostStringReason(java.lang.String s) {\n");
-        out.append("    return JvmRuntime.hostStringReason(s);\n");
-        out.append("  }\n\n");
         out.append("  static java.lang.String __hostInnerMessage(java.lang.String d, "
             + "java.lang.Object v, JvmRuntime.DealError inner) {\n");
         out.append("    if (d.startsWith(\"?\") || d.startsWith(\"!\")) return __hostInnerMessage(d.substring(1), v, inner);\n");
         out.append("    if (inner == null) { throw new java.lang.IllegalStateException(\"the host inner-reason render has no inner failure (producer defect)\"); }\n");
-        out.append("    if (v instanceof java.lang.String s && JvmRuntime.hostStringReason(s) != null) return JvmRuntime.hostStringReason(s);\n");
         out.append("    return inner.msg;\n");
         out.append("  }\n\n");
         emitCheckValue(out);
@@ -1452,7 +1447,7 @@ final class JvmHostAbiEmission {
         // check_number admit it; the declared return carrier's normalization
         // then settles the admitted value as the production Double.
         out.append("    if (d.equals(\"number\")) { if (v instanceof java.lang.Double || v instanceof java.lang.Long || v instanceof java.lang.Integer) return v; throw __hostFail(JvmRuntime.kindReason(\"number\"), d, v, oFile, oLine, oCol); }\n");
-        out.append("    if (d.equals(\"string\")) { if (v instanceof java.lang.String __s) { java.lang.String __r = __hostStringReason(__s); if (__r != null) throw __hostFail(__r, d, v, oFile, oLine, oCol); return v; } if (v instanceof byte[] __b) { java.lang.String __r = JvmRuntime.hostStringReason(__b); if (__r != null) throw __hostFail(__r, d, v, oFile, oLine, oCol); return new java.lang.String(__b, java.nio.charset.StandardCharsets.UTF_8); } throw __hostFail(JvmRuntime.kindReason(\"string\"), d, v, oFile, oLine, oCol); }\n");
+        out.append("    if (d.equals(\"string\")) { if (v instanceof java.lang.String) return v; if (v instanceof byte[] __b) { java.lang.String __r = JvmRuntime.hostStringReason(__b); if (__r != null) throw __hostFail(__r, d, v, oFile, oLine, oCol); return new java.lang.String(__b, java.nio.charset.StandardCharsets.UTF_8); } throw __hostFail(JvmRuntime.kindReason(\"string\"), d, v, oFile, oLine, oCol); }\n");
         out.append("    if (d.equals(\"record\")) { if (v instanceof JvmRuntime.Table) return JvmRuntime.validateData(v, false); throw __hostFail(JvmRuntime.kindReason(\"record\"), d, v, oFile, oLine, oCol); }\n");
         out.append("    if (d.startsWith(\"[\")) { return __hostCheckArrayPlan(d, v, oFile, oLine, oCol, __pending, __memo); }\n");
         out.append("    if (d.startsWith(\"(\") || d.startsWith(\"async(\")) {\n");

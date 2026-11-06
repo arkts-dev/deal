@@ -1,12 +1,11 @@
 "use strict";
 
 // Host-module fixture (host-module-abi D6): a host surface whose
-// returned strings exercise the DEAL v1.2 string carrier classes. JS
-// strings are UTF-16, so lone surrogate code units are the JS analog of
-// the Lua host's malformed UTF-8 bytes — the declared (string) boundary
-// must reject both classes with E8010 and select the pinned reason from
-// the offending code point (the embedded surrogate included). The valid
-// exports exercise the admitted carriers at scalar and array element
+// returned strings preserve UTF-16 units. Lone surrogate units, including
+// embedded ones, are legal strings, not malformed byte transport. JS has
+// no raw byte-string carrier, so badString/nativeBadStringArray are legal
+// unit controls here; byte-transport rejection runs on Lua/JVM/native hosts.
+// The valid exports exercise the admitted carriers at scalar and array element
 // positions (the raw carrier decodes to the same "ok" string), the
 // nullable nested-array element that must stay the language null, one
 // inner array returned at both positions of a declared string[][] (the

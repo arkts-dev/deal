@@ -11,9 +11,9 @@
 
 const $rt = require("../deal/runtime");
 
-const EP = "@$external/host.carrierasync/Endpoint";
-const SC = "@$external/host.carrierasync/ServerConfig";
-const FARM = "@$external/host.carrierasync/Farm";
+const EP = "@$external/host/carrierasync/Endpoint";
+const SC = "@$external/host/carrierasync/ServerConfig";
+const FARM = "@$external/host/carrierasync/Farm";
 
 function endpoint(path) {
   return { $kind: "class", $classname: EP, path: path };

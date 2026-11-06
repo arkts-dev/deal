@@ -154,7 +154,7 @@ final class DefaultIrRecorder {
         bindingProviders = new java.util.IdentityHashMap<>();
 
     /**
-     * The checker's non-hoisting let visibility (docs/spec-v1.5.md
+     * The checker's non-hoisting let visibility (docs/spec-v1.6.md
      * &sect;Name resolution — Declaration order and &sect;Scope) mirrored over this
      * source-order walk: one frame per open statement list, holding the
      * scope of that list and its own let-declared names not yet
@@ -560,10 +560,7 @@ final class DefaultIrRecorder {
         } else if (call.callee() instanceof IdentifierExpr cid
                 && visibleBinding(scope, cid.name())
                     instanceof Symbol.FunctionSymbol function) {
-            // The declaration the callee name resolved to, never the
-            // first top-level declaration carrying the name: a nested
-            // declaration shadowing a module-level function owns its
-            // parameter contexts.
+            // The resolved module declaration owns its parameter contexts.
             FunctionDeclaration declaration = functionDeclarationOf(
                 function, cid.name(), scope);
             if (declaration != null) {
@@ -571,6 +568,13 @@ final class DefaultIrRecorder {
                     .map(Parameter::type)
                     .toArray(TypeNode[]::new);
             }
+        }
+        if (call.callee() instanceof IdentifierExpr cid
+                && visibleBinding(scope, cid.name())
+                    instanceof Symbol.VariableSymbol variable
+                && variable.declaredType() instanceof deal.ast.FunctionType functionType) {
+            paramNodes = functionType.params().stream()
+                .map(deal.ast.FunctionTypeParam::type).toArray(TypeNode[]::new);
         }
         if (paramNodes == null) {
             return List.of();
@@ -607,7 +611,7 @@ final class DefaultIrRecorder {
 
     /**
      * Resolves a name to the binding the declaration-order rules make
-     * visible at the current walk position (docs/spec-v1.5.md
+     * visible at the current walk position (docs/spec-v1.6.md
      * &sect;Name resolution — Declaration order): a let declaration is visible only after
      * its declaration, so a reference from inside the declaring
      * statement list's earlier statements — a shadowing declaration's
@@ -1045,6 +1049,9 @@ final class DefaultIrRecorder {
                     b.span().range());
             }
             case VariableDeclaration vd -> {
+                if (vd.initializer() instanceof FunctionExpr) {
+                    declarationReached(effectiveScope, vd.name());
+                }
                 List<DefaultIrNode> children = new ArrayList<>();
                 if (vd.initializer() != null) {
                     // The declared annotation is the checked provenance
@@ -1073,7 +1080,7 @@ final class DefaultIrRecorder {
                 // The declaration is complete: the name is visible to
                 // the following statements of its own statement list,
                 // so a later assignment to it resolves to this binding
-                // (docs/spec-v1.5.md §Name resolution — Declaration order).
+                // (docs/spec-v1.6.md §Name resolution — Declaration order).
                 declarationReached(effectiveScope, vd.name());
                 return node(DefaultIrNode.NodeKind.VARIABLE_DECLARATION,
                     null, null, List.of(), children, null, null,
@@ -1594,6 +1601,12 @@ final class DefaultIrRecorder {
                 function, cid.name(), scope);
             return declaration == null ? null : providerForTypeNode(
                 declaration.returnType(), null);
+        }
+        if (call.callee() instanceof IdentifierExpr cid
+                && visibleBinding(scope, cid.name())
+                    instanceof Symbol.VariableSymbol variable
+                && variable.declaredType() instanceof deal.ast.FunctionType functionType) {
+            return providerForTypeNode(functionType.returnType(), null);
         }
         return null;
     }

@@ -1,15 +1,9 @@
 package deal.source;
 
 /**
- * A half-open range of decoded Unicode scalar positions.
- *
- * <p>Lines and columns are 1-based decoded Unicode scalar positions;
- * {@code startScalarOffset} and {@code endScalarOffset} are 0-based decoded
- * scalar offsets with {@code [start, end)} half-open semantics: the first
- * scalar of the range is at {@code (startLine, startColumn)} and
- * {@code (endLine, endColumn)} is the position of the first scalar after
- * the range. The scalar length of the range is therefore always
- * {@code endScalarOffset - startScalarOffset}.
+ * A half-open UTF-16 source range. Lines/columns are 1-based and
+ * {@code startScalarOffset}/{@code endScalarOffset} are 0-based UTF-16
+ * offsets. The length is {@code endScalarOffset - startScalarOffset}.
  *
  * <p>This record is the {@code deal.source}-local (JDK-only) range carrier:
  * it deliberately carries no {@code file} component, because content-only
@@ -25,7 +19,7 @@ public record SourceScalarRange(int startLine, int startColumn, int endLine, int
                                 int startScalarOffset, int endScalarOffset) {
 
     /**
-     * The decoded scalar length of the range:
+     * The UTF-16 length of the range:
      * {@code endScalarOffset - startScalarOffset}.
      */
     public int scalarLength() {

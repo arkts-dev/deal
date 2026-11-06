@@ -760,7 +760,7 @@ public final class Lexer {
      * nested template literals are all part of the one template token.</p>
      *
      * <p>{@link TemplateScanner} also owns the TemplateText
-     * trailing-backslash rule ({@code docs/spec-v1.5.md}: "trailing
+     * trailing-backslash rule ({@code docs/spec-v1.6.md}: "trailing
      * backslashes form pairs"): a text run that would end with an odd
      * backslash run at the closing backtick or at a {@code ${} opener is
      * not TemplateText. Each such run is rejected here with E1042 over the
@@ -854,10 +854,6 @@ public final class Lexer {
             TemplateScanner.Delimiter delimiter) {
         return switch (delimiter) {
             case ESCAPE_PREFIX -> "Invalid template literal: malformed numeric, hexadecimal or Unicode escape spelling";
-            case CLOSING_BACKTICK -> "Invalid template literal: trailing"
-                + " backslashes before the closing backtick must form pairs";
-            case INTERPOLATION_OPENER -> "Invalid template literal: trailing"
-                + " backslashes before '${' must form pairs";
         };
     }
 

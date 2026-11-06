@@ -12,7 +12,7 @@
 # against private distribution copies carrying the fault under test.
 #
 # Legs:
-#   1. resource set        the matched v1.5 resource set is present
+#   1. resource set        the matched v1.6 resource set is present
 #   2. backend execution   compile, inspect the published set, and execute
 #                          the smoke project on luajit, jvm and js
 #   3. runtime failure     a thrown Error exits nonzero with its code
@@ -289,7 +289,7 @@ leg "leg 3/10 runtime failures are rejected"
 
 FAILURE_PROJECT="$SCRATCH/runtime-failure"
 mkdir -p "$FAILURE_PROJECT/src"
-printf '%s\n' '{"languageVersion": "1.5", "moduleRoots": ["src"], "backend": "luajit"}' \
+printf '%s\n' '{"languageVersion": "1.6", "moduleRoots": ["src"], "backend": "luajit"}' \
   >"$FAILURE_PROJECT/deal.json"
 printf '%s\n' \
   'export function main(): null {' \

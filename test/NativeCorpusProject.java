@@ -54,7 +54,7 @@ final class NativeCorpusProject implements AutoCloseable {
                     .append(CorpusExecution.quote("conformance/bindings/" + name.substring(5) + ".d.deal")).append('}');
                 hosts.put(name, this.corpus.resolve("host-fixtures/" + stem + ".c"));
             }
-            Files.writeString(scratch.resolve("deal.json"), "{\"languageVersion\":\"1.5\",\"stdlib\":\"1.5\","
+            Files.writeString(scratch.resolve("deal.json"), "{\"languageVersion\":\"1.6\",\"stdlib\":\"1.6\","
                 + "\"moduleRoots\":[\"conformance\"],\"backend\":\"llvm\",\"output\":\"out\",\"externals\":{" + external + "}}");
         } catch (Throwable e) { close(); throw e; }
     }
@@ -103,24 +103,8 @@ final class NativeCorpusProject implements AutoCloseable {
     boolean compile() throws Exception {
         var located = ProjectLocator.locate(entry.toString(), new CliOverrides("llvm", output.toString()));
         if (located.context() == null) throw new IllegalStateException("HARNESS_DEFECT: project resolution: " + located);
-        // Use the same corpus orchestrator input as the other three backends.
-        // Their ordinary declarations have a dotted identity alias ahead of
-        // the slash import key; selected probes intentionally have only slash.
-        Map<String, ExternalEntry> externals = new LinkedHashMap<>();
-        for (var host : located.context().externals().entrySet()) {
-            var value = host.getValue();
-            if (!host.getKey().equals("host/probe")
-                    && hosts.get(host.getKey()).getParent().equals(corpus.resolve("host-fixtures"))) {
-                String alias = host.getKey().replace('/', '.');
-                externals.put(alias, new ExternalEntry(alias, value.declarationPath(), value.sourceRange()));
-            }
-            externals.put(host.getKey(), value);
-        }
-        var base = located.context();
-        var context = new ProjectContext(base.manifestPath(), base.projectRoot(), base.manifestDirectory(),
-            base.languageVersion(), base.configuredModuleRoots(), base.outputPath(), base.backend(), externals,
-            base.stdlibVersion(), base.stdlibSurfacePath(), base.stdlibDeclarationFiles(), base.projectDeploymentIdentity());
-        compiler = new CompilationOrchestrator(context, entry, false, false, false, false, null,
+        // Keep the same raw external import keys as the shared corpus lanes.
+        compiler = new CompilationOrchestrator(located.context(), entry, false, false, false, false, null,
             CompilerProfileProvider.resolve(ReleaseConfiguration.CURRENT_RELEASE_STATE,
                 ReleaseConfiguration.releaseCapabilityRegistry()));
         boolean ok = compiler.compile();

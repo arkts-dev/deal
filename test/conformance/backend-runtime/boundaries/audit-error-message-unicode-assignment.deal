@@ -1,8 +1,8 @@
 // @spec: Runtime execution model
-// @description: error message unicode assignment
+// @description: Lone UTF-16 Error message survives assignment, aliasing and host repair
 // @expected: runtime-ok
 // @features: boundary-validation, host-abi
 import * as console from "std/console";
 import * as host from "host/probe";
 function take(e:Error):void{console.log("PARAM_BODY");}
-export function main():null{let e:Error={code:"X",message:"m"};let original:Error={code:"OLD",message:"old"};let destination=original;let alias=e;function get():Error{console.log("RETURN_BODY");return e;}host.edit(e);try{destination=e;console.log("ACCEPT");}catch(x){if(x instanceof Error){console.log(x.code);}else{console.log("NOT_ERROR");}}host.repair();if(e===alias && destination===original){console.log("IDENTITY");}take(e);console.log("RECOVERED");return null;}
+export function main():null{let e:Error={code:"X",message:"m"};let original:Error={code:"OLD",message:"old"};let destination=original;let alias=e;let get: () => Error = function():Error{console.log("RETURN_BODY");return e;};host.edit(e);destination=e;if(e.message!==`\uD800` || destination!==e || e!==alias){throw {code:"TEST",message:"lone message assignment lost value or identity"};}console.log("ACCEPT");host.repair();if(e.message!=="repaired" || destination!==alias){throw {code:"TEST",message:"repair lost alias"};}console.log("IDENTITY");take(e);console.log("RECOVERED");return null;}

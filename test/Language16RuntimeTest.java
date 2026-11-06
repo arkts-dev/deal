@@ -7,7 +7,7 @@ import java.util.*;
 import java.util.concurrent.TimeUnit;
 
 /** Real production compilation and execution; no backend may be skipped. */
-public final class Language15RuntimeTest {
+public final class Language16RuntimeTest {
     private static void run(Path cwd, String... command) throws Exception {
         Process process = new ProcessBuilder(command).directory(cwd.toFile())
             .redirectErrorStream(true).start();
@@ -79,7 +79,9 @@ public final class Language15RuntimeTest {
         String validText = "valid 🌍";
         if (deal.codegen.jvm.JvmRuntime.bcheck("unknown", "ref", validText) != validText)
             throw new AssertionError("unknown changed valid string identity");
-        for (Object unsupported : List.of("\ud800", new Object())) {
+        if (!deal.codegen.jvm.JvmRuntime.bcheck("unknown", "ref", "\ud800").equals("\ud800"))
+            throw new AssertionError("lone unit changed at JVM ingress");
+        for (Object unsupported : List.of(new Object())) {
             try { deal.codegen.jvm.JvmRuntime.bcheck("unknown", "ref", unsupported);
                 throw new AssertionError("unknown accepted unsupported JVM value");
             } catch (deal.codegen.jvm.JvmRuntime.DealError expected) {
@@ -89,7 +91,7 @@ public final class Language15RuntimeTest {
         callableBodyAdmission();
         errorGraphAdmission();
         for (String fixture : List.of("core", "refinement", "assertion", "failures", "equality-loops", "json-values", "audit-scalars")) executeFixture(fixture);
-        System.out.println("Language15RuntimeTest: passed (Oracle, JS, LuaJIT, JVM; deployed array descriptors)");
+        System.out.println("Language16RuntimeTest: passed (Oracle, JS, LuaJIT, JVM; deployed array descriptors)");
     }
 
     /** Exercise the evaluator adapter, not just a hand-built BoundaryValueView. */
@@ -107,7 +109,7 @@ public final class Language15RuntimeTest {
             Path declaration = source.resolveSibling("probe.d.deal");
             Files.writeString(declaration, "export function value():unknown;");
             Files.writeString(work.resolve("deal.json"),
-                "{\"languageVersion\":\"1.5\",\"stdlib\":\"1.5\",\"moduleRoots\":[\"src\"]}");
+                "{\"languageVersion\":\"1.6\",\"stdlib\":\"1.6\",\"moduleRoots\":[\"src\"]}");
             var invocation = deal.semantic.CompilerProfileProvider.resolve(
                 deal.semantic.ReleaseConfiguration.CURRENT_RELEASE_STATE,
                 deal.semantic.ReleaseConfiguration.releaseCapabilityRegistry());
@@ -162,7 +164,7 @@ public final class Language15RuntimeTest {
             Path declaration = source.resolveSibling("probe.d.deal");
             Files.writeString(declaration, "export function edit(e:Error):void;");
             Files.writeString(work.resolve("deal.json"),
-                "{\"languageVersion\":\"1.5\",\"stdlib\":\"1.5\",\"moduleRoots\":[\"src\"]}");
+                "{\"languageVersion\":\"1.6\",\"stdlib\":\"1.6\",\"moduleRoots\":[\"src\"]}");
             for (String boundary : List.of("Error", "unknown", "Record<string,unknown>")) {
                 String value = boundary.equals("Record<string,unknown>") ? "{unread:e}" : "e";
                 Files.writeString(source, "import * as host from \"host/probe\";"
@@ -199,7 +201,7 @@ public final class Language15RuntimeTest {
                     };
                     var result = deal.semantic.SemanticOracle.invokeSyncEntry(project, tables, registries,
                         responder, compiler.checkedProject().input().entryModule(), "run", List.of());
-                    String expected = invalid ? "num:0x1.0p0" : "num:0x0.0p0";
+                    String expected = "num:0x0.0p0";
                     if (calls[0] != 1 || !(result.terminal() instanceof
                             deal.semantic.SemanticRuntimeModel.Terminal.Success success)
                             || !success.resultAtom().equals(expected))
@@ -215,17 +217,17 @@ public final class Language15RuntimeTest {
 
     private static void executeFixture(String fixture) throws Exception {
         Path root = Path.of("").toAbsolutePath();
-        Path work = Files.createTempDirectory(root.resolve("build"), "language15-");
+        Path work = Files.createTempDirectory(root.resolve("build"), "language16-");
         try {
             Path source = Files.createDirectories(work.resolve("src")).resolve("main.deal");
-            Path fixtures = root.resolve("test/conformance/backend-runtime/language15");
+            Path fixtures = root.resolve("test/conformance/backend-runtime/language16");
             Files.writeString(source, ConformanceHarnessMetadata.stripClassificationHeaders(
                 Files.readString(fixtures.resolve(fixture + ".deal"))));
             Files.writeString(source.resolveSibling("nominal.deal"),
                 ConformanceHarnessMetadata.stripClassificationHeaders(
                     Files.readString(fixtures.resolve("nominal.deal"))));
             Files.writeString(work.resolve("deal.json"),
-                "{\"languageVersion\":\"1.5\",\"stdlib\":\"1.5\",\"moduleRoots\":[\"src\"]}\n");
+                "{\"languageVersion\":\"1.6\",\"stdlib\":\"1.6\",\"moduleRoots\":[\"src\"]}\n");
             String cp = Arrays.stream(System.getProperty("java.class.path").split(java.io.File.pathSeparator))
                 .map(p -> root.resolve(p).normalize().toString()).reduce((a,b) -> a + java.io.File.pathSeparator + b).orElseThrow();
             var invocation = deal.semantic.CompilerProfileProvider.resolve(
@@ -345,7 +347,8 @@ public final class Language15RuntimeTest {
             // stdlib realizations cannot stand in for the deployed wrappers.
             run(root, "node", "-e", """
                 const rt=require('./deal/runtime'),s=require('./std/string'),t=require('./std/table');
-                for (const bad of [()=>{}, Promise.resolve(1), {}, '\\uD800', Symbol('foreign')]) {
+                if(rt.checkType('unknown','\\uD800')!=='\\uD800') throw Error('lone unit ingress');
+                for (const bad of [()=>{}, Promise.resolve(1), {}, Symbol('foreign')]) {
                   let rejected=false;
                   try {rt.checkType('unknown',bad)} catch(e) {rejected=e.code==='E8001'}
                   if(!rejected) throw Error('unsupported unknown ingress');
@@ -402,7 +405,8 @@ public final class Language15RuntimeTest {
                 package.path='./?.lua;'..package.path
                 local rt=require('deal.runtime'); local s=require('std.string'); local t=require('std.table')
                 local ffi=require('ffi')
-                for _,bad in ipairs({function() end, coroutine.create(function() end), ffi.new('int',1), string.char(0xed,0xa0,0x80)}) do
+                assert(rt.check_type('unknown',string.char(0xed,0xa0,0x80))==string.char(0xed,0xa0,0x80))
+                for _,bad in ipairs({function() end, coroutine.create(function() end), ffi.new('int',1), string.char(0xe2,0x82)}) do
                   local ok,e=pcall(rt.check_type,'unknown',bad)
                   assert(not ok and e.code=='E8001')
                 end

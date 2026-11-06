@@ -244,9 +244,9 @@ public class SharedStdlibSemanticsTest {
         expectSuccess(SharedStdlibSemantics.stringLength(origin(), valid("h\u00e9llo")),
             new Value.Number(5), "length of 'h\u00e9llo' is 5 scalars (\u00e9 is one scalar)");
         expectSuccess(SharedStdlibSemantics.stringLength(origin(), valid("\ud83d\ude00")),
-            new Value.Number(1), "a surrogate pair is one scalar");
+            new Value.Number(2), "a surrogate pair occupies two UTF-16 units");
         expectSuccess(SharedStdlibSemantics.stringLength(origin(), valid("a\ud83d\ude00b")),
-            new Value.Number(3), "mixed BMP/supplementary count is scalar-exact");
+            new Value.Number(4), "mixed BMP/supplementary count uses UTF-16 units");
         expectSuccess(SharedStdlibSemantics.stringLength(origin(), valid("a".repeat(4000))),
             new Value.Number(4000), "a long carrier counts every scalar");
     }
@@ -265,14 +265,14 @@ public class SharedStdlibSemanticsTest {
         expectSuccess(SharedStdlibSemantics.stringSubstring(origin(), valid("abc"), -5, -1),
             text(""), "lo=hi=0 is empty");
         expectSuccess(SharedStdlibSemantics.stringSubstring(origin(), valid("abc"), 2, 1),
-            text(""), "lo>=hi is empty (start>end)");
+            text("b"), "start>end swaps clamped bounds");
         expectSuccess(SharedStdlibSemantics.stringSubstring(origin(), valid("abc"), 99, 100),
             text(""), "start beyond length is empty");
         expectSuccess(SharedStdlibSemantics.stringSubstring(origin(), valid("abc"), 3, 5),
             text(""), "start==length is empty");
         expectSuccess(SharedStdlibSemantics.stringSubstring(origin(),
                 valid("\ud83d\ude00\ud83d\ude00"), 1, 2),
-            text("\ud83d\ude00"), "indices are scalar indices (pair = one scalar)");
+            text("\ude00"), "indices select individual UTF-16 units");
         expectSuccess(SharedStdlibSemantics.stringSubstring(origin(), valid(""), 0, 1),
             text(""), "empty input is empty");
     }
@@ -324,19 +324,19 @@ public class SharedStdlibSemanticsTest {
 
         expectSuccess(SharedStdlibSemantics.stringReplace(origin(), valid("aba"), valid("a"),
                 valid("z")),
-            text("zbz"), "'aba' replace 'a' with 'z' is 'zbz'");
+            text("zba"), "only the first literal occurrence is replaced");
         expectSuccess(SharedStdlibSemantics.stringReplace(origin(), valid("abc"), valid("d"),
                 valid("z")),
             text("abc"), "an absent from returns the input unchanged");
         expectSuccess(SharedStdlibSemantics.stringReplace(origin(), valid("abc"), valid(""),
                 valid("z")),
-            text("abc"), "an empty from returns the input unchanged");
+            text("zabc"), "an empty search matches at the start");
         expectSuccess(SharedStdlibSemantics.stringReplace(origin(), valid("aaa"), valid("aa"),
                 valid("b")),
             text("ba"), "occurrences are non-overlapping: 'aaa'/'aa' → 'ba'");
         expectSuccess(SharedStdlibSemantics.stringReplace(origin(), valid("aaaa"), valid("aa"),
                 valid("b")),
-            text("bb"), "non-overlapping left-to-right: 'aaaa'/'aa' → 'bb'");
+            text("baa"), "only the first 'aa' is replaced");
         expectSuccess(SharedStdlibSemantics.stringReplace(origin(), valid("a.b"), valid("a.b"),
                 valid("x")),
             text("x"), "the search is literal, never pattern-interpreted");
@@ -348,14 +348,14 @@ public class SharedStdlibSemanticsTest {
             text("x"), "the replacement is literal, never pattern-interpreted");
         expectSuccess(SharedStdlibSemantics.stringReplace(origin(), valid("a\ud83d\ude00a"),
                 valid("a"), valid("z")),
-            text("z\ud83d\ude00z"), "scalar-domain replacement keeps the pair intact");
+            text("z\ud83d\ude00a"), "first replacement keeps the remaining units intact");
     }
 
     static void testStringSplit() {
         System.out.println("-- STRING_SPLIT: empty input/separator and preserved empties --");
 
         expectSuccess(SharedStdlibSemantics.stringSplit(origin(), valid(""), valid(",")),
-            Value.array(), "empty input → [] regardless of the separator");
+            Value.array(text("")), "empty input with a nonempty separator yields one empty part");
         expectSuccess(SharedStdlibSemantics.stringSplit(origin(), valid(""), valid("")),
             Value.array(), "empty input with an empty separator → []");
         expectSuccess(SharedStdlibSemantics.stringSplit(origin(), valid("abc"), valid("")),
@@ -363,8 +363,8 @@ public class SharedStdlibSemanticsTest {
             "empty separator → one single-scalar string per element");
         expectSuccess(SharedStdlibSemantics.stringSplit(origin(),
                 valid("\ud83d\ude00b"), valid("")),
-            Value.array(text("\ud83d\ude00"), text("b")),
-            "empty separator splits by scalars (a pair is one element)");
+            Value.array(text("\ud83d"), text("\ude00"), text("b")),
+            "empty separator splits by UTF-16 units");
         expectSuccess(SharedStdlibSemantics.stringSplit(origin(), valid("a,b"), valid(",")),
             Value.array(text("a"), text("b")), "'a,b' split ',' → ['a','b']");
         expectSuccess(SharedStdlibSemantics.stringSplit(origin(), valid(",a"), valid(",")),
@@ -402,9 +402,9 @@ public class SharedStdlibSemanticsTest {
                 valid("\t\r\n\u000b\fx\u000b\f\n\r\t")),
             text("x"), "the full closed set trims from both ends");
         expectSuccess(SharedStdlibSemantics.stringTrim(origin(), valid("\u00a0x\u00a0")),
-            text("\u00a0x\u00a0"), "U+00A0 (NBSP) is not in the set and stays");
+            text("x"), "ECMAScript trim removes NBSP");
         expectSuccess(SharedStdlibSemantics.stringTrim(origin(), valid("x\u00a0")),
-            text("x\u00a0"), "a trailing NBSP is preserved");
+            text("x"), "a trailing NBSP is trimmed");
     }
 
     // =========================================================================
@@ -631,15 +631,12 @@ public class SharedStdlibSemanticsTest {
             "a non-hex \\u digit at its offset");
         expectParseFailure("\"\\u123\"", 7, SharedStdlibSemantics.REASON_INVALID_ESCAPE,
             "a truncated \\u escape at its non-hex digit");
-        expectParseFailure("\"\\ud800\"", 8,
-            SharedStdlibSemantics.REASON_UNPAIRED_SURROGATE_ESCAPE,
-            "a high-surrogate escape without a pair");
-        expectParseFailure("\"\\ud800x\"", 8,
-            SharedStdlibSemantics.REASON_UNPAIRED_SURROGATE_ESCAPE,
-            "a high-surrogate escape followed by a non-pair");
-        expectParseFailure("\"\\udc00\"", 8,
-            SharedStdlibSemantics.REASON_UNPAIRED_SURROGATE_ESCAPE,
-            "a lone low-surrogate escape");
+        expectParseValue("\"\\ud800\"", text("\ud800"),
+            "a high-surrogate escape is string data");
+        expectParseValue("\"\\ud800x\"", text("\ud800x"),
+            "a high-surrogate escape does not require a following pair");
+        expectParseValue("\"\\udc00\"", text("\udc00"),
+            "a low-surrogate escape is string data");
         expectParseFailure("\"x\n\"", 3, SharedStdlibSemantics.REASON_UNEXPECTED_CHARACTER,
             "a raw control character inside a string");
         expectParseFailure("01", 2, SharedStdlibSemantics.REASON_LEADING_ZERO,
@@ -1103,6 +1100,19 @@ public class SharedStdlibSemanticsTest {
             "multi-byte scalars write their exact UTF-8 bytes plus '\\n' ("
                 + expectedBytes.length + " scalar bytes)");
 
+        String loneText = "A\uD800😀\uDC00B";
+        byte[] displayBytes = "A�😀�B\n".getBytes(StandardCharsets.UTF_8);
+        for (var channel : SharedStdlibSemantics.Channel.values()) {
+            CaptureSink sink = new CaptureSink(channel);
+            if (channel == SharedStdlibSemantics.Channel.STDOUT)
+                SharedStdlibSemantics.consoleLog(origin(), valid(loneText), sink);
+            else SharedStdlibSemantics.consoleError(origin(), valid(loneText), sink);
+            check(sink.writes.size() == 1 && Arrays.equals(sink.writes.get(0), displayBytes),
+                channel + " display replaces only lone units, preserving the pair");
+            check(loneText.charAt(1) == '\uD800' && loneText.charAt(4) == '\uDC00',
+                channel + " display does not mutate language text");
+        }
+
         // One effect per call: two calls → two ordered writes.
         CaptureSink ordered = new CaptureSink(SharedStdlibSemantics.Channel.STDOUT);
         SharedStdlibSemantics.consoleLog(origin(), valid("a"), ordered);
@@ -1207,13 +1217,13 @@ public class SharedStdlibSemanticsTest {
     }
 
     private static CompilerInvocation invocation() {
-        return CompilerProfileProvider.resolve(ReleaseState.V1_5_ACTIVE, CapabilityRegistry.releaseRegistry());
+        return CompilerProfileProvider.resolve(ReleaseState.V1_6_ACTIVE, CapabilityRegistry.releaseRegistry());
     }
 
     private static SemanticIrValidator.ComparisonFacts factsOf(
             CheckedProjectBuildResult checked) {
         return new SemanticIrValidator.ComparisonFacts(
-            checked.index().interfaceIndexDigest(), SemanticProfile.DEAL_V1_5_BINARY64,
+            checked.index().interfaceIndexDigest(), SemanticProfile.DEAL_V1_6_BINARY64,
             CapabilityRegistry.releaseRegistry().capabilityRegistryHash());
     }
 
@@ -1242,7 +1252,7 @@ public class SharedStdlibSemanticsTest {
             moduleIds.add(module.moduleId());
         }
         return SemanticLowerer.lowerModuleFullProgram(
-            subject, SemanticProfile.DEAL_V1_5_BINARY64, manifest.constructCoverage(),
+            subject, SemanticProfile.DEAL_V1_6_BINARY64, manifest.constructCoverage(),
             checked.index().interfaceIndexDigest(),
             CapabilityRegistry.releaseRegistry().capabilityRegistryHash(),
             SemanticIdAllocator.over(moduleIds));
@@ -1339,7 +1349,7 @@ public class SharedStdlibSemanticsTest {
                 List.of(Value.string("abc"), Value.string("c")), new Value.Bool(true)),
             new Seed(StdlibFunctionId.STRING_REPLACE,
                 List.of(Value.string("aba"), Value.string("a"), Value.string("z")),
-                Value.string("zbz")),
+                Value.string("zba")),
             new Seed(StdlibFunctionId.STRING_SPLIT,
                 List.of(Value.string("a,b"), Value.string(",")),
                 Value.array(Value.string("a"), Value.string("b"))),
@@ -1662,13 +1672,10 @@ public class SharedStdlibSemanticsTest {
                 List.of(new Value.Number(-3.5)), null),
             new Value.Number(3.5), "absNumber admits fractional numeric values");
 
-        // An invalid-scalar table key is a producer defect (keys are
-        // identifier-derived), never a projection and never a crash.
-        SemanticTable<Value> badKeyTable = new SemanticTable<>();
-        badKeyTable.put("\ud800", new Value.Number(1));
-        expectDefect(() -> SharedStdlibSemantics.jsonStringify(origin(), badKeyTable),
-            SharedStdlibSemantics.Defect.class, "valid scalar sequence",
-            "an invalid-scalar table key fails closed");
+        SemanticTable<Value> loneKeyTable = new SemanticTable<>();
+        loneKeyTable.put("\ud800", new Value.Number(1));
+        expectSuccess(SharedStdlibSemantics.jsonStringify(origin(), loneKeyTable),
+            text("{\"\\ud800\":1.0}"), "a lone-unit key is escaped losslessly");
 
         // Dispatch preserves the same NaN result.
         SemanticOp sqrt = stdlibOpBy(unit, StdlibFunctionId.MATH_SQRT);

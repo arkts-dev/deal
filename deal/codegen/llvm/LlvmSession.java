@@ -574,7 +574,7 @@ final class LlvmSession extends EmitterSessionBase {
         for (SemanticOp op : bindingRoles.getOrDefault(binding, List.of())) {
             if (op.payload() instanceof KindPayload.TryCatchPayload caught
                     && caught.catchBinding().equals(binding)) {
-                // docs/spec-v1.5.md try/catch: the catch variable binds the
+                // docs/spec-v1.6.md try/catch: the catch variable binds the
                 // identical Error as `unknown` (C4's handler join).
                 return RuntimeDescriptor.Unknown.INSTANCE;
             }

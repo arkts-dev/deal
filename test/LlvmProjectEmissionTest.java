@@ -799,7 +799,7 @@ public final class LlvmProjectEmissionTest {
             Map<String, String> manifest) throws IOException {
         Files.createDirectories(root.resolve("src"));
         StringBuilder json = new StringBuilder("{");
-        json.append("\"languageVersion\": \"1.5\", \"moduleRoots\": [\"src\"]");
+        json.append("\"languageVersion\": \"1.6\", \"moduleRoots\": [\"src\"]");
         for (Map.Entry<String, String> entry : manifest.entrySet()) {
             json.append(", \"").append(entry.getKey()).append("\": \"")
                 .append(entry.getValue()).append('"');

@@ -72,16 +72,16 @@ public class DeclaredBodyCarrierProductionTest {
         Map.entry("called-value-reference", "5:16"), Map.entry("called-alias", "5:16"),
         Map.entry("called-alias-captured", "6:12"), Map.entry("called-alias-later", "4:39"),
         Map.entry("never-called-explicit-null", "3:28"), Map.entry("never-called-explicit-number", "3:30"),
-        Map.entry("never-called-implicit", "2:47"), Map.entry("captured-called", "6:12"),
+        Map.entry("never-called-implicit", "2:65"), Map.entry("captured-called", "6:12"),
         Map.entry("nested-inside-function", "6:14"), Map.entry("escaped-two-groups", "20:12"),
         Map.entry("escaped-two-groups-recursion", "21:5"), Map.entry("escaped-two-groups-alias-recursion", "22:42"),
         Map.entry("param-origin-contextual", "4:39"), Map.entry("async-escaped-two-groups", "22:18"),
         Map.entry("async-param-origin", "10:49"), Map.entry("async-escaped-two-groups-alias", "22:51"),
-        Map.entry("async-escaped-two-groups-alias-later", "20:63"), Map.entry("async-escaped-two-groups-param", "22:11"),
+        Map.entry("async-escaped-two-groups-alias-later", "20:101"), Map.entry("async-escaped-two-groups-param", "22:11"),
         Map.entry("async-escaped-two-groups-alias-param", "22:51"), Map.entry("async-escaped-two-groups-captured", "24:11"),
         Map.entry("async-escaped-two-groups-alias-captured", "24:51"));
     private static final String DEAL_JSON =
-        "{\"languageVersion\":\"1.5\",\"moduleRoots\":[\"src\"],"
+        "{\"languageVersion\":\"1.6\",\"moduleRoots\":[\"src\"],"
             + "\"output\":\"out\",\"backend\":\"luajit\"}\n";
 
     private record FailurePin(String code, String anchor) {}
@@ -150,8 +150,8 @@ public class DeclaredBodyCarrierProductionTest {
               return null;
             }
             function make(base: number): () => number {
-              function target(): number { return base; }
-              function caller(): number { return target(); }
+              let target = function(): number { return base; };
+              let caller = function(): number { return target(); };
               return caller;
             }
             """, List.of("declared-body-sibling-ok"), null, "null", 1, 0, false, false),
@@ -175,8 +175,8 @@ public class DeclaredBodyCarrierProductionTest {
               return null;
             }
             function make(base: number): () => number {
-              function target(): number { return base; }
-              function caller(): number { return target(); }
+              let target = function(): number { return base; };
+              let caller = function(): number { return target(); };
               return caller;
             }
             """, List.of("declared-body-instance-a-ok", "declared-body-instance-b-ok"),
@@ -195,8 +195,8 @@ public class DeclaredBodyCarrierProductionTest {
             }
             export function main(): null { return null; }
             function make(base: number): () => Promise<number> {
-              async function target(): Promise<number> { return base; }
-              async function caller(): Promise<number> { return await target(); }
+              let target = async function(): Promise<number> { return base; };
+              let caller = async function(): Promise<number> { return await target(); };
               return caller;
             }
             """, List.of("declared-body-sibling-async-ok"), "drive", "num:0x1.4p3",
@@ -222,8 +222,8 @@ public class DeclaredBodyCarrierProductionTest {
             }
             export function main(): null { return null; }
             function make(base: number): () => Promise<number> {
-              async function target(): Promise<number> { return base; }
-              async function caller(): Promise<number> { return await target(); }
+              let target = async function(): Promise<number> { return base; };
+              let caller = async function(): Promise<number> { return await target(); };
               return caller;
             }
             """, List.of("declared-body-async-instance-a-ok",
@@ -658,11 +658,11 @@ public class DeclaredBodyCarrierProductionTest {
             }
             export function main(): null { return null; }
             function make(base: number): () => Promise<number> {
-              async function target(): Promise<number> { return base; }
-              async function caller(): Promise<number> {
+              let target = async function(): Promise<number> { return base; };
+              let caller = async function(): Promise<number> {
                 let wide: (extra: number) => Promise<number> = target;
                 return await wide(0);
-              }
+              };
               return caller;
             }
             """, List.of("declared-body-nested-source-adapter-ok"), "drive", "num:0x1.4p3",
@@ -688,11 +688,11 @@ public class DeclaredBodyCarrierProductionTest {
             }
             export function main(): null { return null; }
             function make(base: number): () => Promise<number> {
-              async function target(): Promise<number> { return base; }
-              async function caller(): Promise<number> {
+              let target = async function(): Promise<number> { return base; };
+              let caller = async function(): Promise<number> {
                 let wide: (extra: number) => Promise<number> = target;
                 return await wide(0);
-              }
+              };
               return caller;
             }
             """, List.of("declared-body-nested-adapter-instance-a-ok",
@@ -701,14 +701,14 @@ public class DeclaredBodyCarrierProductionTest {
         group("called-explicit", """
             import * as console from "std/console";
             export function main(): null {
-              function f(n: number): number {
+              let f: (n: number) => number = function(n: number): number {
                 if (n <= 0) { return 0; }
                 return n + g(n - 1);
-              }
-              function g(n: number): number {
+              };
+              let g: (n: number) => number = function(n: number): number {
                 if (n <= 0) { return 0; }
                 return n + f(n - 1);
-              }
+              };
               if (f(4) === 10) {
                 console.log("nested-group-called-explicit-ok");
               } else {
@@ -721,12 +721,12 @@ public class DeclaredBodyCarrierProductionTest {
         group("called-implicit", """
             import * as console from "std/console";
             export function main(): null {
-              function f(n: number): void {
+              let f: (n: number) => void = function(n: number): void {
                 if (n > 0) { g(n - 1); }
-              }
-              function g(n: number): void {
+              };
+              let g: (n: number) => void = function(n: number): void {
                 if (n > 1) { f(n - 1); }
-              }
+              };
               f(4);
               console.log("nested-group-called-implicit-ok");
               return null;
@@ -736,14 +736,14 @@ public class DeclaredBodyCarrierProductionTest {
         group("called-value-reference", """
             import * as console from "std/console";
             export function main(): null {
-              function f(n: number): number {
+              let f: (n: number) => number = function(n: number): number {
                 if (n <= 0) { return 0; }
                 return n + g(n - 1);
-              }
-              function g(n: number): number {
+              };
+              let g: (n: number) => number = function(n: number): number {
                 let fRef: (n: number) => number = f;
                 return n;
-              }
+              };
               if (f(4) === 7) {
                 console.log("nested-group-called-value-reference-ok");
               } else {
@@ -756,14 +756,14 @@ public class DeclaredBodyCarrierProductionTest {
         group("called-alias", """
             import * as console from "std/console";
             export function main(): null {
-              function f(n: number): number {
+              let f: (n: number) => number = function(n: number): number {
                 if (n <= 0) { return 0; }
                 return n + g(n - 1);
-              }
-              function g(n: number): number {
+              };
+              let g: (n: number) => number = function(n: number): number {
                 let fRef: (n: number) => number = f;
                 return fRef(n);
-              }
+              };
               if (f(4) === 10) {
                 console.log("nested-group-alias-ok");
               } else {
@@ -777,14 +777,14 @@ public class DeclaredBodyCarrierProductionTest {
             import * as console from "std/console";
             export function main(): null {
               let base: number = 10;
-              function f(n: number): number {
+              let f: (n: number) => number = function(n: number): number {
                 if (n <= 0) { return base; }
                 return g(n - 1);
-              }
-              function g(n: number): number {
+              };
+              let g: (n: number) => number = function(n: number): number {
                 let fRef: (n: number) => number = f;
                 return fRef(n);
-              }
+              };
               if (f(3) === 10) {
                 console.log("nested-group-alias-captured-ok");
               } else {
@@ -797,14 +797,14 @@ public class DeclaredBodyCarrierProductionTest {
         group("called-alias-later", """
             import * as console from "std/console";
             export function main(): null {
-              function g(n: number): number {
+              let g: (n: number) => number = function(n: number): number {
                 let fRef: (n: number) => number = f;
                 return fRef(n);
-              }
-              function f(n: number): number {
+              };
+              let f: (n: number) => number = function(n: number): number {
                 if (n <= 0) { return 0; }
                 return n + g(n - 1);
-              }
+              };
               if (f(4) === 10) {
                 console.log("nested-group-alias-later-ok");
               } else {
@@ -836,34 +836,34 @@ public class DeclaredBodyCarrierProductionTest {
             List.of(true, true), false, true),
         group("never-called-explicit-null", """
             export function main(): null {
-              function f(): null {
+              let f: () => null = function(): null {
                 let gRef: () => null = g;
                 return null;
-              }
-              function g(): null {
+              };
+              let g: () => null = function(): null {
                 let fRef: () => null = f;
                 return null;
-              }
+              };
               return null;
             }
             """, List.of(), false, List.of(false, false), false, false),
         group("never-called-explicit-number", """
             export function main(): null {
-              function f(): number {
+              let f: () => number = function(): number {
                 let gRef: () => number = g;
                 return 0;
-              }
-              function g(): number {
+              };
+              let g: () => number = function(): number {
                 let fRef: () => number = f;
                 return 1;
-              }
+              };
               return null;
             }
             """, List.of(), false, List.of(false, false), false, false),
         group("never-called-implicit", """
             export function main(): null {
-              function f(): void { let gRef: () => void = g; }
-              function g(): void { let fRef: () => void = f; }
+              let f: () => void = function(): void { let gRef: () => void = g; };
+              let g: () => void = function(): void { let fRef: () => void = f; };
               return null;
             }
             """, List.of(), false, List.of(false, false), true, false),
@@ -871,11 +871,11 @@ public class DeclaredBodyCarrierProductionTest {
             import * as console from "std/console";
             export function main(): null {
               let base: number = 10;
-              function f(n: number): number {
+              let f: (n: number) => number = function(n: number): number {
                 if (n <= 0) { return base; }
                 return g(n - 1);
-              }
-              function g(n: number): number { return f(n); }
+              };
+              let g: (n: number) => number = function(n: number): number { return f(n); };
               if (f(3) === 10) {
                 console.log("nested-group-captured-ok");
               } else {
@@ -888,14 +888,14 @@ public class DeclaredBodyCarrierProductionTest {
         group("nested-inside-function", """
             import * as console from "std/console";
             export function main(): null {
-              function outer(): number {
-                function f(n: number): number {
+              let outer: () => number = function(): number {
+                let f: (n: number) => number = function(n: number): number {
                   if (n <= 0) { return 0; }
                   return g(n - 1);
-                }
-                function g(n: number): number { return f(n); }
+                };
+                let g: (n: number) => number = function(n: number): number { return f(n); };
                 return f(2);
-              }
+              };
               if (outer() === 0) {
                 console.log("nested-group-inside-function-ok");
               } else {
@@ -923,11 +923,11 @@ public class DeclaredBodyCarrierProductionTest {
               return null;
             }
             function make(base: number): (n: number) => number {
-              function f(n: number): number {
+              let f: (n: number) => number = function(n: number): number {
                 if (n <= 0) { return base; }
                 return g(n - 1);
-              }
-              function g(n: number): number { return f(n); }
+              };
+              let g: (n: number) => number = function(n: number): number { return f(n); };
               return f;
             }
             """, List.of("escaped-group-a-ok", "escaped-group-b-ok"), true,
@@ -950,13 +950,13 @@ public class DeclaredBodyCarrierProductionTest {
               return null;
             }
             function make(base: number): (n: number) => number {
-              function f(n: number): number {
+              let f: (n: number) => number = function(n: number): number {
                 if (n <= 0) { return base; }
                 let m: number = n + 1;
                 g(n - 1);
                 return base + n + m;
-              }
-              function g(n: number): number { return f(n); }
+              };
+              let g: (n: number) => number = function(n: number): number { return f(n); };
               return f;
             }
             """, List.of("escaped-group-recursion-a-ok", "escaped-group-recursion-b-ok"),
@@ -979,15 +979,15 @@ public class DeclaredBodyCarrierProductionTest {
               return null;
             }
             function make(base: number): (n: number) => number {
-              function f(n: number): number {
+              let f: (n: number) => number = function(n: number): number {
                 if (n <= 0) { return base; }
                 let m: number = n + 1;
                 let cell: () => number = function(): number { return n + m; };
                 let sibling: (n: number) => number = g;
                 sibling(n - 1);
                 return base + n + m;
-              }
-              function g(n: number): number { return f(n); }
+              };
+              let g: (n: number) => number = function(n: number): number { return f(n); };
               return f;
             }
             """, List.of("escaped-group-alias-recursion-a-ok",
@@ -996,14 +996,14 @@ public class DeclaredBodyCarrierProductionTest {
         group("param-origin-contextual", """
             import * as console from "std/console";
             export function main(): null {
-              function f(n: number): number {
+              let f: (n: number) => number = function(n: number): number {
                 let gRef: (n: number) => number = g;
                 return n;
-              }
-              function g(n: number): number {
+              };
+              let g: (n: number) => number = function(n: number): number {
                 let fRef: (n: number) => number = f;
                 return n;
-              }
+              };
               let value: number | null = 1;
               let clear: () => void = function(): void { value = null; };
               if (value !== null) { clear(); f(value); }
@@ -1031,11 +1031,11 @@ public class DeclaredBodyCarrierProductionTest {
               return av + bv;
             }
             function make(base: number): (n: number) => Promise<number> {
-              async function f(n: number): Promise<number> {
+              let f: (n: number) => Promise<number> = async function(n: number): Promise<number> {
                 if (n <= 0) { return base; }
                 return await g(n - 1);
-              }
-              async function g(n: number): Promise<number> { return await f(n); }
+              };
+              let g: (n: number) => Promise<number> = async function(n: number): Promise<number> { return await f(n); };
               return f;
             }
             export function main(): null { return null; }
@@ -1047,14 +1047,14 @@ public class DeclaredBodyCarrierProductionTest {
               return await a(3);
             }
             function make(base: number): (n: number) => Promise<number> {
-              async function f(n: number): Promise<number> {
+              let f: (n: number) => Promise<number> = async function(n: number): Promise<number> {
                 if (n <= 0) { return base; }
                 let value: number | null = 1;
                 let clear: () => void = function(): void { value = null; };
                 if (value !== null) { clear(); return await g(value); }
                 return base;
-              }
-              async function g(n: number): Promise<number> { return await f(n); }
+              };
+              let g: (n: number) => Promise<number> = async function(n: number): Promise<number> { return await f(n); };
               return f;
             }
             export function main(): null { return null; }
@@ -1080,12 +1080,12 @@ public class DeclaredBodyCarrierProductionTest {
               return av + bv;
             }
             function make(base: number): (n: number) => Promise<number> {
-              async function f(n: number): Promise<number> {
+              let f: (n: number) => Promise<number> = async function(n: number): Promise<number> {
                 if (n <= 0) { return base; }
                 let sibling: (n: number) => Promise<number> = g;
                 return await sibling(n - 1);
-              }
-              async function g(n: number): Promise<number> { return await f(n); }
+              };
+              let g: (n: number) => Promise<number> = async function(n: number): Promise<number> { return await f(n); };
               return f;
             }
             export function main(): null { return null; }
@@ -1111,12 +1111,12 @@ public class DeclaredBodyCarrierProductionTest {
               return av + bv;
             }
             function make(base: number): (n: number) => Promise<number> {
-              async function g(n: number): Promise<number> { return await f(n); }
-              async function f(n: number): Promise<number> {
+              let g: (n: number) => Promise<number> = async function(n: number): Promise<number> { return await f(n); };
+              let f: (n: number) => Promise<number> = async function(n: number): Promise<number> {
                 if (n <= 0) { return base; }
                 let sibling: (n: number) => Promise<number> = g;
                 return await sibling(n - 1);
-              }
+              };
               return f;
             }
             export function main(): null { return null; }
@@ -1143,12 +1143,12 @@ public class DeclaredBodyCarrierProductionTest {
               return av + bv;
             }
             function make(base: number): (n: number) => Promise<number> {
-              async function f(n: number): Promise<number> {
+              let f: (n: number) => Promise<number> = async function(n: number): Promise<number> {
                 if (n <= 0) { return base; }
                 await g(n - 1);
                 return base + n;
-              }
-              async function g(n: number): Promise<number> { return await f(n); }
+              };
+              let g: (n: number) => Promise<number> = async function(n: number): Promise<number> { return await f(n); };
               return f;
             }
             export function main(): null { return null; }
@@ -1174,13 +1174,13 @@ public class DeclaredBodyCarrierProductionTest {
               return av + bv;
             }
             function make(base: number): (n: number) => Promise<number> {
-              async function f(n: number): Promise<number> {
+              let f: (n: number) => Promise<number> = async function(n: number): Promise<number> {
                 if (n <= 0) { return base; }
                 let sibling: (n: number) => Promise<number> = g;
                 await sibling(n - 1);
                 return base + n;
-              }
-              async function g(n: number): Promise<number> { return await f(n); }
+              };
+              let g: (n: number) => Promise<number> = async function(n: number): Promise<number> { return await f(n); };
               return f;
             }
             export function main(): null { return null; }
@@ -1207,14 +1207,14 @@ public class DeclaredBodyCarrierProductionTest {
               return av + bv;
             }
             function make(base: number): (n: number) => Promise<number> {
-              async function f(n: number): Promise<number> {
+              let f: (n: number) => Promise<number> = async function(n: number): Promise<number> {
                 if (n <= 0) { return base; }
                 let m: number = n;
                 let get: () => number = function(): number { return n + m; };
                 await g(n - 1);
                 return base + n + m;
-              }
-              async function g(n: number): Promise<number> { return await f(n); }
+              };
+              let g: (n: number) => Promise<number> = async function(n: number): Promise<number> { return await f(n); };
               return f;
             }
             export function main(): null { return null; }
@@ -1241,15 +1241,15 @@ public class DeclaredBodyCarrierProductionTest {
               return av + bv;
             }
             function make(base: number): (n: number) => Promise<number> {
-              async function f(n: number): Promise<number> {
+              let f: (n: number) => Promise<number> = async function(n: number): Promise<number> {
                 if (n <= 0) { return base; }
                 let m: number = n;
                 let get: () => number = function(): number { return n + m; };
                 let sibling: (n: number) => Promise<number> = g;
                 await sibling(n - 1);
                 return base + n + m;
-              }
-              async function g(n: number): Promise<number> { return await f(n); }
+              };
+              let g: (n: number) => Promise<number> = async function(n: number): Promise<number> { return await f(n); };
               return f;
             }
             export function main(): null { return null; }
@@ -1260,11 +1260,11 @@ public class DeclaredBodyCarrierProductionTest {
             import * as console from "std/console";
             export function main(): null {
               let base: number = 5;
-              function f(n: number): number {
+              let f: (n: number) => number = function(n: number): number {
                 if (n <= 0) { return base; }
                 let again: (n: number) => number = f;
                 return n + again(n - 1);
-              }
+              };
               if (f(4) === 15) {
                 console.log("self-alias-nested-sync-ok");
               } else {
@@ -1293,14 +1293,14 @@ public class DeclaredBodyCarrierProductionTest {
             import * as console from "std/console";
             export async function drive(): Promise<number> {
               let base: number = 5;
-              async function f(n: number): Promise<number> {
+              let f: (n: number) => Promise<number> = async function(n: number): Promise<number> {
                 if (n <= 0) {
                   console.log("self-alias-nested-async-leaf");
                   return base;
                 }
                 let again: (n: number) => Promise<number> = f;
                 return await again(n - 1);
-              }
+              };
               let v: number = await f(4);
               if (v === 5) {
                 console.log("self-alias-nested-async-ok");
@@ -1478,6 +1478,8 @@ public class DeclaredBodyCarrierProductionTest {
                     check(!compiler.compile(), testCase.name() + " [" + lane + "]: forward nested use rejects");
                     var diagnostics = compiler.diagnostics();
                     check(diagnostics.size() == 1 && "E2001".equals(diagnostics.getFirst().code())
+                            && diagnostics.getFirst().message().equals("Undeclared identifier '"
+                                + (testCase.name().endsWith("alias-later") ? "f" : "g") + "'")
                             && diagnostics.getFirst().toString().contains("/main.deal:"
                                 + ORDER_REJECTIONS.get(testCase.name()) + "-"),
                         testCase.name() + " [" + lane + "]: exact resolution failure: " + diagnostics);

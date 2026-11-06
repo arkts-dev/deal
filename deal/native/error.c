@@ -154,11 +154,7 @@ static const deal_arm_repertoire_entry deal_arm_repertoire[] = {
     DEAL_ARM_ENTRY(JSON_STRINGIFY_UNSUPPORTED, deal_arm_parameters_25, 1U,
         DEAL_ARM_SCOPE_TOP_LEVEL, 1U, 1U),
     DEAL_ARM_ENTRY(JSON_TO_WALK_CYCLE, deal_arm_parameters_none, 0U,
-        DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U),
-    DEAL_ARM_ENTRY(SUBSTRING_BOUNDS, deal_arm_parameters_none, 0U,
-        DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U),
-    DEAL_ARM_ENTRY(SQRT_NEGATIVE, deal_arm_parameters_none, 0U,
-        DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 1U)
+        DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U)
 };
 
 /* The compiled repertoire entry of one arm, or NULL for an unknown arm id. */
@@ -423,13 +419,13 @@ static char *deal_error_text_of_string(deal_string *value) {
     if (value == NULL) {
         deal_platform_fault("error record: null string field");
     }
-    size_t length = deal_text_byte_length(value);
-    char *text = deal_platform_allocate(length + 1u);
+    size_t length = deal_text_transport_length(value);
+    char *text = deal_platform_allocate(deal_platform_checked_add(length, 1u));
     if (text == NULL) {
         deal_platform_fault("error record: field text allocation failed");
     }
     if (length != 0u) {
-        memcpy(text, deal_text_bytes(value), length);
+        memcpy(text, deal_text_transport_bytes(value), length);
     }
     text[length] = 0;
     return text;

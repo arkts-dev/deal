@@ -7,12 +7,12 @@ export async function f(): Promise<number> {
   let completionState: number = 0;
   let completionCount: number = 0;
 
-  async function g(): Promise<number> {
+  let g: () => Promise<number> = async function(): Promise<number> {
     let result: number = 42;
     completionState = result;
     completionCount = completionCount + 1;
     return result;
-  }
+  };
 
   await g();
 

@@ -6,8 +6,8 @@
 import * as c from "std/console";
 export function main(): null {
  let trace: string = "";
- function small(x: number): number { trace = trace + "F"; return x; }
- function arg(s: string, x: number): number { trace = trace + s; return x; }
+ let small = function(x: number): number { trace = trace + "F"; return x; };
+ let arg = function(s: string, x: number): number { trace = trace + s; return x; };
  let extended: (x: number, y: number, z: number) => number = small;
  let result: number = extended(arg("A", 4), arg("B", 5), arg("C", 6));
  if(result !== 4 || trace !== "ABCF") {throw {code:"TEST_FAIL",message:"ignored args: " + trace};}

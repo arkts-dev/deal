@@ -1,6 +1,7 @@
 "use strict";
 module.exports = {
   echo: value => value,
+  inspectText: value => value.get("self")===value && value.get("a")===value.get("b") && value.get("😀")==="\ud800" && value.get("a")[0]==="😀" && value.get("a")[1]==="\ud800",
   undefinedValue: () => undefined,
   nothing: () => {},
   maybeNumber: value => value,

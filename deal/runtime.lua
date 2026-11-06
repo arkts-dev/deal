@@ -1,4 +1,4 @@
--- DEAL Runtime Library v1.5 (LuaJIT backend)
+-- DEAL Runtime Library v1.6 (LuaJIT backend)
 -- Provides type checks, canonical descriptor parsing and matching, integer
 -- arithmetic, class construction, function wrapping,
 -- async/await infrastructure and typed host-module loading.
@@ -88,7 +88,7 @@ end
 -- their Java spellings (never LuaJIT's "inf"/"-inf"), a subnormal its
 -- fixed-exponent denormal spelling, every other finite nonzero value its
 -- shortest exact "0x1.<digits>p<exp>" form. The one renderer of the
--- closed-arm actuals that spell a number (SQRT_NEGATIVE), the same
+-- numeric runtime observations, the same
 -- spelling the emitted prelude's __numHex, the JVM runtime's
 -- Double.toHexString and the shared CanonicalJson#numberHex publish.
 function __rt.number_hex(v)
@@ -182,12 +182,10 @@ function __rt.check_number(v, file, line, column)
   return v
 end
 
--- ===== Unicode scalar-value string support =====
+-- ===== UTF-16 code-unit strings =====
 
---- Validate that a Lua string is well-formed UTF-8 encoding a sequence of
--- Unicode scalar values: no truncated sequences, no stray continuation
--- bytes, no overlong encodings, no UTF-16 surrogate code points
--- (U+D800..U+DFFF), and no values above U+10FFFF.
+--- Validate UTF-8/WTF-8 structure. Lone surrogate units are data; truncated,
+-- stray-continuation, overlong and out-of-range encodings reject.
 function __rt.utf8_valid(s)
   local n = #s
   local i = 1
@@ -215,7 +213,6 @@ function __rt.utf8_valid(s)
         local b3 = string.byte(s, i + 2)
         if b3 == nil or b3 < 0x80 or b3 > 0xBF then return false end
         if b1 == 0xE0 and b2 < 0xA0 then return false end  -- overlong
-        if b1 == 0xED and b2 > 0x9F then return false end  -- surrogate U+D800..U+DFFF
       end
       if len == 4 then
         local b3 = string.byte(s, i + 2)
@@ -275,9 +272,6 @@ function __rt.utf8_next(s, i)
     if b1 == 0xE0 and b2 < 0xA0 then
       error(__rt._err("E8001", "expected string, got overlong UTF-8 encoding", nil, nil, nil, "string", "invalid UTF-8 string"))
     end
-    if b1 == 0xED and b2 > 0x9F then
-      error(__rt._err("E8001", "expected string, got UTF-16 surrogate code point", nil, nil, nil, "string", "invalid UTF-8 string"))
-    end
   end
   if len == 4 then
     b3 = string.byte(s, p + 2)
@@ -295,13 +289,8 @@ function __rt.utf8_next(s, i)
   return p + len - 1, string.sub(s, p, p + len - 1)
 end
 
---- Classify a Lua string's UTF-8 validity (the check_string boundary
--- reason split, ISSUE-0598): nil when the string is scalar-valid UTF-8,
--- "surrogate" when the walk reaches a UTF-16 surrogate code point
--- (an ED A0..BF 3-byte sequence), and "invalid" for every other
--- malformed encoding. The byte walk mirrors utf8_valid exactly and
--- stops at the first invalid sequence, so the reported reason is
--- deterministic.
+--- Classify structural encoding validity: nil for admitted UTF-8/WTF-8,
+-- "invalid" for malformed encodings. The walk mirrors utf8_valid.
 function __rt.utf8_status(s)
   local n = #s
   local i = 1
@@ -329,7 +318,6 @@ function __rt.utf8_status(s)
         local b3 = string.byte(s, i + 2)
         if b3 == nil or b3 < 0x80 or b3 > 0xBF then return "invalid" end
         if b1 == 0xE0 and b2 < 0xA0 then return "invalid" end  -- overlong
-        if b1 == 0xED and b2 > 0x9F then return "surrogate" end  -- U+D800..U+DFFF
       end
       if len == 4 then
         local b3 = string.byte(s, i + 2)
@@ -345,24 +333,97 @@ function __rt.utf8_status(s)
   return nil
 end
 
+-- Internal strings use UTF-8 code-unit encodings; supplementary pairs are
+-- canonicalized to two three-byte units. Host UTF-8 is decoded losslessly.
+function __rt.string_units(s)
+  local units, i = {}, 1
+  while i <= #s do
+    local b = s:byte(i)
+    local n = b < 128 and 1 or b < 224 and 2 or b < 240 and 3 or 4
+    local cp = b % (2 ^ (8 - n))
+    if n == 1 then cp = b end
+    for k = 1, n - 1 do cp = cp * 64 + s:byte(i + k) % 64 end
+    if cp > 65535 then
+      cp = cp - 65536
+      units[#units + 1] = 55296 + math.floor(cp / 1024)
+      units[#units + 1] = 56320 + cp % 1024
+    else units[#units + 1] = cp end
+    i = i + n
+  end
+  return units
+end
+
+function __rt.string_from_units(units, first, last)
+  local out = {}
+  for i = first or 1, last or #units do
+    local cp = units[i]
+    if cp < 128 then out[#out + 1] = string.char(cp)
+    elseif cp < 2048 then out[#out + 1] = string.char(192 + math.floor(cp / 64), 128 + cp % 64)
+    else out[#out + 1] = string.char(224 + math.floor(cp / 4096),
+      128 + math.floor(cp / 64) % 64, 128 + cp % 64) end
+  end
+  return table.concat(out)
+end
+
+function __rt.string_normalize(s)
+  return __rt.string_from_units(__rt.string_units(s))
+end
+
+-- UTF-8 transport combines paired units; lone units retain their three-byte
+-- encoding at the Lua host surface. Console output substitutes U+FFFD.
+function __rt.string_transport(s, replace_lone)
+  local units, out, i = __rt.string_units(s), {}, 1
+  while i <= #units do
+    local cp = units[i]
+    if cp >= 55296 and cp <= 56319 and units[i + 1] ~= nil
+        and units[i + 1] >= 56320 and units[i + 1] <= 57343 then
+      cp = 65536 + (cp - 55296) * 1024 + units[i + 1] - 56320
+      out[#out + 1] = string.char(240 + math.floor(cp / 262144),
+        128 + math.floor(cp / 4096) % 64, 128 + math.floor(cp / 64) % 64, 128 + cp % 64)
+      i = i + 2
+    else
+      if replace_lone and cp >= 55296 and cp <= 57343 then cp = 65533 end
+      out[#out + 1] = __rt.string_from_units({cp})
+      i = i + 1
+    end
+  end
+  return table.concat(out)
+end
+
+function __rt.string_json_body(s)
+  local units, out, i = __rt.string_units(s), {}, 1
+  local escapes = {[8]="b", [9]="t", [10]="n", [12]="f", [13]="r"}
+  while i <= #units do
+    local cp, next_unit = units[i], units[i + 1]
+    if cp == 34 or cp == 92 then out[#out + 1] = string.char(92, cp)
+    elseif escapes[cp] then out[#out + 1] = string.char(92) .. escapes[cp]
+    elseif cp >= 55296 and cp <= 56319 and next_unit ~= nil
+        and next_unit >= 56320 and next_unit <= 57343 then
+      out[#out + 1] = __rt.string_from_units(units, i, i + 1)
+      i = i + 1
+    elseif cp < 32 or cp >= 55296 and cp <= 57343 then
+      out[#out + 1] = string.char(92) .. "u" .. string.format("%04x", cp)
+    else out[#out + 1] = __rt.string_from_units(units, i, i) end
+    i = i + 1
+  end
+  return table.concat(out)
+end
+
+function __rt.string_compare(a, b)
+  local x, y = __rt.string_units(a), __rt.string_units(b)
+  for i = 1, math.min(#x, #y) do
+    if x[i] ~= y[i] then return x[i] < y[i] and -1 or 1 end
+  end
+  return #x == #y and 0 or #x < #y and -1 or 1
+end
+
 function __rt.check_string(v, file, line, column)
   if type(v) ~= "string" then
     error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "string" }, "E8001",
       "expected string", file, line, column, "string", __rt.typed_kind(v)))
   end
-  -- Strings accepted from untrusted or backend-native
-  -- boundaries must reject invalid encodings (malformed UTF-8 byte
-  -- sequences). A surrogate code point gets the specific pinned message
-  -- (the host-surrogate-utf8-e8010 sidecar); every other malformed
-  -- encoding keeps the general message. Both are the two INNER_ONLY
-  -- host string-carrier arms' own texts, selected here and rendered by
-  -- the artifact's closed arm table.
-  local status = __rt.utf8_status(v)
-  if status == "surrogate" then
-    error(__rt._armErr("HOST_STRING_SURROGATE", {}, "E8001",
-      "expected string, got UTF-16 surrogate code point", file, line, column,
-      "string", "invalid UTF-8 string"))
-  elseif status == "invalid" then
+  -- Structural byte defects use the owning closed boundary arm.
+  if __rt.utf8_status(v) == "invalid" then
     error(__rt._armErr("HOST_STRING_INVALID_UTF8", {}, "E8001",
       "expected string, got invalid UTF-8 encoding", file, line, column,
       "string", "invalid UTF-8 string"))

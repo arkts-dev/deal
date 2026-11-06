@@ -613,6 +613,8 @@ typedef struct {
     const char *class_atom;    /* the carried canonical class atom of a CLASS */
     const char *signature;     /* the carried signature of a FUNCTION */
     uint32_t unicode_defect;   /* deal_unicode_defect of an INVALID_UNICODE */
+    int host_function;         /* unwrapped callable: never a DEAL datum */
+    int opaque;                /* unsupported host object: never a DEAL datum */
     void *referent;            /* the managed payload of a managed kind */
 } deal_classification;
 
@@ -625,6 +627,8 @@ static deal_classification deal_check_classify(const deal_check_input *input) {
     deal_classification classification;
     classification.class_atom = NULL;
     classification.signature = NULL;
+    classification.host_function = 0;
+    classification.opaque = 0;
     classification.unicode_defect = DEAL_UNICODE_MALFORMED;
     classification.referent = NULL;
     switch ((deal_presentation)input->presentation) {
@@ -645,11 +649,13 @@ static deal_classification deal_check_classify(const deal_check_input *input) {
         classification.kind = DEAL_KIND_INVALID_UNICODE;
         classification.unicode_defect = input->unicode_defect;
         return classification;
-    case DEAL_PRESENT_RAW_FUNCTION:
-        classification.kind = DEAL_KIND_FUNCTION;
-        return classification;
     case DEAL_PRESENT_OPAQUE:
         classification.kind = DEAL_KIND_OPAQUE;
+        classification.opaque = 1;
+        return classification;
+    case DEAL_PRESENT_RAW_FUNCTION:
+        classification.kind = DEAL_KIND_FUNCTION;
+        classification.host_function = 1;
         return classification;
     case DEAL_PRESENT_DATUM:
         break;
@@ -681,8 +687,16 @@ static deal_classification deal_check_classify(const deal_check_input *input) {
         return classification;
     case DEAL_DATA_TABLE:
         classification.kind = DEAL_KIND_TABLE;
+        classification.opaque = input->datum.reference != NULL
+            && deal_object_layout(input->datum.reference) == DEAL_LAYOUT_HOST_OPAQUE;
         return classification;
     case DEAL_DATA_FUNCTION:
+        if (input->datum.reference != NULL
+                && deal_object_layout(input->datum.reference) == DEAL_LAYOUT_HOST_RAW_FUNCTION) {
+            classification.kind = DEAL_KIND_FUNCTION;
+            classification.host_function = 1;
+            return classification;
+        }
         if (input->signature == NULL) {
             deal_platform_fault("check: function datum without its signature");
         }
@@ -755,10 +769,7 @@ static const char *deal_check_carrier_token(const deal_classification *classific
     case DEAL_KIND_STRING:
     case DEAL_KIND_INVALID_UNICODE:
         return "string";
-    /* Every other presentation is table-carried at a host cell arm, the closed
-     * DEAL function value included: the shared carrier-kind projection of a
-     * function view is `table` (P2 item 2). Raw callables without a wrapper
-     * signature are handled above and retain the native `function` token. */
+    /* Every other presentation is table-carried at a host cell arm. */
     default:
         return "table";
     }
@@ -808,6 +819,7 @@ static deal_check_case deal_check_core(deal_descriptor *descriptor,
     }
     failure->descriptor = descriptor;
     failure->actual = deal_check_typed_token(value);
+    if (value->opaque) return DEAL_CHECK_KIND_MISMATCH;
     switch ((deal_descriptor_kind)descriptor->kind) {
     case DEAL_DESCRIPTOR_UNDEFINED:
     case DEAL_DESCRIPTOR_VOID:
@@ -832,6 +844,7 @@ static deal_check_case deal_check_core(deal_descriptor *descriptor,
         return value->kind == DEAL_KIND_TABLE
             ? DEAL_CHECK_PASS : DEAL_CHECK_KIND_MISMATCH;
     case DEAL_DESCRIPTOR_UNKNOWN:
+        if (value->host_function) return DEAL_CHECK_KIND_MISMATCH;
         switch (value->kind) {
         case DEAL_KIND_NULL:
         case DEAL_KIND_UNDEFINED:
@@ -1195,6 +1208,9 @@ deal_outcome deal_check_value(deal_descriptor *expected, deal_check_input input,
 typedef struct {
     deal_check_input input;
     deal_descriptor *descriptor;
+    size_t element_index;
+    deal_descriptor *element_descriptor;
+    deal_check_input element_input;
 } deal_live_item;
 typedef struct {
     deal_live_item *items;
@@ -1204,7 +1220,8 @@ typedef struct {
 } deal_live_walk;
 
 static void deal_live_push(deal_live_walk *walk, deal_check_input input,
-                            deal_descriptor *descriptor) {
+                            deal_descriptor *descriptor,
+                            const deal_live_item *parent) {
     if (walk->count == walk->capacity) {
         size_t capacity = walk->capacity == 0u ? 16u
             : deal_platform_checked_multiply(walk->capacity, 2u);
@@ -1217,7 +1234,15 @@ static void deal_live_push(deal_live_walk *walk, deal_check_input input,
         walk->items = items;
         walk->capacity = capacity;
     }
-    walk->items[walk->count++] = (deal_live_item){input, descriptor};
+    deal_live_item item = {0};
+    item.input = input;
+    item.descriptor = descriptor;
+    if (parent != NULL) {
+        item.element_index = parent->element_index;
+        item.element_descriptor = parent->element_descriptor;
+        item.element_input = parent->element_input;
+    }
+    walk->items[walk->count++] = item;
 }
 
 static size_t deal_live_hash(const void *object, size_t capacity) {
@@ -1261,7 +1286,7 @@ static int deal_live_seen(deal_live_walk *walk, const void *object) {
 static deal_check_input deal_live_datum(deal_data datum) {
     deal_check_input input;
     deal_host_present_datum(datum, &input);
-    if (datum.tag == DEAL_DATA_STRING && !deal_text_is_scalar_sequence(
+    if (datum.tag == DEAL_DATA_STRING && !deal_text_is_code_units(
             deal_text_bytes(datum.reference), deal_text_byte_length(datum.reference))) {
         input.presentation = DEAL_PRESENT_INVALID_UNICODE;
         input.unicode_defect = DEAL_UNICODE_MALFORMED;
@@ -1291,9 +1316,11 @@ static deal_check_input deal_live_element(deal_array *array, size_t index) {
             deal_data_tag tag;
             if (layout == DEAL_LAYOUT_STRING) tag = DEAL_DATA_STRING;
             else if (layout == DEAL_LAYOUT_ARRAY) tag = DEAL_DATA_ARRAY;
-            else if (layout == DEAL_LAYOUT_TABLE) tag = DEAL_DATA_TABLE;
+            else if (layout == DEAL_LAYOUT_TABLE || layout == DEAL_LAYOUT_HOST_OPAQUE)
+                tag = DEAL_DATA_TABLE;
             else if (layout == DEAL_LAYOUT_ERROR) tag = DEAL_DATA_ERROR;
-            else if (layout == DEAL_LAYOUT_FUNCTION) tag = DEAL_DATA_FUNCTION;
+            else if (layout == DEAL_LAYOUT_FUNCTION || layout == DEAL_LAYOUT_HOST_RAW_FUNCTION)
+                tag = DEAL_DATA_FUNCTION;
             else if (layout >= DEAL_LAYOUT_EMITTED_BASE) tag = DEAL_DATA_CLASS;
             else deal_platform_fault("check: invalid graph reference layout");
             datum = deal_data_of_reference(tag, reference);
@@ -1328,9 +1355,10 @@ deal_outcome deal_check_live_value(deal_descriptor *expected, deal_check_input i
     deal_outcome outcome = deal_check_value(expected, input, boundary_kind, context);
     if (outcome.error != NULL || input.presentation != DEAL_PRESENT_DATUM) return outcome;
     deal_live_walk walk = {0};
-    deal_live_push(&walk, input, expected);
+    deal_live_push(&walk, input, expected, NULL);
+    deal_live_item item = {0};
     while (walk.count != 0u) {
-        deal_live_item item = walk.items[--walk.count];
+        item = walk.items[--walk.count];
         deal_descriptor *descriptor = item.descriptor;
         /* Unknown graph leaves still own their concrete string encoding check. */
         if (descriptor->kind == DEAL_DESCRIPTOR_UNKNOWN
@@ -1370,17 +1398,29 @@ deal_outcome deal_check_live_value(deal_descriptor *expected, deal_check_input i
             for (size_t index = count; index != 0u; index--) {
                 deal_string *key = deal_container_table_key_at(table, index - 1u);
                 deal_live_push(&walk, deal_live_datum(deal_container_table_read(table, key)),
-                    deal_descriptor_intern("unknown"));
+                    deal_descriptor_intern("unknown"), &item);
                 deal_live_push(&walk, deal_live_datum(deal_data_of_reference(DEAL_DATA_STRING, key)),
-                    deal_descriptor_intern("string"));
+                    deal_descriptor_intern("string"), &item);
             }
         } else if (datum.tag == DEAL_DATA_ARRAY) {
             deal_array *array = datum.reference;
             uint32_t recorded = deal_container_array_element_descriptor(array);
-            deal_descriptor *element = recorded == 0u ? deal_descriptor_intern("unknown")
-                : deal_descriptor_of_reference(recorded);
-            for (size_t index = deal_container_array_count(array); index != 0u; index--)
-                deal_live_push(&walk, deal_live_element(array, index - 1u), element);
+            deal_descriptor *declared = descriptor;
+            while (declared->kind == DEAL_DESCRIPTOR_NULLISH) declared = declared->inner;
+            deal_descriptor *element = declared->kind == DEAL_DESCRIPTOR_ARRAY
+                ? declared->inner
+                : recorded == 0u ? deal_descriptor_intern("unknown")
+                    : deal_descriptor_of_reference(recorded);
+            for (size_t index = deal_container_array_count(array); index != 0u; index--) {
+                deal_check_input child = deal_live_element(array, index - 1u);
+                deal_live_push(&walk, child, element, &item);
+                deal_live_item *pushed = &walk.items[walk.count - 1u];
+                if (declared->kind == DEAL_DESCRIPTOR_ARRAY && pushed->element_index == 0u) {
+                    pushed->element_index = index;
+                    pushed->element_descriptor = element;
+                    pushed->element_input = child;
+                }
+            }
         } else if (datum.tag == DEAL_DATA_ERROR) {
             /* Builtin fields live in error.c's platform text, not an emitted
              * class record. Inspect without allocating an admitted string from
@@ -1390,7 +1430,7 @@ deal_outcome deal_check_live_value(deal_descriptor *expected, deal_check_input i
                 int present = index == 0u
                     ? deal_error_code(datum.reference, &bytes)
                     : deal_error_message(datum.reference, &bytes);
-                if (present && deal_text_is_scalar_sequence(bytes, strlen(bytes))) continue;
+                if (present && deal_text_is_code_units(bytes, strlen(bytes))) continue;
                 deal_check_input field = {0};
                 field.presentation = present ? DEAL_PRESENT_INVALID_UNICODE : DEAL_PRESENT_MISSING;
                 field.unicode_defect = DEAL_UNICODE_MALFORMED;
@@ -1420,10 +1460,26 @@ deal_outcome deal_check_live_value(deal_descriptor *expected, deal_check_input i
                 }
                 if (child.presentation == DEAL_PRESENT_DATUM)
                     child = deal_live_datum(child.datum);
-                deal_live_push(&walk, child, field->descriptor);
+                deal_live_push(&walk, child, field->descriptor, &item);
             }
             if (outcome.error != NULL) break;
         }
+    }
+    if (outcome.error != NULL && item.element_index != 0u) {
+        /* The outer checked array owns its first failing element; nested
+         * arrays propagate the leaf cause without adding another wrapper. */
+        char index_text[3u * sizeof(size_t) + 1u];
+        size_t end = sizeof(index_text) - 1u;
+        index_text[end] = '\0';
+        size_t index = item.element_index;
+        do {
+            index_text[--end] = (char)('0' + index % 10u);
+            index /= 10u;
+        } while (index != 0u);
+        deal_arm_parameter parameter = {"oneBasedIndex", &index_text[end]};
+        outcome.error = deal_error_materialize(DEAL_ARM_ID_ARRAY_ELEMENT_KIND,
+            &parameter, 1u, deal_descriptor_text(item.element_descriptor),
+            deal_check_token(&item.element_input), context->origin, outcome.error);
     }
     deal_platform_release(walk.items);
     deal_platform_release(walk.seen);

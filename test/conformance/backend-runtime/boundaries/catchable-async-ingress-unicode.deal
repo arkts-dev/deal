@@ -4,5 +4,5 @@
 // @features: boundary-validation
 import * as host from "host/probe";
 
-export async function run():Promise<number>{try{let u=await host.f();return 0;}catch(e){if(e instanceof Error){return 1;}return 0;}}
+export async function run():Promise<number>{let u=await host.f();if((u as string)!==`\uD800`){throw {code:"TEST",message:"async lone unit lost"};}return 1;}
 export function main():null{return null;}

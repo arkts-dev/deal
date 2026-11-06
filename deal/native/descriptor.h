@@ -5,7 +5,7 @@
  * construction validation of `llvm-native-runtime-value-model` R2/R4/R5.
  *
  * Grammar (R4). One parser reads exactly the canonical public descriptor
- * grammar of `docs/spec-v1.5.md`:
+ * grammar of `docs/spec-v1.6.md`:
  *
  *     descriptor := primitive | error | class | array | nullish | function
  *     primitive  := "null" | "undefined" | "boolean" | "number" | "string"
@@ -186,7 +186,10 @@ deal_outcome deal_check_value(deal_descriptor *expected, deal_check_input input,
 
 /* Checks the descriptor and the current reachable managed graph before a
  * language boundary commits. The cycle guard is local to this check; retained
- * aliases can invalidate a graph after any earlier successful admission. */
+ * aliases can invalidate a graph after any earlier successful admission.
+ * Typed arrays check the consuming declared element descriptor as well as
+ * persistent compatibility. The first failing outer element owns E8003,
+ * retaining the original leaf cause through nested arrays. */
 deal_outcome deal_check_live_value(deal_descriptor *expected, deal_check_input input,
                                    uint32_t boundary_kind,
                                    const deal_check_context *context);

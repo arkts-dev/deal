@@ -78,11 +78,11 @@ public class UnicodeScalarsTest {
 
         // Invalid is the single invalid classification: the same instance
         // for every defect shape, never a per-defect projection.
-        UnicodeScalars.ScalarString loneHigh = UnicodeScalars.validate("\uD800");
+        UnicodeScalars.ScalarString malformed = UnicodeScalars.validate(bytes(0x80));
         UnicodeScalars.ScalarString truncated = UnicodeScalars.validate(bytes(0xE2, 0x28));
-        check(loneHigh == UnicodeScalars.Invalid.INSTANCE
+        check(malformed == UnicodeScalars.Invalid.INSTANCE
                 && truncated == UnicodeScalars.Invalid.INSTANCE
-                && loneHigh == truncated,
+                && malformed == truncated,
             "Invalid is the single invalid classification (one instance, no per-defect shape)");
     }
 
@@ -101,23 +101,15 @@ public class UnicodeScalarsTest {
         check(List.of(0x1F600).equals(UnicodeScalars.scalars((UnicodeScalars.Valid) smiley)),
             "U+1F600 (one surrogate pair) decodes as exactly one scalar");
 
-        // Lone high surrogates.
-        check(UnicodeScalars.validate("\uD800") == UnicodeScalars.Invalid.INSTANCE,
-            "a lone high surrogate classifies Invalid");
-        check(UnicodeScalars.validate("ab\uD800") == UnicodeScalars.Invalid.INSTANCE,
-            "a high surrogate at the end classifies Invalid");
-        check(UnicodeScalars.validate("\uD800X") == UnicodeScalars.Invalid.INSTANCE,
-            "a high surrogate followed by a non-low unit classifies Invalid");
-        check(UnicodeScalars.validate("\uD800\uD800\uDC00") == UnicodeScalars.Invalid.INSTANCE,
-            "a high surrogate followed by another high surrogate classifies Invalid");
-
-        // Lone low surrogates.
-        check(UnicodeScalars.validate("\uDC00") == UnicodeScalars.Invalid.INSTANCE,
-            "a lone low surrogate classifies Invalid");
-        check(UnicodeScalars.validate("\uDC00\uDE00") == UnicodeScalars.Invalid.INSTANCE,
-            "a lone low surrogate before a valid pair classifies Invalid");
-        check(UnicodeScalars.validate("a\uDC00b") == UnicodeScalars.Invalid.INSTANCE,
-            "a low surrogate surrounded by BMP scalars classifies Invalid");
+        // Every UTF-16 unit sequence is data, with no replacement or repair.
+        for (String text : List.of("\uD800", "ab\uD800", "\uD800X",
+                "\uD800\uD800\uDC00", "\uDC00", "\uDC00\uDE00", "a\uDC00b")) {
+            check(UnicodeScalars.validate(text) instanceof UnicodeScalars.Valid admitted
+                    && admitted.carrier().equals(text), "UTF-16 units survive unchanged");
+        }
+        check(List.of(0xD800, 0x10000, 0xDC00).equals(
+                UnicodeScalars.scalars(valid("\uD800\uD800\uDC00\uDC00"))),
+            "iteration combines only adjacent high/low pairs");
 
         // Valid carriers stay Valid: pairs, BMP, empty, and U+10FFFF.
         check(UnicodeScalars.validate("\uD83D\uDE00\uD83D\uDE01")
@@ -229,19 +221,15 @@ public class UnicodeScalarsTest {
         check(UnicodeScalars.utf8Defect("a\u00E9\uD83D\uDE00b".getBytes(
                 StandardCharsets.UTF_8)) == null,
             "a scalar-valid UTF-8 sequence carries no defect");
-        check(UnicodeScalars.carrierDefect("\uD800")
-                == UnicodeScalars.Defect.SURROGATE,
-            "a lone high surrogate carrier is the surrogate class");
-        check(UnicodeScalars.carrierDefect("a\uD800b")
-                == UnicodeScalars.Defect.SURROGATE,
-            "an embedded lone surrogate carrier is the surrogate class, "
-                + "never the carrier's length");
-        check(UnicodeScalars.carrierDefect("a\uDC80b")
-                == UnicodeScalars.Defect.SURROGATE,
-            "an embedded lone low surrogate carrier is the surrogate class");
-        check(UnicodeScalars.carrierDefect("a\uD83D\uDE00b") == null,
+        check(UnicodeScalars.validate("\uD800") instanceof UnicodeScalars.Valid,
+            "a lone high unit is valid string data");
+        check(UnicodeScalars.validate("a\uD800b") instanceof UnicodeScalars.Valid,
+            "an embedded lone high unit is valid string data");
+        check(UnicodeScalars.validate("a\uDC80b") instanceof UnicodeScalars.Valid,
+            "an embedded lone low unit is valid string data");
+        check(UnicodeScalars.validate("a\uD83D\uDE00b") instanceof UnicodeScalars.Valid,
             "a valid surrogate pair carrier carries no defect");
-        check(UnicodeScalars.carrierDefect("ok") == null,
+        check(UnicodeScalars.validate("ok") instanceof UnicodeScalars.Valid,
             "a scalar carrier carries no defect");
     }
 
@@ -318,11 +306,11 @@ public class UnicodeScalarsTest {
                     + ") is a Valid string carrying exactly that one scalar");
         }
 
-        // Non-scalar code points fail closed (a producer defect, never a repair).
-        expectIllegalArgument(() -> UnicodeScalars.scalarString(0xD800),
-            "scalarString on a high surrogate code point");
-        expectIllegalArgument(() -> UnicodeScalars.scalarString(0xDFFF),
-            "scalarString on a low surrogate code point");
+        check("\uD800".equals(UnicodeScalars.scalarString(0xD800)),
+            "iteration emits a lone high unit unchanged");
+        check("\uDFFF".equals(UnicodeScalars.scalarString(0xDFFF)),
+            "iteration emits a lone low unit unchanged");
+        // Out-of-range code points remain producer defects.
         expectIllegalArgument(() -> UnicodeScalars.scalarString(-1),
             "scalarString on a negative code point");
         expectIllegalArgument(() -> UnicodeScalars.scalarString(0x110000),
@@ -368,9 +356,10 @@ public class UnicodeScalarsTest {
         check(UnicodeScalars.concat(List.of(UnicodeScalars.Invalid.INSTANCE))
                 == UnicodeScalars.Invalid.INSTANCE,
             "a lone Invalid fragment concatenates to Invalid");
-        check(UnicodeScalars.concat(List.of(UnicodeScalars.validate("\uD800")))
-                == UnicodeScalars.Invalid.INSTANCE,
-            "a lone-surrogate fragment concatenates to Invalid (never repaired)");
+        check(UnicodeScalars.concat(List.of(valid("\uD800")))
+                .equals(valid("\uD800")), "concat retains a lone unit");
+        check(UnicodeScalars.concat(List.of(valid("\uD83D"), valid("\uDE00")))
+                .equals(valid("\uD83D\uDE00")), "concat permits pairing across fragments");
         check(UnicodeScalars.concat(List.of(UnicodeScalars.validate(bytes(0xE2, 0x82))))
                 == UnicodeScalars.Invalid.INSTANCE,
             "a truncated-UTF-8 fragment concatenates to Invalid (never repaired)");
@@ -383,12 +372,12 @@ public class UnicodeScalarsTest {
     static void testFailClosedGuards() {
         System.out.println("-- fail-closed guards --");
 
-        expectIllegalArgument(() -> new UnicodeScalars.Valid("\uD800"),
-            "a Valid constructed from a lone high surrogate");
-        expectIllegalArgument(() -> new UnicodeScalars.Valid("\uDC00"),
-            "a Valid constructed from a lone low surrogate");
-        expectIllegalArgument(() -> new UnicodeScalars.Valid("ab\uD800"),
-            "a Valid constructed from a trailing high surrogate");
+        check(new UnicodeScalars.Valid("\uD800").carrier().equals("\uD800"),
+            "direct high-unit construction retains data");
+        check(new UnicodeScalars.Valid("\uDC00").carrier().equals("\uDC00"),
+            "direct low-unit construction retains data");
+        check(new UnicodeScalars.Valid("ab\uD800").carrier().equals("ab\uD800"),
+            "direct trailing-unit construction retains data");
         UnicodeScalars.Valid direct = new UnicodeScalars.Valid("a\uD83D\uDE00");
         check("a\uD83D\uDE00".equals(direct.carrier()),
             "a directly constructed Valid pair carrier is accepted");

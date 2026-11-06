@@ -247,8 +247,7 @@ public class RuntimeTypeMatcherTest {
                 new ClassValue("Error"), new FnValue("()->void")}) {
             assertPass("unknown", value, "unknown admits supported data by identity");
         }
-        assertFailure("unknown", "\ud800", "E8001", "expected string, got string with unpaired surrogate code units",
-            "unknown still validates Unicode scalars");
+        assertPass("unknown", "\ud800", "unknown preserves lone UTF-16 units");
         assertFailure("unknown", new Object(), "E8001", "expected unknown, got unknown", "unknown rejects foreign carrier");
         assertFailure("number", UNDEFINED_VALUE, "E8001", "expected number, got undefined", "undefined diagnostic token");
     }
@@ -271,7 +270,7 @@ public class RuntimeTypeMatcherTest {
     }
 
     // =========================================================================
-    // string row (with the JVM unpaired-surrogate sub-message)
+    // string row: every UTF-16 unit sequence is legal string data
     // =========================================================================
 
     static void testStringRow() {
@@ -280,31 +279,27 @@ public class RuntimeTypeMatcherTest {
         for (String valid : new String[] {"", "hello", "\uD800\uDC00",
                 "\uDBFF\uDFFF", "a\uD83D\uDE00z", "\uFFFD"}) {
             assertPass("string", valid, "scalar sequence matches");
-            check(deal.codegen.jvm.JvmJson.validScalars(valid),
-                "JSON accepts the same scalar sequence");
+            check(deal.codegen.jvm.JvmJson.escapeString(valid) != null,
+                "JSON encodes the same scalar sequence");
         }
-        for (String invalid : new String[] {"\uD800", "\uDC00", "a\uD800b",
+        for (String units : new String[] {"\uD800", "\uDC00", "a\uD800b",
                 "\uD800\uD800\uDC00", "\uDC00\uD800", "\uDBFF\uDFFF\uDC00"}) {
-            assertFailure("string", invalid, "E8001",
-                "expected string, got string with unpaired surrogate code units",
-                "malformed scalar sequence rejects");
-            check(!deal.codegen.jvm.JvmJson.validScalars(invalid),
-                "JSON rejects the same malformed scalar sequence");
+            assertPass("string", units, "every UTF-16 sequence is string data");
+            String escaped = deal.codegen.jvm.JvmJson.escapeString(units);
+            check(escaped.contains("\\u"),
+                "JSON escapes lone units on output");
+            check(((deal.semantic.ir.CanonicalJson.Str)
+                deal.semantic.ir.CanonicalJson.parse("\"" + escaped + "\"")).value().equals(units),
+                "JSON escaped units decode without replacement");
         }
         assertPass("string", "hello", "string passes");
         assertPass("string", "", "empty string passes");
         assertPass("string", "\uD83D\uDE00", "well-formed surrogate pair passes");
         assertFailure("string", 1.0, "E8001", "expected string, got number",
             "string vs number");
-        assertFailure("string", "\uD800", "E8001",
-            "expected string, got string with unpaired surrogate code units",
-            "lone high surrogate");
-        assertFailure("string", "\uDC00", "E8001",
-            "expected string, got string with unpaired surrogate code units",
-            "lone low surrogate");
-        assertFailure("string", "a\uD800b", "E8001",
-            "expected string, got string with unpaired surrogate code units",
-            "high surrogate not followed by a low surrogate");
+        assertPass("string", "\uD800", "lone high unit");
+        assertPass("string", "\uDC00", "lone low unit");
+        assertPass("string", "a\uD800b", "embedded lone high unit");
     }
 
     // =========================================================================

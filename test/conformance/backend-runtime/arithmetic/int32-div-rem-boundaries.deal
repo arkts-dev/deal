@@ -9,8 +9,8 @@ export function main(): null {
   }
 
   let trace: string = "";
-  function lhs(): number { trace = trace + "L"; return -2147483648; }
-  function rhs(): number { trace = trace + "R"; return -1; }
+  let lhs = function(): number { trace = trace + "L"; return -2147483648; };
+  let rhs = function(): number { trace = trace + "R"; return -1; };
 
   let result: number = lhs() / rhs();
   trace = trace + "X";

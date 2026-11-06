@@ -13,7 +13,7 @@
 
 ## Control flow and storage
 
-For-of evaluates once. Arrays traverse live contiguous positions/appends; source array deletion rejects. Iterations own mutable captured let cells; strings traverse Unicode scalars.
+For-of evaluates once. Arrays traverse live contiguous positions/appends; source array deletion rejects. Iterations own mutable captured let cells; string iteration combines surrogate pairs and retains lone units. Escape literal UTF-16 units losslessly in emitted source.
 
 Array operations use carrier-neutral runtime accessors, including decoded arrays. Persistent descriptors cannot be retagged by empty/current contents. Stored undefined retains identity independently of nullability. Refined receiver/key/length/iterable/presence operations consume admitted boundary results; slot-threaded conditions preserve their preallocated identity. Assignment stores may adapt without changing the original RHS result.
 

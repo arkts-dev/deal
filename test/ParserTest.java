@@ -163,14 +163,14 @@ public class ParserTest {
         testTemplateLiteralLeadingExpr();
         testForOfStatement();
         testForOfMissingIterable();
-        testTemplateRawBackslashText();
+        testTemplateOrdinaryEscapeText();
         testTemplateUnterminatedInterpolation();
         testTemplateNestedBraces();
         testTemplateStringLiteralWithRBrace();
         testTemplateNestedTemplateLiteral();
         testTemplateNestedTemplateWithInterpolation();
-        testTemplateRawBackslashBeforeBacktick();
-        testTemplateTrailingBackslashPairs();
+        testTemplateEscapedBacktick();
+        testTemplateMalformedEscapesAndPairs();
         testTemplateMalformedExpression();
         testTemplateInterpolationRangeAnchors();
 
@@ -881,7 +881,7 @@ public class ParserTest {
     }
 
     /**
-     * v1.4 Semicolon rules (docs/spec-v1.5.md Syntactic grammar): every
+     * v1.4 Semicolon rules (docs/spec-v1.6.md Syntactic grammar): every
      * production carrying {@code ';'} consumes one — imports, class fields,
      * variable/expression/return/break/continue/delete/throw statements and
      * the C-style for separators. Block-ending productions (blocks,
@@ -1324,7 +1324,7 @@ public class ParserTest {
         // aren't a thing yet. Let's just test that parsing doesn't crash.
         // Instead, test a function declaration inside a function body.
         ParseResult r = parse("function outer(): null { function inner(): number { return 0; } return; }");
-        assertNoParseErrors(r, "function in function");
+        assertParseError(r, "E1042", "function declarations are module-only");
     }
 
     static void testFuncExprInCall() {
@@ -1618,22 +1618,22 @@ public class ParserTest {
         System.out.println("    (D20: for-of with missing iterable handled gracefully)");
     }
 
-    static void testTemplateRawBackslashText() {
-        System.out.println("-- Template Literal: raw backslash text (v1.4) --");
+    static void testTemplateOrdinaryEscapeText() {
+        System.out.println("-- Template Literal: ordinary escape decoding --");
 
-        // v1.4 TemplateText has no escape mechanism: the backslash and the
-        // character after it are ordinary text.
+        // An ordinary template escape consumes its backslash without changing
+        // the following character, matching an untagged TypeScript template.
         ParseResult r = parse("let x = `hello \\q world`;");
-        assertNoParseErrors(r, "raw backslash is ordinary TemplateText");
+        assertNoParseErrors(r, "ordinary template escape decodes once");
         VariableDeclaration vd = (VariableDeclaration) r.program().statements().get(0);
         TemplateLiteralExpr tl = assertExprInstance(vd.initializer(),
-            TemplateLiteralExpr.class, "raw backslash template");
+            TemplateLiteralExpr.class, "ordinary escape template");
         if (tl != null) {
             check(tl.parts().size() == 1, "one text part, got " + tl.parts().size());
             if (tl.parts().get(0) instanceof LiteralExpr part
                     && part.value() instanceof LiteralValue.StringLiteral sl) {
-                check(sl.value().equals("hello \\q world"),
-                    "verbatim text, got '" + sl.value() + "'");
+                check(sl.value().equals("hello q world"),
+                    "ordinary escape decoding, got '" + sl.value() + "'");
             }
         }
     }
@@ -1711,42 +1711,41 @@ public class ParserTest {
         }
     }
 
-    static void testTemplateRawBackslashBeforeBacktick() {
-        System.out.println("-- Template Literal: raw backslash does not shield"
-            + " a backtick, and its odd trailing run is rejected --");
+    static void testTemplateEscapedBacktick() {
+        System.out.println("-- Template Literal: escaped backtick is text --");
 
-        // A backslash is ordinary TemplateText, so the backtick after it
-        // closes the template; the trailing backslash run is odd, so the
-        // closed form is rejected with E1042 (the backtick is no closer for
-        // that text run) while the recovery shape is unchanged: the
-        // remaining backtick opens a new (unterminated) literal.
+        // The escaped backtick belongs to the decoded text, not the closing
+        // delimiter. The final unescaped backtick closes the template.
         LexResult lex = new Lexer("let x = `a\\`b`;", "test.deal").tokenize();
         boolean e1003 = lex.diagnostics().stream()
             .anyMatch(d -> d.code().equals("E1003"));
-        check(e1003, "the unterminated trailing literal reports E1003");
+        check(!e1003, "the escaped backtick does not terminate the template");
         boolean e1042 = lex.diagnostics().stream()
             .anyMatch(d -> d.code().equals("E1042"));
-        check(e1042, "the odd trailing backslash run reports E1042");
+        check(!e1042, "an escaped backtick is legal");
         ParseResult r = parse("let x = `a\\`b`;");
-        check(r.program() != null, "raw backslash before backtick parses");
+        assertNoParseErrors(r, "escaped backtick parses");
+        VariableDeclaration declaration = (VariableDeclaration) r.program().statements().get(0);
+        TemplateLiteralExpr template = (TemplateLiteralExpr) declaration.initializer();
+        check(template.parts().size() == 1, "escaped backtick is one text part");
+        LiteralExpr text = (LiteralExpr) template.parts().get(0);
+        check(text.value() instanceof LiteralValue.StringLiteral string
+                && string.value().equals("a`b"),
+            "escaped backtick decodes exactly once");
     }
 
     /**
-     * TemplateText trailing backslashes form pairs (docs/spec-v1.5.md): an odd
-     * run before the closing backtick or a {@code ${} opener is rejected with
-     * E1042 over the run and delimiter, every even run is admitted with the raw
-     * text preserved verbatim, and a nested template literal is rejected at its
-     * own delimiter.
+     * Malformed numeric/hexadecimal escapes reject with E1042, including in a
+     * nested template. Paired backslashes decode once, both before a closing
+     * backtick and before an interpolation boundary.
      */
-    static void testTemplateTrailingBackslashPairs() {
-        System.out.println("-- Template Literal: trailing backslash pairs --");
-        String closingMessage = "Invalid template literal: trailing"
-            + " backslashes before the closing backtick must form pairs";
-        String openerMessage = "Invalid template literal: trailing"
-            + " backslashes before '${' must form pairs";
+    static void testTemplateMalformedEscapesAndPairs() {
+        System.out.println("-- Template Literal: malformed escapes and paired controls --");
+        String closingMessage = "Invalid template literal: malformed numeric, hexadecimal or Unicode escape spelling";
+        String openerMessage = closingMessage;
 
-        // Odd run before the closing backtick.
-        String oddClosing = "let x = `a\\`;";
+        // Empty braced Unicode escape before the closing backtick.
+        String oddClosing = "let x = `a\\u{}`;";
         LexResult lex = new Lexer(oddClosing, "test.deal").tokenize();
         CompilerDiagnostic rejected = findDiag(lex.diagnostics(), "E1042");
         check(rejected != null && rejected.message().equals(closingMessage),
@@ -1757,8 +1756,7 @@ public class ParserTest {
                 RangeOrigin.SOURCE, "odd closing run range");
         }
 
-        // Even control: the raw text is preserved verbatim (two backslashes,
-        // no escape decoding).
+        // Two source backslashes decode to one literal backslash.
         ParseResult r = parse("let x = `a\\\\`;");
         assertNoParseErrors(r, "even closing run is admitted");
         VariableDeclaration vd = (VariableDeclaration) r.program().statements().get(0);
@@ -1769,26 +1767,25 @@ public class ParserTest {
                 + tl.parts().size());
             if (tl.parts().get(0) instanceof LiteralExpr part
                     && part.value() instanceof LiteralValue.StringLiteral sl) {
-                check(sl.value().equals("a\\\\"),
-                    "even closing run keeps both backslashes, got '"
+                check(sl.value().equals("a\\"),
+                    "paired backslashes decode to one unit, got '"
                         + sl.value() + "'");
             }
         }
 
-        // Odd run before the '${' interpolation boundary.
-        String oddOpener = "let y: string = \"s\"; let x = `a\\${y}`;";
+        // Malformed hexadecimal escape before the interpolation boundary.
+        String oddOpener = "let y: string = \"s\"; let x = `a\\xG1${y}`;";
         lex = new Lexer(oddOpener, "test.deal").tokenize();
         CompilerDiagnostic opener = findDiag(lex.diagnostics(), "E1042");
         check(opener != null && opener.message().equals(openerMessage),
             "odd opener run: exact E1042 message, got "
                 + (opener == null ? "none" : opener.message()));
         if (opener != null) {
-            checkRange(opener.range(), "test.deal", 1, 32, 1, 35, 31, 34, 3,
+            checkRange(opener.range(), "test.deal", 1, 32, 1, 34, 31, 33, 2,
                 RangeOrigin.SOURCE, "odd opener run range");
         }
 
-        // Even control at the interpolation boundary: the text part keeps the
-        // backslash pair and the interpolation still splits out.
+        // Paired backslashes decode to one unit; interpolation still splits out.
         r = parse("let y: string = \"s\"; let x = `a\\\\${y}`;");
         assertNoParseErrors(r, "even opener run is admitted");
         vd = (VariableDeclaration) r.program().statements().get(1);
@@ -1799,19 +1796,18 @@ public class ParserTest {
                 + tl.parts().size());
             if (tl.parts().get(0) instanceof LiteralExpr part
                     && part.value() instanceof LiteralValue.StringLiteral sl) {
-                check(sl.value().equals("a\\\\"),
-                    "even opener run keeps both backslashes, got '"
+                check(sl.value().equals("a\\"),
+                    "paired escape before interpolation decodes once, got '"
                         + sl.value() + "'");
             }
         }
 
-        // A nested template literal is rejected at its own closing backtick:
-        // the expression sub-lexer owns that literal and reports it once, at
-        // the rebased source position.
-        lex = new Lexer("let x = `[${ `in\\` }]`;", "test.deal").tokenize();
+        // The nested empty Unicode escape is reported once by its expression
+        // sub-lexer, at the rebased source position.
+        lex = new Lexer("let x = `[${ `in\\u{}` }]`;", "test.deal").tokenize();
         check(lex.diagnostics().isEmpty(),
             "the outer template level reports no nested violation");
-        ParseResult nested = parse("let x = `[${ `in\\` }]`;");
+        ParseResult nested = parse("let x = `[${ `in\\u{}` }]`;");
         CompilerDiagnostic nestedDiag = findDiag(nested.diagnostics(), "E1042");
         check(nestedDiag != null, "nested odd run is rejected with E1042");
         if (nestedDiag != null) {
@@ -1825,8 +1821,7 @@ public class ParserTest {
                 .filter(d -> d.code().equals("E1042")).count() == 1,
             "the nested odd run is reported exactly once");
 
-        // Even control: the same nested shape is admitted and the nested text
-        // part is verbatim.
+        // The same nested shape with a paired escape decodes once.
         r = parse("let x = `[${ `in\\\\` }]`;");
         assertNoParseErrors(r, "nested even run is admitted");
         vd = (VariableDeclaration) r.program().statements().get(0);
@@ -1839,8 +1834,8 @@ public class ParserTest {
                     && inner.parts().size() == 1
                     && inner.parts().get(0) instanceof LiteralExpr part
                     && part.value() instanceof LiteralValue.StringLiteral sl) {
-                check(sl.value().equals("in\\\\"),
-                    "nested even run keeps both backslashes, got '"
+                check(sl.value().equals("in\\"),
+                    "nested paired escape decodes once, got '"
                         + sl.value() + "'");
             } else {
                 fail("nested even run: unexpected nested template shape");
@@ -1915,14 +1910,14 @@ public class ParserTest {
         CompilerDiagnostic e1001 = findDiag(r3.diagnostics(), "E1001");
         check(e1001 != null, "T3: E1001 present for the interpolation error");
         if (e1001 != null) {
-            checkRange(e1001.range(), "test.deal", 1, 18, 1, 19, 17, 18, 1,
+            checkRange(e1001.range(), "test.deal", 1, 19, 1, 20, 18, 19, 1,
                 RangeOrigin.SOURCE, "T3: E1001 rebased to the raw '@' position");
-            checkCursorAt(src3, 17, 1, 18, "T3");
+            checkCursorAt(src3, 18, 1, 19, "T3");
         }
         CompilerDiagnostic e1037c = findDiag(r3.diagnostics(), "E1037");
         check(e1037c != null, "T3: E1037 present after the rebased '@'");
         if (e1037c != null) {
-            checkRange(e1037c.range(), "test.deal", 1, 19, 1, 19, 18, 18, 0,
+            checkRange(e1037c.range(), "test.deal", 1, 20, 1, 20, 19, 19, 0,
                 RangeOrigin.SOURCE, "T3: E1037 at the '}' position");
         }
 
@@ -1933,9 +1928,9 @@ public class ParserTest {
         CompilerDiagnostic e1037d = findDiag(r4.diagnostics(), "E1037");
         check(e1037d != null, "T4: E1037 present after the astral prefix");
         if (e1037d != null) {
-            checkRange(e1037d.range(), "test.deal", 1, 18, 1, 18, 17, 17, 0,
-                RangeOrigin.SOURCE, "T4: astral scalar counts one column");
-            checkCursorAt(src4, 17, 1, 18, "T4");
+            checkRange(e1037d.range(), "test.deal", 1, 19, 1, 19, 18, 18, 0,
+                RangeOrigin.SOURCE, "T4: astral content occupies two units");
+            checkCursorAt(src4, 18, 1, 19, "T4");
         }
 
         // 5. Tab content before the interpolation counts one scalar.
@@ -1957,10 +1952,10 @@ public class ParserTest {
         check(e1042b != null,
             "T6: E1042 present for the unterminated interpolation after astral");
         if (e1042b != null) {
-            checkRange(e1042b.range(), "test.deal", 1, 15, 1, 17, 14, 16, 2,
+            checkRange(e1042b.range(), "test.deal", 1, 16, 1, 18, 15, 17, 2,
                 RangeOrigin.SOURCE,
                 "T6: unterminated-interpolation pseudo-token raw-positioned");
-            checkCursorAt(src6, 14, 1, 15, "T6");
+            checkCursorAt(src6, 15, 1, 16, "T6");
         }
 
         // 7. The one-complete-expression rule: a leftover token is E1042 at
@@ -2037,7 +2032,7 @@ public class ParserTest {
     private static void checkCursorAt(String source, int scalarOffset,
             int expectedLine, int expectedColumn, String context) {
         ScalarSourceCursor cursor = new ScalarSourceCursor(source);
-        for (int i = 0; i < scalarOffset; i++) {
+        while (cursor.scalarOffset() < scalarOffset) {
             cursor.advance();
         }
         check(cursor.line() == expectedLine && cursor.column() == expectedColumn,

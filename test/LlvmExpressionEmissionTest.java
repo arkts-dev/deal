@@ -849,42 +849,37 @@ public final class LlvmExpressionEmissionTest {
      * failure path leaves the activation.
      */
     private static final String TYPED_FAILURE_SOURCE = """
+        function doubleInner(a: number): number { return a + a; }
+        function positiveInner(a: number): number { return a + a; }
+        function numberInner(a: number): number { return a + a; }
+        function booleanInner(a: number): number { return a + a; }
+        function anyInner(a: number): number { return a + a; }
         function double(n: number): number {
-          function inner(a: number): number {
-            return a + a;
-          }
+          let inner = doubleInner;
           let doubled: number = inner(n);
           return doubled + 1.0;
         }
 
         function positive(n: number): boolean {
-          function inner(a: number): number {
-            return a + a;
-          }
+          let inner = positiveInner;
           let doubled: number = inner(n);
           return doubled > 0.0;
         }
 
         function maybeNumber(n: number): number | null {
-          function inner(a: number): number {
-            return a + a;
-          }
+          let inner = numberInner;
           let doubled: number = inner(n);
           return doubled;
         }
 
         function maybeBoolean(n: number): boolean | undefined {
-          function inner(a: number): number {
-            return a + a;
-          }
+          let inner = booleanInner;
           let doubled: number = inner(n);
           return doubled > 0.0;
         }
 
         function anyValue(n: number): unknown {
-          function inner(a: number): number {
-            return a + a;
-          }
+          let inner = anyInner;
           let doubled: number = inner(n);
           return doubled;
         }
@@ -2172,7 +2167,7 @@ public final class LlvmExpressionEmissionTest {
             throws IOException {
         Files.createDirectories(root.resolve("src"));
         Files.writeString(root.resolve("deal.json"),
-            "{\"languageVersion\": \"1.5\", \"moduleRoots\": [\"src\"],"
+            "{\"languageVersion\": \"1.6\", \"moduleRoots\": [\"src\"],"
                 + " \"backend\": \"llvm\", \"externals\":"
                 + " {\"host/probe\": {\"declaration\":"
                 + " \"src/probe.d.deal\"}}}",
@@ -2186,7 +2181,7 @@ public final class LlvmExpressionEmissionTest {
     private static void writeProject(Path root, String source) throws IOException {
         Files.createDirectories(root.resolve("src"));
         Files.writeString(root.resolve("deal.json"),
-            "{\"languageVersion\": \"1.5\", \"moduleRoots\": [\"src\"],"
+            "{\"languageVersion\": \"1.6\", \"moduleRoots\": [\"src\"],"
                 + " \"backend\": \"llvm\"}", StandardCharsets.UTF_8);
         Files.writeString(root.resolve("src/main.deal"), source,
             StandardCharsets.UTF_8);

@@ -162,9 +162,11 @@ test("check_string rejects overlong encodings with E8001", function()
   assert_error(function() __rt.check_string("\xF0\x80\x80\x80") end, "E8001")
 end)
 
-test("check_string rejects UTF-16 surrogate code points with E8001", function()
-  assert_error(function() __rt.check_string("\xED\xA0\x80") end, "E8001")
-  assert_error(function() __rt.check_string("\xED\xBF\xBF") end, "E8001")
+test("check_string preserves lone UTF-16 units", function()
+  assert(__rt.check_string("\xED\xA0\x80") == "\xED\xA0\x80")
+  assert(__rt.check_string("\xED\xBF\xBF") == "\xED\xBF\xBF")
+  local next_cursor, ch = __rt.utf8_next("\xED\xA0\x80", 0)
+  assert(next_cursor == 3 and ch == "\xED\xA0\x80")
 end)
 
 test("check_string rejects code points above U+10FFFF with E8001", function()
@@ -190,7 +192,7 @@ end)
 
 test("utf8_next raises E8001 on malformed input", function()
   assert_error(function() __rt.utf8_next("\x80", 0) end, "E8001")
-  assert_error(function() __rt.utf8_next("\xED\xA0\x80", 0) end, "E8001")
+  assert_error(function() __rt.utf8_next("\xE2\x82", 0) end, "E8001")
 end)
 
 -- ==================== check_table tests ====================
@@ -1303,7 +1305,7 @@ test("check_type Error rejects non-Error class instances", function()
 end)
 
 test("check_type rejects the superseded builtin Error aliases", function()
-  -- The canonical builtin atom is exactly the bare "Error" (v1.5
+  -- The canonical builtin atom is exactly the bare "Error" (v1.6
   -- DescriptorV13); the superseded v1.2 spellings do not decode.
   local e = __rt.error_value("E8001", "boom")
   for _, alias in ipairs({"@/Error", "@$builtin/Error"}) do

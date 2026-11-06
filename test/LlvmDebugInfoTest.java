@@ -158,7 +158,7 @@ public final class LlvmDebugInfoTest {
         Files.writeString(root.resolve("src/lib.deal"), LIB_SOURCE,
             StandardCharsets.UTF_8);
         Files.writeString(root.resolve("deal.json"),
-            "{\"languageVersion\": \"1.5\", \"stdlib\": \"1.5\","
+            "{\"languageVersion\": \"1.6\", \"stdlib\": \"1.6\","
                 + " \"moduleRoots\": [\"src\"], \"backend\": \"llvm\"}\n",
             StandardCharsets.UTF_8);
         return root;

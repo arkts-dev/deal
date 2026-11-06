@@ -132,22 +132,18 @@ final class NativeRequirementCases {
                     if (fields.length != 7 + 2 * count) throw new AssertionError("truncated arm: " + line);
                     Map<String, String> parameters = new LinkedHashMap<>();
                     for (int index = 0; index < count; index++) parameters.put(fields[3 + 2 * index], fields[4 + 2 * index]);
-                    if (id == FailureArmId.SQRT_NEGATIVE && (!parameters.isEmpty()
-                            || !fields[3].equals("E8001") || !fields[4].equals("-")
-                            || !fields[5].equals("-0x1.0p2") || !fields[6].equals("sqrt of negative number")))
-                        throw new AssertionError("retained sqrt ABI tuple changed: " + line);
                     accounting.materializedArm(id, parameters, fields[3 + 2 * count], fields[6 + 2 * count],
                         fields[4 + 2 * count].equals("-") ? null : fields[4 + 2 * count],
                         fields[5 + 2 * count].equals("-") ? null : fields[5 + 2 * count]);
                     seen.add(id);
                 }
-                if (!seen.containsAll(Set.of(FailureArmId.SQRT_NEGATIVE, FailureArmId.HOST_LOAD_RAW_SHAPE,
+                if (!seen.containsAll(Set.of(FailureArmId.HOST_LOAD_RAW_SHAPE,
                         FailureArmId.HOST_LOAD_NOT_A_MODULE, FailureArmId.ARRAY_DELETE_BOUNDS)))
                     throw new AssertionError("missing retained ABI controls");
                 accounting.runtimeBoundary(BoundaryKind.ARRAY_ELEMENT_DELETE);
             }
         }
-        System.out.println("Native runtime contracts: actual arm materialization O0/O2 normal/stress (not source sqrt behavior)");
+        System.out.println("Native runtime contracts: actual arm materialization O0/O2 normal/stress (ABI materialization)");
     }
 
     /** Preserve the source assertions while spelling their equivalent raw-read/optional IR envelope.

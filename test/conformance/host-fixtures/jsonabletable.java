@@ -6,9 +6,8 @@
 // (makeParsed, ISSUE-0900: the JVM decoders' Table/Array carriers with the
 // boxed Long/Double numeric variants), and a self-referential table for
 // the closed cycle arm. The closed arms' returns carry a non-finite
-// numeric leaf, an invalid (unpaired-surrogate) object value and an
-// invalid (unpaired-surrogate) object key, the content shapes the finite
-// acyclic JSON domain excludes.
+// numeric leaf (JSON null) and lone UTF-16 units in object values and
+// keys (losslessly escaped JSON data).
 
 final class HostJsonabletable {
   public static Object makeTable() {

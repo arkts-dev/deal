@@ -4,7 +4,7 @@
   "diagnostic": {
     "code": "E3002",
     "line": 6,
-    "column": 83,
+    "column": 90,
     "message": "Cannot infer type of empty array literal"
   }
 }

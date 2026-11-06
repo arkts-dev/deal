@@ -514,9 +514,6 @@ deal_outcome_data deal_fn_apply(deal_fn *function,
                                 const deal_check_input *arguments,
                                 uint32_t argument_count,
                                 const deal_origin *origin) {
-    deal_outcome_data outcome;
-    outcome.error = NULL;
-    outcome.value = deal_data_of_undefined();
     if (origin == NULL) {
         deal_platform_fault("function value: null apply origin");
     }

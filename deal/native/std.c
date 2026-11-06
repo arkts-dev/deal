@@ -3,7 +3,7 @@
  *
  * The closed 18-operation dispatch of `std.h` (`llvm-native-runtime-value-model`
  * R7, R8, R10; `StdlibInvoke`). Every operation is enumerated from the merged
- * v1.5 `StdlibFunctionId` registry, its parameter and result descriptors are the
+ * v1.6 `StdlibFunctionId` registry, its parameter and result descriptors are the
  * declared `std/` signatures, and every crossing runs the delivered
  * descriptor-driven check, so this unit authors no failure text and no second
  * check authority.
@@ -107,19 +107,6 @@ static double deal_std_truncate(double value) {
     uint64_t fractional = (UINT64_C(1) << (52 - exponent)) - 1u;
     representation.bits &= ~fractional;
     return representation.number;
-}
-
-/* 1 when `value` is finite and integral (its own binary64 value has no
- * fractional part), which is exactly the `substring` bounds rule (R8). Every
- * binary64 value of magnitude at least 2^52 is integral, so only values below
- * that magnitude need the fractional-part test; a NaN or an infinity is never
- * integral. */
-static int deal_std_integral(double value) {
-    if (!(deal_std_abs(value) <= 1.7976931348623157e308)) {
-        return 0;
-    }
-    return deal_std_abs(value) >= 4503599627370496.0
-        || deal_std_truncate(value) == value;
 }
 
 static double deal_std_floor(double value) {
@@ -226,13 +213,13 @@ static double deal_std_sqrt(double value) {
 }
 
 /* =========================================================================
- * The string operations (R8), over Unicode scalar values
+ * The string operations (R8), over UTF-16 code units
  * ========================================================================= */
 
 /* The first byte offset at or after `from` where `needle` occurs, or SIZE_MAX.
  * Valid UTF-8 is self-synchronizing: a continuation byte never equals a lead
  * byte and a lead byte never occurs inside another scalar's encoding, so a
- * literal byte search is exactly the literal scalar-subsequence search. */
+ * literal byte search is exactly a canonical unit-subsequence search. */
 static size_t deal_std_find(const unsigned char *haystack, size_t haystack_length,
                             const unsigned char *needle, size_t needle_length,
                             size_t from) {
@@ -251,9 +238,19 @@ static size_t deal_std_find(const unsigned char *haystack, size_t haystack_lengt
     return SIZE_MAX;
 }
 
-/* 1 when `scalar` is in the closed trim set U+0009..U+000D and U+0020. */
-static int deal_std_trim_scalar(unsigned char byte) {
-    return (byte >= 0x09u && byte <= 0x0Du) || byte == 0x20u;
+/* ECMAScript whitespace and line-terminator set. */
+static int deal_std_trim_scalar(uint32_t unit) {
+    return (unit >= 9u && unit <= 13u) || unit == 32u || unit == 160u
+        || unit == 5760u || (unit >= 8192u && unit <= 8202u)
+        || unit == 8232u || unit == 8233u || unit == 8239u
+        || unit == 8287u || unit == 12288u || unit == 65279u;
+}
+
+static uint32_t deal_std_unit_at(deal_string *text, size_t index) {
+    const unsigned char *p = deal_text_bytes(text) + deal_text_unit_offset(text, index);
+    if (p[0] < 128u) return p[0];
+    if (p[0] < 224u) return ((uint32_t)(p[0] & 31u) << 6) | (p[1] & 63u);
+    return ((uint32_t)(p[0] & 15u) << 12) | ((uint32_t)(p[1] & 63u) << 6) | (p[2] & 63u);
 }
 
 /* One `[string]` array (the runtime's reference element layout with the
@@ -297,12 +294,21 @@ static deal_data deal_std_string_result(deal_string *text) {
     return deal_data_of_reference(DEAL_DATA_STRING, text);
 }
 
-/* `std/console`: the argument's exact bytes plus one newline, then the
+/* `std/console`: UTF-8 display (lone units become U+FFFD) plus one newline, then the
  * result-only `void` project of `undefined`. */
 static deal_data deal_std_console(const deal_check_input *argument, int to_stderr) {
     deal_string *text = deal_std_string_argument(argument);
-    const unsigned char *bytes = deal_text_bytes(text);
-    size_t length = deal_text_byte_length(text);
+    const unsigned char *bytes = deal_text_transport_bytes(text);
+    size_t length = deal_text_transport_length(text);
+    unsigned char *display = deal_platform_allocate(length == 0u ? 1u : length);
+    if (display == NULL) deal_platform_fault("std: console scratch allocation failed");
+    for (size_t i = 0u; i < length; i += 1u) {
+        if (bytes[i] == 0xEDu && length - i >= 3u && bytes[i + 1u] >= 0xA0u) {
+            display[i] = 0xEFu; display[i + 1u] = 0xBFu; display[i + 2u] = 0xBDu;
+            i += 2u;
+        } else display[i] = bytes[i];
+    }
+    bytes = display;
     if (to_stderr) {
         deal_platform_write_stderr(bytes, length);
         deal_platform_write_stderr("\n", 1u);
@@ -310,139 +316,96 @@ static deal_data deal_std_console(const deal_check_input *argument, int to_stder
         deal_platform_write_stdout(bytes, length);
         deal_platform_write_stdout("\n", 1u);
     }
+    deal_platform_release(display);
     return deal_data_of_undefined();
 }
 
-/* `std/string.substring`: finite integral bounds first (the SUBSTRING_BOUNDS
- * arm), then clamp to `0..scalar count` and slice by scalar positions. */
+/* ECMAScript substring: truncate, clamp and swap unit bounds. */
 static deal_outcome_data deal_std_substring(deal_string *text, double start,
                                             double end, const deal_origin *origin) {
     deal_outcome_data outcome;
     memset(&outcome, 0, sizeof(outcome));
-    if (!deal_std_integral(start) || !deal_std_integral(end)) {
-        outcome.error = deal_error_materialize(DEAL_ARM_ID_SUBSTRING_BOUNDS,
-            NULL, 0u, NULL, NULL, origin, NULL);
-        return outcome;
-    }
-    size_t scalar_length = deal_text_scalar_length(text);
+    (void)origin;
+    size_t scalar_length = deal_text_unit_length(text);
     double limit = (double)scalar_length;
-    double lo_value = start < 0.0 ? 0.0 : (start > limit ? limit : start);
-    double hi_value = end < 0.0 ? 0.0 : (end > limit ? limit : end);
+    double lo_value = !(start > 0.0) ? 0.0 : (start > limit ? limit : start);
+    double hi_value = !(end > 0.0) ? 0.0 : (end > limit ? limit : end);
     size_t lo = (size_t)lo_value;
     size_t hi = (size_t)hi_value;
+    if (lo > hi) { size_t swap = lo; lo = hi; hi = swap; }
     if (lo >= hi) {
         deal_string *empty = deal_text_new(NULL, 0u);
         outcome.value = deal_std_string_result(empty);
         return outcome;
     }
     const unsigned char *bytes = deal_text_bytes(text);
-    size_t lo_byte = deal_text_scalar_offset(text, lo);
-    size_t hi_byte = deal_text_scalar_offset(text, hi);
+    size_t lo_byte = deal_text_unit_offset(text, lo);
+    size_t hi_byte = deal_text_unit_offset(text, hi);
     deal_string *slice = deal_text_new(bytes + lo_byte, hi_byte - lo_byte);
     outcome.value = deal_std_string_result(slice);
     return outcome;
 }
 
-/* `std/string.replace`: every non-overlapping literal occurrence, left to
- * right; an empty search returns the input unchanged. */
+/* First literal match, with ECMAScript replacement substitutions. */
+static void deal_std_replace_append(unsigned char *scratch, size_t *length,
+                                     const unsigned char *piece, size_t count) {
+    if (count == 0u) return;
+    size_t total = deal_platform_checked_add(*length, count);
+    if (scratch != NULL) memcpy(scratch + *length, piece, count);
+    *length = total;
+}
 static deal_data deal_std_replace(deal_string *text, deal_string *search,
                                   deal_string *replacement) {
     const unsigned char *haystack = deal_text_bytes(text);
     size_t haystack_length = deal_text_byte_length(text);
     const unsigned char *needle = deal_text_bytes(search);
     size_t needle_length = deal_text_byte_length(search);
-    if (needle_length == 0u) {
-        return deal_data_of_reference(DEAL_DATA_STRING, text);
-    }
+    size_t found = deal_std_find(haystack, haystack_length, needle, needle_length, 0u);
+    if (found == SIZE_MAX) return deal_data_of_reference(DEAL_DATA_STRING, text);
     const unsigned char *substitute = deal_text_bytes(replacement);
     size_t substitute_length = deal_text_byte_length(replacement);
-    /* The output is one managed string, so the pieces are assembled in platform
-     * scratch first and copied once. */
-    size_t capacity = haystack_length + 1u;
-    unsigned char *scratch = deal_platform_allocate(capacity);
-    if (scratch == NULL) {
-        deal_platform_fault("std: replace scratch allocation failed");
-    }
+    unsigned char *scratch = NULL;
     size_t length = 0u;
-    size_t cursor = 0u;
-    while (1) {
-        size_t found = deal_std_find(haystack, haystack_length, needle,
-                                     needle_length, cursor);
-        if (found == SIZE_MAX) {
-            break;
-        }
-        size_t piece = found - cursor;
-        if (length + piece + substitute_length > capacity) {
-            size_t grown_capacity = capacity;
-            while (grown_capacity < length + piece + substitute_length) {
-                if (grown_capacity > SIZE_MAX / 2u) {
-                    deal_platform_fault("std: replace size overflow");
-                }
-                grown_capacity *= 2u;
+    size_t suffix = found + needle_length;
+    /* Size with checked arithmetic, allocate once, then copy the same pieces. */
+    for (int pass = 0; pass < 2; pass += 1) {
+        length = 0u;
+        deal_std_replace_append(scratch, &length, haystack, found);
+        for (size_t i = 0u; i < substitute_length; i += 1u) {
+            const unsigned char *piece = substitute + i;
+            size_t count = 1u;
+            if (substitute[i] == '$' && i + 1u < substitute_length) {
+                unsigned char next = substitute[i + 1u];
+                if (next == '$') { i += 1u; }
+                else if (next == '&') { piece = needle; count = needle_length; i += 1u; }
+                else if (next == '`') { piece = haystack; count = found; i += 1u; }
+                else if (next == '\'') { piece = haystack + suffix; count = haystack_length - suffix; i += 1u; }
             }
-            unsigned char *grown = deal_platform_allocate(grown_capacity);
-            if (grown == NULL) {
-                deal_platform_fault("std: replace scratch allocation failed");
-            }
-            memcpy(grown, scratch, length);
-            deal_platform_release(scratch);
-            scratch = grown;
-            capacity = grown_capacity;
+            deal_std_replace_append(scratch, &length, piece, count);
         }
-        if (piece != 0u) {
-            memcpy(scratch + length, haystack + cursor, piece);
-            length += piece;
+        deal_std_replace_append(scratch, &length, haystack + suffix, haystack_length - suffix);
+        if (pass == 0 && length != 0u) {
+            scratch = deal_platform_allocate(length);
+            if (scratch == NULL) deal_platform_fault("std: replace scratch allocation failed");
         }
-        if (substitute_length != 0u) {
-            memcpy(scratch + length, substitute, substitute_length);
-            length += substitute_length;
-        }
-        cursor = found + needle_length;
-    }
-    size_t tail = haystack_length - cursor;
-    if (length + tail > capacity) {
-        size_t grown_capacity = capacity;
-        while (grown_capacity < length + tail) {
-            if (grown_capacity > SIZE_MAX / 2u) {
-                deal_platform_fault("std: replace size overflow");
-            }
-            grown_capacity *= 2u;
-        }
-        unsigned char *grown = deal_platform_allocate(grown_capacity);
-        if (grown == NULL) {
-            deal_platform_fault("std: replace scratch allocation failed");
-        }
-        memcpy(grown, scratch, length);
-        deal_platform_release(scratch);
-        scratch = grown;
-        capacity = grown_capacity;
-    }
-    if (tail != 0u) {
-        memcpy(scratch + length, haystack + cursor, tail);
-        length += tail;
     }
     deal_string *result = deal_text_new(scratch, length);
     deal_platform_release(scratch);
     return deal_std_string_result(result);
 }
 
-/* `std/string.split`: an empty input is `[]`, an empty separator splits into
- * one element per scalar, everything else keeps the empty leading, internal and
- * trailing parts. */
+/* Empty separator splits units; other separators preserve empty parts. */
 static deal_data deal_std_split(deal_string *text, deal_string *separator) {
     deal_array *array = deal_std_string_array();
     deal_std_hold(array);
-    size_t scalar_length = deal_text_scalar_length(text);
+    size_t scalar_length = deal_text_unit_length(text);
     const unsigned char *bytes = deal_text_bytes(text);
     size_t byte_length = deal_text_byte_length(text);
     size_t separator_length = deal_text_byte_length(separator);
-    if (scalar_length == 0u) {
-        return deal_data_of_reference(DEAL_DATA_ARRAY, array);
-    }
     if (separator_length == 0u) {
         for (size_t index = 0; index < scalar_length; index += 1u) {
-            size_t from = deal_text_scalar_offset(text, index);
-            size_t to = deal_text_scalar_offset(text, index + 1u);
+            size_t from = deal_text_unit_offset(text, index);
+            size_t to = deal_text_unit_offset(text, index + 1u);
             deal_string *element = deal_text_new(bytes + from, to - from);
             deal_std_hold(element);
             deal_std_string_array_append(array, element);
@@ -468,20 +431,17 @@ static deal_data deal_std_split(deal_string *text, deal_string *separator) {
     return deal_data_of_reference(DEAL_DATA_ARRAY, array);
 }
 
-/* `std/string.trim`: the closed set U+0009..U+000D and U+0020 removed from both
- * ends, never from the interior. */
+/* ECMAScript whitespace removed from both ends, never the interior. */
 static deal_data deal_std_trim(deal_string *text) {
     const unsigned char *bytes = deal_text_bytes(text);
-    size_t length = deal_text_byte_length(text);
+    size_t length = deal_text_unit_length(text);
     size_t first = 0u;
-    while (first < length && deal_std_trim_scalar(bytes[first])) {
-        first += 1u;
-    }
+    while (first < length && deal_std_trim_scalar(deal_std_unit_at(text, first))) first += 1u;
     size_t last = length;
-    while (last > first && deal_std_trim_scalar(bytes[last - 1u])) {
-        last -= 1u;
-    }
-    deal_string *trimmed = deal_text_new(bytes + first, last - first);
+    while (last > first && deal_std_trim_scalar(deal_std_unit_at(text, last - 1u))) last -= 1u;
+    size_t from = deal_text_unit_offset(text, first);
+    size_t to = deal_text_unit_offset(text, last);
+    deal_string *trimmed = deal_text_new(bytes + from, to - from);
     return deal_std_string_result(trimmed);
 }
 
@@ -516,7 +476,7 @@ static deal_data deal_std_evaluate(uint32_t operation_id,
     case DEAL_STDLIB_CONSOLE_ERROR:
         return deal_std_console(&arguments[0], 1);
     case DEAL_STDLIB_STRING_LENGTH:
-        return deal_data_of_number((double)deal_text_scalar_length(
+        return deal_data_of_number((double)deal_text_unit_length(
             deal_std_string_argument(&arguments[0])));
     case DEAL_STDLIB_STRING_SUBSTRING: {
         deal_outcome_data outcome = deal_std_substring(

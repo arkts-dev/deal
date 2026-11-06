@@ -66,10 +66,10 @@ export async function test_array_async_closure(): Promise<number> {
   }
   // discard await evaluates exactly once with the completion check
   let hits: number = 0;
-  async function counter(b: number[]): Promise<number[]> {
+  let counter: (b: number[]) => Promise<number[]> = async function(b: number[]): Promise<number[]> {
     hits = hits + 1;
     return b;
-  }
+  };
   await counter([0]);
   if (hits !== 1) {
     throw { code: "TEST_FAIL", message: "discard await count failed" };

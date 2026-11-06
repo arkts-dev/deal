@@ -1,13 +1,10 @@
 package deal.source;
 
 /**
- * A source position measured in decoded Unicode scalars (code points).
- *
- * <p>Lines and columns are 1-based; {@code scalarOffset} is the 0-based count
- * of decoded Unicode scalars from the start of the source. One code point is
- * one scalar: a surrogate pair counts as one column and one offset unit, and
- * an unpaired UTF-16 surrogate counts as one recovery unit (one column, one
- * offset unit). CRLF counts as two scalars; a tab counts as one scalar.
+ * A UTF-16 source position, with 1-based lines/columns and a 0-based
+ * {@code scalarOffset}. Supplementary characters occupy two units, lone
+ * surrogates one recovery unit. CRLF consumes two offsets and one line;
+ * a tab occupies one column.
  *
  */
 public record ScalarPosition(int line, int column, int scalarOffset) {

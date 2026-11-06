@@ -365,33 +365,59 @@ static int deal_host_descriptor_is_class_atom(const char *text) {
     return position == grammar.length;
 }
 
-/*
- * 1 when `bytes` (of `length`) is a Unicode scalar sequence and 0 otherwise. The
- * `text` group owns the one validator; the host group asks it and maps a
- * rejection to the closed invalid-Unicode presentation with its encoding defect
- * (the two pinned host-string inner reasons).
- */
-static int deal_host_bytes_are_scalars(const void *bytes, size_t length,
-                                       uint32_t *defect) {
-    if (deal_text_is_scalar_sequence(bytes, length)) {
+/* The text group owns structural UTF-8/WTF-8 admission. */
+static int deal_host_bytes_are_units(const void *bytes, size_t length,
+                                      uint32_t *defect) {
+    if (deal_text_is_code_units(bytes, length)) {
         return 1;
     }
     if (defect != NULL) {
         *defect = DEAL_UNICODE_MALFORMED;
     }
-    const unsigned char *data = bytes;
-    for (size_t index = 0; index + 2u < length; index += 1u) {
-        if (data[index] != 0xEDu) {
-            continue;
-        }
-        if (data[index + 1u] >= 0xA0u && data[index + 1u] <= 0xBFu) {
-            if (defect != NULL) {
-                *defect = DEAL_UNICODE_SURROGATE;
-            }
-            break;
+    return 0;
+}
+
+/* Read one unit of an admitted carrier without allocating managed storage. */
+static uint32_t deal_host_next_unit(const unsigned char *bytes, size_t *index,
+                                    uint32_t *pending) {
+    if (*pending != 0u) {
+        uint32_t unit = *pending;
+        *pending = 0u;
+        return unit;
+    }
+    unsigned char lead = bytes[(*index)++];
+    if (lead < 0x80u) {
+        return lead;
+    }
+    size_t width = lead < 0xE0u ? 2u : lead < 0xF0u ? 3u : 4u;
+    uint32_t unit = lead & (width == 2u ? 31u : width == 3u ? 15u : 7u);
+    for (size_t part = 1u; part < width; part += 1u) {
+        unit = (unit << 6u) | (bytes[(*index)++] & 63u);
+    }
+    if (unit >= 0x10000u) {
+        unit -= 0x10000u;
+        *pending = 0xDC00u + (unit & 1023u);
+        unit = 0xD800u + (unit >> 10u);
+    }
+    return unit;
+}
+
+/* Host carriers may spell a pair as four or six bytes; identity is by units. */
+static int deal_host_units_equal(const void *left, size_t left_length,
+                                 const void *right, size_t right_length) {
+    size_t a = 0u;
+    size_t b = 0u;
+    uint32_t a_pending = 0u;
+    uint32_t b_pending = 0u;
+    while ((a < left_length || a_pending != 0u)
+            && (b < right_length || b_pending != 0u)) {
+        if (deal_host_next_unit(left, &a, &a_pending)
+                != deal_host_next_unit(right, &b, &b_pending)) {
+            return 0;
         }
     }
-    return 0;
+    return a == left_length && b == right_length
+        && a_pending == 0u && b_pending == 0u;
 }
 
 /* =========================================================================
@@ -412,7 +438,9 @@ typedef enum {
     DEAL_HOST_BOX_CLASS_ATOM = 10,
     DEAL_HOST_BOX_FUNCTION = 11,
     DEAL_HOST_BOX_ASYNC_OPERATION = 12,
-    DEAL_HOST_BOX_INVALID_UNICODE = 13
+    DEAL_HOST_BOX_INVALID_UNICODE = 13,
+    DEAL_HOST_BOX_RAW_FUNCTION = 14,
+    DEAL_HOST_BOX_OPAQUE = 15
 } deal_host_box_kind;
 
 /* One array slot or one class field of a boxed carrier: presence metadata plus
@@ -429,8 +457,7 @@ typedef struct {
     void *key_bytes;
     size_t key_length;
     deal_value value;
-    /* Raw host-map keys may be nonstrings. Keep the actual carrier until
-     * ingress validation; never coerce it into the string-keyed DEAL Record. */
+    /* Keep nonstring keys as carriers until ingress validation. */
     deal_value raw_key;
     uint32_t has_raw_key;
 } deal_host_member;
@@ -457,6 +484,7 @@ typedef struct deal_host_box {
      * conversion; boxed contents remain the host's own presentation. */
     int materialized;
     deal_data managed;
+    const void *opaque_identity;      /* borrowed, neither traced nor read    */
 } deal_host_box;
 
 /* The union of every runtime-owned element storage slot (C3), so one staged
@@ -848,10 +876,12 @@ static deal_value_kind deal_host_kind_of_object(const void *referent) {
     case DEAL_LAYOUT_ARRAY:
         return DEAL_KIND_ARRAY;
     case DEAL_LAYOUT_TABLE:
+    case DEAL_LAYOUT_HOST_OPAQUE:
         return DEAL_KIND_TABLE;
     case DEAL_LAYOUT_ERROR:
         return DEAL_KIND_CLASS;
     case DEAL_LAYOUT_FUNCTION:
+    case DEAL_LAYOUT_HOST_RAW_FUNCTION:
         return DEAL_KIND_FUNCTION;
     default:
         break;
@@ -882,11 +912,13 @@ static deal_value_kind deal_host_kind_of_box(const deal_host_box *box) {
     case DEAL_HOST_BOX_ARRAY:
         return DEAL_KIND_ARRAY;
     case DEAL_HOST_BOX_RECORD:
+    case DEAL_HOST_BOX_OPAQUE:
         return DEAL_KIND_TABLE;
     case DEAL_HOST_BOX_CLASS:
     case DEAL_HOST_BOX_CLASS_ATOM:
         return DEAL_KIND_CLASS;
     case DEAL_HOST_BOX_FUNCTION:
+    case DEAL_HOST_BOX_RAW_FUNCTION:
         return DEAL_KIND_FUNCTION;
     case DEAL_HOST_BOX_ASYNC_OPERATION:
         return DEAL_KIND_ASYNC_OPERATION;
@@ -959,6 +991,14 @@ static void deal_host_layouts_ensure(void) {
         DEAL_LAYOUT_HOST_FUNCTION, 0u, sizeof(deal_host_entry), NULL, 0u
     };
     deal_layout_define(&hostFunctionLayout);
+    static const deal_layout opaqueLayout = {
+        DEAL_LAYOUT_HOST_OPAQUE, 0u, sizeof(const void *), NULL, 0u
+    };
+    deal_layout_define(&opaqueLayout);
+    static const deal_layout rawFunctionLayout = {
+        DEAL_LAYOUT_HOST_RAW_FUNCTION, 0u, sizeof(deal_host_function), NULL, 0u
+    };
+    deal_layout_define(&rawFunctionLayout);
 }
 
 /* The wrapper of one host-backed function value, or NULL when the value is not
@@ -1251,6 +1291,14 @@ void deal_host_present_datum(deal_data datum, deal_check_input *out) {
     if (referent == NULL) {
         return;
     }
+    if (deal_object_layout(referent) == DEAL_LAYOUT_HOST_OPAQUE) {
+        out->presentation = DEAL_PRESENT_OPAQUE;
+        return;
+    }
+    if (deal_object_layout(referent) == DEAL_LAYOUT_HOST_RAW_FUNCTION) {
+        out->presentation = DEAL_PRESENT_RAW_FUNCTION;
+        return;
+    }
     switch (deal_host_kind_of_object(referent)) {
     case DEAL_KIND_FUNCTION:
         out->signature = deal_fn_signature(referent);
@@ -1309,6 +1357,8 @@ static deal_error *deal_host_materialize_array(deal_host_crossing *crossing,
             case DEAL_HOST_BOX_MISSING:
             case DEAL_HOST_BOX_NOTHING:
             case DEAL_HOST_BOX_ASYNC_OPERATION:
+            case DEAL_HOST_BOX_RAW_FUNCTION:
+            case DEAL_HOST_BOX_OPAQUE:
             case DEAL_HOST_BOX_INVALID_UNICODE: {
                 /* A diagnostic carrier presentation is never an element
                  * (R2/R11): the element position rejects it with its own arm,
@@ -1323,7 +1373,11 @@ static deal_error *deal_host_materialize_array(deal_host_crossing *crossing,
                             ? DEAL_PRESENT_NOTHING
                             : inner->kind == DEAL_HOST_BOX_ASYNC_OPERATION
                                 ? DEAL_PRESENT_ASYNC_OPERATION
-                                : DEAL_PRESENT_INVALID_UNICODE;
+                                : inner->kind == DEAL_HOST_BOX_RAW_FUNCTION
+                                    ? DEAL_PRESENT_RAW_FUNCTION
+                                    : inner->kind == DEAL_HOST_BOX_OPAQUE
+                                        ? DEAL_PRESENT_OPAQUE
+                                        : DEAL_PRESENT_INVALID_UNICODE;
                 presented.unicode_defect = inner->unicode_defect;
                 deal_check_context context;
                 context.origin = &crossing->origin;
@@ -1418,7 +1472,7 @@ static deal_error *deal_host_materialize_record(deal_host_crossing *crossing,
             if (rejected.error != NULL) return rejected.error;
         }
         uint32_t defect = 0u;
-        if (!deal_host_bytes_are_scalars(member->key_bytes, member->key_length,
+        if (!deal_host_bytes_are_units(member->key_bytes, member->key_length,
                 &defect)) {
             /* A malformed record key is never admitted (R2/R11): the inner
              * reason is the pinned host-string arm, never invented text. */
@@ -1475,6 +1529,10 @@ static deal_error *deal_host_materialize_record(deal_host_crossing *crossing,
             }
         } else {
             value = deal_host_datum_of_referent(referent);
+            deal_check_input presented;
+            deal_host_present_datum(value, &presented);
+            if (presented.presentation != DEAL_PRESENT_DATUM)
+                return deal_host_record_reject(crossing, &presented);
         }
         deal_host_keep(crossing, deal_data_referent(&value));
         deal_container_table_write(table, key, &value);
@@ -1810,6 +1868,12 @@ static deal_error *deal_host_materialize_node(deal_host_crossing *crossing,
         return deal_host_materialize_class(crossing, box, memo, out);
     case DEAL_HOST_BOX_FUNCTION:
         return deal_host_materialize_function(crossing, box, memo, out);
+    case DEAL_HOST_BOX_OPAQUE:
+        return deal_host_carrier_reject(deal_descriptor_intern("unknown"),
+            "table", &crossing->origin);
+    case DEAL_HOST_BOX_RAW_FUNCTION:
+        return deal_host_carrier_reject(deal_descriptor_intern("unknown"),
+            "function", &crossing->origin);
     case DEAL_HOST_BOX_MISSING:
     case DEAL_HOST_BOX_NOTHING:
     case DEAL_HOST_BOX_ASYNC_OPERATION:
@@ -1847,9 +1911,9 @@ static deal_status deal_host_classify_into(deal_host_crossing *crossing,
     }
     memset(out, 0, sizeof(*out));
     if (box == NULL) {
-        out->presentation = DEAL_PRESENT_DATUM;
-        out->datum = deal_host_datum_of_referent(referent);
-        if (deal_host_kind_of_object(referent) == DEAL_KIND_FUNCTION) {
+        deal_host_present_datum(deal_host_datum_of_referent(referent), out);
+        if (out->presentation == DEAL_PRESENT_DATUM
+                && deal_host_kind_of_object(referent) == DEAL_KIND_FUNCTION) {
             out->signature = deal_fn_signature(referent);
             if (out->signature == NULL) out->presentation = DEAL_PRESENT_RAW_FUNCTION;
         }
@@ -1876,6 +1940,12 @@ static deal_status deal_host_classify_into(deal_host_crossing *crossing,
         out->presentation = DEAL_PRESENT_INVALID_UNICODE;
         out->unicode_defect = box->unicode_defect;
         return DEAL_OK;
+    case DEAL_HOST_BOX_RAW_FUNCTION:
+        out->presentation = DEAL_PRESENT_RAW_FUNCTION;
+        return DEAL_OK;
+    case DEAL_HOST_BOX_OPAQUE:
+        out->presentation = DEAL_PRESENT_OPAQUE;
+        return DEAL_OK;
     case DEAL_HOST_BOX_NULL:
         out->presentation = DEAL_PRESENT_DATUM;
         out->datum = deal_data_of_null();
@@ -1894,7 +1964,7 @@ static deal_status deal_host_classify_into(deal_host_crossing *crossing,
         return DEAL_OK;
     case DEAL_HOST_BOX_STRING: {
         uint32_t defect = 0u;
-        if (!deal_host_bytes_are_scalars(box->bytes, box->length, &defect)) {
+        if (!deal_host_bytes_are_units(box->bytes, box->length, &defect)) {
             out->presentation = DEAL_PRESENT_INVALID_UNICODE;
             out->unicode_defect = defect;
             return DEAL_OK;
@@ -1986,6 +2056,9 @@ static deal_status deal_host_carrier_of_input(const deal_check_input *input,
         deal_host_box *box = deal_host_box_new(crossing, kind);
         return deal_host_box_publish(box, out);
     }
+    case DEAL_PRESENT_OPAQUE:
+        deal_platform_fault("host: an opaque object reached an admitted parameter");
+
     case DEAL_PRESENT_INVALID_UNICODE:
     case DEAL_PRESENT_RAW_FUNCTION:
         deal_platform_fault("host: an unadmitted presentation reached a"
@@ -2352,7 +2425,8 @@ deal_status deal_apply(deal_value function, const deal_value *args, size_t argc,
         return status;
     }
     if (box != NULL || referent == NULL
-            || deal_host_kind_of_object(referent) != DEAL_KIND_FUNCTION) {
+            || deal_host_kind_of_object(referent) != DEAL_KIND_FUNCTION
+            || deal_object_layout(referent) != DEAL_LAYOUT_FUNCTION) {
         return DEAL_STATUS_KIND;
     }
     /* The function value's own declared signature is the applied crossing's
@@ -2615,11 +2689,13 @@ static const char *deal_host_shape_token(deal_host_box *box, void *referent) {
         case DEAL_HOST_BOX_ARRAY:
             return "array";
         case DEAL_HOST_BOX_RECORD:
+        case DEAL_HOST_BOX_OPAQUE:
             return "table";
         case DEAL_HOST_BOX_CLASS:
         case DEAL_HOST_BOX_CLASS_ATOM:
             return box->bytes != NULL ? box->bytes : "table";
         case DEAL_HOST_BOX_FUNCTION:
+        case DEAL_HOST_BOX_RAW_FUNCTION:
             return "function";
         case DEAL_HOST_BOX_ASYNC_OPERATION:
             return "async-operation";
@@ -2863,7 +2939,7 @@ deal_status deal_string_new(const void *bytes, size_t length, deal_value *out) {
     }
     box->length = length;
     uint32_t defect = 0u;
-    if (!deal_host_bytes_are_scalars(box->bytes, length, &defect)) {
+    if (!deal_host_bytes_are_units(box->bytes, length, &defect)) {
         box->kind = DEAL_HOST_BOX_INVALID_UNICODE;
         box->unicode_defect = defect;
     }
@@ -3002,6 +3078,38 @@ deal_status deal_function_new(deal_host_function fn,
     return deal_host_box_publish(box, out);
 }
 
+deal_status deal_function_raw(deal_host_function fn, deal_value *out) {
+    if (out == NULL) deal_platform_fault("host: null out-parameter");
+    if (fn == NULL) return DEAL_STATUS_PROTOCOL;
+    deal_host_crossing *crossing = deal_host_crossing_current();
+    if (crossing == NULL) return DEAL_STATUS_OUT_OF_SCOPE;
+    deal_host_box *box = deal_host_box_new(crossing, DEAL_HOST_BOX_RAW_FUNCTION);
+    box->function = fn;
+    deal_host_layouts_ensure();
+    void *object = deal_alloc(DEAL_LAYOUT_HOST_RAW_FUNCTION, sizeof(fn));
+    memcpy(object, &fn, sizeof(fn));
+    deal_host_keep(crossing, object);
+    box->managed = deal_data_of_reference(DEAL_DATA_FUNCTION, object);
+    return deal_host_box_publish(box, out);
+}
+
+deal_status deal_opaque(const void *identity, deal_value *out) {
+    if (out == NULL) deal_platform_fault("host: null out-parameter");
+    if (identity == NULL) return DEAL_STATUS_PROTOCOL;
+    deal_host_crossing *crossing = deal_host_crossing_current();
+    if (crossing == NULL) return DEAL_STATUS_OUT_OF_SCOPE;
+    deal_host_box *box = deal_host_box_new(crossing, DEAL_HOST_BOX_OPAQUE);
+    box->opaque_identity = identity;
+    /* A managed, nondata identity representation lets native host storage root
+     * this object precisely. Admission never exposes it as a Record. */
+    deal_host_layouts_ensure();
+    void *object = deal_alloc(DEAL_LAYOUT_HOST_OPAQUE, sizeof(identity));
+    memcpy(object, &identity, sizeof(identity));
+    deal_host_keep(crossing, object);
+    box->managed = deal_data_of_reference(DEAL_DATA_TABLE, object);
+    return deal_host_box_publish(box, out);
+}
+
 deal_status deal_async_operation(deal_async_token token, deal_value *out) {
     if (out == NULL) {
         deal_platform_fault("host: null out-parameter");
@@ -3094,8 +3202,8 @@ deal_status deal_as_string(deal_value value, const void **bytes,
         return DEAL_STATUS_KIND;
     }
     deal_string *text = referent;
-    *bytes = deal_text_bytes(text);
-    *length = deal_text_byte_length(text);
+    *bytes = deal_text_transport_bytes(text);
+    *length = deal_text_transport_length(text);
     return DEAL_OK;
 }
 
@@ -3175,14 +3283,28 @@ deal_status deal_same(deal_value a, deal_value b, int *same) {
         if (status != DEAL_OK) {
             return status;
         }
-        /* Both carriers are scalar-valid UTF-8; equal bytes are exactly equal
-         * scalar sequences, without allocating or admitting a graph. */
-        *same = x_length == y_length
-            && (x_length == 0u || memcmp(x, y, x_length) == 0);
+        *same = deal_host_units_equal(x, x_length, y, y_length);
         return DEAL_OK;
     }
     default:
         break;
+    }
+    int left_opaque = left_box != NULL ? left_box->kind == DEAL_HOST_BOX_OPAQUE
+        : deal_object_layout(left) == DEAL_LAYOUT_HOST_OPAQUE;
+    int right_opaque = right_box != NULL ? right_box->kind == DEAL_HOST_BOX_OPAQUE
+        : deal_object_layout(right) == DEAL_LAYOUT_HOST_OPAQUE;
+    if (left_opaque || right_opaque) {
+        const void *left_identity = NULL, *right_identity = NULL;
+        if (left_opaque) {
+            if (left_box != NULL) left_identity = left_box->opaque_identity;
+            else memcpy(&left_identity, left, sizeof(left_identity));
+        }
+        if (right_opaque) {
+            if (right_box != NULL) right_identity = right_box->opaque_identity;
+            else memcpy(&right_identity, right, sizeof(right_identity));
+        }
+        *same = left_opaque && right_opaque && left_identity == right_identity;
+        return DEAL_OK;
     }
     if (left_box != NULL && left_box->materialized != 0) {
         left = deal_data_referent(&left_box->managed);
@@ -3198,6 +3320,39 @@ deal_status deal_same(deal_value a, deal_value b, int *same) {
 }
 
 /* -- containers --------------------------------------------------------- */
+
+deal_status deal_table_set_key(deal_value table, deal_value key, deal_value value) {
+    deal_host_box *box = NULL;
+    void *referent = NULL;
+    deal_status status = deal_host_resolve(table, &box, &referent);
+    if (status != DEAL_OK) return status;
+    deal_value_kind kind;
+    status = deal_kind_of(key, &kind);
+    if (status != DEAL_OK) return status;
+    if (kind == DEAL_KIND_STRING) {
+        const void *bytes; size_t length;
+        status = deal_as_string(key, &bytes, &length);
+        return status == DEAL_OK ? deal_table_set(table, bytes, length, value) : status;
+    }
+    if (box == NULL || box->kind != DEAL_HOST_BOX_RECORD || box->materialized)
+        return DEAL_STATUS_KIND;
+    for (size_t index = 0u; index < box->member_count; index++) {
+        deal_host_member *member = &box->members[index];
+        int same = 0;
+        if (!member->has_raw_key) continue;
+        status = deal_same(member->raw_key, key, &same);
+        if (status != DEAL_OK) return status;
+        if (same) { member->value = value; return DEAL_OK; }
+    }
+    box->members = deal_host_grow(box->members, &box->member_capacity,
+        box->member_count, sizeof(*box->members), "host: record key allocation failed");
+    deal_host_member *member = &box->members[box->member_count++];
+    memset(member, 0, sizeof(*member));
+    member->has_raw_key = 1u;
+    member->raw_key = key;
+    member->value = value;
+    return DEAL_OK;
+}
 
 deal_status deal_array_length(deal_value array, int64_t *out) {
     if (out == NULL) {
@@ -3395,6 +3550,9 @@ deal_status deal_table_get(deal_value table, const void *key, size_t keyLength,
     if (key == NULL && keyLength != 0u) {
         return DEAL_STATUS_PROTOCOL;
     }
+    if (!deal_text_is_code_units(key, keyLength)) {
+        return DEAL_STATUS_KIND;
+    }
     deal_host_box *box = NULL;
     void *referent = NULL;
     deal_status status = deal_host_resolve(table, &box, &referent);
@@ -3412,19 +3570,15 @@ deal_status deal_table_get(deal_value table, const void *key, size_t keyLength,
         }
         for (size_t index = 0; index < box->member_count; index += 1u) {
             deal_host_member *member = &box->members[index];
-            if (member->key_length == keyLength
-                    && (keyLength == 0u
-                        || memcmp(member->key_bytes, key, keyLength) == 0)) {
+            if (!member->has_raw_key && deal_host_units_equal(member->key_bytes, member->key_length,
+                    key, keyLength)) {
                 return deal_host_slot_carrier(member->value, out);
             }
         }
         return DEAL_STATUS_ABSENT;
     }
-    if (deal_host_kind_of_object(referent) != DEAL_KIND_TABLE) {
-        return DEAL_STATUS_KIND;
-    }
-    uint32_t defect = 0u;
-    if (!deal_host_bytes_are_scalars(key, keyLength, &defect)) {
+    if (deal_host_kind_of_object(referent) != DEAL_KIND_TABLE
+            || deal_object_layout(referent) != DEAL_LAYOUT_TABLE) {
         return DEAL_STATUS_KIND;
     }
     deal_string *name = deal_text_new(key, keyLength);
@@ -3448,7 +3602,7 @@ deal_status deal_table_set(deal_value table, const void *key, size_t keyLength,
         return status;
     }
     uint32_t defect = 0u;
-    if (!deal_host_bytes_are_scalars(key, keyLength, &defect)) {
+    if (!deal_host_bytes_are_units(key, keyLength, &defect)) {
         return DEAL_STATUS_KIND;
     }
     if (box != NULL) {
@@ -3465,9 +3619,8 @@ deal_status deal_table_set(deal_value table, const void *key, size_t keyLength,
         }
         for (size_t index = 0; index < box->member_count; index += 1u) {
             deal_host_member *member = &box->members[index];
-            if (member->key_length == keyLength
-                    && (keyLength == 0u
-                        || memcmp(member->key_bytes, key, keyLength) == 0)) {
+            if (!member->has_raw_key && deal_host_units_equal(member->key_bytes, member->key_length,
+                    key, keyLength)) {
                 member->value = value;
                 return DEAL_OK;
             }
@@ -3491,7 +3644,8 @@ deal_status deal_table_set(deal_value table, const void *key, size_t keyLength,
         box->member_count += 1u;
         return DEAL_OK;
     }
-    if (deal_host_kind_of_object(referent) != DEAL_KIND_TABLE) {
+    if (deal_host_kind_of_object(referent) != DEAL_KIND_TABLE
+            || deal_object_layout(referent) != DEAL_LAYOUT_TABLE) {
         return DEAL_STATUS_KIND;
     }
     deal_host_crossing *crossing = deal_host_crossing_current();
@@ -3540,7 +3694,7 @@ deal_status deal_table_has(deal_value table, const void *key, size_t keyLength,
         return status;
     }
     uint32_t defect = 0u;
-    if (!deal_host_bytes_are_scalars(key, keyLength, &defect)) {
+    if (!deal_host_bytes_are_units(key, keyLength, &defect)) {
         return DEAL_STATUS_KIND;
     }
     if (box != NULL) {
@@ -3554,9 +3708,8 @@ deal_status deal_table_has(deal_value table, const void *key, size_t keyLength,
         }
         for (size_t index = 0; index < box->member_count; index += 1u) {
             deal_host_member *member = &box->members[index];
-            if (member->key_length == keyLength
-                    && (keyLength == 0u
-                        || memcmp(member->key_bytes, key, keyLength) == 0)) {
+            if (!member->has_raw_key && deal_host_units_equal(member->key_bytes, member->key_length,
+                    key, keyLength)) {
                 *present = 1;
                 return DEAL_OK;
             }
@@ -3564,7 +3717,8 @@ deal_status deal_table_has(deal_value table, const void *key, size_t keyLength,
         *present = 0;
         return DEAL_OK;
     }
-    if (deal_host_kind_of_object(referent) != DEAL_KIND_TABLE) {
+    if (deal_host_kind_of_object(referent) != DEAL_KIND_TABLE
+            || deal_object_layout(referent) != DEAL_LAYOUT_TABLE) {
         return DEAL_STATUS_KIND;
     }
     deal_string *name = deal_text_new(key, keyLength);
@@ -3584,7 +3738,7 @@ deal_status deal_table_delete(deal_value table, const void *key,
         return status;
     }
     uint32_t defect = 0u;
-    if (!deal_host_bytes_are_scalars(key, keyLength, &defect)) {
+    if (!deal_host_bytes_are_units(key, keyLength, &defect)) {
         return DEAL_STATUS_KIND;
     }
     if (box != NULL) {
@@ -3598,9 +3752,8 @@ deal_status deal_table_delete(deal_value table, const void *key,
         }
         for (size_t index = 0; index < box->member_count; index += 1u) {
             deal_host_member *member = &box->members[index];
-            if (member->key_length != keyLength
-                    || (keyLength != 0u
-                        && memcmp(member->key_bytes, key, keyLength) != 0)) {
+            if (member->has_raw_key || !deal_host_units_equal(member->key_bytes, member->key_length,
+                    key, keyLength)) {
                 continue;
             }
             deal_platform_release(member->key_bytes);
@@ -3613,7 +3766,8 @@ deal_status deal_table_delete(deal_value table, const void *key,
         }
         return DEAL_STATUS_ABSENT;
     }
-    if (deal_host_kind_of_object(referent) != DEAL_KIND_TABLE) {
+    if (deal_host_kind_of_object(referent) != DEAL_KIND_TABLE
+            || deal_object_layout(referent) != DEAL_LAYOUT_TABLE) {
         return DEAL_STATUS_KIND;
     }
     deal_string *name = deal_text_new(key, keyLength);
@@ -3747,6 +3901,7 @@ deal_status deal_field_get(deal_value object, const char *field,
     case DEAL_PRESENT_INVALID_UNICODE:
         return deal_host_publish_box(DEAL_HOST_BOX_INVALID_UNICODE, out);
     case DEAL_PRESENT_RAW_FUNCTION:
+    case DEAL_PRESENT_OPAQUE:
         return DEAL_STATUS_KIND;
     }
     deal_platform_fault("host: presentation outside the closed set");
@@ -3972,7 +4127,8 @@ deal_status deal_function_signature(deal_value value,
         *descriptorText = box->signature;
         return DEAL_OK;
     }
-    if (deal_host_kind_of_object(referent) != DEAL_KIND_FUNCTION) {
+    if (deal_host_kind_of_object(referent) != DEAL_KIND_FUNCTION
+            || deal_object_layout(referent) != DEAL_LAYOUT_FUNCTION) {
         return DEAL_STATUS_KIND;
     }
     const char *signature = deal_fn_signature(referent);
@@ -4017,9 +4173,10 @@ deal_status deal_retain(deal_value value, deal_handle *out) {
         retained = checked.datum;
         deal_host_memo_release(&memo);
     } else {
-        if (deal_host_kind_of_object(referent) == DEAL_KIND_FUNCTION
-                && deal_fn_signature(referent) == NULL) return DEAL_STATUS_KIND;
         retained = deal_host_datum_of_referent(referent);
+        deal_check_input checked;
+        deal_host_present_datum(retained, &checked);
+        if (checked.presentation != DEAL_PRESENT_DATUM) return DEAL_STATUS_KIND;
     }
     deal_host_handles_ensure();
     deal_host_handles = deal_host_grow(deal_host_handles,

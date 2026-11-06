@@ -174,6 +174,8 @@ uint32_t deal_root_frame_depth(void);
  * tagged datum whose managed payload the layout traces. The open-operation
  * table roots it while the operation is live (M5). */
 #define DEAL_LAYOUT_ASYNC_OPERATION   17u   /* one async operation record (H5)    */
+#define DEAL_LAYOUT_HOST_OPAQUE       18u   /* unsupported host identity, no refs */
+#define DEAL_LAYOUT_HOST_RAW_FUNCTION 19u   /* unsigned host entry, no refs      */
 
 #define DEAL_LAYOUT_EMITTED_BASE  1024u
 

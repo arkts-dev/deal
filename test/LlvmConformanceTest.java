@@ -20,11 +20,22 @@ public final class LlvmConformanceTest {
         }
         Path corpus = Path.of("test/conformance").toAbsolutePath().normalize();
         var fixtures = CorpusConformanceTest.nativeCorpusFixtures(corpus);
-        accounting = args.length == 0 ? new NativeCorpusAccounting() : null;
+        boolean knownSkips = args.length == 2 && args[0].equals("--known-skips");
+        if (args.length > 1 && !knownSkips)
+            throw new IllegalArgumentException("usage: LlvmConformanceTest [filter | --known-skips file]");
+        boolean fullPopulation = args.length == 0 || knownSkips;
+        NativeKnownSkips skips = knownSkips ? NativeKnownSkips.load(Path.of(args[1])) : NativeKnownSkips.none();
+        Set<String> discovered = new HashSet<>();
+        for (var fixture : fixtures)
+            if (fixture.classification().kind() != CorpusDiscovery.Kind.COMPANION)
+                discovered.add(fixture.corpusPath());
+        skips.validateCases(discovered);
+        accounting = fullPopulation ? new NativeCorpusAccounting() : null;
+        NativeKnownSkips.controls();
         CorpusExecution.controls();
         NativeCorpusAccounting.controls();
         expectationControls();
-        if (args.length == 0) {
+        if (fullPopulation) {
             nativeControls();
             nativeLoadCases();
             nativeTransportCase();
@@ -32,11 +43,17 @@ public final class LlvmConformanceTest {
             nativeNumericCases();
             NativeRequirementCases.run(accounting);
         }
-        int passed = 0, failed = 0;
+        int passed = 0, failed = 0, skipped = 0;
         for (var fixture : fixtures) {
             if (fixture.classification().kind() == CorpusDiscovery.Kind.COMPANION) continue;
-            // An explicit developer filter is diagnostic only; the manifest invokes the complete population.
-            if (args.length != 0 && !fixture.corpusPath().contains(args[0])) continue;
+            // A developer filter is diagnostic only. Gate omissions are exact,
+            // LLVM-only entries; no skipped case earns a verdict or fact.
+            if (!fullPopulation && !fixture.corpusPath().contains(args[0])) continue;
+            if (skips.contains("case", fixture.corpusPath())) {
+                skips.report("case", fixture.corpusPath());
+                skipped++;
+                continue;
+            }
             try {
                 if (fixture.runtimeClassified()) run(corpus, fixture);
                 else runFrontend(fixture);
@@ -48,12 +65,14 @@ public final class LlvmConformanceTest {
             }
         }
         System.out.println("Native corpus: " + passed + " passed, " + failed
-            + " failed (runtime O0/O2; frontend diagnostics only)");
-        if (args.length == 0) {
+            + " failed, " + skipped + " skipped; total=" + (passed + failed + skipped)
+            + " (runtime O0/O2; frontend diagnostics only)");
+        if (knownSkips) System.out.println("LLVM KNOWN SKIPS ENABLED: this is not full LLVM certification");
+        if (fullPopulation) {
             List<String> defects = new ArrayList<>();
-            try { validateNativeHosts(corpus.resolve("host-fixtures")); }
+            try { validateNativeHosts(corpus.resolve("host-fixtures"), skips); }
             catch (AssertionError failure) { defects.add(failure.getMessage()); }
-            try { accounting.verify(); }
+            try { accounting.verify(skips); }
             catch (AssertionError failure) { defects.add(failure.getMessage()); }
             if (!defects.isEmpty()) throw new AssertionError(String.join("; ", defects));
         }
@@ -149,15 +168,17 @@ public final class LlvmConformanceTest {
     private static void nativeLoadCases() throws Exception {
         String atom = "@$external/host/probe/C";
         String other = "@$external/host/probe/Other";
-        for (String variant : List.of("failed", "signature", "identity", "metadata", "invalid-utf8", "string-surrogate",
-                "typed-unicode", "extra-field", "json-walk", "json-unsupported", "opaque")) {
+        for (String variant : List.of("failed", "signature", "identity", "metadata", "invalid-utf8", "string-truncated",
+                "typed-unicode", "explicit-surrogate-defect", "extra-field", "json-walk", "json-unsupported", "opaque")) {
             Path corpus = NativeCompiler.executableScratch("native-load-case");
             try {
                 Path source = corpus.resolve("backend-runtime/load-" + variant + ".deal");
                 Path hosts = Files.createDirectories(corpus.resolve("host-fixtures"));
                 Files.createDirectories(source.getParent());
-                boolean invalidText = variant.equals("invalid-utf8") || variant.equals("string-surrogate");
-                boolean runtimeCheck = variant.equals("typed-unicode") || variant.equals("extra-field")
+                boolean surrogateDefect = variant.equals("explicit-surrogate-defect");
+                boolean invalidText = variant.equals("invalid-utf8") || variant.equals("string-truncated")
+                    || surrogateDefect;
+                boolean runtimeCheck = variant.equals("typed-unicode") || surrogateDefect || variant.equals("extra-field")
                     || variant.equals("json-walk") || variant.equals("json-unsupported");
                 boolean atCall = invalidText || runtimeCheck || variant.equals("opaque");
                 String body = "import * as host from \"host/probe\";\n"
@@ -188,9 +209,9 @@ public final class LlvmConformanceTest {
                     parameters = Map.of("fieldPath", "x", "actual", "number");
                 } else if (invalidText) {
                     arm = deal.semantic.ir.FailureArmId.HOST_SYNC_RETURN_CELL;
-                    String inner = deal.semantic.ir.FailureContractRegistry.renderInner(variant.equals("invalid-utf8")
-                        ? deal.semantic.ir.FailureArmId.HOST_STRING_INVALID_UTF8
-                        : deal.semantic.ir.FailureArmId.HOST_STRING_SURROGATE, Map.of());
+                    String inner = deal.semantic.ir.FailureContractRegistry.renderInner(
+                        surrogateDefect ? deal.semantic.ir.FailureArmId.HOST_STRING_SURROGATE
+                            : deal.semantic.ir.FailureArmId.HOST_STRING_INVALID_UTF8, Map.of());
                     parameters = Map.of("inner", inner);
                 } else if (variant.equals("failed")) {
                     arm = deal.semantic.ir.FailureArmId.HOST_LOAD_FAILED;
@@ -229,13 +250,28 @@ public final class LlvmConformanceTest {
                         Path unit = Files.createDirectories(project.scratch.resolve("host-units")).resolve("probe.c");
                         String registration;
                         if (runtimeCheck) {
-                            String check = variant.equals("typed-unicode") ? """
+                            String check = surrogateDefect ? """
+                                /* An explicit invalid transport presentation is not a lone
+                                 * UTF-16 unit: valid unit carriers remain admitted separately. */
+                                deal_check_input input = {0};
+                                input.presentation = DEAL_PRESENT_INVALID_UNICODE;
+                                input.unicode_defect = DEAL_UNICODE_SURROGATE;
+                                deal_check_context context = {&origin, 0};
+                                deal_outcome checked = deal_check_value(deal_descriptor_intern("string"), input,
+                                    DEAL_BOUNDARY_HOST_SYNC_RETURN, &context);
+                                """ : variant.equals("typed-unicode") ? """
                                 deal_value carrier;
                                 if (deal_string_new("\\xed\\xa0\\x80", 3u, &carrier) != DEAL_OK) abort();
                                 deal_check_input input = {0};
                                 deal_error *cause = NULL;
                                 if (deal_host_value_presentation(carrier, &input, &cause) != DEAL_OK || cause != NULL) abort();
                                 deal_check_context context = {&origin, 0};
+                                /* Lone units are legal; a malformed transport presentation is not. */
+                                deal_outcome admitted = deal_check_value(deal_descriptor_intern("string"), input,
+                                    DEAL_BOUNDARY_TYPE_DESCRIPTOR, &context);
+                                if (admitted.error != NULL) abort();
+                                input.presentation = DEAL_PRESENT_INVALID_UNICODE;
+                                input.unicode_defect = DEAL_UNICODE_MALFORMED;
                                 deal_outcome checked = deal_check_value(deal_descriptor_intern("string"), input,
                                     DEAL_BOUNDARY_TYPE_DESCRIPTOR, &context);
                                 """ : variant.equals("json-unsupported") ? """
@@ -317,7 +353,7 @@ public final class LlvmConformanceTest {
                             const deal_host_module deal_host_module_probe = {
                                 "host/probe", exports, 1u, NULL, 0u, NULL
                             };
-                            """.replace("BAD_BYTES", variant.equals("invalid-utf8") ? "\"\\xff\"" : "\"\\xed\\xa0\\x80\"");
+                            """.replace("BAD_BYTES", variant.equals("invalid-utf8") ? "\"\\xff\"" : "\"\\xe2\\x82\"");
                         else if (variant.equals("signature")) registration = """
                             static deal_host_result f(const deal_value *args, size_t argc) {
                                 (void)args; (void)argc; deal_host_result r = {0};
@@ -641,36 +677,32 @@ public final class LlvmConformanceTest {
                   return null;
                 }
                 """;
-            String rejected = """
+            String substring = """
                 import * as strings from "std/string";
                 export function main(): null {
-                  strings.substring("abc", 0.5, 2);
+                  if (strings.substring("abc", 0.5, 2) !== "ab"
+                      || strings.substring("abc", 2, 0) !== "ab"
+                      || strings.substring("abc", -1 / 0, 1 / 0) !== "abc"
+                      || strings.substring("abc", 0 / 0, 1) !== "a") {
+                    throw {code: "STRING_TEST", message: "substring clamp/truncate/swap"};
+                  }
                   return null;
                 }
                 """;
             for (boolean bounds : new boolean[]{false, true}) {
-                String coordinate = "backend-runtime/native-" + (bounds ? "substring-bounds" : "sqrt-values") + ".deal";
+                String coordinate = "backend-runtime/native-" + (bounds ? "substring-values" : "sqrt-values") + ".deal";
                 Path source = corpus.resolve(coordinate);
-                Files.createDirectories(source.getParent()); Files.writeString(source, bounds ? rejected : success);
+                String body = bounds ? substring : success;
+                Files.createDirectories(source.getParent()); Files.writeString(source, body);
                 SidecarExpectations.ErrorExpectation error = null;
-                String stdout = "";
-                if (bounds) {
-                    var failure = deal.semantic.ir.FailureContractRegistry.render(
-                        deal.semantic.ir.FailureArmId.SUBSTRING_BOUNDS, Map.of(), null, null, null);
-                    error = new SidecarExpectations.ErrorExpectation(failure.code().name(), failure.message(), coordinate, 3, 3,
-                        Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty());
-                    stdout = ErrorSnapshot.CODE_LINE_PREFIX + failure.code().name() + "\n"
-                        + ErrorSnapshot.SNAPSHOT_LINE_PREFIX + ErrorSnapshot.canonicalJson(error) + "\n";
-                }
-                var expected = new SidecarExpectations.RuntimeExpectation.Executed(bounds ? "runtime-error" : "runtime-ok",
-                    stdout.getBytes(StandardCharsets.UTF_8), new byte[0], bounds ? 1 : 0, error);
+                var expected = new SidecarExpectations.RuntimeExpectation.Executed("runtime-ok",
+                    new byte[0], new byte[0], 0, error);
                 var fixture = new CorpusDiscovery.Fixture(source, coordinate, "backend-runtime", "Runtime execution model",
-                    "native binary64", bounds ? "runtime-error E8001" : "runtime-ok", "", "", bounds ? rejected : success,
-                    bounds ? rejected : success, 0, new CorpusDiscovery.Classification(bounds
-                        ? CorpusDiscovery.Kind.RUNTIME_ERROR : CorpusDiscovery.Kind.RUNTIME_OK, bounds ? "E8001" : null));
+                    "native numeric contracts", "runtime-ok", "", "", body,
+                    body, 0, new CorpusDiscovery.Classification(CorpusDiscovery.Kind.RUNTIME_OK, null));
                 try (var project = new NativeCorpusProject(corpus, fixture, null)) {
                     if (!project.compile()) throw new AssertionError("numeric case rejected: " + project.compiler.diagnostics());
-                    var probes = CorpusExecution.probes(project.program(), bounds);
+                    var probes = CorpusExecution.probes(project.program(), false);
                     for (int level : new int[]{0, 2}) {
                         Path work = Files.createDirectories(project.scratch.resolve("run-O" + level));
                         Path product = work.resolve("driver");
@@ -679,7 +711,7 @@ public final class LlvmConformanceTest {
                             Path execution = Files.createDirectories(work.resolve("stress-" + stress));
                             var actual = BoundedProcess.runCaptured(List.of(product.toString()), execution,
                                 stress ? Map.of("DEAL_GC_STRESS", "1") : Map.of());
-                            var receipt = CorpusExecution.receiptVerdict(execution, probes, bounds, false);
+                            var receipt = CorpusExecution.receiptVerdict(execution, probes, false, false);
                             if (actual.stdoutTruncated() || actual.stderrTruncated() || receipt.isPresent())
                                 throw new AssertionError("numeric capture/receipt: " + actual + "; " + receipt);
                             var mismatch = StructuredExpectationComparator.compare("native-numeric-O" + level, expected,
@@ -700,6 +732,10 @@ public final class LlvmConformanceTest {
     }
 
     static void validateNativeHosts(Path root) throws Exception {
+        validateNativeHosts(root, NativeKnownSkips.none());
+    }
+
+    private static void validateNativeHosts(Path root, NativeKnownSkips skips) throws Exception {
         Set<String> declarations = new TreeSet<>(), implementations = new TreeSet<>();
         List<String> malformed = new ArrayList<>();
         try (var files = Files.walk(root)) {
@@ -724,8 +760,9 @@ public final class LlvmConformanceTest {
         Set<String> extra = new TreeSet<>(implementations); extra.removeAll(declarations);
         System.out.println("Native hosts: " + declarations.size() + " declarations, "
             + implementations.size() + " companions (file presence is not execution coverage)");
-        if (!missing.isEmpty() || !extra.isEmpty() || !malformed.isEmpty())
-            throw new AssertionError("HARNESS_DEFECT: native hosts missing=" + missing
+        Set<String> unexpectedMissing = skips.remaining("host", missing);
+        if (!unexpectedMissing.isEmpty() || !extra.isEmpty() || !malformed.isEmpty())
+            throw new AssertionError("HARNESS_DEFECT: native hosts missing=" + unexpectedMissing
                 + "; unmatched=" + extra + "; malformed=" + malformed);
     }
 
@@ -755,6 +792,16 @@ public final class LlvmConformanceTest {
     }
 
     private static void run(Path corpus, CorpusDiscovery.Fixture fixture) throws Exception {
+        run(corpus, fixture, false);
+    }
+
+    /** The same consumers, receipts and exact verdict under native instrumentation. */
+    static void runInstrumented(Path corpus, CorpusDiscovery.Fixture fixture) throws Exception {
+        run(corpus, fixture, true);
+    }
+
+    private static void run(Path corpus, CorpusDiscovery.Fixture fixture,
+                            boolean instrumented) throws Exception {
         String json = Files.readString(fixture.sidecarPath(corpus));
         var sidecar = SidecarExpectations.StructuredExpectationSidecar.parse(json);
         var expected = sharedNativeExpectation(sidecar);
@@ -764,14 +811,23 @@ public final class LlvmConformanceTest {
             List<Path> hosts = project.hostUnits();
             List<String> failures = new ArrayList<>();
             for (int level : new int[]{0, 2}) {
+              for (boolean sanitized : instrumented ? new boolean[]{false, true} : new boolean[]{false}) {
+               for (boolean stress : instrumented ? new boolean[]{false, true} : new boolean[]{false}) {
+                String variant = "O" + level + " sanitized=" + sanitized + " stress=" + stress;
                 try {
-                    Path work = project.scratch.resolve("run-" + level); Files.createDirectories(work);
+                    Path work = project.scratch.resolve("run-" + level + "-" + sanitized + "-" + stress);
+                    Files.createDirectories(work);
                     Path product = work.resolve("driver");
                     NativeCompiler.build(new NativeBuildRequest(project.output, product, level, hosts,
-                        driver(project.module(), probes, sidecar.completions())));
+                        driver(project.module(), probes, sidecar.completions())),
+                        sanitized ? NativeCompiler.SANITIZER_FLAGS : List.of());
                     if (!Files.isExecutable(product)) throw new IllegalStateException("ARTIFACT_MISSING: executable");
-                    var result = BoundedProcess.runCaptured(List.of(product.toString()), work, Map.of());
-                    if (result.stdoutTruncated() || result.stderrTruncated()) throw new IllegalStateException("HARNESS_DEFECT: truncated capture");
+                    var environment = new HashMap<String, String>();
+                    environment.put("DEAL_GC_STRESS", stress ? "1" : "0");
+                    if (sanitized) environment.putAll(NativeCompiler.sanitizerEnvironment());
+                    NativeCompiler.Result result = sanitized
+                        ? NativeCompiler.runSanitized(product, work, environment).result()
+                        : NativeCompiler.execute(product, work, environment);
                     boolean loadFailure = expected.isRuntimeError() && expected.error().code().equals("E8011");
                     var receipt = CorpusExecution.receiptVerdict(work, probes, expected.isRuntimeError(), loadFailure);
                     if (receipt.isPresent()) throw new AssertionError(receipt.get() + "; " + result.stdout() + result.stderr());
@@ -781,10 +837,12 @@ public final class LlvmConformanceTest {
                         new LaneExecution.Executed(stdout.getBytes(StandardCharsets.UTF_8),
                             result.stderr().getBytes(StandardCharsets.UTF_8), result.exitCode()));
                     if (mismatch.isPresent()) throw new AssertionError(mismatch.get() + "; exit=" + result.exitCode() + "; stderr=" + result.stderr() + "; stdout=" + result.stdout());
-                    System.out.println("  O" + level + " executed: " + fixture.corpusPath());
+                    System.out.println("  " + variant + " executed: " + fixture.corpusPath());
                 } catch (Exception | AssertionError failure) {
-                    failures.add("O" + level + ": " + failure);
+                    failures.add(variant + ": " + failure);
                 }
+               }
+              }
             }
             if (!failures.isEmpty()) throw new AssertionError(String.join("; ", failures));
             if (accounting != null) accounting.executed(project.compiler.producedProject(), expected.error());

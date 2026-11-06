@@ -1224,7 +1224,7 @@ public class ContainerBoundaryProductionTest {
         LoweredModuleUnit unit = result.project().modules().get(fixtureModule);
         Optional<CompilerDiagnostic> gate = SemanticIrValidator.validate(
             result.project(), new SemanticIrValidator.ComparisonFacts(
-                unit.interfaceHash(), SemanticProfile.DEAL_V1_5_BINARY64,
+                unit.interfaceHash(), SemanticProfile.DEAL_V1_6_BINARY64,
                 ReleaseConfiguration.releaseCapabilityRegistry()
                     .capabilityRegistryHash()));
         check(gate.isEmpty(), spec.what() + ": the closed schema and bindings gates "

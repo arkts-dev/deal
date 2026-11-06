@@ -10,9 +10,9 @@
 local rt = require("deal.runtime")
 local K = rt.__keys
 
-local EP = "@$external/host.carrierasync/Endpoint"
-local SC = "@$external/host.carrierasync/ServerConfig"
-local FARM = "@$external/host.carrierasync/Farm"
+local EP = "@$external/host/carrierasync/Endpoint"
+local SC = "@$external/host/carrierasync/ServerConfig"
+local FARM = "@$external/host/carrierasync/Farm"
 
 local M = {}
 

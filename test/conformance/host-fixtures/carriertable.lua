@@ -12,8 +12,8 @@
 local rt = require("deal.runtime")
 local K = rt.__keys
 
-local WIDGET = "@$external/host.carriertable/Widget"
-local BOARD = "@$external/host.carriertable/Board"
+local WIDGET = "@$external/host/carriertable/Widget"
+local BOARD = "@$external/host/carriertable/Board"
 
 local M = {}
 

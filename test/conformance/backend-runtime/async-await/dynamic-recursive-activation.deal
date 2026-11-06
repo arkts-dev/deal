@@ -12,6 +12,12 @@ function check(ok:boolean):void{
 export function main():null{
   return null;
 }
+async function staticDown(n:number):Promise<number>{
+  if(n===0){
+    return 0;
+  }
+  return n+await staticDown(n-1);
+}
 export async function drive():Promise<number>{
   {
     // async-array-recursion
@@ -42,13 +48,7 @@ export async function drive():Promise<number>{
   }
   {
     // async-static-control
-    async function f(n:number):Promise<number>{
-      if(n===0){
-        return 0;
-      }
-      return n+await f(n-1);
-    }
-    check(await f(3)===6);
+    check(await staticDown(3)===6);
   }
   {
     // async-sync-dynamic

@@ -574,18 +574,18 @@ static deal_host_result echo_impl(const deal_value *args, size_t argc) {
 #endif
 }
 
-/* One malformed string carrier (H2's negative presentation, R2/R4): an unpaired
- * UTF-16 surrogate encoding, which no declared `string` position admits. The
+/* One malformed string carrier (H2's negative presentation, R2/R4): a truncated
+ * multibyte encoding, which no declared `string` position admits. The
  * value surface still carries the bytes so the declared boundary is the
  * rejecting authority. */
 static deal_host_result malformed_text_impl(const deal_value *args,
                                             size_t argc) {
-  static const char surrogate[3] = {(char)0xED, (char)0xA0, (char)0x80};
+  static const char malformed[2] = {(char)0xE2, (char)0x82};
   (void)args;
   (void)argc;
   deal_value value;
   deal_value_kind kind = DEAL_KIND_NULL;
-  if (deal_string_new(surrogate, sizeof surrogate, &value) != DEAL_OK
+  if (deal_string_new(malformed, sizeof malformed, &value) != DEAL_OK
       || deal_kind_of(value, &kind) != DEAL_OK
       || kind != DEAL_KIND_INVALID_UNICODE) {
     return host_failure("E_HOST", "malformed text construction");
@@ -719,7 +719,7 @@ static deal_host_result make_sparse_array_impl(const deal_value *args,
  * member and a string member cross at the declared `record` position, and a
  * malformed key is the closed host-boundary signal, never a stored member. */
 static deal_host_result make_record_impl(const deal_value *args, size_t argc) {
-  static const char malformed_key[3] = {(char)0xED, (char)0xA0, (char)0x80};
+  static const char malformed_key[2] = {(char)0xE2, (char)0x82};
   (void)args;
   (void)argc;
   deal_value table;

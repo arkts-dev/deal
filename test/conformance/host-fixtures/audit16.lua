@@ -1,6 +1,6 @@
 local rt = require('deal.runtime')
 local K = rt.__keys
-local identity = '@$external/host.audit15/C'
+local identity = '@$external/host/audit16/C'
 local retained, growing, callback, unknown
 return {
   C = {[K.kind]='class',[K.classname]=identity},

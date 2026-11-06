@@ -353,7 +353,7 @@ public final class LlvmBackendSelectionTest {
 
     private static void writeManifest(Path root, String backend) throws IOException {
         StringBuilder manifest = new StringBuilder(
-            "{\"languageVersion\": \"1.5\", \"moduleRoots\": [\"src\"]");
+            "{\"languageVersion\": \"1.6\", \"moduleRoots\": [\"src\"]");
         if (backend != null) {
             manifest.append(", \"backend\": ").append(backend);
         }

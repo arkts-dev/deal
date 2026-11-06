@@ -355,7 +355,7 @@ public final class LlvmGcStressTest {
         String externalText = externals.length() == 0 ? ""
             : ", \"externals\": {" + externals + "}";
         Files.writeString(root.resolve("deal.json"),
-            "{\"languageVersion\": \"1.5\", \"stdlib\": \"1.5\","
+            "{\"languageVersion\": \"1.6\", \"stdlib\": \"1.6\","
                 + " \"moduleRoots\": [\"src\"], \"backend\": \"llvm\""
                 + externalText + "}\n",
             StandardCharsets.UTF_8);

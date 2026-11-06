@@ -94,10 +94,10 @@ function testUpdateReadsOtherState(): void {
 function testBreakBeforeUpdate(): void {
   let visits: number = 0;
   let updates: number = 0;
-  function bump(x: number): number {
+  let bump = function(x: number): number {
     updates = updates + 1;
     return x + 1;
-  }
+  };
   { let v14Loop6: number = 0; while (v14Loop6 < 10) { let i: number = v14Loop6; {
     visits = visits + 1;
     i = i + 1;
@@ -172,17 +172,17 @@ function testNumberCounterStore(): void {
 
 function testReturnAndThrowSkipUpdate(): void {
   let calls: number = 0;
-  function next(x: number): number {
+  let next = function(x: number): number {
     calls = calls + 1;
     return x + 1;
-  }
-  function firstBodyValue(): number {
+  };
+  let firstBodyValue = function(): number {
     { let v14Loop12: number = 0; while (v14Loop12 < 3) { let i: number = v14Loop12; {
       i = i + 1;
       return i;
     } v14Loop12 = i; v14Loop12 = next(v14Loop12); } }
     return -1;
-  }
+  };
   let got: number = firstBodyValue();
   if (got !== 1) {
     throw { code: "TEST_FAIL", message: "the returning body lost its store" };

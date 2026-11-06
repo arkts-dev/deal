@@ -5,4 +5,4 @@
 import * as console from "std/console";
 import * as host from "host/probe";
 class B{r:Record<string,unknown>;}function consume(r:Record<string,unknown>):void{console.log("PARAM_BODY");}
-export function main():null{let r:Record<string,unknown>={};r.self=r;let box:B={r:r};let xs:Record<string,unknown>[]=[];function get():Record<string,unknown>{console.log("RETURN_BODY");return r;}host.corrupt(r);console.log("CORRUPTED");try{get();console.log("BAD_ACCEPTED");}catch(e){console.log("REJECT");}host.repair();consume(r);console.log("RECOVERED");return null;}
+export function main():null{let r:Record<string,unknown>={};r.self=r;let box:B={r:r};let xs:Record<string,unknown>[]=[];let get: () => Record<string,unknown> = function():Record<string,unknown>{console.log("RETURN_BODY");return r;};host.corrupt(r);console.log("CORRUPTED");try{get();console.log("BAD_ACCEPTED");}catch(e){console.log("REJECT");}host.repair();consume(r);console.log("RECOVERED");return null;}

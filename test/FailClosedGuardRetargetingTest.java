@@ -136,7 +136,7 @@ public class FailClosedGuardRetargetingTest {
     }
 
     private static CompilerInvocation harnessInvocation() {
-        return CompilerProfileProvider.resolve(ReleaseState.V1_5_ACTIVE,
+        return CompilerProfileProvider.resolve(ReleaseState.V1_6_ACTIVE,
             CapabilityRegistry.releaseRegistry());
     }
 
@@ -409,7 +409,7 @@ public class FailClosedGuardRetargetingTest {
 
     private static final String MANIFEST = """
         {
-          "languageVersion": "1.5",
+          "languageVersion": "1.6",
           "moduleRoots": ["src"],
           "output": "out",
           "backend": "luajit"
@@ -428,13 +428,13 @@ public class FailClosedGuardRetargetingTest {
 
         export function main(): null {
           let calls: number = 0;
-          function down(n: number): number {
+          let down: (n: number) => number = function(n: number): number {
             calls = calls + 1;
             if (n === 0) {
               return 0;
             }
             return down(n - 1);
-          }
+          };
           let r: number = down(4);
           if (r === 0 && calls === 5) {
             console.log("PROBE|RESIDUAL|ok");

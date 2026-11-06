@@ -24,7 +24,7 @@ import java.util.stream.Stream;
 /**
  * The catch-variable narrowing isolation regression (ISSUE-0888): the catch
  * identifier declares a fresh {@code Error} binding
- * (docs/spec-v1.5.md §try / catch), so a same-named outer binding's null
+ * (docs/spec-v1.6.md §try / catch), so a same-named outer binding's null
  * refinement never types the catch read and never overrides the catch
  * binding's own Error facts, while the catch scope's exit restores the
  * outer refinement the language did not invalidate (§Name resolution —

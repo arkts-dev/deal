@@ -4,54 +4,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * DEAL v1.5 template-literal structure scanner (docs/spec-v1.5.md lexical
- * grammar).
- *
- * <pre>
- * TemplateLiteral ::= '`' (TemplateText | '${' Expression '}')* '`'
- * TemplateText    ::= /* maximal nonempty text excluding line-terminators,
- *                        '`', '${'; trailing backslashes form pairs *&#47;
- * </pre>
- *
- * <p>TemplateText has no escape mechanism: a backslash is an ordinary
- * TemplateText character, and only a line terminator, a backtick, or the
- * {@code ${} opener ends the text run. Inside an interpolation the normal
- * expression lexical rules apply: whitespace including line terminators,
- * {@code //} and {@code /* *&#47;} comments, the five-escape quoted strings,
- * nested template literals, and balanced braces.</p>
- *
- * <p>Numeric/hex/Unicode escape spellings must be syntactically valid in
- * untagged TypeScript templates, but remain raw text in DEAL. An even
- * backslash run does not start an escape spelling.</p>
- *
- * <p>The <em>trailing backslash</em> rule closes the text run: the run of
- * backslashes that ends a TemplateText run and immediately precedes its
- * delimiter (the closing backtick or the {@code ${} opener) must form
- * pairs, so a text run never ends with an odd number of backslashes. The
- * rule introduces no escape: a backslash never shields a delimiter and no
- * scalar is rewritten or dropped. A text run that would end with an odd
- * run is not TemplateText, so the scan records a {@link Violation} for the
- * run and its delimiter. The scan keeps the structure it derives from the
- * delimiters — a violating template still terminates at that backtick and
- * a violating {@code ${} still opens its interpolation — so the caller
- * alone decides the rejection. A line terminator or the end of the scanned
- * text ends a run with the existing failure {@link Status}es, which already
- * reject the template.</p>
- *
- * <p>The scan is a pure structural walk: it records text and interpolation
- * segment ranges and never produces diagnostics, directive events, or
- * tokens. The lexer uses it to find the closing backtick of a template
- * token (the returned {@link Status} distinguishes the failure kinds); the
- * parser uses it to split the raw token content into its text and
- * interpolation segments. Because the scan never re-decodes or rewrites the
- * scanned text, a caller holding the raw slice can rebase sub-lexed
- * coordinates one-to-one.</p>
- *
- * <p>{@link #violations()} reports only the text runs of the scanned level:
- * a nested template literal inside an interpolation is a separate
- * TemplateLiteral production whose own scan owns its violations, because
- * the enclosing caller re-lexes that nested literal through the normal
- * expression lexical rules and reports the violation there.</p>
+ * Shared template structure and escape processing. Scans retain raw UTF-16
+ * ranges; the parser decodes text once before creating semantic values.
+ * Nested templates own their escape diagnostics through expression lexing.
  */
 public final class TemplateScanner {
 
@@ -82,27 +37,21 @@ public final class TemplateScanner {
                           boolean unterminated) {
     }
 
-    /** The delimiter that a violating TemplateText run would end at. */
     public enum Delimiter {
-        /** The closing backtick of the template literal. */
-        CLOSING_BACKTICK,
-        /** The {@code ${} opener of an interpolation. */
-        INTERPOLATION_OPENER,
-        /** An unpaired backslash starts an invalid numeric/hex/Unicode escape. */
+        /** A backslash starts an invalid numeric/hex/Unicode escape. */
         ESCAPE_PREFIX
     }
 
     /**
-     * A broken TemplateText restriction: the half-open UTF-16 range of an
-     * odd trailing backslash run with its delimiter, or an invalid escape
-     * prefix. No escape is decoded and structural recovery is unchanged.
+     * An invalid template escape's half-open UTF-16 source range.
+     * Scanning preserves raw text; the parser decodes accepted text.
      */
     public record Violation(int start, int end, Delimiter delimiter) {
     }
 
     /**
      * One scan outcome: the stop status, the stop index, the segments and
-     * the trailing-backslash violations of the scanned level, in source
+     * the invalid escapes of the scanned level, in source
      * order.
      */
     public record Scan(Status status, int endIndex, List<Segment> segments,
@@ -143,16 +92,12 @@ public final class TemplateScanner {
             }
             if (c == '`') {
                 addText(segments, textStart, pos);
-                recordTrailingBackslashes(source, textStart, pos, pos + 1,
-                    Delimiter.CLOSING_BACKTICK, violations);
                 return new Scan(Status.TERMINATED, pos + 1,
                     List.copyOf(segments), List.copyOf(violations));
             }
             if (c == '$' && pos + 1 < source.length()
                     && source.charAt(pos + 1) == '{') {
                 addText(segments, textStart, pos);
-                recordTrailingBackslashes(source, textStart, pos, pos + 2,
-                    Delimiter.INTERPOLATION_OPENER, violations);
                 int opener = pos;
                 int exprStart = pos + 2;
                 InterpolationScan interp = scanInterpolation(source, exprStart);
@@ -180,16 +125,16 @@ public final class TemplateScanner {
             }
 
             if (c == '\\') {
-                int end = pos + 1;
-                while (end < source.length() && source.charAt(end) == '\\') end++;
-                if (((end - pos) & 1) != 0 && end < source.length()) {
-                    char next = source.charAt(end);
-                    if (invalidEscape(source, end, next)) {
-                        violations.add(new Violation(end - 1, end + 1,
-                            Delimiter.ESCAPE_PREFIX));
-                    }
+                int next = pos + 1;
+                if (next < source.length() && invalidEscape(source, next, source.charAt(next))) {
+                    violations.add(new Violation(pos, next + 1, Delimiter.ESCAPE_PREFIX));
                 }
-                pos = end;
+                if (next < source.length() && source.charAt(next) == '\r'
+                        && next + 1 < source.length() && source.charAt(next + 1) == '\n') {
+                    pos = next + 2;
+                } else {
+                    pos = Math.min(next + 1, source.length());
+                }
                 continue;
             }
 
@@ -202,6 +147,46 @@ public final class TemplateScanner {
         addText(segments, textStart, pos);
         return new Scan(Status.EOF, pos, List.copyOf(segments),
             List.copyOf(violations));
+    }
+
+    /** Decodes validated untagged-template text; ranges always retain the raw source. */
+    public static String decodeText(String raw) {
+        StringBuilder out = new StringBuilder();
+        for (int i = 0; i < raw.length(); i++) {
+            char c = raw.charAt(i);
+            if (c != '\\' || i + 1 == raw.length()) {
+                out.append(c);
+                continue;
+            }
+            c = raw.charAt(++i);
+            switch (c) {
+                case 'n' -> out.append('\n');
+                case 'r' -> out.append('\r');
+                case 't' -> out.append('\t');
+                case 'b' -> out.append('\b');
+                case 'f' -> out.append('\f');
+                case 'v' -> out.append('\u000b');
+                case '0' -> out.append('\0');
+                case '\n', '\u2028', '\u2029' -> { }
+                case '\r' -> { if (i + 1 < raw.length() && raw.charAt(i + 1) == '\n') i++; }
+                case 'x', 'u' -> {
+                    boolean braces = c == 'u' && i + 1 < raw.length() && raw.charAt(i + 1) == '{';
+                    int start = i + (braces ? 2 : 1);
+                    int end = braces ? raw.indexOf('}', start) : start + (c == 'x' ? 2 : 4);
+                    if (end < start || end > raw.length()) { out.append(c); break; }
+                    try {
+                        int point = Integer.parseInt(raw.substring(start, end), 16);
+                        out.appendCodePoint(point);
+                        i = braces ? end : end - 1;
+                    } catch (IllegalArgumentException invalid) {
+                        // Lexer owns malformed spellings; recovery must not throw.
+                        out.append(c);
+                    }
+                }
+                default -> out.append(c);
+            }
+        }
+        return out.toString();
     }
 
     private static boolean invalidEscape(String source, int pos, char next) {
@@ -234,25 +219,6 @@ public final class TemplateScanner {
         if (c >= 'a' && c <= 'f') return c - 'a' + 10;
         if (c >= 'A' && c <= 'F') return c - 'A' + 10;
         return -1;
-    }
-
-    /**
-     * Applies the TemplateText trailing-backslash rule to the text run that
-     * ends at {@code delimiterStart}: the contiguous backslash run immediately
-     * before the delimiter (bounded by {@code textStart}) must be even. An
-     * odd run records a {@link Violation} covering the run and its
-     * {@code [delimiterStart, delimiterEnd)} delimiter.
-     */
-    private static void recordTrailingBackslashes(String source, int textStart,
-            int delimiterStart, int delimiterEnd, Delimiter delimiter,
-            List<Violation> violations) {
-        int runStart = delimiterStart;
-        while (runStart > textStart && source.charAt(runStart - 1) == '\\') {
-            runStart--;
-        }
-        if (((delimiterStart - runStart) & 1) == 1) {
-            violations.add(new Violation(runStart, delimiterEnd, delimiter));
-        }
     }
 
     /**
@@ -296,7 +262,7 @@ public final class TemplateScanner {
                 // A nested template literal: it is itself a TemplateLiteral
                 // production, so scan it recursively; its own
                 // interpolation braces are balanced inside it. The nested
-                // level owns its trailing-backslash violations: the
+                // level owns its escape violations: the
                 // enclosing caller re-lexes this nested literal under the
                 // normal expression rules and reports them there.
                 int nestedBacktick = pos;

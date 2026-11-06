@@ -82,10 +82,12 @@ int main(void) {
         check(metadata->parameter_count == 3U
                   && strcmp(metadata->parameter_names[2], "defaults|fields") == 0,
               "record 21 keeps its declared parameter names");
-        const deal_arm_record *sqrt = &installed->records[28];
-        check(strcmp(sqrt->code, "E8001") == 0
-                  && sqrt->has_expected == 0U && sqrt->has_actual == 1U,
-              "record 28 declares its actual field only");
+        const deal_arm_record *cycle = &installed->records[26];
+        check(strcmp(cycle->code, "E8001") == 0
+                  && cycle->has_expected == 0U && cycle->has_actual == 0U
+                  && strcmp(cycle->template_text,
+                      "cyclic value cannot be encoded as JSON") == 0,
+              "record 26 declares the fieldless cycle failure");
     }
     check(deal_arm_table_install(&deal_project_arm_table) == 1,
           "re-installing the accepted table is idempotent");

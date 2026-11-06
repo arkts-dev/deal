@@ -71,7 +71,7 @@ public final class ClassPresenceAdmissionTest {
         Path root = Files.createTempDirectory("deal-class-presence-admission-");
         Files.createDirectories(root.resolve("src"));
         Files.writeString(root.resolve("deal.json"), """
-            {"languageVersion":"1.5","stdlib":"1.5","moduleRoots":["src"],"backend":"js","output":"out"}
+            {"languageVersion":"1.6","stdlib":"1.6","moduleRoots":["src"],"backend":"js","output":"out"}
             """);
         Files.writeString(root.resolve("src/model.deal"), """
             export class Shared { required: number; nullable: string | null; optional?: number; }
@@ -88,7 +88,7 @@ public final class ClassPresenceAdmissionTest {
             """);
         Path source = root.resolve("src/main.deal");
         var located = ProjectLocator.locate(source.toString(), null);
-        check(located.context() != null, "v1.5 project locates: " + located);
+        check(located.context() != null, "v1.6 project locates: " + located);
         var owner = new CompilationOrchestrator(located.context(), source, false, false,
             false, false, null, ConformanceHarnessMetadata.invocation());
         check(owner.compile(), "baseline production compile: " + owner.diagnostics());

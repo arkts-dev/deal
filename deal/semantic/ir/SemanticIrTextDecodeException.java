@@ -5,8 +5,8 @@ package deal.semantic.ir;
  * (schema S2; conformance D1): raised when versioned
  * {@code deal.semantic-ir/2} text violates the pinned framing — malformed
  * JSON syntax, invalid UTF-8, a non-canonical number form, a duplicate
- * object key, an unpaired surrogate escape, trailing content after the
- * top-level value, or a pinned field/value-type/version mismatch of the
+ * object key, trailing content after the top-level value, or a pinned
+ * field/value-type/version mismatch of the
  * snapshot record shape.
  *
  * <p>This exception is deliberately <em>not</em> a diagnostic and not a

@@ -1358,7 +1358,7 @@ public final class NativeToolchainTest {
     private static void writeProject(Path root, Map<String, String> sources,
             Map<String, String> manifest) throws IOException {
         Files.createDirectories(root.resolve("src"));
-        StringBuilder json = new StringBuilder("{\"languageVersion\": \"1.5\","
+        StringBuilder json = new StringBuilder("{\"languageVersion\": \"1.6\","
             + " \"moduleRoots\": [\"src\"]");
         for (Map.Entry<String, String> entry : manifest.entrySet()) {
             json.append(", \"").append(entry.getKey()).append("\": \"")

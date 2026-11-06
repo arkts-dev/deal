@@ -1,7 +1,6 @@
 // Host-module fixture (host-module-abi D6): declaration for the bad_string
-// host module — a host surface whose returned strings violate DEAL v1.2
-// string encoding rules (malformed UTF-8 bytes, UTF-16 surrogate code
-// points) and whose valid returns exercise the raw backend-native carrier at
+// host module — a host surface distinguishing malformed byte transport from
+// legal lone UTF-16 units. Its valid returns exercise the raw backend-native carrier at
 // scalar, array, nested-array, nullable-element, and nullable nested-array
 // positions (a raw UTF-8 byte carrier decodes at the declared string cell;
 // the decoded element result lands back in the production array; a null
@@ -13,7 +12,8 @@
 // host's own declared `$DealRt` array carriers (the Lua/JS hosts return the
 // analogous plain array), so the declared-array check must validate the
 // carrier elements recursively instead of admitting the carrier's Java
-// storage: nativeBadStringArray's second element is an unpaired surrogate,
+// storage: nativeBadStringArray's second element is truncated byte transport
+// where the host supports byte carriers (the JS companion supplies legal units),
 // nativeBadNestedTail's later element is not an array while its earlier
 // nested carrier is valid, and the valid controls must land as usable DEAL
 // arrays (including one inner carrier returned at both positions of a

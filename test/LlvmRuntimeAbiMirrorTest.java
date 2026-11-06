@@ -420,7 +420,7 @@ public final class LlvmRuntimeAbiMirrorTest {
             check(errorHeader.contains("#define DEAL_ARM_ID_" + id.name() + " "),
                 "the header publishes the arm identity " + id);
         }
-        checkEq("29", macroText(errorHeader, "DEAL_ARM_REPERTOIRE_COUNT"),
+        checkEq("27", macroText(errorHeader, "DEAL_ARM_REPERTOIRE_COUNT"),
             "the published repertoire count is the closed arm set");
     }
 

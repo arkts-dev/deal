@@ -7,8 +7,8 @@ import * as c from "std/console";
 export function main(): null {
  let trace: string = "";
  let fs: ((x: number) => number)[] = [function(x: number): number { trace = trace + "O"; return x + 10; }];
- function index(): number { trace = trace + "I"; return 0; }
- function argument(): number { trace = trace + "A"; fs[0] = function(x: number): number {trace = trace + "N"; return x + 20;}; return 3; }
+ let index = function(): number { trace = trace + "I"; return 0; };
+ let argument = function(): number { trace = trace + "A"; fs[0] = function(x: number): number {trace = trace + "N"; return x + 20;}; return 3; };
  let result: number = fs[index()](argument());
  if (result !== 13 || trace !== "IAO") {throw {code:"TEST_FAIL",message:"callee capture: " + trace};}
  c.log("array-callee-before-arguments"); return null;

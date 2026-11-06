@@ -9,7 +9,7 @@ local console = {}
 -- call site, so the dynamic-nonstring E8001 reports it byte-exact.
 console.log = __rt.function_("(string)->void", function(x, file, line, column)
   __rt.check_string(x, file, line, column)
-  print(x)
+  print(__rt.string_transport(x, true))
   return __rt.__UNDEFINED
 end)
 
@@ -17,7 +17,7 @@ end)
 -- call site, so the dynamic-nonstring E8001 reports it byte-exact.
 console.error = __rt.function_("(string)->void", function(x, file, line, column)
   __rt.check_string(x, file, line, column)
-  io.stderr:write(x .. "\n")
+  io.stderr:write(__rt.string_transport(x, true) .. "\n")
   return __rt.__UNDEFINED
 end)
 

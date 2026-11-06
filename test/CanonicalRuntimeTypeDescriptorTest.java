@@ -238,7 +238,7 @@ public class CanonicalRuntimeTypeDescriptorTest {
             "[record]", "?record", "[?record]", "?[record]",
             "!number", "?!number", "null|undefined", "[!number]", "[?!record]",
             "(!number,?!string)->void", "async()->!record",
-            // Spec examples (docs/spec-v1.5.md §Runtime type descriptor format).
+            // Spec examples (docs/spec-v1.6.md §Runtime type descriptor format).
             "?[@src/app/User]", "[?@src/app/User]", "(number,string)->boolean",
             "()->null", "async(number)->string",
             // Exact sync/async functions over table at depth.

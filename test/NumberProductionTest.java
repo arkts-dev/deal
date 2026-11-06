@@ -41,30 +41,16 @@ public final class NumberProductionTest {
           ensure(a.length === 3);
           a[2] = 30;
           ensure(a.length === 3);
-          ensure(text.length("a😀b") === 3);
-          ensure(text.substring("a😀b", 1, 2) === "😀");
+          ensure(text.length("a😀b") === 4);
+          ensure(text.substring("a😀b", 1, 3) === "😀");
           ensure(text.substring("a😀b", 1e100, 1e100) === "");
           ensure(text.substring("a😀b", -1e100, 1e100) === "a😀b");
-          for (let bound of [0.5, nan, inf, -inf]) {
-            let failed: boolean = false;
-            try { text.substring("a😀b", bound, 2); }
-            catch (e) {
-              let error = e as Error;
-              ensure(error.code === "E8001");
-              ensure(error.message === "substring bounds must be finite integers");
-              failed = true;
-            }
-            ensure(failed);
-            failed = false;
-            try { text.substring("a😀b", 0, bound); }
-            catch (e) {
-              let error = e as Error;
-              ensure(error.code === "E8001");
-              ensure(error.message === "substring bounds must be finite integers");
-              failed = true;
-            }
-            ensure(failed);
+          for (let bound of [0.5, nan, -inf]) {
+            ensure(text.substring("a😀b", bound, 1) === "a");
+            ensure(text.substring("a😀b", 0, bound) === "");
           }
+          ensure(text.substring("a😀b", inf, 1) === "😀b");
+          ensure(text.substring("a😀b", 0, inf) === "a😀b");
           let parsed: Record<string, unknown> = json.parse("{\\\"a\\\":9007199254740993,\\\"z\\\":-0,\\\"b\\\":2147483647.00000001}");
           let rounded: number = parsed.a as number;
           let zero: number = parsed.z as number;
@@ -104,8 +90,8 @@ public final class NumberProductionTest {
         Files.createDirectories(source.getParent());
         Files.writeString(source, SOURCE);
         Files.writeString(project.resolve("deal.json"), """
-            {"languageVersion":"1.5","moduleRoots":["src"],"output":"out",
-             "backend":"js","stdlib":"1.5","dependencies":{},"externals":{}}
+            {"languageVersion":"1.6","moduleRoots":["src"],"output":"out",
+             "backend":"js","stdlib":"1.6","dependencies":{},"externals":{}}
             """);
         String javaCommand = Path.of(System.getProperty("java.home"), "bin/java").toString();
         String javac = Path.of(System.getProperty("java.home"), "bin/javac").toString();

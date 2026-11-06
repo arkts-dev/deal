@@ -94,8 +94,7 @@ public record FailureArm(
         /** The carried canonical class atom. */
         CARRIED_CLASS_ATOM,
         /**
-         * The failing value's canonical text (the {@code SQRT_NEGATIVE}
-         * arm's pinned hex-float actual projection).
+         * Canonical numeric text, independent of descriptor-kind tokens.
          */
         CANONICAL_VALUE_TEXT,
         /** The carried canonical signature text. */
