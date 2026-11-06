@@ -1068,8 +1068,6 @@ try {
 
 Catch binds the identical Error as unknown; narrow before field access or rethrow. Host failures normalize to Error without replacing DEAL Errors; native code/message/cause are backend-defined. Rethrow preserves fields, origin, frames and cause. Catch is skipped on success; after handling, execution continues after the statement.
 
-If the `try` block has a definite `return`, the `catch` block must also have a definite `return` or `throw`. Both return expressions must satisfy the enclosing function's return type.
-
 ### Narrowing across try/catch
 
 After a `try`/`catch`, all variables assigned inside the `try` block revert to their declared type.
