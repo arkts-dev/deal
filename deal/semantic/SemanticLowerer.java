@@ -8742,6 +8742,15 @@ public final class SemanticLowerer {
          * pair is interpreted as a stdlib algorithm here (D1).
          */
         private ValueId lowerCallSite(CallExpr call, ValueId slot) {
+            if (call.callee() instanceof IdentifierExpr id && id.name().equals("String")
+                    && siteCheckerScope().resolve(id.name()) instanceof Symbol.IntrinsicSymbol) {
+                ExpressionNode argument = call.args().getFirst();
+                ValueId value = lowerOperand(argument);
+                return emitOperandOp(SemanticOpKind.UNARY,
+                    new KindPayload.UnaryPayload(UnarySelector.NUMBER_TO_STRING),
+                    List.of(value), List.of(RuntimeDescriptor.Number.INSTANCE), call.span(),
+                    RuntimeDescriptor.String.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE, slot);
+            }
             Optional<StdlibFunctionCatalog.Entry> stdlibEntry =
                 StdlibCallRecognition.recognize(call.callee(), currentCheckerScope(),
                     moduleImports);

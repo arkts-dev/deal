@@ -52,6 +52,15 @@ public final class Language16FrontendTest {
         check("function f(): void { for(const x of [1]) { let g = function():void{x = 2;}; } }", false);
         check("function f(): void { for(const x of [1]) { const y = x; } }", true);
         check("function f(): void { const r:Record<string,unknown> = {const:1}; r.const = 2; }", true);
+        check("function f():string{return String(1);}", true);
+        check("function f(x:unknown):string{if(typeof x===\"number\"){return String(x);}return \"\";}", true);
+        for(String expression : List.of("String()", "String(1,2)", "String(\"1\")", "String(true)", "String(null)", "String(undefined)", "String")) {
+            check("function f():void{let value=" + expression + ";}", false);
+        }
+        check("function f(x:unknown):string{return String(x);}", false);
+        check("function f():void{let String=1;}", false);
+        check("function f(String:number):void{}", false);
+        check("function String():void{}", false);
         check("function f():string{return `${1}|${-0}|${1/0}`;}", true);
         check("function f(x:unknown):string{if(typeof x===\"number\"){return `${x}`;}return \"\";}", true);
         for (String type : List.of("boolean", "unknown", "number|null", "number|undefined", "number[]", "()=>number")) {

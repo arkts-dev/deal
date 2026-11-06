@@ -14,6 +14,8 @@ Own resolution, typing, narrowing and facts. Diagnostics are deterministic/targe
 - Declarations/imports and const bindings are immutable; let-bound function values remain mutable. Preserve const through inference, closure resolution and for-of binding replacement; aggregates referenced by const remain mutable. Resolve signatures in their enclosing scope, excluding shadowing parameters.
 - Nested functions follow declaration order; modules hoist. Validate nested declaration names (reserved/builtin/$) and reject same-scope redeclaration without forbidding ordinary outer shadowing. Reject namespace/metadata data, duplicate properties and array deletion. Record keys remain string data; class members are declared-field accesses.
 
+String is an unshadowable direct-call-only builtin with exactly one checked number argument; it supplies no contextual unknown extraction. Lower calls through the same NUMBER_TO_STRING contract as numeric interpolation.
+
 Template interpolations accept checked string or number values only; they grant no implicit contextual extraction from unknown or nullish values.
 
 Expression-bodied arrows check their expression against the declared result, including requiring a void expression for void-result arrows. Their blocks, captures, recursion and async checks otherwise follow ordinary function expressions.

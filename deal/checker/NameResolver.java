@@ -233,6 +233,9 @@ public final class NameResolver {
         for (BuiltinErrorDeclaration.Field field : builtinError.fields()) {
             errorFields.add(field.declaration());
         }
+        root.define("String", new Symbol.IntrinsicSymbol("String",
+            new Type.Func(List.of(Type.Number.INSTANCE), Type.String.INSTANCE),
+            (call, args, ctx) -> Type.String.INSTANCE));
         root.define("Error", new Symbol.ClassSymbol("Error", errorFields, "",
             builtinError.identity()));
     }
@@ -808,7 +811,7 @@ public final class NameResolver {
      * Emits E2008 if it does.
      */
     private void checkNoDollar(String name, Span span) {
-        if (java.util.Set.of("Record", "Promise", "Object", "undefined", "switch", "enum",
+        if (java.util.Set.of("Record", "Promise", "Object", "String", "undefined", "switch", "enum",
                 "case", "default", "const", "var", "new", "this", "super", "extends",
                 "implements", "interface", "package", "private", "protected", "public",
                 "static", "yield", "with", "debugger", "do", "finally", "in", "instanceof",

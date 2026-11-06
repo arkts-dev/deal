@@ -1691,6 +1691,10 @@ public final class TypeChecker {
             return Type.Error.INSTANCE;
         }
 
+        if (sym instanceof Symbol.IntrinsicSymbol && id.name().equals("String")) {
+            error(DiagnosticCode.E3001, "Builtin operations support direct calls only", id.span());
+            return Type.Error.INSTANCE;
+        }
         if (sym instanceof Symbol.ModuleSymbol || sym instanceof Symbol.ClassSymbol) {
             error(DiagnosticCode.E3001, "Namespace/class metadata is not a data value", id.span());
             return Type.Error.INSTANCE;
@@ -1863,6 +1867,17 @@ public final class TypeChecker {
     // =======================================================================
 
     private Type checkCall(CallExpr call) {
+        if (call.callee() instanceof IdentifierExpr id && id.name().equals("String")
+                && resolveVisibleBinding(id.name()) instanceof Symbol.IntrinsicSymbol builtin) {
+            typeMap.put(id, builtin.type());
+            List<Type> arguments = new ArrayList<>();
+            Type savedExpected = expectedType;
+            expectedType = null;
+            try {
+                for (ExpressionNode argument : call.args()) arguments.add(checkExpression(argument));
+            } finally { expectedType = savedExpected; }
+            return checkFunctionCall(call, (Type.Func) builtin.type(), arguments);
+        }
         if (call.callee() instanceof IdentifierExpr id && currentScope.resolve(id.name()) == null) {
             diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E2001,
                     "Undeclared identifier '" + id.name() + "'", id.span())

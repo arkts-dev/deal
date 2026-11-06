@@ -229,7 +229,7 @@ public final class CompositionProductionTest {
                 if(i>0) numericSource.append(',');
                 numericSource.append('"').append(expectedNumbers.get(i)).append('"');
             }
-            numericSource.append("];let i=0;while(i<values.length){if(`${values[i]}`!==expected[i]){"
+            numericSource.append("];let i=0;while(i<values.length){if(`${values[i]}`!==expected[i] || String(values[i])!==expected[i]){"
                 + "throw {code:\"NUMBER_TEXT\",message:`${i}: ${values[i]}`};}i=i+1;}return null;}");
             execute(numericSource.toString(), "", root.resolve("number-text-reference"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
@@ -246,7 +246,11 @@ public final class CompositionProductionTest {
                 + "throw {code:\"ORDER\",message:\"interpolation order\"};}"
                 + "let fail=():number=>{throw {code:\"STOP\",message:\"stop\"};};"
                 + "try{let text=`${step(3)}${fail()}${step(4)}`;}catch(e){}"
-                + "if(state!==123){throw {code:\"ABRUPT\",message:\"interpolation failure\"};}return null;}";
+                + "if(state!==123){throw {code:\"ABRUPT\",message:\"interpolation failure\"};}"
+                + "if(String(step(4))!==\"4\" || state!==1234){throw {code:\"STRING\",message:\"String effects\"};}"
+                + "try{let text=String(fail());}catch(e){}"
+                + "let refined:unknown=1.5;if(typeof refined===\"number\"){if(String(refined)!==\"1.5\"){"
+                + "throw {code:\"REFINED\",message:\"String refinement\"};}}return null;}";
             execute(interpolation, "", root.resolve("numeric-templates"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             String multiline = "export function main():null{"
