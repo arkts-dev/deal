@@ -13,7 +13,7 @@ ECMAScript references apply within DEAL's grammar and type rules.
 ## Lexical elements
 
 - Tokens and property-name rules are defined by the [lexical grammar](#lexical-grammar-normative). Follow TypeScript module identifier rules by position: `switch`/`enum` cannot name bindings.
-- `Record`, `Promise`, `Object`, `Array`, `String`, `JSON`, `Math`, `Date`, `console`, `undefined` are unshadowable builtins.
+- `Record`, `Promise`, `Object`, `Array`, `String`, `Number`, `JSON`, `Math`, `Date`, `console`, `undefined` are unshadowable builtins.
 
 ### Comment semantics
 
@@ -1276,6 +1276,14 @@ xs.pop(): E | undefined
 xs.splice(start: number, deleteCount: number): E[]
 xs.map(mapper: (value: E, index: number, array: E[]) => R): R[]
 xs.filter(predicate: (value: E, index: number, array: E[]) => boolean): E[]
+xs.includes(value: E): boolean
+xs.includes(value: E, fromIndex: number): boolean
+xs.indexOf(value: E): number
+xs.indexOf(value: E, fromIndex: number): number
+xs.find(predicate: (value: E, index: number, array: E[]) => boolean): E | undefined
+xs.findIndex(predicate: (value: E, index: number, array: E[]) => boolean): number
+xs.some(predicate: (value: E, index: number, array: E[]) => boolean): boolean
+xs.every(predicate: (value: E, index: number, array: E[]) => boolean): boolean
 xs.slice(start: number, end: number): E[]
 ss.join(separator: string): string
 Array.from(xs: E[], mapper: (value: E, index: number) => R): R[]
@@ -1283,7 +1291,7 @@ Array.from(xs: E[], mapper: (value: E, index: number) => R): R[]
 
 For xs of type E[] and ss of type string[], E and R denote data types, not source generics; R is the synchronous mapper's explicit result type.
 
-Listed receiver operations follow corresponding [ECMAScript semantics](https://262.ecma-international.org/16.0/#sec-array-objects), except `map` raises E8002 for missing indexes within its initial length. `push`, `pop` and `splice` validate affected elements before mutation.
+Listed receiver operations follow corresponding [ECMAScript semantics](https://262.ecma-international.org/16.0/#sec-array-objects), except `map`, `find` and `findIndex` raise E8002 when visiting missing indexes. `push`, `pop` and `splice` validate affected elements before mutation.
 
 `from` traverses xs as [for-of](#for-of) does, invoking mapper with each value and index; returns its results in a fresh array.
 
@@ -1304,6 +1312,10 @@ s.slice(start: number): string
 s.slice(start: number, end: number): string
 s.includes(part: string): boolean
 s.includes(part: string, position: number): boolean
+s.indexOf(search: string): number
+s.indexOf(search: string, position: number): number
+s.lastIndexOf(search: string): number
+s.lastIndexOf(search: string, position: number): number
 s.startsWith(part: string): boolean
 s.startsWith(part: string, position: number): boolean
 s.endsWith(part: string): boolean
@@ -1320,6 +1332,15 @@ s has type string; `length` is read-only. Follow corresponding [ECMAScript Strin
 #### Numeric conversion
 
 `String(value: number): string` follows ECMAScript [Number::toString](https://262.ecma-international.org/16.0/#sec-numeric-types-number-tostring).
+
+#### Number
+
+```txt
+Number.isFinite(value: unknown): boolean
+Number.isNaN(value: unknown): boolean
+```
+
+Follow corresponding [ECMAScript Number operations](https://262.ecma-international.org/16.0/#sec-properties-of-the-number-constructor).
 
 #### JSON
 
@@ -1358,6 +1379,9 @@ Math.floor(x: number): number
 Math.ceil(x: number): number
 Math.sqrt(x: number): number
 Math.abs(x: number): number
+Math.min(a: number, b: number): number
+Math.max(a: number, b: number): number
+Math.round(value: number): number
 ```
 
 Follow corresponding [ECMAScript Math operations](https://262.ecma-international.org/16.0/#sec-math-object).
