@@ -1074,25 +1074,7 @@ public final class TypeChecker {
             // void admits normal completion; null is an explicit data result.
             // Analyze reachable statements, including unconditional-return loops.
             Type retType = funcType.returnType();
-            // The try/catch-local obligation first: a try block that
-            // definitely returns via return statements requires the catch
-            // block to definitely return or throw, independently of the
-            // enclosing body's termination and of its return type
-            // (docs/spec-v1.6.md §try / catch). The deficient catch block
-            // carries the diagnostic even when a later statement returns;
-            // when the composite rule fires, the whole-body falloff
-            // diagnostic is redundant and stays suppressed.
-            List<TryStatement> fallthroughs =
-                ReturnAnalysis.tryCatchFallthroughs(fd.body());
-            for (TryStatement ts : fallthroughs) {
-                error(DiagnosticCode.E5002,
-                    "Function '" + fd.name() + "' must return on all paths:"
-                        + " the catch block of a definitely-returning try"
-                        + " must also definitely return or throw",
-                    ts.catchBlock().span());
-            }
-            if (fallthroughs.isEmpty()
-                    && !(retType instanceof Type.Void)
+            if (!(retType instanceof Type.Void)
                     && !ReturnAnalysis.definitelyReturns(fd.body())) {
                 error(DiagnosticCode.E5002,
                     "Function '" + fd.name() + "' must return a value on all paths",
@@ -2625,21 +2607,7 @@ public final class TypeChecker {
         loopSavedNarrowing = savedLoopSavedNarrowing;
         loopDepth = savedLoopDepth;
 
-        // ISSUE-0717: the reachability-ordered walk (the null-returning
-        // expression keeps the landed fall-off tolerance; see
-        // checkFunctionDeclaration). The try/catch-local obligation is
-        // independent of it.
-        List<TryStatement> fallthroughs =
-            ReturnAnalysis.tryCatchFallthroughs(fe.body());
-        for (TryStatement ts : fallthroughs) {
-            error(DiagnosticCode.E5002,
-                "Function expression must return on all paths: the catch"
-                    + " block of a definitely-returning try must also"
-                    + " definitely return or throw",
-                ts.catchBlock().span());
-        }
-        if (fallthroughs.isEmpty()
-                && !(returnType instanceof Type.Void)
+        if (!(returnType instanceof Type.Void)
                 && !ReturnAnalysis.definitelyReturns(fe.body())) {
             error(DiagnosticCode.E5002,
                 "Function expression must return a value on all paths", fe.span());

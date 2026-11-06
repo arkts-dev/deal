@@ -146,6 +146,21 @@ public final class CompositionProductionTest {
                     fixturePath.toString()), "", root.resolve(commas), null,
                     List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             }
+            String catchPaths = "function value(fail: boolean): number {"
+                + "let xs: number[] = [7]; try {if(fail){return xs[2];}return xs[0];}"
+                + "catch(e) {} return 9;}"
+                + "function done(): void {try {return;}catch(e){}}"
+                + "async function asyncValue(fail: boolean): Promise<number> {"
+                + "let f: (fail: boolean) => number = function(fail: boolean): number {"
+                + "try {return value(fail);}catch(e){} return 11;};return f(fail);}"
+                + "export async function probe(): Promise<number> {return await asyncValue(true);}"
+                + "export function main(): null {done();"
+                + "if(value(false)!==7 || value(true)!==9){throw {code:\"TEST\",message:\"catch path\"};}"
+                + "let f: () => number = function(): number {try {throw {code:\"X\",message:\"x\"};}"
+                + "catch(e){}return 13;};"
+                + "if(f()!==13){throw {code:\"TEST\",message:\"catch expression\"};}return null;}";
+            execute(catchPaths, "", root.resolve("catch-paths"), null,
+                List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             // Each seed changes values and composition depth, not the language
             // contract. Integer arithmetic here is exactly representable binary64.
             for (int seed = 0; seed < 4; seed++) {
@@ -170,7 +185,7 @@ public final class CompositionProductionTest {
                     + "){throw {code:\"TEST\",message:\"value\"};}c.log(\"COMPOSE_OK\");return null;}";
                 execute(source, "COMPOSE_OK\n", root.resolve("seed" + seed), null);
             }
-            System.out.println("Composition production: 15 composition lanes and 14 trailing-comma executions passed");
+            System.out.println("Composition production: 15 composition lanes and 21 revised-syntax executions passed");
         } finally { remove(root); }
     }
 }

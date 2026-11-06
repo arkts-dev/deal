@@ -1340,14 +1340,14 @@ public class CheckerTest {
 
     /**
      * Retained corner cases: unknown Record reads reject concrete condition
-     * and logical consumers at their own ranges. The independent catch
-     * obligation remains E5002, including recursive and expression bodies.
+     * and logical consumers at their own ranges. Catch fallthrough uses
+     * ordinary whole-body definite-return analysis.
      * Explicit extraction controls preserve direct storage, argument,
      * condition and return consumers; Error extraction preserves catch throws.
      */
     static void testRetainedCornerCaseFrontendContract() {
         System.out.println("-- retained corner-case frontend contract:"
-            + " contextual-read negatives and the catch obligation --");
+            + " contextual-read negatives and ordinary definite returns --");
 
         // Subject 9: an unknown read cannot act as a boolean condition.
         CheckerOutput whileRead = checkProgram(
@@ -1366,33 +1366,30 @@ public class CheckerTest {
         checkExactRange(logicalRead, "E3007", 1, 84, 1, 90,
             "the composite operand carries its own exact range");
 
-        // Subject 11: a definitely-returning try with a fallthrough catch
-        // rejects at the catch block even though a later return follows.
+        // A later return completes the fallthrough catch path.
         CheckerOutput catchFallthrough = checkProgram(
             "export function f(): number {try {return 1;} catch(e) {} return 2;}\n");
-        assertError(catchFallthrough, "E5002",
-            "the fallthrough catch rejects E5002");
-        checkExactRange(catchFallthrough, "E5002", 1, 55, 1, 57,
-            "the catch obligation carries the catch block's exact range");
+        assertNoErrors(catchFallthrough, "a later return completes the catch path");
 
-        // The obligation is independent of the enclosing body's return:
-        // the mutual-recursion shape republishes the same E5002 at the
-        // catch, never the whole-function falloff.
+        // Calls, including recursive calls, do not prove a value return.
         CheckerOutput recursive = checkProgram(
             "export function main(): null {f(); return null;}\n"
                 + "function f(): null {try {return null;} catch(e) {g();}}\n"
                 + "function g(): null {f();}\n");
         assertError(recursive, "E5002",
             "the recursive definitely-returning try rejects E5002");
-        checkExactRange(recursive, "E5002", 2, 49, 2, 55,
-            "the recursive catch carries its own exact range");
 
-        // Function expressions carry the same obligation.
+        // Function expressions follow the same whole-body analysis.
         CheckerOutput expression = checkProgram(
             "export function f(): null {let g: () => number = function(): number"
                 + " {try {return 1;} catch(e) {} return 2;}; return null;}\n");
-        assertError(expression, "E5002",
-            "the function-expression catch rejects E5002");
+        assertNoErrors(expression, "a function-expression catch can reach a later return");
+        assertNoErrors(checkProgram(
+            "function f(): void {try {return;} catch(e) {}}"),
+            "void catches may fall through");
+        assertNoErrors(checkProgram(
+            "async function f(): Promise<void> {try {return;} catch(e) {}}"),
+            "async void catches may fall through");
 
         // Legal control: a throw-only try does not trigger the rule, so a
         // fallthrough catch with a valid later return compiles.

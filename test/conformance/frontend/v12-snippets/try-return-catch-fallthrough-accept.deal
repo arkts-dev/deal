@@ -1,6 +1,6 @@
 // @spec: Type system
-// @description: Corner-case subject try-return-catch-fallthrough-accept — Trailing return cannot legalize forbidden catch fallthrough. (basis: try/catch: definite return in try requires catch return/throw)
+// @description: A trailing return completes the catch fallthrough path
 // @expected: compile-ok
 // @features: v1.2, frontend, accept-control
 
-export function f(): number {try {return 1;} catch(e) {throw e as Error;}}
+export function f(): number {try {return 1;} catch(e) {} return 2;}
