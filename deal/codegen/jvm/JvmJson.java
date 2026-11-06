@@ -495,9 +495,9 @@ public final class JvmJson {
     // Canonical text
     // =========================================================================
 
-    /** The E8 canonical number text (shortest round-trippable, Double.toString). */
+    /** Finite JSON numbers share ECMAScript Number::toString spelling. */
     public static String numberText(double value) {
-        return value == 0 ? "0" : Double.toString(value);
+        return deal.semantic.ir.NumberSemantics.toString(value);
     }
 
     /** The RFC-8259 string body; lone UTF-16 units are escaped losslessly. */
@@ -962,7 +962,7 @@ public final class JvmJson {
                 }
                 double number = numeric.doubleValue();
                 if (!Double.isFinite(number)) yield "null";
-                yield number == 0 ? "0" : Double.toString(number);
+                yield numberText(number);
             }
             case "string" -> {
                 if (!(value instanceof String string)) {
@@ -1085,7 +1085,7 @@ public final class JvmJson {
         }
         if (value instanceof Number numeric) {
             double number = numeric.doubleValue();
-            out.append(!Double.isFinite(number) ? "null" : number == 0 ? "0" : Double.toString(number));
+            out.append(!Double.isFinite(number) ? "null" : numberText(number));
             return;
         }
         if (value instanceof String string) {

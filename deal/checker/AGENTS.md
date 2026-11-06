@@ -14,7 +14,7 @@ Own resolution, typing, narrowing and facts. Diagnostics are deterministic/targe
 - Declarations/imports and const bindings are immutable; let-bound function values remain mutable. Preserve const through inference, closure resolution and for-of binding replacement; aggregates referenced by const remain mutable. Resolve signatures in their enclosing scope, excluding shadowing parameters.
 - Nested functions follow declaration order; modules hoist. Validate nested declaration names (reserved/builtin/$) and reject same-scope redeclaration without forbidding ordinary outer shadowing. Reject namespace/metadata data, duplicate properties and array deletion. Record keys remain string data; class members are declared-field accesses.
 
-Record, Promise, Object, Array, String, JSON, Math, Date, console and undefined cannot be rebound by user declarations/imports/parameters/iteration/catch names. Fixed Math, Date and console namespace operations require direct calls and exact signatures; ordinary class/Record callable fields remain distinct.
+Record, Promise, Object, Array, String, JSON, Math, Date, console and undefined cannot be rebound by user declarations/imports/parameters/iteration/catch names. Fixed Math, Date, console and JSON.stringify namespace operations require direct calls and exact signatures; JSON.stringify accepts unknown without supplying an extraction context and returns string|undefined; ordinary class/Record callable fields remain distinct.
 
 String is an unshadowable direct-call-only builtin with exactly one checked number argument; it supplies no contextual unknown extraction. Lower calls through the same NUMBER_TO_STRING contract as numeric interpolation.
 

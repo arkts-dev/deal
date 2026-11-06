@@ -7127,53 +7127,11 @@ local function __jsonParse(s)
   if pos <= len then return __JSONSYNTAX end
   return value
 end
--- The Java-Double.toString-compatible canonical number text (shortest
--- round-trippable digits, always one fractional digit, E-notation
--- outside [1e-3, 1e7)).
+-- JSON substitutes null for nonfinite numbers; finite spelling is the
+-- deployed runtime's shared ECMAScript numeric conversion.
 local function __jsonNumText(v)
   if v ~= v or v == math.huge or v == -math.huge then return nil end
-  if v == 0 then return "0" end
-  local sign = ""
-  if v < 0 then sign = "-"; v = -v end
-  local digits = nil
-  local exp = nil
-  for p = 1, 17 do
-    local text = string.format("%." .. (p - 1) .. "e", v)
-    if tonumber(text) == v then
-      local lead, rest, e = string.match(text, "^(%d)%.?(%d*)e([%+%-]?%d+)$")
-      if lead ~= nil then
-        digits = lead .. rest
-        exp = tonumber(e)
-        break
-      end
-    end
-  end
-  if digits == nil then
-    return nil
-  end
-  digits = string.gsub(digits, "0+$", "")
-  if digits == "" then digits = "0" end
-  local text
-  if exp >= -3 and exp < 7 then
-    if exp >= 0 then
-      if #digits > exp + 1 then
-        text = string.sub(digits, 1, exp + 1) .. "." .. string.sub(digits, exp + 2)
-      else
-        text = digits .. string.rep("0", exp + 1 - #digits) .. ".0"
-      end
-    else
-      text = "0." .. string.rep("0", -exp - 1) .. digits
-    end
-  else
-    local mantissa
-    if #digits > 1 then
-      mantissa = string.sub(digits, 1, 1) .. "." .. string.sub(digits, 2)
-    else
-      mantissa = string.sub(digits, 1, 1) .. ".0"
-    end
-    text = mantissa .. "E" .. tostring(exp)
-  end
-  return sign .. text
+  return require("deal.runtime").number_text(v)
 end
 local function __jsonEscapeString(s)
   return require("deal.runtime").string_json_body(s)
@@ -9709,18 +9667,8 @@ local function __num(v)
   if type(v) == "table" and v[__dealCarrierKeys.jn] then return v.d end
   return v
 end
--- The number-typed slot mark of the shared JSON_STRINGIFY walker: the
--- Lua value model carries no int/number distinction for plain numbers,
--- so every container write records the written value's own variant —
--- the __jn carrier's kind when the value is a runtime carrier, the
--- written expression's static kind otherwise. A number-variant slot
--- serializes through the closed decimal spelling (__sfNumText,
--- Double.toString parity), an int-variant slot through the integer
--- spelling. The mark is keyed exactly like the storage key (a table
--- key or a 1-based element index) and is cleared by a non-number
--- rewrite of the same slot, so the walker's decision always mirrors
--- the stored value's own variant — the oracle's and the shared JVM
--- runtime's typing rule.
+-- Preserve private per-slot numeric metadata across writes and bridges.
+-- JSON spelling itself depends only on the binary64 value, never this mark.
 local function __numKey(t, k, v, isNumber)
   if type(v) == "table" and v[__dealCarrierKeys.jn] then isNumber = (v.k == "number") end
   local ns = __nsSurfaces[t]
@@ -11233,69 +11181,10 @@ local function __cmp(selector, kindL, l, kindR, r, side)
   if selector == "REFERENCE_NE" then return l ~= r end
   return false
 end
--- Exact decimal expansion, then shortest round-tripping, ties-to-even rounding.
-local function __numberText(v)
-  if v ~= v then return "NaN" end
-  if v == math.huge then return "Infinity" end
-  if v == -math.huge then return "-Infinity" end
-  if v == 0 then return "0" end
-  local sign = v < 0 and "-" or ""
-  v = math.abs(v)
-  local m, e = math.frexp(v)
-  local digits = string.format("%.0f", math.ldexp(m, 53))
-  e = e - 53
-  local scale = math.max(0, -e)
-  local factor = e < 0 and 5 or 2
-  for step = 1, math.abs(e) do
-    local carry, out = 0, {}
-    for i = #digits, 1, -1 do
-      local n = (string.byte(digits, i) - 48) * factor + carry
-      out[i] = string.char(48 + n % 10)
-      carry = math.floor(n / 10)
-    end
-    digits = (carry > 0 and string.char(48 + carry) or "") .. table.concat(out)
-  end
-  local exponent = #digits - scale - 1
-  local function increment(s)
-    local i = #s
-    while i > 0 and s:sub(i,i) == "9" do i = i - 1 end
-    if i == 0 then return "1" .. string.rep("0", #s) end
-    return s:sub(1,i-1) .. string.char(string.byte(s,i)+1) .. string.rep("0", #s-i)
-  end
-  local chosen, power
-  for precision = 1, 17 do
-    local lower = digits:sub(1,precision)
-    if #lower < precision then lower = lower .. string.rep("0", precision-#lower) end
-    local nextDigit = digits:sub(precision+1,precision+1)
-    local tail = digits:sub(precision+2):find("[1-9]") ~= nil
-    local up = nextDigit ~= "" and (nextDigit > "5" or
-      (nextDigit == "5" and (tail or tonumber(lower:sub(-1)) % 2 == 1)))
-    local upper = increment(lower)
-    local rounded, other = lower, upper
-    if up then rounded, other = upper, lower end
-    power = exponent - precision + 1
-    if tonumber(rounded .. "e" .. power) == v then chosen = rounded
-    elseif tonumber(other .. "e" .. power) == v then chosen = other end
-    if chosen then break end
-  end
-  if not chosen then error("number: missing roundtrip") end
-  while #chosen > 1 and chosen:sub(-1) == "0" do
-    chosen = chosen:sub(1,-2); power = power + 1
-  end
-  exponent = #chosen + power - 1
-  if exponent >= -6 and exponent < 21 then
-    local point = #chosen + power
-    if point <= 0 then return sign .. "0." .. string.rep("0", -point) .. chosen end
-    if point >= #chosen then return sign .. chosen .. string.rep("0", point-#chosen) end
-    return sign .. chosen:sub(1,point) .. "." .. chosen:sub(point+1)
-  end
-  local fraction = #chosen > 1 and "." .. chosen:sub(2) or ""
-  return sign .. chosen:sub(1,1) .. fraction .. "e" .. (exponent >= 0 and "+" or "") .. exponent
-end
 local function __unary(selector, v, opKey, digest, parent, origin)
   if selector == "BOOL_NOT" then return not v end
   v = __num(v)
-  if selector == "NUMBER_TO_STRING" then return __numberText(v) end
+  if selector == "NUMBER_TO_STRING" then return require("deal.runtime").number_text(v) end
   return -v
 end
 local function __arith(selector, l, r, opKey, digest, parent, origin)
@@ -12046,147 +11935,9 @@ local function __rawArgAtom(kind, v)
   if t == "function" then return "ref:"..__allocId(v) end
   return __atom(kind, v)
 end
--- The Java Double.toString notation of one finite nonzero double: the
--- shortest round-tripping digit string (at least two significant
--- digits — the printed form always carries one fractional digit), the
--- closest such decimal, and the even last digit when the value is
--- exactly equidistant between two of them — the JDK's rule, which the
--- C library's %g rounding (ties away from zero) does not reproduce on
--- its own. Plain notation when the decimal exponent is in [-3, 6],
--- scientific d.dddE±dd otherwise, and a pinned ".0" suffix on integral
--- plain forms. Named distinctly from the class-encoder renderer
--- (JSON_PRELUDE's __jsonNumText), so the emitted chunk carries one name
--- per renderer.
---
--- The steps below: __sfParts reads a %g rendering as (digit integer,
--- exponent of its last digit); __sfBump steps that digit integer by one
--- grid unit; __sfDec renders a (digits, exponent) pair back to a
--- parseable decimal for the round-trip probe; __sfExpDigits reads the
--- exact expansion through 40 places (a tie candidate has at most 18
--- digits); __sfDigits picks the shortest round-tripping digits.
-local function __sfParts(rep)
-  local mant, e = string.match(rep, "^(%d+%.?%d*)e([%+%-]?%d+)$")
-  if mant then
-    local point = string.find(mant, ".", 1, true)
-    local intLen = point and (point - 1) or #mant
-    local digits = string.gsub(mant, "%.", "")
-    return digits, tonumber(e) - (#digits - intLen)
-  end
-  local point = string.find(rep, ".", 1, true)
-  local digits
-  local expo
-  if point then
-    digits = string.gsub(rep, "%.", "")
-    expo = point - #rep
-  else
-    digits = rep
-    expo = 0
-  end
-  digits = string.gsub(digits, "^0+", "")
-  if digits == "" then digits = "0" end
-  return digits, expo
-end
-local function __sfBump(digits, up)
-  local n = #digits
-  local d = {}
-  for i = 1, n do d[i] = tonumber(string.sub(digits, i, i)) end
-  if up then
-    local i = n
-    while i >= 1 and d[i] == 9 do d[i] = 0; i = i - 1 end
-    if i == 0 then return "1" end
-    d[i] = d[i] + 1
-  else
-    local i = n
-    while i >= 1 and d[i] == 0 do d[i] = 9; i = i - 1 end
-    if i == 0 then return "9" end
-    d[i] = d[i] - 1
-  end
-  local s = ""
-  for i = 1, n do s = s..tostring(d[i]) end
-  return s
-end
-local function __sfDec(digits, expo)
-  if #digits == 1 then return digits.."e"..expo end
-  return string.sub(digits, 1, 1).."."..string.sub(digits, 2)
-    .."e"..(expo + #digits - 1)
-end
-local function __sfExpDigits(v)
-  local mant = string.match(string.format("%.40e", v), "^(%d+%.?%d*)e")
-  return (string.gsub(mant or "", "%.", ""))
-end
-local function __sfDigits(v, N)
-  local rep = string.format("%."..N.."g", v)
-  local digits, expo = __sfParts(rep)
-  local pad = N - #digits
-  if pad > 0 then
-    digits = digits..string.rep("0", pad)
-    expo = expo - pad
-  end
-  if tonumber(__sfDec(digits, expo)) ~= v then
-    -- The correctly rounded decimal lies outside the rounding interval:
-    -- the candidate is its in-interval neighbour.
-    local up = __sfBump(digits, true)
-    if tonumber(__sfDec(up, expo)) == v then return up, expo end
-    local dn = __sfBump(digits, false)
-    if tonumber(__sfDec(dn, expo)) == v then return dn, expo end
-    return nil
-  end
-  local exp = __sfExpDigits(v)
-  local dn = __sfBump(digits, false)
-  local dnMid = string.gsub(dn.."5", "^0+", "")
-  if string.sub(exp, 1, #dnMid) == dnMid
-      and string.gsub(string.sub(exp, #dnMid + 1), "0", "") == ""
-      and tonumber(__sfDec(dn, expo)) == v then
-    if tonumber(string.sub(dn, #dn, #dn)) % 2 == 0 then return dn, expo end
-    return digits, expo
-  end
-  local up = __sfBump(digits, true)
-  local upMid = digits.."5"
-  if string.sub(exp, 1, #upMid) == upMid
-      and string.gsub(string.sub(exp, #upMid + 1), "0", "") == ""
-      and tonumber(__sfDec(up, expo)) == v then
-    if tonumber(string.sub(up, #up, #up)) % 2 == 0 then return up, expo end
-    return digits, expo
-  end
-  return digits, expo
-end
+-- Finite JSON leaves share the deployed ECMAScript number formatter.
 local function __sfNumText(v)
-  local neg = false
-  if v < 0 or (v == 0 and 1 / v < 0) then neg = true; v = -v end
-  if v == 0 then return "0" end
-  local digits, expo = nil, nil
-  for N = 2, 17 do
-    digits, expo = __sfDigits(v, N)
-    if digits ~= nil then break end
-  end
-  if digits == nil then digits, expo = __sfParts(string.format("%.17g", v)) end
-  digits = string.gsub(digits, "^0+", "")
-  if digits == "" then digits = "0" end
-  local trail = 0
-  while #digits > 1 and string.sub(digits, #digits, #digits) == "0" do
-    digits = string.sub(digits, 1, #digits - 1)
-    trail = trail + 1
-  end
-  local k = expo + trail + #digits - 1
-  local ds = digits
-  local text
-  if k >= -3 and k <= 6 then
-    if k >= 0 then
-      if #ds <= k + 1 then
-        text = ds..string.rep("0", k + 1 - #ds)..".0"
-      else
-        text = string.sub(ds, 1, k + 1).."."..string.sub(ds, k + 2)
-      end
-    else
-      text = "0."..string.rep("0", -k - 1)..ds
-    end
-  else
-    local tail = string.sub(ds, 1, 1)
-    if #ds > 1 then tail = tail.."."..string.sub(ds, 2) else tail = tail..".0" end
-    text = tail.."E"..tostring(k)
-  end
-  if neg then text = "-"..text end
-  return text
+  return require("deal.runtime").number_text(v)
 end
 -- RFC-8259 string escaping: quote/backslash escaped, the named short
 -- escapes, every other control scalar as the lowercase four-hex-digit
@@ -12599,12 +12350,8 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
     end
     local sfValue
     local sfEmit
-    -- The number slot flag is the written slot's recorded static kind
-    -- (__numKey): a number-typed slot — integral values included —
-    -- serializes through the closed decimal spelling, an int-typed
-    -- slot through the integer spelling. Without the mark (a dynamic
-    -- position, a __jn carrier, or a slot no shared write path wrote)
-    -- the int spelling stands, exactly the JSON_PARSE carrier split.
+    -- Every numeric leaf has the same spelling, independent of slot marks
+    -- or whether its binary64 value is mathematically integral.
     -- The walk is stack-safe: an explicit frame stack replaces the
     -- recursion, so a finite nested value has no Lua call-stack bound.
     sfEmit = function(frames, v, isNumber)
@@ -12617,8 +12364,7 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
       if t == "number" then
         if v ~= v or v == math.huge or v == -math.huge then out[#out + 1] = "null"; return end
         if v == 0 then out[#out + 1] = "0"; return end
-        if isNumber then out[#out + 1] = __sfNumText(v)
-        else out[#out + 1] = tostring(v) end
+        out[#out + 1] = __sfNumText(v)
         return
       end
       if t == "string" then

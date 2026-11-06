@@ -905,27 +905,19 @@ test("json.parse classifies exact decimal lexemes (v1.4)", function()
     "an out-of-range integer token converts to binary64")
 end)
 
--- The decoded-graph variant record (DEAL v1.4): the direct realization
--- keeps the exact classification per slot at every depth, exactly the
--- emitted LuaJIT prelude's parse marks, the shared JVM runtime's boxed
--- variant and the JS runtime's recorded variant. A number-variant leaf is
--- marked and renders the canonical decimal text; an number-variant leaf is
--- unmarked and renders the integer text. The four pinned tokens are the
--- review's direct evidence set: -2147483649 (below the signed32 lower
--- bound), 0.1 (the shortest round-tripping decimal), 1e20 (the pinned
--- exponent form) and 2147483647.00000001 (a fractional token that rounds
--- to an integral binary64 value yet stays the number variant).
+-- Decoded numeric metadata survives at every depth. All binary64 leaves
+-- use ECMAScript decimal spelling regardless of metadata or integrality.
 test("json.parse records the exact number/number variant in the decoded graph (v1.4)", function()
   local function roundtrip(text)
     return json.stringify.f(json.parse.f(text))
   end
-  assert(roundtrip('{"v":-2147483649}') == '{"v":-2.147483649E9}',
+  assert(roundtrip('{"v":-2147483649}') == '{"v":-2147483649}',
     "-2147483649 stays the number variant, got: " .. roundtrip('{"v":-2147483649}'))
   assert(roundtrip('{"v":0.1}') == '{"v":0.1}',
     "0.1 keeps the canonical decimal text, got: " .. roundtrip('{"v":0.1}'))
-  assert(roundtrip('{"v":1e20}') == '{"v":1.0E20}',
+  assert(roundtrip('{"v":1e20}') == '{"v":100000000000000000000}',
     "1e20 keeps the pinned exponent form, got: " .. roundtrip('{"v":1e20}'))
-  assert(roundtrip('{"v":2147483647.00000001}') == '{"v":2.147483647E9}',
+  assert(roundtrip('{"v":2147483647.00000001}') == '{"v":2147483647}',
     "a fractional token rounding to an integral value stays the number variant, got: "
       .. roundtrip('{"v":2147483647.00000001}'))
   -- The marks are recorded at every depth, in objects and in arrays.
@@ -933,7 +925,7 @@ test("json.parse records the exact number/number variant in the decoded graph (v
     "a nested object slot keeps its recorded variant, got: "
       .. roundtrip('{"v":{"o":{"n":0.1}}}'))
   assert(roundtrip('{"v":{"xs":[0.1,-2147483649,1]}}')
-      == '{"v":{"xs":[0.1,-2.147483649E9,1.0]}}',
+      == '{"v":{"xs":[0.1,-2147483649,1]}}',
     "an array slot keeps its recorded variant, got: "
       .. roundtrip('{"v":{"xs":[0.1,-2147483649,1]}}'))
   -- An number-variant leaf stays unmarked: 1.0, 1e0, -0.0 and the signed32
@@ -943,7 +935,7 @@ test("json.parse records the exact number/number variant in the decoded graph (v
   assert(intMarks.a and intMarks.b and intMarks.c and intMarks.d,
     "every decoded numeric leaf carries the binary64 mark")
   assert(roundtrip('{"v":{"xs":[1.0,1e0,-0.0,2147483648]}}')
-      == '{"v":{"xs":[1.0,1.0,0,2.147483648E9]}}',
+      == '{"v":{"xs":[1,1,0,2147483648]}}',
     "number leaves keep the integer text and the out-of-range integral token is the number variant, got: "
       .. roundtrip('{"v":{"xs":[1.0,1e0,-0.0,2147483648]}}'))
   -- The marks are the same private map the emitted chunk reads; the
@@ -1032,11 +1024,11 @@ test("json.stringify encodes nested decoded arrays, empty arrays included (v1.4)
   -- compiled LuaJIT lane produce {"items":[]}.
   assert(json.stringify.f(json.parse.f('{"items":[]}')) == '{"items":[]}',
     "a nested empty decoded array encodes as []")
-  assert(json.stringify.f(json.parse.f('{"items":[1,2]}')) == '{"items":[1.0,2.0]}',
+  assert(json.stringify.f(json.parse.f('{"items":[1,2]}')) == '{"items":[1,2]}',
     "a nested decoded array encodes as its elements")
   assert(json.stringify.f(json.parse.f('{"a":[[],[]]}')) == '{"a":[[],[]]}',
     "arrays nested in arrays keep every empty boundary")
-  assert(json.stringify.f(json.parse.f('{"a":[1,[2],{"b":[]}]}')) == '{"a":[1.0,[2.0],{"b":[]}]}',
+  assert(json.stringify.f(json.parse.f('{"a":[1,[2],{"b":[]}]}')) == '{"a":[1,[2],{"b":[]}]}',
     "mixed decoded nesting keeps every array boundary")
   -- The encoder does not mutate the decoded carriers it reads.
   local parsed = json.parse.f('{"items":[]}')
@@ -1076,17 +1068,15 @@ end)
 -- numeric leaf and the read-side variant materialization carry the value
 -- model's recorded number/number variant as the private
 -- {[__K.jn] = true, k = ..., d = ...} shape. The encoder projects the
--- carried number with its recorded variant spelling — the number variant is
--- the integer text, the number variant the canonical decimal text (the
--- same Double.toString spelling the emitted prelude, the JVM and the JS
--- runtime publish) — instead of enumerating k/d as an object.
+-- carried binary64 value with ECMAScript spelling, instead of enumerating
+-- its private k/d representation as an object.
 test("json.stringify projects a numeric-variant carrier to its number (v1.4)", function()
   local function carrier(kind, value)
     return { [__K.jn] = true, k = kind, d = value }
   end
-  assert(json.stringify.f({ v = carrier("number", 7) }) == '{"v":7.0}',
+  assert(json.stringify.f({ v = carrier("number", 7) }) == '{"v":7}',
     "an number-variant carrier encodes as its integer spelling")
-  assert(json.stringify.f({ v = carrier("number", 1.0) }) == '{"v":1.0}',
+  assert(json.stringify.f({ v = carrier("number", 1.0) }) == '{"v":1}',
     "a number-variant integral value keeps its recorded number spelling")
   assert(json.stringify.f({ v = carrier("number", 1.5) }) == '{"v":1.5}',
     "a number-variant fractional value keeps the decimal spelling")
@@ -1096,12 +1086,12 @@ test("json.stringify projects a numeric-variant carrier to its number (v1.4)", f
     "a negative-zero number variant keeps its sign")
   assert(json.stringify.f({ v = carrier("number", 0) }) == '{"v":0}',
     "an number-variant zero stays the integer spelling")
-  assert(json.stringify.f({ v = carrier("number", 1e20) }) == '{"v":1.0E20}',
+  assert(json.stringify.f({ v = carrier("number", 1e20) }) == '{"v":100000000000000000000}',
     "a number variant outside the plain range keeps the pinned exponent form")
   -- The carriers occur inside the decoded/array shapes at every depth.
   local chunkArray = { [__K.a] = true, [__K.n] = 2, [__K.nK] = {},
     carrier("number", 1), carrier("number", 2.0) }
-  assert(json.stringify.f({ v = chunkArray }) == '{"v":[1.0,2.0]}',
+  assert(json.stringify.f({ v = chunkArray }) == '{"v":[1,2]}',
     "carriers inside a chunk array carrier keep their own variants")
   local text = json.stringify.f({ v = carrier("number", 5) })
   assert(string.find(text, '"k"', 1, true) == nil
@@ -1145,7 +1135,7 @@ test("json.stringify encodes the chunk table carrier over its user keys (v1.4)",
     [__K.keys] = { n = true, i = true },
     [__K.order] = { "n", "i" },
     [__K.nK] = { n = true }, n = 1.0, i = 2.0 }
-  assert(json.stringify.f(marked) == '{"n":1.0,"i":2}',
+  assert(json.stringify.f(marked) == '{"n":1,"i":2}',
     "a number-marked slot keeps the number spelling, an unmarked slot the number spelling")
   -- The marks are table-object keys: no private key text is ever emitted.
   local text = json.stringify.f(carrier)
@@ -1185,19 +1175,19 @@ test("json.stringify encodes a chunk-written plain table with variant marks (v1.
   assert(written[__K.t] == nil,
     "the written plain table carries no TABLE_NEW mark")
   local text = json.stringify.f(written)
-  assert(text == '{"x":1.0,"y":7,"z":0}',
+  assert(text == '{"x":1,"y":7,"z":0}',
     "a written plain table keeps its insertion order and per-slot variants, got: "
       .. text)
   assert(string.find(text, "table:", 1, true) == nil,
     "no private carrier key is encoded, got: " .. text)
   assert(json.stringify.f({ nested = written })
-      == '{"nested":{"x":1.0,"y":7,"z":0}}',
+      == '{"nested":{"x":1,"y":7,"z":0}}',
     "a nested written plain table encodes as an object")
   -- A table that records only the per-slot variant marks (no presence or
   -- order list) takes the same object encoding, never the mark as a
   -- member.
   local marksOnly = { [__K.nK] = { amount = true }, amount = 1.0 }
-  assert(json.stringify.f(marksOnly) == '{"amount":1.0}',
+  assert(json.stringify.f(marksOnly) == '{"amount":1}',
     "per-slot variant marks alone still select the object carrier, got: "
       .. json.stringify.f(marksOnly))
   -- The encoder reads the marks; it never mutates the written table.
@@ -1474,9 +1464,9 @@ end)
 test("json.stringify substitutes null for a deleted decoded-array slot", function()
   local doc = json.parse.f('{"xs":[1,2]}')
   doc.xs[1] = nil
-  assert(json.stringify.f(doc, "caller.deal", 12, 9) == '{"xs":[null,2.0]}', "hole substitution")
+  assert(json.stringify.f(doc, "caller.deal", 12, 9) == '{"xs":[null,2]}', "hole substitution")
   assert(doc.xs[1] == nil, "deleted slot remains absent")
-  assert(json.stringify.f(json.parse.f('{"xs":[null,2]}')) == '{"xs":[null,2.0]}',
+  assert(json.stringify.f(json.parse.f('{"xs":[null,2]}')) == '{"xs":[null,2]}',
     "a decoded present null still encodes as null")
 end)
 

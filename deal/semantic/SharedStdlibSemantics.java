@@ -985,7 +985,7 @@ public final class SharedStdlibSemantics {
      * named short escapes {@code \b \f \n \r \t} or {@code \\u00XX},
      * quote, backslash; surrogate pairs emitted as raw scalar UTF-8);
      * shortest round-trippable decimal number formatting
-     * ({@code Double.toString}); the first unsupported value in
+     * ({@link deal.semantic.ir.NumberSemantics}); the first unsupported value in
      * declaration order fails through the
      * {@code JSON_STRINGIFY_UNSUPPORTED} arm — E8001
      * {@code unsupported type for JSON encoding: {actual}} with the
@@ -1205,7 +1205,7 @@ public final class SharedStdlibSemantics {
 
             case Value.Number number -> {
                 out.append(!Double.isFinite(number.value()) ? "null"
-                    : number.value() == 0 ? "0" : Double.toString(number.value()));
+                    : deal.semantic.ir.NumberSemantics.toString(number.value()));
             }
             case Value.String string -> {
                 if (string.scalar() instanceof UnicodeScalars.Invalid) {

@@ -95,12 +95,12 @@ static double deal_json_decode_number(const unsigned char *token,
 
 /* Exact binary64 expansion makes shortest-decimal rounding independent of
  * host printf's intermediate precision. Neighbours cover asymmetric intervals. */
-deal_string *deal_number_to_string(double value) {
-    char exact[1400], digits[1400], candidate[64], output[64];
-    if (value != value) return deal_text_new("NaN", 3);
-    if (value == 0) return deal_text_new("0", 1);
-    if (value > 0x1.fffffffffffffp1023) return deal_text_new("Infinity", 8);
-    if (value < -0x1.fffffffffffffp1023) return deal_text_new("-Infinity", 9);
+static size_t deal_number_text(double value, char output[64]) {
+    char exact[1400], digits[1400], candidate[64];
+    if (value != value) { (void)memcpy(output, "NaN", 3u); return 3u; }
+    if (value == 0) { output[0] = '0'; return 1u; }
+    if (value > 0x1.fffffffffffffp1023) { (void)memcpy(output, "Infinity", 8u); return 8u; }
+    if (value < -0x1.fffffffffffffp1023) { (void)memcpy(output, "-Infinity", 9u); return 9u; }
     int negative = value < 0;
     double magnitude = negative ? -value : value;
     locale_t previous = uselocale(deal_json_numeric_locale());
@@ -168,24 +168,18 @@ deal_string *deal_number_to_string(double value) {
             output[used++] = '.';
             for (int i = 1; i < n; i++) output[used++] = digits[i];
         }
-        int suffix = snprintf(output + used, sizeof(output) - (size_t)used, "e%+d", e);
-        if (suffix <= 0 || (size_t)suffix >= sizeof(output) - (size_t)used)
+        int suffix = snprintf(output + used, 64u - (size_t)used, "e%+d", e);
+        if (suffix <= 0 || (size_t)suffix >= 64u - (size_t)used)
             deal_platform_fault("number: exponent overflow");
         used += suffix;
     }
-    return deal_text_new(output, (size_t)used);
+    return (size_t)used;
 }
 
-/* Renders one magnitude with `%.*e` under the private C locale. */
-static int deal_json_format_exponent(char *buffer, size_t size, int precision,
-                                     double magnitude) {
-    locale_t previous = uselocale(deal_json_numeric_locale());
-    int written = snprintf(buffer, size, "%.*e", precision, magnitude);
-    (void)uselocale(previous);
-    if (written <= 0 || (size_t)written >= size) {
-        deal_platform_fault("json: number text overflow");
-    }
-    return written;
+deal_string *deal_number_to_string(double value) {
+    char output[64];
+    size_t length = deal_number_text(value, output);
+    return deal_text_new(output, length);
 }
 
 /* =========================================================================
@@ -1398,112 +1392,12 @@ static void deal_json_escape(deal_json_buffer *out, const deal_string *text) {
                            deal_text_byte_length(text));
 }
 
-/*
- * Appends one finite binary64 value's canonical text: the shortest decimal
- * digit string that rounds back to the value, in plain notation for
- * `1e-3 <= |value| < 1e7` and in `d.dddE<exponent>` form otherwise (the
- * `Double.toString` spelling the shared model's `Value.Number` row carries).
- * The caller handles zero, infinities and NaN.
- */
+/* Finite JSON numbers use the same ECMAScript spelling as String(number).
+ * Format into caller-owned bytes: no managed allocation during the walk. */
 static void deal_json_number_text(deal_json_buffer *out, double value) {
-    char buffer[64];
-    double magnitude = value < 0.0 ? -value : value;
-    /* The shortest significant-digit count whose decimal rounds back to the
-     * value: at most 17 digits always suffice for a binary64 value. */
-    size_t precision = 1u;
-    for (; precision <= 17u; precision += 1u) {
-        int written = deal_json_format_exponent(buffer, sizeof(buffer),
-                                                (int)(precision - 1u),
-                                                magnitude);
-        if (deal_json_decode_number((const unsigned char *)buffer,
-                                    (size_t)written) == magnitude) {
-            break;
-        }
-    }
-    char digits[24];
-    size_t digit_count = 0u;
-    size_t position = 0u;
-    while (buffer[position] != 0 && buffer[position] != 'e'
-            && buffer[position] != 'E') {
-        if (buffer[position] >= '0' && buffer[position] <= '9') {
-            if (digit_count + 1u >= sizeof(digits)) {
-                deal_platform_fault("json: digit count overflow");
-            }
-            digits[digit_count] = buffer[position];
-            digit_count += 1u;
-        }
-        position += 1u;
-    }
-    while (digit_count > 1u && digits[digit_count - 1u] == '0') {
-        digit_count -= 1u;
-    }
-    int exponent = 0;
-    if (buffer[position] == 'e' || buffer[position] == 'E') {
-        position += 1u;
-        int negative = 0;
-        if (buffer[position] == '+' || buffer[position] == '-') {
-            negative = buffer[position] == '-';
-            position += 1u;
-        }
-        while (buffer[position] >= '0' && buffer[position] <= '9') {
-            exponent = exponent * 10 + (buffer[position] - '0');
-            position += 1u;
-        }
-        if (negative) {
-            exponent = -exponent;
-        }
-    }
-    if (value < 0.0) {
-        deal_json_buffer_byte(out, '-');
-    }
-    if (exponent >= -3 && exponent < 7) {
-        if (exponent >= 0) {
-            size_t integer_digits = (size_t)exponent + 1u;
-            for (size_t index = 0; index < integer_digits; index += 1u) {
-                deal_json_buffer_byte(out,
-                    (unsigned char)(index < digit_count ? digits[index] : '0'));
-            }
-            deal_json_buffer_byte(out, '.');
-            if (integer_digits >= digit_count) {
-                deal_json_buffer_byte(out, '0');
-            } else {
-                deal_json_buffer_append(out, digits + integer_digits,
-                                        digit_count - integer_digits);
-            }
-        } else {
-            deal_json_buffer_byte(out, '0');
-            deal_json_buffer_byte(out, '.');
-            for (int index = 0; index < -exponent - 1; index += 1) {
-                deal_json_buffer_byte(out, '0');
-            }
-            deal_json_buffer_append(out, digits, digit_count);
-        }
-        return;
-    }
-    deal_json_buffer_byte(out, (unsigned char)digits[0]);
-    deal_json_buffer_byte(out, '.');
-    if (digit_count > 1u) {
-        deal_json_buffer_append(out, digits + 1u, digit_count - 1u);
-    } else {
-        deal_json_buffer_byte(out, '0');
-    }
-    deal_json_buffer_byte(out, 'E');
-    char exponent_text[16];
-    size_t exponent_length = 0u;
-    int magnitude_exponent = exponent;
-    if (magnitude_exponent < 0) {
-        deal_json_buffer_byte(out, '-');
-        magnitude_exponent = -magnitude_exponent;
-    }
-    do {
-        exponent_text[exponent_length] =
-            (char)('0' + (magnitude_exponent % 10));
-        exponent_length += 1u;
-        magnitude_exponent /= 10;
-    } while (magnitude_exponent != 0 && exponent_length < sizeof(exponent_text));
-    for (size_t index = exponent_length; index > 0u; index -= 1u) {
-        deal_json_buffer_byte(out, (unsigned char)exponent_text[index - 1u]);
-    }
+    char text[64];
+    size_t length = deal_number_text(value, text);
+    deal_json_buffer_append(out, text, length);
 }
 
 /* 1 when the descriptor admits the undefined datum (a nullish descriptor with

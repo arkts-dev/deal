@@ -1,0 +1,20 @@
+// @spec: Standard library builtins — JSON encoding
+// @description: Import-free encoding, omission, class order, exact number text and lone units.
+// @expected: runtime-ok
+// @features: stdlib, json, classes
+class Packet { z: number; absent?: string; label: string; nil: null; ignored: undefined; }
+export function main(): null {
+  const packet: Packet = { ignored: undefined, nil: null, label: "\uD800", z: 1e21 };
+  if ((JSON.stringify(packet) as string) !== "{\"z\":1e+21,\"label\":\"\\ud800\",\"nil\":null}") {
+    throw { code: "CLASS", message: "JSON class order, presence and lone units" };
+  }
+  const record: Record<string, unknown> = { v: 1e-7, omit: undefined };
+  const values: unknown[] = [record, undefined, (): number => 1, 0/0, -0];
+  if ((JSON.stringify(values) as string) !== "[{\"v\":1e-7},null,null,null,0]") {
+    throw { code: "VALUES", message: "JSON substitution and numeric text" };
+  }
+  if (JSON.stringify(undefined) !== undefined || JSON.stringify((): number => 1) !== undefined) {
+    throw { code: "ROOT", message: "Unrepresentable JSON roots" };
+  }
+  return null;
+}

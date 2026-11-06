@@ -148,7 +148,7 @@ public class LuaJitChunkLocalBoundTest {
 
     private static String growingFactorySource() {
         StringBuilder source = new StringBuilder();
-        source.append("import * as console from \"std/console\";\n\n");
+        source.append("import * as output from \"std/console\";\n\n");
         for (int i = 0; i < GROWING_FUNCTIONS; i++) {
             source.append("export function m").append(i)
                 .append("(): number {\n  return 1;\n}\n\n");
@@ -193,7 +193,7 @@ public class LuaJitChunkLocalBoundTest {
         source.append("  if (total !== ").append(expected).append(") {\n");
         source.append("    throw { code: \"TEST_FAIL\", message: \"sum mismatch\" };\n");
         source.append("  }\n");
-        source.append("  console.log(\"").append(FIXTURE_MARKER).append("\");\n");
+        source.append("  output.log(\"").append(FIXTURE_MARKER).append("\");\n");
         source.append("  return null;\n}\n");
         return source.toString();
     }

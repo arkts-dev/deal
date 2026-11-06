@@ -1959,7 +1959,7 @@ public class JsSemanticEmitterTest {
               let p1: lib.Point = { x: 2, y: 0 };
               let p2: lib.Point = { x: 0, y: 0 };
               if (p1.y !== 0 || p2.x !== 0) { throw { code: "TEST_FAIL", message: "provider defaults" }; }
-              if (lib.Point$toJson(p1) !== "{\\"x\\":2.0,\\"y\\":0}") { throw { code: "TEST_FAIL", message: "provider toJson" }; }
+              if (lib.Point$toJson(p1) !== "{\\"x\\":2,\\"y\\":0}") { throw { code: "TEST_FAIL", message: "provider toJson" }; }
               // A source literal evaluates its supplied expressions
               // left-to-right, then applies the omitted required defaults.
               let ordered: lib.Point = { x: note(1), opt: note(2), y: 0 };
@@ -1983,9 +1983,9 @@ public class JsSemanticEmitterTest {
               if (!Object.hasOwn(pn, "opt")) { throw { code: "TEST_FAIL", message: "present null" }; }
               if (pn.opt !== null) { throw { code: "TEST_FAIL", message: "present null read" }; }
               if (!Object.hasOwn(pv, "opt")) { throw { code: "TEST_FAIL", message: "present value" }; }
-              if (lib.Point$toJson(pm) !== "{\\"x\\":1.0,\\"y\\":0}") { throw { code: "TEST_FAIL", message: "missing optional toJson" }; }
-              if (lib.Point$toJson(pn) !== "{\\"x\\":1.0,\\"y\\":0,\\"opt\\":null}") { throw { code: "TEST_FAIL", message: "present null toJson" }; }
-              if (lib.Point$toJson(pv) !== "{\\"x\\":1.0,\\"y\\":0,\\"opt\\":2.0}") { throw { code: "TEST_FAIL", message: "present value toJson" }; }
+              if (lib.Point$toJson(pm) !== "{\\"x\\":1,\\"y\\":0}") { throw { code: "TEST_FAIL", message: "missing optional toJson" }; }
+              if (lib.Point$toJson(pn) !== "{\\"x\\":1,\\"y\\":0,\\"opt\\":null}") { throw { code: "TEST_FAIL", message: "present null toJson" }; }
+              if (lib.Point$toJson(pv) !== "{\\"x\\":1,\\"y\\":0,\\"opt\\":2}") { throw { code: "TEST_FAIL", message: "present value toJson" }; }
               let dm: lib.Point | null = lib.Point$fromJson("{\\"x\\":1.0,\\"y\\":0}");
               let dn: lib.Point | null = lib.Point$fromJson("{\\"x\\":1.0,\\"y\\":0,\\"opt\\":null}");
               if (dm !== null) {
@@ -2351,10 +2351,10 @@ public class JsSemanticEmitterTest {
                 + "[true,null],[true,2]]"),
             "the optional-nullable three states survive public construction"
                 + " (missing differs from present null): " + run.output());
-        check(run.output().contains("\"nilJson\":[\"{\\\"x\\\":1.0,"
-                + "\\\"y\\\":0}\",\"{\\\"x\\\":1.0,\\\"y\\\":0,"
-                + "\\\"opt\\\":null}\",\"{\\\"x\\\":1.0,\\\"y\\\":0,"
-                + "\\\"opt\\\":2.0}\"]"),
+        check(run.output().contains("\"nilJson\":[\"{\\\"x\\\":1,"
+                + "\\\"y\\\":0}\",\"{\\\"x\\\":1,\\\"y\\\":0,"
+                + "\\\"opt\\\":null}\",\"{\\\"x\\\":1,\\\"y\\\":0,"
+                + "\\\"opt\\\":2}\"]"),
             "toJson omits the missing optional, keeps a present null and"
                 + " serializes a present value: " + run.output());
         check(run.output().contains("\"decodedStates\":[[false,null],"
@@ -2829,8 +2829,8 @@ public class JsSemanticEmitterTest {
         checkEq(0, run.status(), "the field/JSON driver exits 0: "
             + run.output());
         String report = run.output();
-        check(report.contains("\"directHelper\":\"ok:{\\\"v\\\":1.0,"
-                + "\\\"data\\\":{}}|{\\\"v\\\":7.0,\\\"data\\\":{}}\""),
+        check(report.contains("\"directHelper\":\"ok:{\\\"v\\\":1,"
+                + "\\\"data\\\":{}}|{\\\"v\\\":7,\\\"data\\\":{}}\""),
             "a direct call of a generated JSON helper keeps its own"
                 + " creation site while another function holds a"
                 + " function-typed alias of it: " + report);
@@ -2870,7 +2870,7 @@ public class JsSemanticEmitterTest {
                 + "\\\"many\\\":[],\\\"node\\\":null,\\\"data\\\":{}}"
                 + "|{\\\"name\\\":\\\"A\\\",\\\"point\\\":"
                 + "{\\\"x\\\":0,\\\"y\\\":0},"
-                + "\\\"many\\\":[],\\\"node\\\":{\\\"v\\\":5.0,"
+                + "\\\"many\\\":[],\\\"node\\\":{\\\"v\\\":5,"
                 + "\\\"data\\\":{}},\\\"data\\\":{}}"
                 + "|FFFFFT\""),
             "fromJson decodes provided values before the omitted imported"
@@ -4528,14 +4528,14 @@ public class JsSemanticEmitterTest {
             + " JSON --");
         Path root = Files.createTempDirectory(tmpRoot, "stdlib");
         Fixture fixture = compileFixture(root, """
-            import * as console from "std/console";
+            import * as output from "std/console";
             import * as json from "std/json";
             import * as str from "std/string";
             import * as time from "std/time";
 
             export function checks(): string {
-              console.log("out-line");
-              console.error("err-line");
+              output.log("out-line");
+              output.error("err-line");
               let parse: (s: string) => Record<string, unknown> = json.parse;
               if (json.parse !== parse) {
                 throw { code: "STDLIB_IDENTITY", message: "surface" };
@@ -4548,7 +4548,7 @@ public class JsSemanticEmitterTest {
                 throw { code: "STDLIB_CALL", message: "values" };
               }
               let text: string = json.stringify(stored) as string;
-              if (text !== "{\\"n\\":1.0}") {
+              if (text !== "{\\"n\\":1}") {
                 throw { code: "STDLIB_JSON", message: text };
               }
               let now: number = time.nowMillis();

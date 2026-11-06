@@ -9,6 +9,68 @@
 
 local __rt = {}
 
+-- ECMAScript Number::toString: exact decimal expansion followed by the
+-- shortest round-tripping, ties-to-even candidate. Shared by emitted numeric
+-- conversion and deployed/emitted JSON encoders.
+function __rt.number_text(v)
+  if v ~= v then return "NaN" end
+  if v == math.huge then return "Infinity" end
+  if v == -math.huge then return "-Infinity" end
+  if v == 0 then return "0" end
+  local sign = v < 0 and "-" or ""
+  v = math.abs(v)
+  local m, e = math.frexp(v)
+  local digits = string.format("%.0f", math.ldexp(m, 53))
+  e = e - 53
+  local scale = math.max(0, -e)
+  local factor = e < 0 and 5 or 2
+  for step = 1, math.abs(e) do
+    local carry, out = 0, {}
+    for i = #digits, 1, -1 do
+      local n = (string.byte(digits, i) - 48) * factor + carry
+      out[i] = string.char(48 + n % 10)
+      carry = math.floor(n / 10)
+    end
+    digits = (carry > 0 and string.char(48 + carry) or "") .. table.concat(out)
+  end
+  local exponent = #digits - scale - 1
+  local function increment(s)
+    local i = #s
+    while i > 0 and s:sub(i,i) == "9" do i = i - 1 end
+    if i == 0 then return "1" .. string.rep("0", #s) end
+    return s:sub(1,i-1) .. string.char(string.byte(s,i)+1) .. string.rep("0", #s-i)
+  end
+  local chosen, power
+  for precision = 1, 17 do
+    local lower = digits:sub(1,precision)
+    if #lower < precision then lower = lower .. string.rep("0", precision-#lower) end
+    local nextDigit = digits:sub(precision+1,precision+1)
+    local tail = digits:sub(precision+2):find("[1-9]") ~= nil
+    local up = nextDigit ~= "" and (nextDigit > "5" or
+      (nextDigit == "5" and (tail or tonumber(lower:sub(-1)) % 2 == 1)))
+    local upper = increment(lower)
+    local rounded, other = lower, upper
+    if up then rounded, other = upper, lower end
+    power = exponent - precision + 1
+    if tonumber(rounded .. "e" .. power) == v then chosen = rounded
+    elseif tonumber(other .. "e" .. power) == v then chosen = other end
+    if chosen then break end
+  end
+  if not chosen then error("number: missing roundtrip") end
+  while #chosen > 1 and chosen:sub(-1) == "0" do
+    chosen = chosen:sub(1,-2); power = power + 1
+  end
+  exponent = #chosen + power - 1
+  if exponent >= -6 and exponent < 21 then
+    local point = #chosen + power
+    if point <= 0 then return sign .. "0." .. string.rep("0", -point) .. chosen end
+    if point >= #chosen then return sign .. chosen .. string.rep("0", point-#chosen) end
+    return sign .. chosen:sub(1,point) .. "." .. chosen:sub(point+1)
+  end
+  local fraction = #chosen > 1 and "." .. chosen:sub(2) or ""
+  return sign .. chosen:sub(1,1) .. fraction .. "e" .. (exponent >= 0 and "+" or "") .. exponent
+end
+
 -- ===== Sentinels =====
 -- __rt.__NULL is the one language-null representation of the deployed
 -- runtime and of every emitted chunk that binds it (ISSUE-0814): the

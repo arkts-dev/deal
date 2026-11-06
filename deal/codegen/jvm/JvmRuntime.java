@@ -3100,7 +3100,7 @@ case "NUMBER_ADD" -> {
             out.append(bool ? "true" : "false");
         } else if (value instanceof Number numeric) {
             double d = numeric.doubleValue();
-            out.append(!Double.isFinite(d) ? "null" : d == 0 ? "0" : Double.toString(d));
+            out.append(!Double.isFinite(d) ? "null" : deal.semantic.ir.NumberSemantics.toString(d));
         } else if (value instanceof String string) {
             appendJsonString(out, string);
         } else if (value instanceof Table table) {

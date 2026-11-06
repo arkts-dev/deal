@@ -110,6 +110,13 @@ export class Settings { name: string; note?: string | null; }
 // preserves null, rejects cycles, substitutes null for declared numeric
 // nonfinite values, and emits either zero sign as 0. JSON numeric tokens round to binary64; parsing preserves -0.
 
+// Encoding is import-free. It returns undefined for a function/undefined root,
+// omits those object members, substitutes null in arrays and for nonfinite
+// numbers, rejects cycles, and follows ECMAScript numeric spelling.
+function encode(value: unknown): string | undefined {
+  return JSON.stringify(value);
+}
+
 function text(): string {
   let size: number = strings.length("a😀b"); // 4
   let part: string = strings.substring("a😀b", 1, 3); // 😀

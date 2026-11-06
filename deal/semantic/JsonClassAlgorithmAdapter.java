@@ -117,7 +117,7 @@ public final class JsonClassAlgorithmAdapter {
             if (omitted(value) || value instanceof ClassOpsExecutor.Value.Null) { out.append("null"); continue; }
             if (value instanceof ClassOpsExecutor.Value.Bool b) { out.append(b.value()); continue; }
             if (value instanceof ClassOpsExecutor.Value.Number n) {
-                out.append(!Double.isFinite(n.value()) ? "null" : n.value() == 0 ? "0" : Double.toString(n.value()));
+                out.append(!Double.isFinite(n.value()) ? "null" : deal.semantic.ir.NumberSemantics.toString(n.value()));
                 continue;
             }
             if (value instanceof ClassOpsExecutor.Value.String s) {

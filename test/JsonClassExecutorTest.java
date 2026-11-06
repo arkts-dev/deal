@@ -262,7 +262,7 @@ public class JsonClassExecutorTest {
         escaped.put("z", new Value.Number(2));
         check(JsonClassAlgorithmAdapter.stringifier().stringify(new Value.Table(escaped), "")
                 instanceof JsonStringify.Success s
-                && s.text().carrier().equals("{\"q\":\"a\\\"b\\n\",\"z\":2.0}"),
+                && s.text().carrier().equals("{\"q\":\"a\\\"b\\n\",\"z\":2}"),
             "escaping and first-insertion order are literal-exact");
         check(JsonClassAlgorithmAdapter.stringifier().stringify(new Value.Number(Double.NaN), "f")
             instanceof JsonStringify.Success s && s.text().carrier().equals("null"), "nonfinite JSON substitution");
@@ -277,7 +277,7 @@ public class JsonClassExecutorTest {
         var pointLayout = layoutOf(POINT, field("x", INT, true));
         check(JsonClassAlgorithmAdapter.stringifier(Map.of(POINT, pointLayout)).stringify(
             rawTable(Map.of("k", instanceOf(pointLayout, Map.of("x", new Value.Number(1))))), "data")
-            instanceof JsonStringify.Success s && s.text().carrier().equals("{\"k\":{\"x\":1.0}}"), "nested class JSON");
+            instanceof JsonStringify.Success s && s.text().carrier().equals("{\"k\":{\"x\":1}}"), "nested class JSON");
         assertStringifyFailure(rawTable(Map.of("k", invalidValue())), "data", "data.k", "invalid-unicode", false);
         SemanticTable<Value> cycle = new SemanticTable<>();
         cycle.put("self", new Value.Table(cycle));
@@ -532,7 +532,7 @@ public class JsonClassExecutorTest {
         check(outcome instanceof Outcome.Success<Value> success
                 && success.value() instanceof Value.String text
                 && carrier(text).equals(
-                    "{\"name\":\"a\\\"b\",\"age\":42.0,\"note\":null}"),
+                    "{\"name\":\"a\\\"b\",\"age\":42,\"note\":null}"),
             "the deterministic text carries declared fields in declaration order with "
                 + "RFC-8259 escaping");
         check(!(outcome instanceof Outcome.Failure<?>), "no failure terminal");
@@ -546,7 +546,7 @@ public class JsonClassExecutorTest {
             nextOrigin(null));
         check(skipped instanceof Outcome.Success<Value> success
                 && success.value() instanceof Value.String text
-                && carrier(text).equals("{\"name\":\"n\",\"age\":1.0}"),
+                && carrier(text).equals("{\"name\":\"n\",\"age\":1}"),
             "an omitted optional field is skipped");
 
         // Determinism: repeated executions produce identical bytes.
@@ -1512,7 +1512,7 @@ public class JsonClassExecutorTest {
         check(roundtrip instanceof Outcome.Success<Value> success
                 && success.value() instanceof Value.String text
                 && carrier(text).equals(
-                    "{\"name\":\"anon\",\"age\":42.0,\"tags\":[1.0,2.0]}"),
+                    "{\"name\":\"anon\",\"age\":42,\"tags\":[1,2]}"),
             "roundtrip preserves provided values and skips omitted optionals");
 
         ClassLayout strict = layoutOf(POINT, field("x", INT, true));

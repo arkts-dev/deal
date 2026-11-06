@@ -714,13 +714,13 @@ test("json.stringify traverses class instances in Record and array positions", f
 
 test("json.parse classifies exact decimal lexemes: 1.0/1e0/-0.0 are number", function() {
   assertEqual(json.stringify.$f(json.parse.$f('{"v":1}', "f.js", 1, 1), "f.js", 1, 1),
-    '{"v":1.0}', "integer token");
+    '{"v":1}', "integer token");
   assertEqual(json.stringify.$f(json.parse.$f('{"v":1.0}', "f.js", 1, 1), "f.js", 1, 1),
-    '{"v":1.0}', "1.0 denotes the number value");
+    '{"v":1}', "1.0 denotes the number value");
   assertEqual(json.stringify.$f(json.parse.$f('{"v":1e0}', "f.js", 1, 1), "f.js", 1, 1),
-    '{"v":1.0}', "1e0 denotes the number value");
+    '{"v":1}', "1e0 denotes the number value");
   assertEqual(json.stringify.$f(json.parse.$f('{"v":100e-2}', "f.js", 1, 1), "f.js", 1, 1),
-    '{"v":1.0}', "100e-2 denotes the number value");
+    '{"v":1}', "100e-2 denotes the number value");
   assertEqual(json.stringify.$f(json.parse.$f('{"v":-0.0}', "f.js", 1, 1), "f.js", 1, 1),
     '{"v":0}', "-0.0 normalizes to number 0");
   assertEqual(json.stringify.$f(json.parse.$f('{"v":0e999999999999999999999}', "f.js", 1, 1), "f.js", 1, 1),
@@ -731,31 +731,31 @@ test("json.parse classifies exact decimal lexemes: 1.0/1e0/-0.0 are number", fun
     '{"v":1.5}', "a fractional token stays a number");
   assertEqual(json.stringify.$f(
     json.parse.$f('{"v":2147483647.00000001}', "f.js", 1, 1), "f.js", 1, 1),
-    '{"v":2.147483647E9}',
+    '{"v":2147483647}',
     "a rounded fractional token stays a number (canonical decimal text)");
   assertEqual(json.stringify.$f(json.parse.$f('{"v":2147483648}', "f.js", 1, 1), "f.js", 1, 1),
-    '{"v":2.147483648E9}', "an out-of-range integer token is a number");
+    '{"v":2147483648}', "an out-of-range integer token is a number");
   // The signed32 check compares the magnitude before the sign is applied:
   // a negative magnitude above 2147483648 is the number variant, never an
   // out-of-range number (the canonical text proves the variant).
   assertEqual(json.stringify.$f(json.parse.$f('{"v":-2147483648}', "f.js", 1, 1), "f.js", 1, 1),
-    '{"v":-2.147483648E9}', "the negative signed32 edge is an number");
+    '{"v":-2147483648}', "the negative signed32 edge is an number");
   assertEqual(json.stringify.$f(json.parse.$f('{"v":-2147483649}', "f.js", 1, 1), "f.js", 1, 1),
-    '{"v":-2.147483649E9}', "-2147483649 is the number variant");
+    '{"v":-2147483649}', "-2147483649 is the number variant");
   assertEqual(json.stringify.$f(json.parse.$f('{"v":-9999999999}', "f.js", 1, 1), "f.js", 1, 1),
-    '{"v":-9.999999999E9}', "-9999999999 is the number variant");
+    '{"v":-9999999999}', "-9999999999 is the number variant");
   // The exponent magnitude accumulates its digits with bounded
   // saturation: leading zeroes contribute nothing, so a zero-padded
   // exponent text longer than 18 characters whose value is small stays
   // exactly classified (1e0000000000000000001 is the integral 10).
   assertEqual(json.stringify.$f(json.parse.$f('{"v":1e0000000000000000001}', "f.js", 1, 1), "f.js", 1, 1),
-    '{"v":10.0}', "a zero-padded long exponent stays the number 10");
+    '{"v":10}', "a zero-padded long exponent stays the number 10");
   assertEqual(json.stringify.$f(json.parse.$f('{"v":1e00000000000000000000}', "f.js", 1, 1), "f.js", 1, 1),
-    '{"v":1.0}', "a zero-valued zero-padded exponent stays the number 1");
+    '{"v":1}', "a zero-valued zero-padded exponent stays the number 1");
   assertEqual(json.stringify.$f(json.parse.$f('{"v":100e-000000000000000000002}', "f.js", 1, 1), "f.js", 1, 1),
-    '{"v":1.0}', "a zero-padded negative exponent stays the number 1");
+    '{"v":1}', "a zero-padded negative exponent stays the number 1");
   assertEqual(json.stringify.$f(json.parse.$f('{"v":-1e0000000000000000001}', "f.js", 1, 1), "f.js", 1, 1),
-    '{"v":-10.0}', "a negative zero-padded long exponent stays the number -10");
+    '{"v":-10}', "a negative zero-padded long exponent stays the number -10");
   // A huge exponent converts to binary64 infinity: the classification
   // itself never overflows, and generic stringify substitutes JSON null.
   const huge = json.parse.$f('{"v":1e999999999999999999999}', "f.js", 1, 1);

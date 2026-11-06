@@ -6,7 +6,7 @@ CorpusConformanceTest discovers cases and parses invocation plans: main once, th
 
 - Pin exact sibling declaration atoms with independently executed valid controls. Assertions use E8001; ordinary identity boundaries keep their own projections.
 - Supply all required class fields, including nullable/callable fields. Separate literals establish freshness; supplied references establish aliases. Failed construction preserves expression effects without publishing partial targets.
-- Preserve binary64, signed zero and nontrapping arithmetic. Compare JSON structures/decoded numbers, allowing roundtripping spelling differences except exact zero rules.
+- Preserve binary64, signed zero and nontrapping arithmetic. Compare JSON structures/decoded numbers for value assertions; separately pin ECMAScript numeric spelling, including signed-zero normalization and exponent thresholds.
 - Generic/generated Record JSON omits object undefined/functions, null-substitutes arrays/nonfinite numbers, and returns undefined for unrepresentable roots. Independently cover cycle rejection, declared-field ordering and parse object-root rejection.
 - Catch/Record reads remain unknown until checked extraction or supported refinement. Preserve shadowing, async invalidation and actual consuming-boundary negatives; do not assume unsupported post-termination narrowing.
 - Presence uses Object.hasOwn without refinement. Distinguish absence, null and stored undefined. Delete Record keys/optional fields, never array elements. Void completion is not null.

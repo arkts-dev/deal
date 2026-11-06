@@ -205,6 +205,8 @@ public final class CompositionProductionTest {
             // default formatter from the implementation under test.
             var random = new java.util.Random(1616);
             var numberSamples = new ArrayList<Double>();
+            numberSamples.addAll(List.of(0.0,-0.0,Double.NaN,Double.POSITIVE_INFINITY,Double.NEGATIVE_INFINITY,
+                1e-6,1e-7,1e20,1e21,1000000000000000100.0));
             for (int i = 0; i < 256; i++) numberSamples.add(Double.longBitsToDouble(random.nextLong()));
             for (int e : new int[] {-1074,-1022,-100,-20,-1,0,1,20,52,53,100,1023}) {
                 double v = Math.scalb(1.0, e);
@@ -214,13 +216,19 @@ public final class CompositionProductionTest {
                 .map(v -> "\"" + Long.toUnsignedString(Double.doubleToRawLongBits(v),16) + "\"")
                 .collect(java.util.stream.Collectors.joining(",", "[", "]"))
                 + ";for(const s of a){const b=Buffer.alloc(8);b.writeBigUInt64BE(BigInt('0x'+s));"
-                + "console.log(String(b.readDoubleBE()));}";
+                + "console.log(String(b.readDoubleBE()));console.log(JSON.stringify(b.readDoubleBE()));}";
             var reference = BoundedProcess.runCaptured(List.of("node", "-e", referenceScript), Path.of("").toAbsolutePath());
             if (reference.exitCode()!=0 || reference.stdoutTruncated() || reference.stderrTruncated()
                     || !reference.stderr().isEmpty()) throw new AssertionError(reference);
-            var expectedNumbers = reference.stdout().lines().toList();
-            if (expectedNumbers.size()!=numberSamples.size()) throw new AssertionError("number reference population");
-            StringBuilder numericSource = new StringBuilder("export function main():null{let values:number[]=[");
+            var referenceLines = reference.stdout().lines().toList();
+            if (referenceLines.size()!=2*numberSamples.size()) throw new AssertionError("number reference population");
+            var expectedNumbers = new ArrayList<String>();
+            var expectedJson = new ArrayList<String>();
+            for (int i=0;i<numberSamples.size();i++) {
+                expectedNumbers.add(referenceLines.get(2*i));
+                expectedJson.add(referenceLines.get(2*i+1));
+            }
+            StringBuilder numericSource = new StringBuilder("class Numeric{v:number;}export function main():null{let values:number[]=[");
             for (int i=0;i<numberSamples.size();i++) {
                 if(i>0) numericSource.append(',');
                 double value = numberSamples.get(i);
@@ -234,7 +242,15 @@ public final class CompositionProductionTest {
                 if(i>0) numericSource.append(',');
                 numericSource.append('"').append(expectedNumbers.get(i)).append('"');
             }
-            numericSource.append("];let i=0;while(i<values.length){if(`${values[i]}`!==expected[i] || String(values[i])!==expected[i]){"
+            numericSource.append("];let jsonExpected:string[]=[");
+            for(int i=0;i<expectedNumbers.size();i++) {
+                if(i>0) numericSource.append(',');
+                numericSource.append('"').append(expectedJson.get(i)).append('"');
+            }
+            numericSource.append("];let i=0;while(i<values.length){let item:Numeric={v:values[i]};if(`${values[i]}`!==expected[i] || String(values[i])!==expected[i]"
+                + " || (JSON.stringify(values[i]) as string)!==jsonExpected[i]"
+                + " || (JSON.stringify([values[i]]) as string)!==\"[\"+jsonExpected[i]+\"]\""
+                + " || (JSON.stringify(item) as string)!==\"{\\\"v\\\":\"+jsonExpected[i]+\"}\"){"
                 + "throw {code:\"NUMBER_TEXT\",message:`${i}: ${values[i]}`};}i=i+1;}return null;}");
             execute(numericSource.toString(), "", root.resolve("number-text-reference"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
@@ -266,6 +282,35 @@ public final class CompositionProductionTest {
                 + "if(Math.abs(arg())!==2 || state!==1){throw {code:\"ORDER\",message:\"builtin effect\"};}"
                 + "console.log(String(Math.abs(-1/0)));console.error(\"BUILTIN\");return null;}";
             execute(builtins, "Infinity\n", "BUILTIN\n", root.resolve("builtin-namespaces"), null,
+                List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
+            String jsonEncoding = "class Item{z:number;a?:string;b:null;c:undefined;}"
+                + "export function main():null{let f=():number=>1;let mixed:unknown[]=[undefined,f,0/0,1/0,-0];"
+                + "if(JSON.stringify(undefined)!==undefined || JSON.stringify(f)!==undefined"
+                + " || (JSON.stringify(null) as string)!==\"null\" || (JSON.stringify(true) as string)!==\"true\""
+                + " || (JSON.stringify(mixed) as string)!==\"[null,null,null,null,0]\"){"
+                + "throw {code:\"ROOTS\",message:\"JSON roots and substitution\"};}"
+                + "let r:Record<string,unknown>={b:1};r[\"10\"]=10;r[\"2\"]=2;r.a=null;r.drop=f;r.u=undefined;"
+                + "if((JSON.stringify(r) as string)!==\"{\\\"2\\\":2,\\\"10\\\":10,\\\"b\\\":1,\\\"a\\\":null}\"){"
+                + "throw {code:\"ORDER\",message:\"JSON own keys/omission\"};}"
+                + "let c:Item={c:undefined,b:null,z:1e21};"
+                + "if((JSON.stringify(c) as string)!==\"{\\\"z\\\":1e+21,\\\"b\\\":null}\"){"
+                + "throw {code:\"CLASS\",message:\"JSON declaration order/presence\"};}"
+                + "let child:Record<string,unknown>={v:1};let shared:Record<string,unknown>={x:child,y:child};"
+                + "if((JSON.stringify(shared) as string)!==\"{\\\"x\\\":{\\\"v\\\":1},\\\"y\\\":{\\\"v\\\":1}}\"){"
+                + "throw {code:\"SHARED\",message:\"JSON shared acyclic children\"};}"
+                + "let caught=0;child.cycle=child;try{JSON.stringify(shared);}catch(e){caught=1;}"
+                + "if(caught!==1){throw {code:\"CYCLE\",message:\"JSON cycle\"};}delete child.cycle;"
+                + "let state=0;let arg=():number=>{state=state+1;return 2;};"
+                + "if((JSON.stringify(arg()) as string)!==\"2\" || state!==1){throw {code:\"ONCE\",message:\"JSON argument\"};}"
+                + "let fail=():unknown=>{throw {code:\"ARG\",message:\"stop\"};};"
+                + "try{JSON.stringify(fail());}catch(e){if(e instanceof Error){if(e.code!==\"ARG\"){throw e;}state=2;}}"
+                + "if(state!==2 || JSON.stringify(shared)===undefined){throw {code:\"RETRY\",message:\"JSON repair\"};}return null;}";
+            execute(jsonEncoding, "", root.resolve("json-encoding"), null,
+                List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
+            String jsonFixture = "stdlib/json/builtin-stringify.deal";
+            execute(ConformanceHarnessMetadata.productionCorpusSource(Files.readString(
+                Path.of("test/conformance/backend-runtime").resolve(jsonFixture)), jsonFixture),
+                "", root.resolve("json-corpus"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             String receiverStrings = "export function main():null{let state=0;"
                 + "let receiver=():string=>{state=state*10+1;return \"  a😀b  \";};"
@@ -317,7 +362,7 @@ public final class CompositionProductionTest {
                     + "){throw {code:\"TEST\",message:\"value\"};}c.log(\"COMPOSE_OK\");return null;}";
                 execute(source, "COMPOSE_OK\n", root.resolve("seed" + seed), null);
             }
-            System.out.println("Composition production: 15 composition lanes and 91 revised-syntax executions passed");
+            System.out.println("Composition production: 15 composition lanes and 105 revised-syntax executions passed");
         } finally { remove(root); }
     }
 }

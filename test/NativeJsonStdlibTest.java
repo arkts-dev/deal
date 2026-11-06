@@ -517,7 +517,7 @@ public final class NativeJsonStdlibTest {
             .filter(line -> line.startsWith("RT\town-key-order\t"))
             .findFirst().orElseThrow());
         checkEq("RT\town-key-order\tTEXT\t"
-                + "{\"1\":4.0,\"2\":2.0,\"b\":1.0,\"a\":3.0}",
+                + "{\"1\":4,\"2\":2,\"b\":1,\"a\":3}",
             expected.get(orderIndex),
             "own-key order follows the specification's array-index rule");
 
@@ -541,10 +541,10 @@ public final class NativeJsonStdlibTest {
 
         // 4. The v1.6 encoding rules from the specification's JSON encoding
         // section, and the two closed arms from their own authority.
-        expected.add("ENC\trecord-omission\tTEXT\t{\"0\":0,\"kept\":1.0}");
-        expected.add("ENC\tarray-substitution\tTEXT\t[1.0,null,null,null]");
+        expected.add("ENC\trecord-omission\tTEXT\t{\"0\":0,\"kept\":1}");
+        expected.add("ENC\tarray-substitution\tTEXT\t[1,null,null,null]");
         expected.add("ENC\trecord-cycle\tERROR\t" + tail(cycleArm()));
-        expected.add("ENC\tshared-children\tTEXT\t[{\"v\":2.0},{\"v\":2.0}]");
+        expected.add("ENC\tshared-children\tTEXT\t[{\"v\":2},{\"v\":2}]");
         expected.add("ENC\tclass-unsupported\tERROR\t"
             + tail(stringifyArm(FailureProjections.CarrierKind.TABLE)));
         expected.add("ENC\troot-undefined\tUNDEFINED");
@@ -773,11 +773,11 @@ public final class NativeJsonStdlibTest {
 
         // 17. The class walks: authored from docs/spec-v1.6.md's @jsonable rules.
         expected.add("FROM\tcomplete\tTEXT\t" + "{\"name\":\"Ada\",\"bio\":null,"
-            + "\"tags\":[\"x\",\"y\"],\"props\":{\"k\":[1.0,2.0]},"
-            + "\"items\":[{\"id\":2.0}],\"label\":null}");
+            + "\"tags\":[\"x\",\"y\"],\"props\":{\"k\":[1,2]},"
+            + "\"items\":[{\"id\":2}],\"label\":null}");
         expected.add("FROM\toptional-present\tTEXT\t" + "{\"name\":\"Ada\","
             + "\"nick\":\"A\",\"bio\":\"text\",\"tags\":[],\"props\":{},"
-            + "\"items\":[{\"id\":2.0,\"note\":\"n\"}],"
+            + "\"items\":[{\"id\":2,\"note\":\"n\"}],"
             + "\"label\":\"L\"}");
         expected.add("FROM\textra-key\tNULL");
         expected.add("FROM\tmissing-required\tNULL");
@@ -794,7 +794,7 @@ public final class NativeJsonStdlibTest {
         expected.add("FROM\trequired-undefined-omitted\tNULL");
         expected.add("TO\tinstance-minimal\tTEXT\t" + "{\"name\":\"Ada\","
             + "\"bio\":null,\"tags\":[\"x\",\"y\"],\"props\":{\"k\":\"v\"},"
-            + "\"items\":[{\"id\":3.0}],\"label\":null}");
+            + "\"items\":[{\"id\":3}],\"label\":null}");
         expected.add("TO\tinstance-omits-undefined\tTEXT\t" + "{\"name\":\"Ada\","
             + "\"bio\":null,\"tags\":[],\"props\":{},\"items\":[],"
             + "\"label\":null}");

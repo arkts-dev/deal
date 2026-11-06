@@ -146,135 +146,9 @@ local function escape(s, file, line, column)
   return __rt.string_json_body(s)
 end
 
--- The canonical decimal spelling (Java Double.toString parity) of one
--- finite binary64 value: the shortest round-tripping digit string, the
--- closest such decimal, and the even last digit when the value is exactly
--- equidistant — the same spelling the emitted prelude (__sfNumText), the
--- JVM JvmJson.numberText and the JS $numText publish. The JSON stringify
--- walker uses it for binary64 values; either signed zero serializes as 0.
-local function json_num_parts(rep)
-  local mant, e = string.match(rep, "^(%d+%.?%d*)e([%+%-]?%d+)$")
-  if mant then
-    local point = string.find(mant, ".", 1, true)
-    local intLen = point and (point - 1) or #mant
-    local digits = string.gsub(mant, "%.", "")
-    return digits, tonumber(e) - (#digits - intLen)
-  end
-  local point = string.find(rep, ".", 1, true)
-  local digits
-  local expo
-  if point then
-    digits = string.gsub(rep, "%.", "")
-    expo = point - #rep
-  else
-    digits = rep
-    expo = 0
-  end
-  digits = string.gsub(digits, "^0+", "")
-  if digits == "" then digits = "0" end
-  return digits, expo
-end
-local function json_num_bump(digits, up)
-  local n = #digits
-  local d = {}
-  for i = 1, n do d[i] = tonumber(string.sub(digits, i, i)) end
-  if up then
-    local i = n
-    while i >= 1 and d[i] == 9 do d[i] = 0; i = i - 1 end
-    if i == 0 then return "1" end
-    d[i] = d[i] + 1
-  else
-    local i = n
-    while i >= 1 and d[i] == 0 do d[i] = 9; i = i - 1 end
-    if i == 0 then return "9" end
-    d[i] = d[i] - 1
-  end
-  local s = ""
-  for i = 1, n do s = s..tostring(d[i]) end
-  return s
-end
-local function json_num_dec(digits, expo)
-  if #digits == 1 then return digits.."e"..expo end
-  return string.sub(digits, 1, 1).."."..string.sub(digits, 2)
-    .."e"..(expo + #digits - 1)
-end
-local function json_num_exp_digits(v)
-  local mant = string.match(string.format("%.40e", v), "^(%d+%.?%d*)e")
-  return (string.gsub(mant or "", "%.", ""))
-end
-local function json_num_digits(v, N)
-  local rep = string.format("%."..N.."g", v)
-  local digits, expo = json_num_parts(rep)
-  local pad = N - #digits
-  if pad > 0 then
-    digits = digits..string.rep("0", pad)
-    expo = expo - pad
-  end
-  if tonumber(json_num_dec(digits, expo)) ~= v then
-    -- The correctly rounded decimal lies outside the rounding interval:
-    -- the candidate is its in-interval neighbour.
-    local up = json_num_bump(digits, true)
-    if tonumber(json_num_dec(up, expo)) == v then return up, expo end
-    local dn = json_num_bump(digits, false)
-    if tonumber(json_num_dec(dn, expo)) == v then return dn, expo end
-    return nil
-  end
-  local exp = json_num_exp_digits(v)
-  local dn = json_num_bump(digits, false)
-  local dnMid = string.gsub(dn.."5", "^0+", "")
-  if string.sub(exp, 1, #dnMid) == dnMid
-      and string.gsub(string.sub(exp, #dnMid + 1), "0", "") == ""
-      and tonumber(json_num_dec(dn, expo)) == v then
-    if tonumber(string.sub(dn, #dn, #dn)) % 2 == 0 then return dn, expo end
-    return digits, expo
-  end
-  local up = json_num_bump(digits, true)
-  local upMid = digits.."5"
-  if string.sub(exp, 1, #upMid) == upMid
-      and string.gsub(string.sub(exp, #upMid + 1), "0", "") == ""
-      and tonumber(json_num_dec(up, expo)) == v then
-    if tonumber(string.sub(up, #up, #up)) % 2 == 0 then return up, expo end
-    return digits, expo
-  end
-  return digits, expo
-end
+-- Deployed and emitted encoders share the runtime's ECMAScript spelling.
 local function json_number_text(v)
-  local neg = false
-  if v < 0 or (v == 0 and 1 / v < 0) then neg = true; v = -v end
-  if v == 0 then return "0" end
-  local digits, expo = nil, nil
-  for N = 2, 17 do
-    digits, expo = json_num_digits(v, N)
-    if digits ~= nil then break end
-  end
-  if digits == nil then digits, expo = json_num_parts(string.format("%.17g", v)) end
-  digits = string.gsub(digits, "^0+", "")
-  if digits == "" then digits = "0" end
-  local trail = 0
-  while #digits > 1 and string.sub(digits, #digits, #digits) == "0" do
-    digits = string.sub(digits, 1, #digits - 1)
-    trail = trail + 1
-  end
-  local k = expo + trail + #digits - 1
-  local ds = digits
-  local text
-  if k >= -3 and k <= 6 then
-    if k >= 0 then
-      if #ds <= k + 1 then
-        text = ds..string.rep("0", k + 1 - #ds)..".0"
-      else
-        text = string.sub(ds, 1, k + 1).."."..string.sub(ds, k + 2)
-      end
-    else
-      text = "0."..string.rep("0", -k - 1)..ds
-    end
-  else
-    local tail = string.sub(ds, 1, 1)
-    if #ds > 1 then tail = tail.."."..string.sub(ds, 2) else tail = tail..".0" end
-    text = tail.."E"..tostring(k)
-  end
-  if neg then text = "-"..text end
-  return text
+  return __rt.number_text(v)
 end
 
 -- The decoded-array mark: every array the parser completes carries the
@@ -304,8 +178,8 @@ end
 -- spelling; the chunk table carrier ([__K.t] with [__K.keys]/[__K.order])
 -- renders exactly its user string keys in the recorded insertion order;
 -- the array carrier ([__K.a]/[__K.n]) renders its elements; and the
--- per-slot number marks ([__K.nK]) select the number-variant spelling for
--- the marked slot. No private table-object key is ever enumerated as an
+-- per-slot number marks ([__K.nK]) do not affect numeric spelling.
+-- No private table-object key is ever enumerated as an
 -- object member. An unmarked table takes the shared table-form rule: the
 -- pure positive-integer-keyed array or the pure string-keyed object, in
 -- that order; a table with any other key — a numeric key outside that
@@ -372,13 +246,7 @@ local function encode_value(v, file, line, column, path)
         out[#out + 1] = 'null'; return
       end
       if val == 0 then out[#out + 1] = '0'; return end
-      -- A marked number-variant slot keeps the closed decimal spelling;
-      -- an unmarked number keeps the module's existing %.17g encoding.
-      if isNumber then
-        out[#out + 1] = json_number_text(val)
-      else
-        out[#out + 1] = string.format('%.17g', val)
-      end
+      out[#out + 1] = json_number_text(val)
       return
     elseif t == 'boolean' then
       out[#out + 1] = val and 'true' or 'false'

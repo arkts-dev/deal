@@ -63,6 +63,13 @@ public final class Language16FrontendTest {
         for (String expression : List.of("Math.floor", "Date.now", "console.log", "Math.abs()", "Date.now(1)", "console.log(1)", "Math.sqrt(true)")) {
             check("function f():void{let value=" + expression + ";}", false);
         }
+        check("function f(x:unknown):string|undefined{return JSON.stringify(x);}", true);
+        check("function f():string|undefined{return JSON.stringify(undefined);}", true);
+        check("function f():string|undefined{return JSON.stringify(()=>1);}", false);
+        check("function f():string|undefined{return JSON.stringify(():number=>1);}", true);
+        for (String expression : List.of("JSON", "JSON.stringify", "JSON.stringify()", "JSON.stringify(1,2)")) {
+            check("function f():void{let value=" + expression + ";}", false);
+        }
         check("function f(s:string):number{return s.length;}", true);
         check("function f(s:string):string{return s.substring(1,2).trim().replace(\"a\",\"b\");}", true);
         check("function f(s:string):boolean{return s.includes(\"a\") && s.startsWith(\"a\") && s.endsWith(\"a\");}", true);

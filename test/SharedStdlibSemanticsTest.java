@@ -597,7 +597,7 @@ public class SharedStdlibSemanticsTest {
                 && success.value() instanceof Value.Table table) {
             Outcome<Value> roundTripStringify =
                 SharedStdlibSemantics.jsonStringify(origin(), table.table());
-            expectSuccess(roundTripStringify, text("{\"a\":[1.0,2.5,\"x\"],\"b\":true}"),
+            expectSuccess(roundTripStringify, text("{\"a\":[1,2.5,\"x\"],\"b\":true}"),
                 "parse→stringify round-trips the JSON text");
         }
     }
@@ -738,40 +738,40 @@ public class SharedStdlibSemanticsTest {
         expectStringify(tableOf("t", new Value.Bool(true), "f", new Value.Bool(false)),
             "{\"t\":true,\"f\":false}", "booleans stringify in insertion order");
         expectStringify(tableOf("i", new Value.Number(42), "n", new Value.Number(-7)),
-            "{\"i\":42.0,\"n\":-7.0}", "ints stringify as decimal integers");
+            "{\"i\":42,\"n\":-7}", "ints stringify as decimal integers");
         expectStringify(tableOf("z", new Value.Number(0)), "{\"z\":0}", "number zero is 0");
 
         expectStringify(tableOf("n", new Value.Number(1.5)), "{\"n\":1.5}",
             "a finite number uses its shortest round-trippable decimal");
-        expectStringify(tableOf("n", new Value.Number(1.0)), "{\"n\":1.0}",
-            "1.0 keeps its fraction (shortest spelling)");
-        expectStringify(tableOf("n", new Value.Number(100.0)), "{\"n\":100.0}",
-            "100.0 keeps its fraction");
+        expectStringify(tableOf("n", new Value.Number(1.0)), "{\"n\":1}",
+            "integral binary64 uses the shortest spelling");
+        expectStringify(tableOf("n", new Value.Number(100.0)), "{\"n\":100}",
+            "integral trailing zeroes use plain notation");
         expectStringify(tableOf("n", new Value.Number(0.1)), "{\"n\":0.1}",
             "0.1 is '0.1', never a longer expansion");
-        expectStringify(tableOf("n", new Value.Number(1e-7)), "{\"n\":1.0E-7}",
+        expectStringify(tableOf("n", new Value.Number(1e-7)), "{\"n\":1e-7}",
             "a small magnitude uses the exponent spelling");
         expectStringify(tableOf("n", new Value.Number(9.007199254740992E15)),
-            "{\"n\":9.007199254740992E15}",
+            "{\"n\":9007199254740992}",
             "2^53 keeps its exact shortest spelling");
         expectStringify(tableOf("n", new Value.Number(-0.0)), "{\"n\":0}",
-            "negative zero keeps its sign");
+            "negative zero serializes as zero");
 
         // Object insertion order; arrays index order.
         SemanticTable<Value> ordered = tableOf("a", new Value.Number(1), "b", new Value.Number(2),
             "c", new Value.Number(3));
-        expectStringify(ordered, "{\"a\":1.0,\"b\":2.0,\"c\":3.0}",
+        expectStringify(ordered, "{\"a\":1,\"b\":2,\"c\":3}",
             "object fields follow first-insertion order");
         expectStringify(tableOf("xs", Value.array(new Value.Number(1), text("x"),
                 Value.Null.INSTANCE)),
-            "{\"xs\":[1.0,\"x\",null]}", "array elements follow index order");
+            "{\"xs\":[1,\"x\",null]}", "array elements follow index order");
 
         // Nested structures and empty containers.
         SemanticTable<Value> inner = new SemanticTable<>();
         inner.put("b", Value.array(new Value.Number(1), new Value.Number(2)));
         SemanticTable<Value> nested = new SemanticTable<>();
         nested.put("a", new Value.Table(inner));
-        expectStringify(nested, "{\"a\":{\"b\":[1.0,2.0]}}", "nested objects/arrays stringify");
+        expectStringify(nested, "{\"a\":{\"b\":[1,2]}}", "nested objects/arrays stringify");
         expectStringify(new SemanticTable<>(), "{}", "the empty table is {}");
         expectStringify(tableOf("xs", Value.array()), "{\"xs\":[]}", "the empty array is []");
 
@@ -824,7 +824,7 @@ public class SharedStdlibSemanticsTest {
             "nested unsupported values fail after omitted function members");
         expectStringify(tableOf("arr", Value.array(new Value.Number(1),
                 new Value.Other(ActualKind.FUNCTION, null))),
-            "{\"arr\":[1.0,null]}", "array function entries become null");
+            "{\"arr\":[1,null]}", "array function entries become null");
         expectStringify(tableOf("arr", Value.array(new Value.Number(Double.NaN))),
             "{\"arr\":[null]}", "nonfinite array entries become null");
 
@@ -844,7 +844,7 @@ public class SharedStdlibSemanticsTest {
         SemanticTable<Value> aliasRoot = new SemanticTable<>();
         aliasRoot.put("a", new Value.Table(shared));
         aliasRoot.put("b", new Value.Table(shared));
-        expectStringify(aliasRoot, "{\"a\":{\"v\":1.0},\"b\":{\"v\":1.0}}",
+        expectStringify(aliasRoot, "{\"a\":{\"v\":1},\"b\":{\"v\":1}}",
             "a shared acyclic child is duplicated, never a cycle");
 
         // Acyclic finite data never fails: a deep but finite shape passes.
@@ -886,7 +886,7 @@ public class SharedStdlibSemanticsTest {
         for (int i = 0; i < depth; i++) {
             expected.append("{\"k\":");
         }
-        expected.append("{\"leaf\":7.0}");
+        expected.append("{\"leaf\":7}");
         for (int i = 0; i < depth; i++) {
             expected.append('}');
         }
@@ -1359,7 +1359,7 @@ public class SharedStdlibSemanticsTest {
             seed(StdlibFunctionId.JSON_PARSE, Value.string("{\"a\": 1}"),
                 new Value.Table(parsed)),
             seed(StdlibFunctionId.JSON_STRINGIFY, new Value.Table(table),
-                Value.string("{\"k\":1.0,\"a\":2.0}")),
+                Value.string("{\"k\":1,\"a\":2}")),
             seed(StdlibFunctionId.MATH_FLOOR, new Value.Number(1.5), new Value.Number(1.0)),
             seed(StdlibFunctionId.MATH_CEIL, new Value.Number(1.5), new Value.Number(2.0)),
             seed(StdlibFunctionId.MATH_SQRT, new Value.Number(4.0), new Value.Number(2.0)),
@@ -1383,7 +1383,7 @@ public class SharedStdlibSemanticsTest {
                     }
                     """,
                 "lib.deal", """
-                    import * as console from "std/console";
+                    import * as output from "std/console";
                     import * as str from "std/string";
                     import * as tbl from "std/table";
                     import * as json from "std/json";
@@ -1391,8 +1391,8 @@ public class SharedStdlibSemanticsTest {
                     import * as time from "std/time";
 
                     function run(): null {
-                      console.log("log");
-                      console.error("error");
+                      output.log("log");
+                      output.error("error");
                       let n1: number = str.length("abc");
                       let s2: string = str.substring("abc", 1, 2);
                       let b3: boolean = str.contains("abc", "b");
@@ -1675,7 +1675,7 @@ public class SharedStdlibSemanticsTest {
         SemanticTable<Value> loneKeyTable = new SemanticTable<>();
         loneKeyTable.put("\ud800", new Value.Number(1));
         expectSuccess(SharedStdlibSemantics.jsonStringify(origin(), loneKeyTable),
-            text("{\"\\ud800\":1.0}"), "a lone-unit key is escaped losslessly");
+            text("{\"\\ud800\":1}"), "a lone-unit key is escaped losslessly");
 
         // Dispatch preserves the same NaN result.
         SemanticOp sqrt = stdlibOpBy(unit, StdlibFunctionId.MATH_SQRT);
