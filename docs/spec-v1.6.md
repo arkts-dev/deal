@@ -59,7 +59,7 @@ let s: string = `Items: ${xs[0]}, ${xs[1]}`;
 
 ### Numbers
 
-`number` is the sole numeric type. Numeric literals and arithmetic follow IEEE 754 binary64 with round-to-nearest, ties-to-even and non-trapping arithmetic.
+`number` is the sole numeric type. Numeric literals and arithmetic follow IEEE 754 binary64 with round-to-nearest, ties-to-even and non-trapping arithmetic. `%` follows ECMAScript [Number::remainder](https://tc39.es/ecma262/#sec-numeric-types-number-remainder).
 
 An **integral number** is a finite `number` with no fractional part. Where required, integrality is checked at runtime without rounding or truncation.
 
@@ -107,7 +107,7 @@ HexDigit ::= [0-9a-fA-F]
 
 LineTerminator ::= '\n' | '\r\n' | '\r'
 
-Operator ::= '+' | '-' | '*' | '/'
+Operator ::= '+' | '-' | '*' | '/' | '%'
  | '===' | '!==' | '<' | '<=' | '>' | '>='
  | '&&' | '||' | '!' | '=' | '.' | '=>' | '|'
 
@@ -210,7 +210,7 @@ ClassReference ::= Identifier ('.' Identifier)? | '(' ClassReference ')'
 
 AdditiveExpression ::= MultiplicativeExpression (('+' | '-') MultiplicativeExpression)*
 
-MultiplicativeExpression ::= UnaryExpression (('*' | '/') UnaryExpression)*
+MultiplicativeExpression ::= UnaryExpression (('*' | '/' | '%') UnaryExpression)*
 
 UnaryExpression ::= ('!' | '-' | 'typeof') UnaryExpression
                   | AwaitExpression
@@ -457,7 +457,7 @@ String concatenation uses `+`. Both operands must be `string`.
 | `a + b` where both `number` | `number` |
 | `a + b` where both `string` | `string` (concatenation; no implicit conversions) |
 | any other `+` | error |
-| `a - b`, `a * b` | both operands must be `number`; result is `number` |
+| `a - b`, `a * b`, `a % b` | both operands must be `number`; result is `number` |
 | `a / b` where both `number` | `number`, IEEE division |
 | `=== !==` | result is `boolean` |
 | `< <= > >=` | result is `boolean` |
