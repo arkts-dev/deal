@@ -56,6 +56,7 @@ public final class Language16FrontendTest {
         check("function f():number{return \"5\" % 2;}", false);
         check("function f(x:unknown):number{return x % 2;}", false);
         check("function f(x:unknown):number{if(typeof x===\"number\"){return x % 2;}return 0;}", true);
+        check("function f():string{return \"\\r\\x41\\u0042\\u{1f600}\\uD800\";}", true);
         check("function f():void{const twice=(x:number,):number=>x*2;}", true);
         check("function f():void{const twice=(x:number):number=>{return x*2;};}", true);
         check("function f():void{const twice=async (x:number):Promise<number>=>x*2;}", true);

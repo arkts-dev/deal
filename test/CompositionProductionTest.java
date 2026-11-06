@@ -189,6 +189,13 @@ public final class CompositionProductionTest {
                 Path.of("test/conformance/backend-runtime").resolve(arrowFixture)), arrowFixture);
             execute(arrows, "", root.resolve("arrows"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
+            String escapes = "export function main():null{"
+                + "if(\"\\r\\x41\\u0042\\u{1f600}\\uD800\" !== `\\rAB😀\\uD800`"
+                + " || \"\\u{000000000000000000000000041}\" !== \"A\""
+                + " || '\\x27' !== \"'\" || \"\\x22\" !== '\"'){"
+                + "throw {code:\"TEST\",message:\"escape decoding\"};}return null;}";
+            execute(escapes, "", root.resolve("string-escapes"), null,
+                List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             // Each seed changes values and composition depth, not the language
             // contract. Integer arithmetic here is exactly representable binary64.
             for (int seed = 0; seed < 4; seed++) {
@@ -213,7 +220,7 @@ public final class CompositionProductionTest {
                     + "){throw {code:\"TEST\",message:\"value\"};}c.log(\"COMPOSE_OK\");return null;}";
                 execute(source, "COMPOSE_OK\n", root.resolve("seed" + seed), null);
             }
-            System.out.println("Composition production: 15 composition lanes and 42 revised-syntax executions passed");
+            System.out.println("Composition production: 15 composition lanes and 49 revised-syntax executions passed");
         } finally { remove(root); }
     }
 }

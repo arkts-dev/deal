@@ -2267,24 +2267,6 @@ public final class Parser {
     }
 
     private static String unescapeString(String lexeme) {
-        String inner = lexeme.substring(1, lexeme.length() - 1);
-        StringBuilder sb = new StringBuilder(inner.length());
-        for (int i = 0; i < inner.length(); i++) {
-            char c = inner.charAt(i);
-            if (c == '\\' && i + 1 < inner.length()) {
-                i++;
-                switch (inner.charAt(i)) {
-                    case 'n'  -> sb.append('\n');
-                    case 't'  -> sb.append('\t');
-                    case '\\' -> sb.append('\\');
-                    case '"'  -> sb.append('"');
-                    case '\'' -> sb.append('\'');
-                    default   -> { sb.append('\\'); sb.append(inner.charAt(i)); }
-                }
-            } else {
-                sb.append(c);
-            }
-        }
-        return sb.toString();
+        return TemplateScanner.decodeText(lexeme.substring(1, lexeme.length() - 1));
     }
 }

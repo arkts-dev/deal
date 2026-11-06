@@ -175,7 +175,12 @@ public final class TemplateScanner {
                     int end = braces ? raw.indexOf('}', start) : start + (c == 'x' ? 2 : 4);
                     if (end < start || end > raw.length()) { out.append(c); break; }
                     try {
-                        int point = Integer.parseInt(raw.substring(start, end), 16);
+                        int point = 0;
+                        for (int digit = start; digit < end; digit++) {
+                            int value = hex(raw.charAt(digit));
+                            if (value < 0 || point > 0x10ffff / 16) throw new IllegalArgumentException();
+                            point = point * 16 + value;
+                        }
                         out.appendCodePoint(point);
                         i = braces ? end : end - 1;
                     } catch (IllegalArgumentException invalid) {
@@ -187,6 +192,16 @@ public final class TemplateScanner {
             }
         }
         return out.toString();
+    }
+
+    /** Validates the ordinary-string escape table at its character after the backslash. */
+    public static boolean validStringEscape(String source, int pos) {
+        char next = source.charAt(pos);
+        return switch (next) {
+            case 'n', 'r', 't', '\\', '\"', '\'' -> true;
+            case 'x', 'u' -> !invalidEscape(source, pos, next);
+            default -> false;
+        };
     }
 
     private static boolean invalidEscape(String source, int pos, char next) {

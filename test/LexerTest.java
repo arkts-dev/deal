@@ -433,19 +433,14 @@ public class LexerTest {
         assertToken(r.tokens().get(0), TokenType.STRING_LITERAL, "'a\\'b'", 1, 1);
     }
 
-    /**
-     * The normative five-entry escape table (spec §String escapes and
-     * Unicode): {@code \n}, {@code \t}, {@code \\}, {@code \"},
-     * {@code \'} are the only escapes — no octal, hexadecimal, or
-     * Unicode sequences (ISSUE-0717 defect snippet 57).
-     */
+    /** Ordinary escapes accept UTF-16 units and Unicode code points, but not octal. */
     static void testUnsupportedStringEscapes() {
         System.out.println("-- String escapes outside the normative table --");
 
         String[] unsupported = {
-            "\"a\\u0041b\"", "\"a\\x41b\"", "\"a\\101b\"", "\"a\\rb\"",
+            "\"a\\uZZZZb\"", "\"a\\xQ1b\"", "\"a\\101b\"", "\"a\\qb\"",
         };
-        String[] names = {"\\u0041", "\\x41", "\\101", "\\r"};
+        String[] names = {"malformed Unicode", "malformed hex", "octal", "unknown"};
         for (int i = 0; i < unsupported.length; i++) {
             LexResult r = tokenize(unsupported[i]);
             assertDiagnosticCode(r.diagnostics(), "E1052",
@@ -456,7 +451,13 @@ public class LexerTest {
         }
 
         LexResult ok = tokenize("\"\\n\\t\\\\\\\"\\'\"");
-        assertNoDiagnostics(ok.diagnostics(), "the five normative escapes");
+        assertNoDiagnostics(ok.diagnostics(), "ordinary character escapes");
+        for (String source : List.of("\"\\r\\x41\\u0042\\u{1f600}\"", "\"\\uD800\\uDC00\"")) {
+            assertNoDiagnostics(tokenize(source).diagnostics(), "Unicode and hex escapes");
+        }
+        for (String source : List.of("\"\\u{}\"", "\"\\u{110000}\"", "\"\\u123\"", "\"\\x1\"")) {
+            assertDiagnosticCode(tokenize(source).diagnostics(), "E1052", "malformed escape");
+        }
     }
 
     // =========================================================================

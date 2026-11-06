@@ -8,6 +8,8 @@ Imports precede module-level functions, classes and exports; executable statemen
 
 Comments: // or /* ... */. `$` bindings are compiler-owned. Property keys need explicit values. Assign with x = x + 1. Function expressions use function or explicitly typed arrows, such as (x: number): number => x * 2. Arrows admit block or expression bodies; a void expression body must itself produce void. Async arrows use Promise<T> results and await normally. Keep async with its parameter opening and the result annotation with => on the same line.
 
+Ordinary strings decode newline, carriage-return, tab, backslash and quote escapes, hexadecimal \\xHH/\\uHHHH units and \\u{H…} code points. Strings retain UTF-16 lone surrogates across backends and host transport.
+
 ## Types
 
 Data: null, undefined, unknown, boolean, number, string, Record<string, unknown>, nominal classes, invariant arrays and function types. Nullish unions admit null/undefined independently. Void is result-only.

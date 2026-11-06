@@ -718,11 +718,8 @@ public final class Lexer {
                     String lexeme = source.substring(startPos, pos);
                     return makeToken(TokenType.STRING_LITERAL, lexeme);
                 }
-                // The normative escape table is exactly \n, \t, \\, \", \'
-                // (no octal, hexadecimal, or Unicode escape sequences).
                 char escaped = source.charAt(pos);
-                if (escaped != 'n' && escaped != 't' && escaped != '\\'
-                        && escaped != '"' && escaped != '\'') {
+                if (!TemplateScanner.validStringEscape(source, pos)) {
                     error(DiagnosticCode.E1052,
                         "Unsupported string escape: \\" + escaped,
                         tokenStartRange());
