@@ -310,10 +310,11 @@ public final class LlvmConformanceTest {
                                 static int read_field(const deal_data *instance, size_t index,
                                         deal_check_input *out, uint8_t *present, void *context) {
                                     (void)instance; (void)context;
+                                    *present = index == 0u;
+                                    if (out == NULL) return 1;
                                     memset(out, 0, sizeof(*out));
                                     out->presentation = DEAL_PRESENT_DATUM;
                                     out->datum = deal_data_of_number(1);
-                                    *present = index == 0u;
                                     return 1;
                                 }
                                 static const deal_json_class_plan *lookup(const char *atom, void *context) {

@@ -1293,6 +1293,35 @@ public class SemanticIrValidatorTest {
             }
         }
 
+        for (String defect : List.of("none", "receiver", "result", "operand", "type", "policy", "forward")) {
+            var tableType = RuntimeDescriptor.Table.INSTANCE;
+            SemanticOp table = op(SemanticOpKind.TABLE_NEW, new KindPayload.TableNewPayload(List.of()),
+                nextValue(), tableType, FailurePolicyId.NO_DEAL_FAILURE, null);
+            var payload = new KindPayload.ObjectKeysPayload(defect.equals("receiver") ? nextValue() : (ValueId)table.result());
+            RuntimeDescriptor result = defect.equals("result") ? INT : new RuntimeDescriptor.Array(STR);
+            List<ValueId> operands = List.of(defect.equals("operand") ? nextValue() : (ValueId)table.result());
+            List<RuntimeDescriptor> types = List.of(defect.equals("type") ? INT : tableType);
+            FailurePolicyId policy = defect.equals("policy") ? FailurePolicyId.TYPE_DESCRIPTOR : FailurePolicyId.NO_DEAL_FAILURE;
+            var contract = contractFor(SemanticOpKind.OBJECT_KEYS, payload, result, types, policy, "placeholder");
+            contract = contractFor(SemanticOpKind.OBJECT_KEYS, payload, result, types, policy,
+                ContractSnapshotCanonicalizer.digest(contract));
+            SemanticOp keys = new SemanticOp(nextOpId(), SemanticOpKind.OBJECT_KEYS, origin(null), nextValue(),
+                result, operands, types, payload, policy, contract);
+            var fixture = unit(defect.equals("forward") ? List.of(keys, table) : List.of(table, keys));
+            var rebuilt = deal.semantic.ir.RawUnitMaterializer.materialize(RawUnit.fromTyped(fixture));
+            if (defect.equals("none")) {
+                assertUnitPass(fixture, FACTS, "Object.keys admits fresh string array result");
+                assertUnitPass(rebuilt, FACTS, "Object.keys raw admission");
+                checkEq(SemanticIrValidator.toUnitText(fixture), SemanticIrValidator.toUnitText(rebuilt), "keys lossless transport");
+            } else {
+                var typed = SemanticIrValidator.validate(fixture, FACTS);
+                assertE6005(typed, defect.equals("policy") ? "R-POLICY-KIND" : "R-ENUM", "OBJECT_KEYS");
+                check(typed.equals(SemanticIrValidator.validate(rebuilt, FACTS))
+                    && typed.equals(SemanticIrValidator.validateText(SemanticIrValidator.toUnitText(fixture), FACTS)),
+                    "Object.keys typed/raw/text rejection agrees: " + defect);
+            }
+        }
+
         for (RuntimeDescriptor operand : List.of(INT, BOOL)) {
             SemanticOp value = op(SemanticOpKind.CONST,
                 new KindPayload.ConstPayload(operand.equals(INT) ? new ScalarValue.Number(1)

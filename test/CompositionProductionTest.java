@@ -196,6 +196,15 @@ public final class CompositionProductionTest {
                 + "{throw {code:\"DECODED\",message:\"splice append\"};}return null;}";
             execute(decodedSplice, "", root.resolve("splice-decoded"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
+            execute(ConformanceHarnessMetadata.productionCorpusSource(Files.readString(Path.of(
+                "test/conformance/backend-runtime/tables/object-keys-live-fields.deal")), "tables/object-keys-live-fields.deal"),
+                "", root.resolve("object-keys-live"), popHost,
+                List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
+            String keysFixture = "tables/builtin-object-keys.deal";
+            execute(ConformanceHarnessMetadata.productionCorpusSource(Files.readString(
+                Path.of("test/conformance/backend-runtime").resolve(keysFixture)), keysFixture),
+                "", root.resolve("object-keys"), null,
+                List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             String receiverFixture = "stdlib/string/receiver-intrinsics.deal";
             execute(ConformanceHarnessMetadata.productionCorpusSource(Files.readString(
                 Path.of("test/conformance/backend-runtime").resolve(receiverFixture)), receiverFixture),
@@ -437,7 +446,7 @@ public final class CompositionProductionTest {
                     + "){throw {code:\"TEST\",message:\"value\"};}c.log(\"COMPOSE_OK\");return null;}";
                 execute(source, "COMPOSE_OK\n", root.resolve("seed" + seed), null);
             }
-            System.out.println("Composition production: 15 composition lanes and 173 revised-syntax executions passed");
+            System.out.println("Composition production: 15 composition lanes and 187 revised-syntax executions passed");
         } finally { remove(root); }
     }
 }

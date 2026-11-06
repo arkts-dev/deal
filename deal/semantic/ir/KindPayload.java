@@ -12,6 +12,7 @@ public sealed interface KindPayload
             KindPayload.TableNewPayload,
             KindPayload.ArrayLengthPayload,
             KindPayload.ArrayPopPayload,
+            KindPayload.ObjectKeysPayload,
             KindPayload.ArraySplicePayload,
             KindPayload.MemberReadPayload,
             KindPayload.MemberWritePayload,
@@ -283,6 +284,11 @@ public sealed interface KindPayload
         public TableNewPayload(List<TableEntry> entries) {
             this.entries = List.copyOf(entries);
         }
+    }
+
+    /** Fresh presence-only Record/class key snapshot, without consuming values. */
+    record ObjectKeysPayload(ValueId receiver) implements KindPayload {
+        public ObjectKeysPayload { Objects.requireNonNull(receiver, "receiver"); }
     }
 
     /** Validate the last element before removing it; empty yields undefined. */

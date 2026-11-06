@@ -1,0 +1,38 @@
+// @spec: Standard library builtins — Object key snapshots and presence
+// @expected: runtime-ok
+class Item { z:number; nil:null; absent?:number; undef:undefined; call:()=>number; }
+class Empty {}
+class Callable {keys:()=>number;}
+function joined(xs:string[]):string {let out="";for(const key of xs){out=out+key+"|";}return out;}
+export function main():null {
+  const r:Record<string,unknown>={z:1};r["10"]=null;r["2"]=undefined;r["01"]=true;r["4294967295"]=0;r["0"]=0;r.a=2;
+  const before=Object.keys(r);
+  if(joined(before)!=="0|2|10|z|01|4294967295|a|"){throw {code:"KEYS",message:"Record order"};}
+  r.z=3;delete r.a;r.a=4;delete r.z;r.z=5;r.newKey=null;
+  if(joined(Object.keys(r))!=="0|2|10|01|4294967295|a|z|newKey|" || joined(before)!=="0|2|10|z|01|4294967295|a|"){
+    throw {code:"KEYS",message:"creation order and snapshot"};}
+  before[before.length]="extra";
+  const c:Item={call:():number=>7,undef:undefined,nil:null,z:9};
+  if(joined(Object.keys(c))!=="z|nil|undef|call|"){throw {code:"KEYS",message:"class declaration order"};}
+  c.absent=2;const present=Object.keys(c);delete c.absent;
+  if(joined(present)!=="z|nil|absent|undef|call|" || joined(Object.keys(c))!=="z|nil|undef|call|"){
+    throw {code:"KEYS",message:"class presence snapshot"};}
+  let effects="";const receiver=():Item=>{effects=effects+"r";return c;};
+  if(joined(Object.keys(receiver()))!=="z|nil|undef|call|" || effects!=="r"){throw {code:"KEYS",message:"once"};}
+  let maybe:Item|null=c;const clear=():void=>{maybe=null;};let caught=false;
+  if(maybe!==null){clear();try{Object.keys(maybe);}catch(e){caught=(e as Error).code==="E8001";}}
+  const error:Error={code:"X",message:"x"};
+  if(!caught || joined(Object.keys(error))!=="code|message|"){
+    throw {code:"KEYS",message:"stale receiver or Error fields"};}
+  const bare:Empty={};if(Object.keys(bare).length!==0){throw {code:"KEYS",message:"empty class"};}
+  const ordinary:Callable={keys:():number=>8};const method=ordinary.keys;
+  if(method()!==8){throw {code:"KEYS",message:"ordinary callable field"};}
+  const boundary:Record<string,unknown>={};boundary["4294967295"]=0;boundary["4294967294"]=0;
+  boundary["9007199254740993"]=0;boundary["-0"]=0;boundary["00"]=0;boundary["1"]=0;
+  boundary["$kind"]=null;boundary["__proto__"]=undefined;
+  if(joined(Object.keys(boundary))!=="1|4294967294|4294967295|9007199254740993|-0|00|$kind|__proto__|"){
+    throw {code:"KEYS",message:"numeric boundary and metadata collisions"};}
+  const empty:Record<string,unknown>={};const e1=Object.keys(empty);const e2=Object.keys(empty);
+  if(e1===e2 || e1.length!==0 || e2.length!==0){throw {code:"KEYS",message:"fresh empty"};}
+  return null;
+}

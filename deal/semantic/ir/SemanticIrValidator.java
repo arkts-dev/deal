@@ -1963,6 +1963,20 @@ public final class SemanticIrValidator {
                     return fail(op, unit, facts, R_ENUM, SemanticCapability.CONTAINERS_AND_STRINGS,
                         origin(R_ENUM, "ARRAY_SPLICE requires preceding array/number/number operands and the same array result descriptor"));
             }
+            case "OBJECT_KEYS" -> {
+                ValueId receiver = parseValueIdQuiet(payloadValue(payload, "receiver") instanceof CanonicalJson.Obj obj ? obj : null);
+                String receiverType = null;
+                for (RawOp producer : unit.ops()) {
+                    if (producer.opId().equals(op.opId())) break;
+                    if (receiver != null && receiver.equals(producer.resultValue())) receiverType = producer.resultType();
+                }
+                RuntimeDescriptor descriptor = parseDescriptorQuiet(receiverType);
+                if (!(descriptor instanceof RuntimeDescriptor.Table || descriptor instanceof RuntimeDescriptor.Class)
+                        || op.resultValue() == null || !"[string]".equals(op.resultType())
+                        || !List.of(receiver).equals(op.operands()) || !List.of(receiverType).equals(op.operandTypes()))
+                    return fail(op, unit, facts, R_ENUM, SemanticCapability.CONTAINERS_AND_STRINGS,
+                        origin(R_ENUM, "OBJECT_KEYS requires one preceding Record/class receiver and a string array result"));
+            }
             case "ARRAY_POP" -> {
                 ValueId receiver = parseValueIdQuiet(payloadValue(payload, "arrayValue")
                     instanceof CanonicalJson.Obj obj ? obj : null);
@@ -2444,7 +2458,7 @@ public final class SemanticIrValidator {
     private static Set<FailurePolicyId> allowedPolicies(SemanticOpKind kind) {
         return switch (kind) {
             case ARRAY_POP, ARRAY_SPLICE -> Set.of(FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR);
-            case ARRAY_LENGTH -> Set.of(FailurePolicyId.NO_DEAL_FAILURE);
+            case ARRAY_LENGTH, OBJECT_KEYS -> Set.of(FailurePolicyId.NO_DEAL_FAILURE);
             case OPTIONAL_READ -> Set.of(FailurePolicyId.NO_DEAL_FAILURE,
                 FailurePolicyId.TYPE_DESCRIPTOR);
             case ASYNC_START -> Set.of(FailurePolicyId.NO_DEAL_FAILURE,

@@ -48,6 +48,8 @@ export async function test_async_class_completion(): Promise<null> {
 export function test_sync_class_return(): null {
   let made: host.Config = host.makeSync();
   check(made.value === 42, "the synchronous class return value");
+  let names=Object.keys(made);
+  check(names.length===1 && names[0]==="value", "host class key snapshot");
   return null;
 }
 
@@ -104,6 +106,14 @@ export function test_class_fields(): null {
   check(!Object.hasOwn(holder, "maybe"), "the absent optional nullable class field stays absent");
   check(holder.items.length === 1, "the class array field length");
   check(holder.items[0].value === 42, "the class array field element value");
+  let names=Object.keys(holder);
+  check(names.length===4 && names[0]==="label" && names[1]==="primary"
+      && names[2]==="optional" && names[3]==="items", "host class declaration order and presence");
+  holder.maybe=null;
+  let present=Object.keys(holder);
+  check(present.length===5 && present[3]==="maybe" && present[4]==="items" && names.length===4,
+      "present-null host field and stable snapshot");
+  delete holder.maybe;
   return null;
 }
 

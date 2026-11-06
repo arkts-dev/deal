@@ -15,6 +15,9 @@ export class Payload {
   item: Item;
 }
 
+export class KeyOrder { z:number; a:number; }
+export function ordered():KeyOrder { return {a:2,z:1}; }
+
 export function make(): Item {
   return { value: 1 };
 }

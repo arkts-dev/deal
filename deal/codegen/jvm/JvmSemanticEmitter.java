@@ -1484,6 +1484,7 @@ public final class JvmSemanticEmitter {
                 case TABLE_NEW -> emitTableNew(op, indent);
                 case ARRAY_LENGTH -> emitArrayLength(op, indent);
                 case ARRAY_POP -> emitArrayPop(op, indent);
+                case OBJECT_KEYS -> emitObjectKeys(op, indent);
                 case ARRAY_SPLICE -> emitArraySplice(op, indent);
                 case MEMBER_READ -> emitMemberRead(op, indent);
                 case MEMBER_WRITE -> emitMemberWrite(op, indent);
@@ -1982,6 +1983,14 @@ public final class JvmSemanticEmitter {
                 .append(javaString(runtimeDescriptorText(element))).append(", ")
                 .append(javaString(element.canonicalSpecText())).append(", ").append(javaString(originOf(op))).append(");\n");
             emitResultSuccess(op, slot((ValueId) op.result()), (RuntimeDescriptor) op.resultType(), indent);
+        }
+
+        private void emitObjectKeys(SemanticOp op, int indent) {
+            emitStart(op, indent);
+            String target = slot((ValueId) op.result());
+            out.append(indent(indent)).append(target).append(" = JvmRuntime.objectKeys(")
+                .append(slot(((KindPayload.ObjectKeysPayload) op.payload()).receiver())).append(");\n");
+            emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType(), indent);
         }
 
         private void emitArrayPop(SemanticOp op, int indent) {

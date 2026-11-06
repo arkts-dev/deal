@@ -12,6 +12,7 @@ public enum BuiltinCall {
     MATH_SQRT("Math", "sqrt", List.of(Type.Number.INSTANCE), Type.Number.INSTANCE),
     MATH_ABS_NUMBER("Math", "abs", List.of(Type.Number.INSTANCE), Type.Number.INSTANCE),
     TIME_NOW_MILLIS("Date", "now", List.of(), Type.Number.INSTANCE),
+    OBJECT_KEYS("Object", "keys", List.of(Type.Unknown.INSTANCE), new Type.Array(Type.String.INSTANCE)),
     JSON_STRINGIFY("JSON", "stringify", List.of(Type.Unknown.INSTANCE),
         new Type.Nullable(Type.String.INSTANCE, false, true));
 

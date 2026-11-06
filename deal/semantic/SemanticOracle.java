@@ -1935,6 +1935,7 @@ record NumValue(double value) implements Value {
                 case TABLE_NEW -> executeTableNew(op);
                 case ARRAY_LENGTH -> executeArrayLength(op);
                 case ARRAY_POP -> executeArrayPop(op);
+                case OBJECT_KEYS -> executeObjectKeys(op);
                 case ARRAY_SPLICE -> executeArraySplice(op);
                 case MEMBER_READ -> executeMemberRead(op);
                 case MEMBER_WRITE, MEMBER_DELETE, INDEX_WRITE, INDEX_DELETE,
@@ -2390,14 +2391,33 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
             return input;
         }
 
-        /**
-         * HAS_FIELD: the presence boolean of one checked receiver key —
-         * present (present null included) → true, absent → false. The
-         * table-presence half realizes through the value model's keyed
-         * entries; the class-instance half (the presence map of a
-         * generated instance) is the CLASSES family's production and has
-         * no oracle representation in this domain yet.
-         */
+        /** Snapshot present keys without consuming or traversing field values. */
+        private String executeObjectKeys(SemanticOp op) {
+            Value receiver = valueOf(((KindPayload.ObjectKeysPayload) op.payload()).receiver());
+            List<String> keys = new ArrayList<>();
+            if (receiver instanceof Value.TableValue table) {
+                keys.addAll(table.entries().keySet());
+                keys.sort(java.util.Comparator.comparingLong(key -> {
+                    if (!key.matches("0|[1-9][0-9]*") || key.length() > 10) return Long.MAX_VALUE;
+                    long index = Long.parseLong(key);
+                    return index < 4294967295L ? index : Long.MAX_VALUE;
+                }));
+            } else if (receiver instanceof Value.ClassValue instance) {
+                ClassLayout layout = instanceLayouts.get(instance);
+                if (layout == null) layout = classLayouts.get(instance.classId());
+                if (layout == null || layout.fields().size() != instance.fields().size())
+                    throw new IllegalStateException("OBJECT_KEYS class without matching layout");
+                for (int i = 0; i < layout.fields().size(); i++)
+                    if (instance.fields().get(i) instanceof Value.ClassFieldState.Present)
+                        keys.add(layout.fields().get(i).name());
+            } else if (receiver instanceof Value.ErrorValue) keys.addAll(List.of("code", "message"));
+            else throw new IllegalStateException("OBJECT_KEYS unsupported receiver");
+            List<Value> values = new ArrayList<>();
+            for (String key : keys) values.add(new Value.StrValue(key));
+            return publish(op, new Value.ArrayValue(values, RuntimeDescriptor.String.INSTANCE, false));
+        }
+
+        /** Presence is independent of the stored value, including null/undefined. */
         private String executeHasField(SemanticOp op) {
             KindPayload.HasFieldPayload payload =
                 (KindPayload.HasFieldPayload) op.payload();

@@ -16,7 +16,7 @@ import java.util.Objects;
  *
  * <ul>
  *   <li>{@code FOUNDATION_VALUES} → {@code {CONST, UNARY, BINARY, STRING_CONCAT}}</li>
- *   <li>{@code CONTAINERS_AND_STRINGS} → {@code {ARRAY_NEW, TABLE_NEW, ARRAY_LENGTH, ARRAY_POP, ARRAY_SPLICE, MEMBER_*, INDEX_*, OPTIONAL_READ, HAS_FIELD, FOR_EACH}}</li>
+ *   <li>{@code CONTAINERS_AND_STRINGS} → {@code {ARRAY_NEW, TABLE_NEW, ARRAY_LENGTH, ARRAY_POP, ARRAY_SPLICE, OBJECT_KEYS, MEMBER_*, INDEX_*, OPTIONAL_READ, HAS_FIELD, FOR_EACH}}</li>
  *   <li>{@code DESCRIPTORS} → {@code {BOUNDARY}}</li>
  *   <li>{@code BOUNDARIES} → {@code {BOUNDARY}}</li>
  *   <li>{@code EVALUATION_ORDER} → {@code {BRANCH, LOOP, DISCARD}}</li>
@@ -72,6 +72,7 @@ public final class CapabilityRequirementCatalog {
             RequiredOperation.of("TABLE_NEW", SemanticOpKind.TABLE_NEW),
             RequiredOperation.of("ARRAY_LENGTH", SemanticOpKind.ARRAY_LENGTH),
             RequiredOperation.of("ARRAY_POP", SemanticOpKind.ARRAY_POP),
+            RequiredOperation.of("OBJECT_KEYS", SemanticOpKind.OBJECT_KEYS),
             RequiredOperation.of("ARRAY_SPLICE", SemanticOpKind.ARRAY_SPLICE),
             RequiredOperation.of("MEMBER_*", SemanticOpKind.MEMBER_READ,
                 SemanticOpKind.MEMBER_WRITE, SemanticOpKind.MEMBER_DELETE),

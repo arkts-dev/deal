@@ -1556,6 +1556,7 @@ public final class LuaSemanticEmitter {
                 case TABLE_NEW -> emitTableNew(op);
                 case ARRAY_LENGTH -> emitArrayLength(op);
                 case ARRAY_POP -> emitArrayPop(op);
+                case OBJECT_KEYS -> emitObjectKeys(op);
                 case ARRAY_SPLICE -> emitArraySplice(op);
                 case MEMBER_READ -> emitMemberRead(op);
                 case MEMBER_WRITE -> emitMemberWrite(op);
@@ -1984,6 +1985,32 @@ public final class LuaSemanticEmitter {
                 .append("if c > 0 then for i = s + 1, n - c do local v = rawget(a, i+c); rawset(a, i, v); local marks = a[__dealCarrierKeys.nK]; __numKey(a, i, v, marks ~= nil and marks[i+c] == true) end\n")
                 .append("for i = n - c + 1, n do rawset(a, i, nil); __numKey(a, i, nil, false) end; a[__dealCarrierKeys.n] = n - c end\n")
                 .append(target).append(" = removed end\n");
+            emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
+        }
+
+        private void emitObjectKeys(SemanticOp op) {
+            emitStart(op);
+            String receiver = slot(((KindPayload.ObjectKeysPayload) op.payload()).receiver());
+            String target = slot((ValueId) op.result());
+            out.append("do\n  local value = ").append(receiver).append("\n")
+                .append("  local names = {}\n")
+                .append("  if value[__dealCarrierKeys.c] or value[__dealCarrierKeys.d] or value[__dealCarrierKeys.kind] == 'class' then\n")
+                .append("    local identity = value[__dealCarrierKeys.id] or value[__dealCarrierKeys.classname]\n")
+                .append("    local order = value[__dealCarrierKeys.classOrder] or __factories.__jsonClassOrder[identity] or __dealCarrierKeys.classOrders[identity]\n")
+                .append("    if value[__dealCarrierKeys.d] then order = {'code','message'} end\n")
+                .append("    if order == nil then error('OBJECT_KEYS class without field order',0) end\n")
+                .append("    for i=1,#order do local key=order[i]\n")
+                .append("      local presence=value[__dealCarrierKeys.p]\n")
+                .append("      if value[__dealCarrierKeys.d] or (presence and presence[key]) or (not presence and rawget(value,key) ~= nil) then names[#names+1]=key end\n")
+                .append("    end\n  else\n")
+                .append("    local seen={}\n    local order=value[__dealCarrierKeys.order] or {}\n")
+                .append("    for i=1,#order do local key=order[i]; if type(key)=='string' and not seen[key] then names[#names+1]=key; seen[key]=true end end\n")
+                .append("    for key,_ in pairs(value) do if type(key)=='string' and not seen[key] then names[#names+1]=key; seen[key]=true end end\n")
+                .append("    local function index(key) if key=='0' or string.match(key,'^[1-9][0-9]*$') then local n=tonumber(key); if n and n<4294967295 then return n end end return math.huge end\n")
+                .append("    local positions={}; for i=1,#names do positions[names[i]]=i end\n")
+                .append("    table.sort(names,function(a,b) local ai,bi=index(a),index(b); if ai==bi then return positions[a]<positions[b] end return ai<bi end)\n")
+                .append("  end\n  names[__dealCarrierKeys.a]=true; names[__dealCarrierKeys.n]=#names; names[__dealCarrierKeys.elementDescriptor]='string'\n  ")
+                .append(target).append(" = names\nend\n");
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
         }
 

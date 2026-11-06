@@ -1138,6 +1138,7 @@ public final class JsSemanticEmitter {
                 case TABLE_NEW -> emitTableNew(op);
                 case ARRAY_LENGTH -> emitArrayLength(op);
                 case ARRAY_POP -> emitArrayPop(op);
+                case OBJECT_KEYS -> emit(slotOf(op) + " = $rt.objectKeys(" + slot(((KindPayload.ObjectKeysPayload) op.payload()).receiver()) + ");");
                 case ARRAY_SPLICE -> emitArraySplice(op);
                 case MEMBER_READ -> emitMemberRead(op);
                 case MEMBER_WRITE -> emitMemberWrite(op);

@@ -390,7 +390,7 @@ public final class LlvmDataClassEmissionTest {
     private static String jsonFixture() {
         String deepDocument = "[".repeat(JSON_DEEP_DEPTH) + "1"
             + "]".repeat(JSON_DEEP_DEPTH);
-        String deepEncoded = "[".repeat(JSON_DEEP_DEPTH) + "1.0"
+        String deepEncoded = "[".repeat(JSON_DEEP_DEPTH) + "1"
             + "]".repeat(JSON_DEEP_DEPTH);
         return """
             // @jsonable
@@ -436,7 +436,7 @@ public final class LlvmDataClassEmissionTest {
               let decoded = Outer$fromJson(source);
               if (decoded === null) { report("J1", "decode"); }
               let encoded = Outer$toJson(decoded as Outer);
-              if (encoded !== "{\\"title\\":\\"t\\",\\"inner\\":{\\"value\\":2.0},\\"items\\":[1.0,2.0],\\"maybe\\":\\"m\\",\\"optionalNull\\":null,\\"dynamic\\":{\\"k\\":true}}") {
+              if (encoded !== "{\\"title\\":\\"t\\",\\"inner\\":{\\"value\\":2},\\"items\\":[1,2],\\"maybe\\":\\"m\\",\\"optionalNull\\":null,\\"dynamic\\":{\\"k\\":true}}") {
                 report("J2", encoded);
               }
 
@@ -463,7 +463,7 @@ public final class LlvmDataClassEmissionTest {
               }
 
               let deepSource = "{\\"title\\":\\"t\\",\\"inner\\":{\\"value\\":1},\\"items\\":[],\\"maybe\\":\\"m\\",\\"optionalNull\\":null,\\"dynamic\\":{\\"k\\":DEEP_DOCUMENT}}";
-              let deepExpected = "{\\"title\\":\\"t\\",\\"inner\\":{\\"value\\":1.0},\\"items\\":[],\\"maybe\\":\\"m\\",\\"optionalNull\\":null,\\"dynamic\\":{\\"k\\":DEEP_ENCODED}}";
+              let deepExpected = "{\\"title\\":\\"t\\",\\"inner\\":{\\"value\\":1},\\"items\\":[],\\"maybe\\":\\"m\\",\\"optionalNull\\":null,\\"dynamic\\":{\\"k\\":DEEP_ENCODED}}";
               let deepDecoded = Outer$fromJson(deepSource);
               if (deepDecoded === null) { report("J12", "deep decode"); }
               let deepText = Outer$toJson(deepDecoded as Outer);
@@ -527,7 +527,7 @@ public final class LlvmDataClassEmissionTest {
               for (let value of pair.numbers) { elementSum = elementSum + value; }
               if (elementSum !== 3) { report("J32", "decoded for-of"); }
               let pairText = Arrays$toJson(pair);
-              if (pairText !== "{\\"numbers\\":[1.0,2.0],\\"flags\\":[true,false],\\"texts\\":[\\"a\\",\\"b\\"],\\"nested\\":[[\\"a\\"],[\\"b\\",\\"c\\"]],\\"mixed\\":[1.0,null,3.0],\\"options\\":[true,null],\\"inner\\":[{\\"value\\":4.0}],\\"rows\\":[{\\"a\\":1.0}]}") {
+              if (pairText !== "{\\"numbers\\":[1,2],\\"flags\\":[true,false],\\"texts\\":[\\"a\\",\\"b\\"],\\"nested\\":[[\\"a\\"],[\\"b\\",\\"c\\"]],\\"mixed\\":[1,null,3],\\"options\\":[true,null],\\"inner\\":[{\\"value\\":4}],\\"rows\\":[{\\"a\\":1}]}") {
                 report("J33", pairText);
               }
 
@@ -1751,8 +1751,8 @@ public final class LlvmDataClassEmissionTest {
         Map<String, String> messages = new LinkedHashMap<>();
         messages.put("containers", "héllo");
         messages.put("classes", "Ada|London|b");
-        messages.put("json", "{\"title\":\"t\",\"inner\":{\"value\":2.0},"
-            + "\"items\":[1.0,2.0],\"maybe\":\"m\",\"optionalNull\":null,"
+        messages.put("json", "{\"title\":\"t\",\"inner\":{\"value\":2},"
+            + "\"items\":[1,2],\"maybe\":\"m\",\"optionalNull\":null,"
             + "\"dynamic\":{\"k\":true}}|{\"name\":\"a\",\"maybe\":\"m\"}");
         messages.put("routing", "routing");
         messages.put("ieee", "ieee");

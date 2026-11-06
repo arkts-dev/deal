@@ -622,12 +622,17 @@ final class LlvmClassPlans {
                 ir.line("ret i32 1");
                 ir.label("present" + index);
             }
+            ir.line("store i8 1, i8* %present");
+            String presenceOnly = ir.temp("icmp eq %struct.deal_check_input* %value, null");
+            ir.line("br i1 " + presenceOnly + ", label %presenceOnly" + index + ", label %readValue" + index);
+            ir.label("presenceOnly" + index);
+            ir.line("ret i32 1");
+            ir.label("readValue" + index);
             String slot = ir.temp("load " + field.slotType() + ", "
                 + field.slotType() + "* " + ir.temp("getelementptr "
                     + def.recordName() + ", " + def.recordName()
                     + "* %typed, i32 0, i32 " + field.structIndex()));
             String datum = slot;
-            ir.line("store i8 1, i8* %present");
             // Derive identity/signature from the stored datum, never the
             // field declaration. This also preserves raw callable presentation.
             session.referenceRuntimeEntry("deal_host_present_datum");

@@ -649,6 +649,7 @@ final class LlvmFunctionEmitter {
             case TABLE_NEW -> emitTableNew(op);
             case ARRAY_LENGTH -> emitArrayLength(op);
             case ARRAY_POP -> emitArrayPop(op);
+            case OBJECT_KEYS -> emitObjectKeys(op);
             case ARRAY_SPLICE -> emitArraySplice(op);
             case MEMBER_READ -> emitMemberRead(op);
             case OPTIONAL_READ -> emitOptionalRead(op);
@@ -4980,6 +4981,17 @@ final class LlvmFunctionEmitter {
         branchOnFailure(op, error, "arraysplice");
         String datum = emitTemporary(op, "extractvalue %struct.deal_outcome_data " + outcome + ", 1");
         storeResult(op, LlvmTypeMapper.ARRAY, datumToRepresentation((RuntimeDescriptor) op.resultType(), datum, op));
+    }
+
+    private void emitObjectKeys(SemanticOp op) {
+        ValueId receiver = ((KindPayload.ObjectKeysPayload) op.payload()).receiver();
+        RuntimeDescriptor type = op.operandTypes().getFirst();
+        String datum = emitDatum(type, loadRepresentation(receiver, type, op), op);
+        String slot = newAlloca("%struct.deal_data", "keysreceiver");
+        emit("store %struct.deal_data " + datum + ", %struct.deal_data* " + slot);
+        session.referenceRuntimeEntry("deal_object_keys");
+        storeResult(op, LlvmTypeMapper.ARRAY, emitTemporary(op,
+            "call " + LlvmTypeMapper.ARRAY + " @deal_object_keys(%struct.deal_data* " + slot + ")"));
     }
 
     private void emitArrayPop(SemanticOp op) {

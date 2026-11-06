@@ -206,7 +206,7 @@ public final class LlvmStageClassifierTest {
             }
         }
         checkEq(Set.of("CONST", "UNARY", "BINARY", "STRING_CONCAT",
-                "ARRAY_NEW", "TABLE_NEW", "ARRAY_LENGTH", "ARRAY_POP", "ARRAY_SPLICE", "MEMBER_READ",
+                "ARRAY_NEW", "TABLE_NEW", "ARRAY_LENGTH", "ARRAY_POP", "ARRAY_SPLICE", "OBJECT_KEYS", "MEMBER_READ",
                 "MEMBER_WRITE", "MEMBER_DELETE", "INDEX_NORMALIZE",
                 "INDEX_READ", "INDEX_WRITE", "INDEX_DELETE", "HAS_FIELD",
                 "BINDING_ALLOC", "BINDING_INIT", "BINDING_LOAD",

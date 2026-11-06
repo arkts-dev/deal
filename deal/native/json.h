@@ -108,7 +108,8 @@ typedef deal_outcome_data (*deal_json_construct)(
  * instance of the plan's class. The nominal tag alone identifies the class, so
  * an index outside the declared field list answers 1 with presence 0 ("this is
  * my class, no such field") and a class that declares no field is identifiable
- * without one. A class instance is opaque to every runtime
+ * without one. A NULL value output requests presence only: do not load or
+ * classify the stored field value. A class instance is opaque to every runtime
  * group, so the emitted module owns both its field slots and its nominal tag
  * and this group never inspects either.
  */
@@ -130,6 +131,9 @@ typedef const deal_json_class_plan *(*deal_json_plan_lookup)(
 
 /* Install the project's ordinary class plans for generic JSON traversal. */
 void deal_json_plans_install(deal_json_plan_lookup lookup, void *context);
+
+/* Fresh present-own-key snapshot; no field value admission or graph traversal. */
+deal_array *deal_object_keys(const deal_data *value);
 
 /*
  * `C$fromJson`: parses `text` as one object root and decodes the plan's fields

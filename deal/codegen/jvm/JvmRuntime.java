@@ -233,6 +233,26 @@ public final class JvmRuntime {
             + "instances only)");
     }
 
+    /** A fresh typed presence-only snapshot; class order belongs to its carrier. */
+    public static Array objectKeys(Object receiver) {
+        List<String> names = new ArrayList<>();
+        if (receiver instanceof Table table) {
+            for (String name : table.entries.keySet()) if (table.keys.contains(name)) names.add(name);
+            names.sort(java.util.Comparator.comparingLong(key -> {
+                if (!key.matches("0|[1-9][0-9]*") || key.length() > 10) return Long.MAX_VALUE;
+                long index = Long.parseLong(key);
+                return index < 4294967295L ? index : Long.MAX_VALUE;
+            }));
+        } else if (receiver instanceof ClassInstance instance) {
+            for (String name : instance.fieldNames()) if (instance.isPresent(name)) names.add(name);
+        } else throw new IllegalStateException("OBJECT_KEYS unsupported receiver");
+        Array result = new Array(names.size());
+        result.elementDescriptor = "string";
+        result.elements.addAll(names);
+        result.length = names.size();
+        return result;
+    }
+
     /** A dense array with the shared slot-space length. */
     public static final class Array {
         public List<Object> elements = new ArrayList<>();

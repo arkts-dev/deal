@@ -17,6 +17,14 @@ function fail(what: string): null {
 }
 
 export function main(): null {
+  const aKeys=Object.keys(a.ordered());
+  const againKeys=Object.keys(aAgain.ordered());
+  const bKeys=Object.keys(b.ordered());
+  if(aKeys.length!==2 || aKeys[0]!=="z" || aKeys[1]!=="a"
+      || againKeys[0]!=="z" || againKeys[1]!=="a"
+      || bKeys.length!==2 || bKeys[0]!=="a" || bKeys[1]!=="z"){
+    return fail("key order uses exact defining provider, not same-named sibling");
+  }
   // The declaring declaration's own value passes a dynamic table read.
   let t: Record<string, unknown> = { item: a.make() };
   let ok: a.Item = t.item as a.Item;

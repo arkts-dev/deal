@@ -1000,14 +1000,12 @@ static int test_read_field(const deal_data *instance, size_t index,
     deal_string *name = deal_text_new(layout->fields[index].name,
         strlen(layout->fields[index].name));
     (void)deal_root_scope_hold(name);
+    *present = (uint8_t)deal_container_table_has(fields, name);
+    if (value == NULL) return 1;
     memset(value, 0, sizeof(*value));
     value->presentation = DEAL_PRESENT_DATUM;
-    *present = 0u;
-    if (!deal_container_table_has(fields, name)) {
-        return 1;
-    }
+    if (!*present) return 1;
     value->datum = deal_container_table_read(fields, name);
-    *present = 1u;
     if (value->datum.tag == DEAL_DATA_CLASS) {
         /* The nested instance's own canonical atom, which the two test plans
          * carry as static text. */

@@ -2742,6 +2742,47 @@ void deal_json_plans_install(deal_json_plan_lookup lookup, void *context) {
     deal_json_project_context = context;
 }
 
+deal_array *deal_object_keys(const deal_data *value) {
+    deal_root_scope_push();
+    (void)deal_root_scope_hold_data(value);
+    deal_descriptor *string = deal_descriptor_intern("string");
+    deal_array *result = deal_container_array_new_typed(DEAL_LAYOUT_ELEMENT_REFERENCE,
+        deal_descriptor_reference(string), 0u);
+    (void)deal_root_scope_hold(result);
+    if (value->tag == DEAL_DATA_TABLE) {
+        size_t count = 0u;
+        deal_string **keys = deal_json_ordered_keys(value->reference, &count);
+        for (size_t i = 0u; i < count; ++i) deal_container_array_append(result, &keys[i]);
+        deal_platform_release(keys);
+    } else if (value->tag == DEAL_DATA_ERROR) {
+        deal_string *key = deal_text_new((const uint8_t *)"code", 4u);
+        (void)deal_root_scope_hold(key);
+        deal_container_array_append(result, &key);
+        key = deal_text_new((const uint8_t *)"message", 7u);
+        (void)deal_root_scope_hold(key);
+        deal_container_array_append(result, &key);
+    } else if (value->tag == DEAL_DATA_CLASS) {
+        deal_check_input input;
+        deal_host_present_datum(*value, &input);
+        const deal_json_class_plan *plan = deal_json_project_lookup == NULL ? NULL
+            : deal_json_project_lookup(input.class_atom, deal_json_project_context);
+        if (plan == NULL) deal_platform_fault("object keys: class without plan");
+        for (size_t i = 0u; i < plan->layout->field_count; ++i) {
+            uint8_t present = 0u;
+            if (!plan->read_field(value, i, NULL, &present, plan->context))
+                deal_platform_fault("object keys: class plan mismatch");
+            if (present) {
+                const char *name = plan->layout->fields[i].name;
+                deal_string *key = deal_text_new((const uint8_t *)name, strlen(name));
+                (void)deal_root_scope_hold(key);
+                deal_container_array_append(result, &key);
+            }
+        }
+    } else deal_platform_fault("object keys: unsupported receiver");
+    deal_root_scope_pop();
+    return result;
+}
+
 deal_outcome_data deal_json_stringify(deal_data value,
                                       const deal_origin *origin) {
     deal_outcome_data outcome;

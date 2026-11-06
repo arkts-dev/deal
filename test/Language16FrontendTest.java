@@ -70,6 +70,12 @@ public final class Language16FrontendTest {
         for (String expression : List.of("JSON", "JSON.stringify", "JSON.stringify()", "JSON.stringify(1,2)")) {
             check("function f():void{let value=" + expression + ";}", false);
         }
+        check("function f(r:Record<string,unknown>):string[]{return Object.keys(r);}", true);
+        check("class C{x:number;} function f(c:C):string[]{return Object.keys(c);}", true);
+        for (String expression : List.of("Object.keys", "Object.keys()", "Object.keys({}, {})",
+                "Object.keys(1)", "Object.keys(null)", "Object.keys(undefined)", "Object.keys([] as number[])", "Object.keys(x)"))
+            check("function f(x:unknown):void{" + expression + ";}", false);
+        check("class C{x:number;} function f(c:C|null):void{Object.keys(c);}", false);
         check("function f(xs:number[]):number[]{return xs.splice(1,2);}", true);
         check("function f(xs:(number|null)[]):(number|null)[]{return xs.splice(1,2);}", true);
         check("function f(xs:unknown[]):unknown[]{return xs.splice(1,2);}", true);

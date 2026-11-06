@@ -2661,6 +2661,7 @@ const $rt = {
             } else $rt.checkType(field.descriptor, v[field.name], file, line, column);
           }
         } finally { checking.delete(descriptor); }
+        if (!$classFieldOrder.has(v)) $classFieldOrder.set(v, plan.map(field => field.name));
       }
       return v;
     }
@@ -2926,6 +2927,19 @@ const $rt = {
     }
     if (!decoded) v.length = length - count;
     return removed;
+  },
+
+  // Snapshot presence/order only; never validate or traverse member values.
+  objectKeys: function $objectKeys(value) {
+    let keys;
+    const fields = $classFieldOrder.get(value);
+    if (fields) keys = fields.filter(key => $rt.has(value, key));
+    else if (value instanceof Map) {
+      keys = [...value.keys()];
+      const index = key => /^(0|[1-9][0-9]*)$/.test(key) && Number(key) < 4294967295 ? Number(key) : Infinity;
+      keys.sort((a, b) => index(a) === index(b) ? 0 : index(a) < index(b) ? -1 : 1);
+    } else throw new Error("OBJECT_KEYS unsupported receiver");
+    return $rt.tagArray(keys, "string");
   },
 
   // Pop validates the live tail before changing storage or private metadata.

@@ -88,12 +88,85 @@ public final class Language16RuntimeTest {
                 if (!expected.code.equals("E8001")) throw new AssertionError(expected);
             }
         }
+        objectKeysAdmission(false);
+        objectKeysAdmission(true);
         arrayRemovalAdmission(false);
         arrayRemovalAdmission(true);
         callableBodyAdmission();
         errorGraphAdmission();
         for (String fixture : List.of("core", "refinement", "assertion", "failures", "equality-loops", "json-values", "audit-scalars")) executeFixture(fixture);
         System.out.println("Language16RuntimeTest: passed (Oracle, JS, LuaJIT, JVM; deployed array descriptors)");
+    }
+
+    private static void objectKeysAdmission(boolean hostile) throws Exception {
+        Path work = Files.createTempDirectory(Path.of("build"), "keys-admission-").toAbsolutePath();
+        try {
+            Path source = Files.createDirectories(work.resolve("src")).resolve("main.deal");
+            Files.writeString(source, hostile ? """
+                import * as host from "host/probe";
+                class Item{x:number;stable:number;}
+                export function main():null{return null;}
+                export function run():null{
+                  const item:Item={x:9,stable:4};const r:Record<string,unknown>={f:():number=>9,child:item};
+                  r.self=r;host.keep(r);host.corrupt();host.damage(item,false);
+                  const a=Object.keys(r);const b=Object.keys(item);
+                  if(a.length!==3 || a[0]!=="f" || a[1]!=="child" || a[2]!=="self"
+                     || b.length!==2 || b[0]!=="x" || b[1]!=="stable"){
+                    throw {code:"KEYS",message:"hostile values consumed"};}
+                  return null;
+                }
+                """ : ConformanceHarnessMetadata.stripClassificationHeaders(Files.readString(
+                    Path.of("test/conformance/backend-runtime/tables/builtin-object-keys.deal")))
+                    .replace("export function main():null", "export function run():null")
+                    + "\nexport function main():null{return null;}\n");
+            Path declaration = source.resolveSibling("probe.d.deal");
+            Files.writeString(declaration, Files.readString(Path.of("test/conformance/host-fixtures/array_pop.d.deal")));
+            Files.writeString(work.resolve("deal.json"),
+                "{\"languageVersion\":\"1.6\",\"stdlib\":\"1.6\",\"moduleRoots\":[\"src\"]}");
+            var invocation = deal.semantic.CompilerProfileProvider.resolve(
+                deal.semantic.ReleaseConfiguration.CURRENT_RELEASE_STATE,
+                deal.semantic.ReleaseConfiguration.releaseCapabilityRegistry());
+            var compiler = new deal.module.CompilationOrchestrator(source, work.resolve("out"),
+                false, false, false, false, deal.codegen.Backend.JS,
+                hostile ? Map.of("host/probe", declaration.toString()) : Map.of(), List.of(source.getParent()), null, null, invocation);
+            if (!compiler.compile()) throw new AssertionError("keys Oracle compilation: " + compiler.diagnostics());
+            var project = Objects.requireNonNull(compiler.producedProject());
+            var facts = new deal.semantic.ir.SemanticIrValidator.ComparisonFacts(
+                project.interfaceIndex().interfaceIndexDigest(), project.semanticProfile(), invocation.capabilityRegistryHash());
+            String raw = deal.semantic.ir.SemanticIrValidator.toProjectText(project);
+            if (deal.semantic.ir.SemanticIrValidator.validateText(raw, facts).isPresent())
+                throw new AssertionError("keys project transport");
+            rejectsOp(raw, "OBJECT_KEYS", op -> field(op, "payload", field(payload(op), "receiver",
+                deal.semantic.ir.CanonicalJson.Null.INSTANCE)), facts);
+            rejectsOp(raw, "OBJECT_KEYS", op -> field(op, "payload", new deal.semantic.ir.CanonicalJson.Obj(List.of())), facts);
+            var tables = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.StructuredBodyTable>();
+            var registries = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.ClassFactoryRegistry>();
+            project.modules().forEach((id, unit) -> { tables.put(id, unit.bodyTable()); registries.put(id, unit.classFactories()); });
+            var responder = new deal.semantic.SemanticOracle.HostResponder() {
+                private deal.semantic.SemanticOracle.Value.TableValue saved;
+                public SyncOutcome call(deal.semantic.ir.ModuleId module, String export,
+                        deal.semantic.ir.RuntimeDescriptor.Func descriptor,
+                        List<deal.semantic.SemanticOracle.Value> arguments) {
+                    switch(export) {
+                        case "keep" -> saved=(deal.semantic.SemanticOracle.Value.TableValue)arguments.getFirst();
+                        case "corrupt" -> saved.entries().put("f", new deal.semantic.SemanticOracle.Value.FuncValue(null,
+                            (deal.semantic.ir.RuntimeDescriptor.Func)deal.semantic.ir.RuntimeDescriptor.parseCanonicalText("()->number"), Map.of()));
+                        case "damage" -> ((deal.semantic.SemanticOracle.Value.ClassValue)arguments.getFirst()).fields().set(0,
+                            new deal.semantic.SemanticOracle.Value.ClassFieldState.Present(new deal.semantic.SemanticOracle.Value.StrValue("bad")));
+                        default -> throw new AssertionError(export);
+                    }
+                    return new SyncOutcome.Returned(deal.semantic.SemanticOracle.Value.UndefinedValue.INSTANCE);
+                }
+            };
+            var result = deal.semantic.SemanticOracle.invokeSyncEntry(project, tables, registries,
+                responder, compiler.checkedProject().input().entryModule(), "run", List.of());
+            if (!(result.terminal() instanceof deal.semantic.SemanticRuntimeModel.Terminal.Success success)
+                    || !success.resultAtom().equals("null"))
+                throw new AssertionError("keys Oracle: " + result.comparisonReport());
+            long snapshots = result.trace().stream().filter(e -> e.kind()==deal.semantic.ir.SemanticOpKind.OBJECT_KEYS
+                && e.phase()==deal.semantic.SemanticRuntimeModel.Phase.SUCCESS).count();
+            if (snapshots!=(hostile ? 2 : 11)) throw new AssertionError("keys Oracle execution population: " + snapshots);
+        } finally { CompositionProductionTest.remove(work); }
     }
 
     /** Execute the same retained-mutation contract in the Oracle with genuine lowered bodies. */

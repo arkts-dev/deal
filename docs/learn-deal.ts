@@ -5,7 +5,6 @@
 import * as math from "std/math";
 import * as strings from "std/string";
 import * as json from "std/json";
-import * as tables from "std/table";
 
 // Values and control flow: strict types; boolean conditions; semicolons.
 function values(): number {
@@ -83,7 +82,9 @@ function tableData(): number {
   let age: number = data.age as number;
   data.note = null;
   delete data.note;
-  let keys: string[] = tables.keys(data);
+  // Fresh present-key snapshot: numeric indexes first, then creation order.
+  // Values are not read or validated by enumeration.
+  let keys: string[] = Object.keys(data);
   for (let key of keys) {
     let name: string = key;
   }
@@ -101,6 +102,8 @@ class User {
 function records(): User {
   let user: User = { name: "Ada", nick: "beeb", bio: null, active: true };
   let present: boolean = Object.hasOwn(user, "nick");
+  // Class keys follow declaration order, excluding absent fields/metadata.
+  let names: string[] = Object.keys(user);
   let nick: string | undefined = user.nick;
   if (nick !== undefined) { user.name = nick; }
   delete user.nick;

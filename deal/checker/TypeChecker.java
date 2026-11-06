@@ -1942,6 +1942,17 @@ public final class TypeChecker {
             contextualClassDecl = savedContextual;
         }
 
+        if (call.callee() instanceof MemberAccessExpr member
+                && member.object() instanceof IdentifierExpr namespace
+                && BuiltinCall.resolve(namespace.name(), member.field()) == BuiltinCall.OBJECT_KEYS
+                && argTypes.size() == 1) {
+            Type argument = argTypes.getFirst();
+            if (!(argument instanceof Type.Table) && !(argument instanceof Type.Class)
+                    && argument != Type.Error.INSTANCE)
+                error(DiagnosticCode.E5001, "Object.keys requires a Record or class instance, got "
+                    + typeName(argument), call.args().getFirst().span());
+        }
+
         // Intrinsic call? The callee's own visible binding decides: a
         // lexically shadowing local, parameter or enclosing-block binding
         // — and a same-block `let` that is not declared yet

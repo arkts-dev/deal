@@ -693,6 +693,8 @@ public final class ContractSnapshotCanonicalizer {
                 CanonicalJson.e("arrayValue", semanticIdJson(p.arrayValue())),
                 CanonicalJson.e("deleteCount", semanticIdJson(p.deleteCount())),
                 CanonicalJson.e("start", semanticIdJson(p.start())));
+            case KindPayload.ObjectKeysPayload p -> CanonicalJson.obj(
+                CanonicalJson.e("receiver", semanticIdJson(p.receiver())));
             case KindPayload.ArrayPopPayload p -> CanonicalJson.obj(
                 CanonicalJson.e("arrayValue", semanticIdJson(p.arrayValue())));
             case KindPayload.ArrayLengthPayload p -> CanonicalJson.obj(

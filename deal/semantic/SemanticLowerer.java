@@ -8767,6 +8767,15 @@ public final class SemanticLowerer {
             if (call.callee() instanceof MemberAccessExpr member
                     && member.object() instanceof IdentifierExpr namespace) {
                 deal.checker.BuiltinCall builtin = deal.checker.BuiltinCall.resolve(namespace.name(), member.field());
+                if (builtin == deal.checker.BuiltinCall.OBJECT_KEYS) {
+                    ExpressionNode argument = call.args().getFirst();
+                    ValueId receiver = lowerOperand(argument);
+                    return emitOperandOp(SemanticOpKind.OBJECT_KEYS,
+                        new KindPayload.ObjectKeysPayload(receiver), List.of(receiver),
+                        List.of(ContainerPayloadDescriptors.resultDescriptorOf(checkedType(argument))),
+                        call.span(), new RuntimeDescriptor.Array(RuntimeDescriptor.String.INSTANCE),
+                        FailurePolicyId.NO_DEAL_FAILURE, slot);
+                }
                 if (builtin != null) {
                     StdlibFunctionId algorithm = StdlibFunctionId.valueOf(builtin.name());
                     StdlibFunctionCatalog.Entry entry = StdlibFunctionCatalog.entries().stream()
