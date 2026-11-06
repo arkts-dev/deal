@@ -424,7 +424,7 @@ public class FailClosedGuardRetargetingTest {
      * captured counter proves the local body executed once per call).
      */
     private static final String RESIDUAL_PROBE = """
-        import * as console from "std/console";
+        import * as output from "std/console";
 
         export function main(): null {
           let calls: number = 0;
@@ -437,17 +437,17 @@ public class FailClosedGuardRetargetingTest {
           };
           let r: number = down(4);
           if (r === 0 && calls === 5) {
-            console.log("PROBE|RESIDUAL|ok");
+            output.log("PROBE|RESIDUAL|ok");
           } else {
-            console.log("PROBE|RESIDUAL|bad");
+            output.log("PROBE|RESIDUAL|bad");
           }
           return null;
         }
         """;
 
-    private static final String CAPTURE_PROBE = "import * as console from \"std/console\";\n\nexport function main(): null {\n  let fs: (() => number)[] = [function(): number { return -1; }, function(): number { return -1; }, function(): number { return -1; }, function(): number { return -1; }];\n  { let v14Loop0: number = 0; while (v14Loop0 < 4) { let i: number = v14Loop0; {\n    fs[i] = function(): number { return i; };\n  } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }\n  let total: number = fs[0]() + fs[1]() + fs[2]() + fs[3]();\n  if (total === 6) {\n    console.log(\"PROBE|CAPTURE|ok\");\n  } else {\n    console.log(\"PROBE|CAPTURE|bad\");\n  }\n  return null;\n}\n";
+    private static final String CAPTURE_PROBE = "import * as output from \"std/console\";\n\nexport function main(): null {\n  let fs: (() => number)[] = [function(): number { return -1; }, function(): number { return -1; }, function(): number { return -1; }, function(): number { return -1; }];\n  { let v14Loop0: number = 0; while (v14Loop0 < 4) { let i: number = v14Loop0; {\n    fs[i] = function(): number { return i; };\n  } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }\n  let total: number = fs[0]() + fs[1]() + fs[2]() + fs[3]();\n  if (total === 6) {\n    output.log(\"PROBE|CAPTURE|ok\");\n  } else {\n    output.log(\"PROBE|CAPTURE|bad\");\n  }\n  return null;\n}\n";
 
-    private static final String TRANSFER_PROBE = "import * as console from \"std/console\";\n\nexport function main(): null {\n  let vals: number[] = [1, 2, 3, 4, 5];\n  let sum: number = 0;\n  for (let x of vals) {\n    if (x === 2) {\n      continue;\n    }\n    if (x === 4) {\n      break;\n    }\n    sum = sum + x;\n  }\n  let found: number = 0;\n  { let v14Loop1: number = 0; while (v14Loop1 < 5) { let i: number = v14Loop1; {\n    try {\n      if (i === 3) {\n        break;\n      }\n    } catch (e) {\n      found = -1;\n    }\n    found = found + 1;\n  } v14Loop1 = i; v14Loop1 = v14Loop1 + 1; } }\n  if (sum === 4 && found === 3) {\n    console.log(\"PROBE|TRANSFER|ok\");\n  } else {\n    console.log(\"PROBE|TRANSFER|bad\");\n  }\n  return null;\n}\n";
+    private static final String TRANSFER_PROBE = "import * as output from \"std/console\";\n\nexport function main(): null {\n  let vals: number[] = [1, 2, 3, 4, 5];\n  let sum: number = 0;\n  for (let x of vals) {\n    if (x === 2) {\n      continue;\n    }\n    if (x === 4) {\n      break;\n    }\n    sum = sum + x;\n  }\n  let found: number = 0;\n  { let v14Loop1: number = 0; while (v14Loop1 < 5) { let i: number = v14Loop1; {\n    try {\n      if (i === 3) {\n        break;\n      }\n    } catch (e) {\n      found = -1;\n    }\n    found = found + 1;\n  } v14Loop1 = i; v14Loop1 = v14Loop1 + 1; } }\n  if (sum === 4 && found === 3) {\n    output.log(\"PROBE|TRANSFER|ok\");\n  } else {\n    output.log(\"PROBE|TRANSFER|bad\");\n  }\n  return null;\n}\n";
 
     private static void testRealizedConstructProbes() throws Exception {
         System.out.println("-- the realized construct families compile through "
@@ -455,19 +455,19 @@ public class FailClosedGuardRetargetingTest {
             + "real toolchains with their oracle-agreed transcripts and no "
             + "guard outcome --");
         probe("array value semantics", """
-            import * as console from "std/console";
+            import * as output from "std/console";
             export function main(): null {
               let b: number[] = [0, 0, 0, 0];
               b[0] = 7;
               b[3] = 250;
               let n: number = b[0] + b[3] + b.length;
-              if (n === 261) { console.log("PROBE|ARRAY|ok"); }
-              else { console.log("PROBE|ARRAY|bad"); }
+              if (n === 261) { output.log("PROBE|ARRAY|ok"); }
+              else { output.log("PROBE|ARRAY|bad"); }
               return null;
             }
             """, "PROBE|ARRAY|ok");
         probe("same-module @jsonable public CLI", """
-            import * as console from "std/console";
+            import * as output from "std/console";
             // @jsonable
             export class Person { name: string; score: number; }
             export function main(): null {
@@ -476,9 +476,9 @@ public class FailClosedGuardRetargetingTest {
               let q: Person | null = Person$fromJson(s);
               if (q !== null) {
                 if (q.name === "Carol" && q.score === 7) {
-                  console.log("PROBE|JSONABLE|ok");
-                } else { console.log("PROBE|JSONABLE|bad"); }
-              } else { console.log("PROBE|JSONABLE|bad"); }
+                  output.log("PROBE|JSONABLE|ok");
+                } else { output.log("PROBE|JSONABLE|bad"); }
+              } else { output.log("PROBE|JSONABLE|bad"); }
               return null;
             }
             """, "PROBE|JSONABLE|ok");
@@ -488,7 +488,7 @@ public class FailClosedGuardRetargetingTest {
                 export class Widget { label: string; count: number; }
                 """,
             "src/main.deal", """
-                import * as console from "std/console";
+                import * as output from "std/console";
                 import * as Lib from "./lib";
                 export function main(): null {
                   let w: Lib.Widget = { label: "a", count: 1 };
@@ -496,9 +496,9 @@ public class FailClosedGuardRetargetingTest {
                   let q: Lib.Widget | null = Lib.Widget$fromJson(s);
                   if (q !== null) {
                     if (q.label === "a" && q.count === 1) {
-                      console.log("PROBE|JSONABLE-XMOD|ok");
-                    } else { console.log("PROBE|JSONABLE-XMOD|bad"); }
-                  } else { console.log("PROBE|JSONABLE-XMOD|bad"); }
+                      output.log("PROBE|JSONABLE-XMOD|ok");
+                    } else { output.log("PROBE|JSONABLE-XMOD|bad"); }
+                  } else { output.log("PROBE|JSONABLE-XMOD|bad"); }
                   return null;
                 }
                 """), "PROBE|JSONABLE-XMOD|ok");

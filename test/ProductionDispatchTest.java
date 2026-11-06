@@ -118,11 +118,11 @@ public class ProductionDispatchTest {
      * and constructed in {@code main}.
      */
     private static final String SIBLING_MAIN_SOURCE = """
-        import * as console from "std/console";
+        import * as outputx from "std/console";
         import * as ir from "./m/ir";
         import * as codec from "./m/codec";
         export function main(): null {
-          if (ir.useIr({a: 0}) === 0 && codec.useCodec({b: 0}) === 0) { console.log("ok"); }
+          if (ir.useIr({a: 0}) === 0 && codec.useCodec({b: 0}) === 0) { outputx.log("ok"); }
           return null;
         }
         """;
@@ -163,13 +163,13 @@ public class ProductionDispatchTest {
      * {@code ir.Ir} while the codec sibling declares a same-name
      * non-exported class. */
     private static final String COLLISION_MAIN_CODEC_FIRST = """
-        import * as console from "std/console";
+        import * as outputx from "std/console";
         import * as codec from "./m/codec";
         import * as ir from "./m/ir";
         export class Outer { r: ir.Ir; c: codec.Codec; }
         export function main(): null {
           let o: Outer = {r: {a: 7}, c: {b: 9}};
-          if (o.r.a === 7 && o.c.b === 9) { console.log("ok"); }
+          if (o.r.a === 7 && o.c.b === 9) { outputx.log("ok"); }
           return null;
         }
         """;
@@ -201,13 +201,13 @@ public class ProductionDispatchTest {
      * the {@code ir}-imported callee, so only the callee's parameter
      * context names the demanded provider. */
     private static final String CONTEXTUAL_MAIN_CODEC_FIRST = """
-        import * as console from "std/console";
+        import * as outputx from "std/console";
         import * as codec from "./m/codec";
         import * as ir from "./m/ir";
         export class Outer { x: number; c: codec.Codec; }
         export function main(): null {
           let o: Outer = {x: ir.useIr({a: 7}), c: {b: 9}};
-          if (o.x === 7 && o.c.b === 9) { console.log("ok"); }
+          if (o.x === 7 && o.c.b === 9) { outputx.log("ok"); }
           return null;
         }
         """;
@@ -220,11 +220,11 @@ public class ProductionDispatchTest {
      * same-name sibling collision: the construction sits outside a
      * published plan default. */
     private static final String CONTEXTUAL_BODY_CODEC_FIRST = """
-        import * as console from "std/console";
+        import * as outputx from "std/console";
         import * as codec from "./m/codec";
         import * as ir from "./m/ir";
         export function main(): null {
-          if (ir.useIr({a: 7}) === 7) { console.log("ok"); }
+          if (ir.useIr({a: 7}) === 7) { outputx.log("ok"); }
           return null;
         }
         """;
@@ -244,7 +244,7 @@ public class ProductionDispatchTest {
      */
     private static String localProviderBody(String firstImport,
             String secondImport) {
-        return "import * as console from \"std/console\";\n"
+        return "import * as outputx from \"std/console\";\n"
             + firstImport + secondImport
             + "\n"
             + "class Ir { a: number; }\n"
@@ -258,9 +258,9 @@ public class ProductionDispatchTest {
             + "  let r: ir.Ir = make();\n"
             + "  let local: Ir = {a: 5};\n"
             + "  if (n === 7 && m === 7 && r.a === 7 && local.a === 5) {\n"
-            + "    console.log(\"ok\");\n"
+            + "    outputx.log(\"ok\");\n"
             + "  } else {\n"
-            + "    console.log(\"wrong\");\n"
+            + "    outputx.log(\"wrong\");\n"
             + "  }\n"
             + "  return null;\n"
             + "}\n";
@@ -275,14 +275,14 @@ public class ProductionDispatchTest {
      * top-level declaration's sibling (93).
      */
     private static final String SHADOWED_CALLEE_CODEC_FIRST = """
-        import * as console from "std/console";
+        import * as outputx from "std/console";
         import * as codec from "./m/codec";
         import * as ir from "./m/ir";
         function consume(x: codec.Ir): number { return x.a; }
         export function main(): null {
           let consume: (x: ir.Ir) => number = function(x: ir.Ir): number { return x.a; };
-          if (consume({a: 7}) === 7) { console.log("ok"); }
-          else { console.log("wrong"); }
+          if (consume({a: 7}) === 7) { outputx.log("ok"); }
+          else { outputx.log("wrong"); }
           return null;
         }
         """;
@@ -307,13 +307,13 @@ public class ProductionDispatchTest {
         """;
 
     private static final String NESTED_MAIN_CODEC_FIRST = """
-        import * as console from "std/console";
+        import * as outputx from "std/console";
         import * as codec from "./m/codec";
         import * as ir from "./m/ir";
         export class Outer { w: ir.Wrap; }
         export function main(): null {
           let o: Outer = {w: {inner: {a: 7}}};
-          if (o.w.inner.a === 7) { console.log("ok"); }
+          if (o.w.inner.a === 7) { outputx.log("ok"); }
           return null;
         }
         """;
@@ -337,7 +337,7 @@ public class ProductionDispatchTest {
         """;
 
     private static final String RETURN_MAIN_CODEC_FIRST = """
-        import * as console from "std/console";
+        import * as outputx from "std/console";
         import * as codec from "./m/codec";
         import * as ir from "./m/ir";
         function make(): ir.Ir { return {a: 7}; }
@@ -348,7 +348,7 @@ public class ProductionDispatchTest {
           let xs: ir.Ir[] = [{a: 7}];
           let m: ir.Ir = make();
           if (o.r.a === 7 && xs[0].a === 7 && m.a === 7 && o.c.b === 9)
-            { console.log("ok"); }
+            { outputx.log("ok"); }
           return null;
         }
         """;
@@ -376,7 +376,7 @@ public class ProductionDispatchTest {
         """;
 
     private static final String ASSIGN_MAIN_CODEC_FIRST = """
-        import * as console from "std/console";
+        import * as outputx from "std/console";
         import * as codec from "./m/codec";
         import * as ir from "./m/ir";
         function set(p: ir.Ir): number { p = {a: 7}; return p.a; }
@@ -389,8 +389,8 @@ public class ProductionDispatchTest {
           y = {a: 7};
           let c: codec.Codec = {b: 9};
           if (x.a === 7 && xs[0].a === 7 && y.a === 7 && set({a: 7}) === 7
-              && c.b === 9) { console.log("ok"); }
-          else { console.log("wrong"); }
+              && c.b === 9) { outputx.log("ok"); }
+          else { outputx.log("wrong"); }
           return null;
         }
         """;
@@ -419,7 +419,7 @@ public class ProductionDispatchTest {
         """;
 
     private static final String ASSIGN_MEMBER_MAIN_CODEC_FIRST = """
-        import * as console from "std/console";
+        import * as outputx from "std/console";
         import * as codec from "./m/codec";
         import * as ir from "./m/ir";
         class Holder { w: ir.Wrap; }
@@ -435,8 +435,8 @@ public class ProductionDispatchTest {
           xs[0].inner = {a: 7};
           if (w.inner.a === 7 && v.inner.a === 7 && h.w.inner.a === 7
               && xs[0].inner.a === 7 && setParam({inner: {a: 7}}) === 7) {
-            console.log("ok");
-          } else { console.log("wrong"); }
+            outputx.log("ok");
+          } else { outputx.log("wrong"); }
           return null;
         }
         """;
@@ -465,7 +465,7 @@ public class ProductionDispatchTest {
         export class Codec { b: number; }
         """;
 
-    private static final String SHADOW_MAIN_CODEC_FIRST = "import * as console from \"std/console\";\nimport * as codec from \"./m/codec\";\nimport * as ir from \"./m/ir\";\nexport function main(): null {\n  let x: ir.Ir = {a: 7};\n  { let x: codec.Ir = (x = {a: 7}); }\n  { let x: codec.Ir = (x = {a: 7}); while (false) { } }\n  if (x.a === 7) { console.log(\"ok\"); } else { console.log(\"wrong\"); }\n  return null;\n}\n";
+    private static final String SHADOW_MAIN_CODEC_FIRST = "import * as outputx from \"std/console\";\nimport * as codec from \"./m/codec\";\nimport * as ir from \"./m/ir\";\nexport function main(): null {\n  let x: ir.Ir = {a: 7};\n  { let x: codec.Ir = (x = {a: 7}); }\n  { let x: codec.Ir = (x = {a: 7}); while (false) { } }\n  if (x.a === 7) { outputx.log(\"ok\"); } else { outputx.log(\"wrong\"); }\n  return null;\n}\n";
 
     private static final String SHADOW_MAIN_IR_FIRST =
         reverseSiblingImports(SHADOW_MAIN_CODEC_FIRST);
@@ -517,10 +517,10 @@ public class ProductionDispatchTest {
     /** The covered two-module entry: a COMPILED import, no call. */
     private static final String APP_SOURCE = """
         import * as lib from "./lib";
-        import * as console from "std/console";
+        import * as outputx from "std/console";
 
         export function main(): null {
-          console.log("PROBE|MAIN-ONCE");
+          outputx.log("PROBE|MAIN-ONCE");
           return null;
         }
 
@@ -555,10 +555,10 @@ public class ProductionDispatchTest {
      */
     private static final String MAP_APP_SOURCE = """
         import * as lib from "./lib";
-        import * as console from "std/console";
+        import * as outputx from "std/console";
 
         export function main(): null {
-          console.log("PROBE|MAIN-ONCE");
+          outputx.log("PROBE|MAIN-ONCE");
           return null;
         }
 
@@ -600,7 +600,7 @@ public class ProductionDispatchTest {
      */
     private static final String DIRECT_EMISSION_APP_SOURCE = """
         import * as lib from "./lib";
-        import * as console from "std/console";
+        import * as outputx from "std/console";
 
         export function f(x: number): number {
           return x;
@@ -609,8 +609,8 @@ public class ProductionDispatchTest {
         export function main(): null {
           let p: lib.Point = { x: 1 };
           let q: lib.DefaultPoint = {x: 3, y: 4};
-          console.log("PROBE|DIRECT-MAIN");
-          console.log("PROBE|OMITTED-DEFAULTS");
+          outputx.log("PROBE|DIRECT-MAIN");
+          outputx.log("PROBE|OMITTED-DEFAULTS");
           return null;
         }
         """;
@@ -1121,10 +1121,10 @@ public class ProductionDispatchTest {
         try {
             write(project, "deal.json", DEAL_JSON_LUA);
             write(project, "src/main.deal", """
-                import * as console from "std/console";
+                import * as outputx from "std/console";
 
                 export function main(): null {
-                  console.log("PROBE|MAIN-ONCE");
+                  outputx.log("PROBE|MAIN-ONCE");
                   return null;
                 }
 
@@ -1381,7 +1381,7 @@ public class ProductionDispatchTest {
 
     private static String callReceiverBody(String firstImport,
             String secondImport) {
-        return "import * as console from \"std/console\";\n"
+        return "import * as outputx from \"std/console\";\n"
             + firstImport + secondImport
             + "\n"
             + "function wrap(): ir.Ir { return { a: 7 }; }\n"
@@ -1398,9 +1398,9 @@ public class ProductionDispatchTest {
             + "  let had: boolean = Object.hasOwn(z, \"nick\");\n"
             + "  delete z.nick;\n"
             + "  if (v === 7 && n === 7 && w === 11 && q === 7 && !had) {\n"
-            + "    console.log(\"ok\");\n"
+            + "    outputx.log(\"ok\");\n"
             + "  } else {\n"
-            + "    console.log(\"wrong\");\n"
+            + "    outputx.log(\"wrong\");\n"
             + "  }\n"
             + "  return null;\n"
             + "}\n";
@@ -1452,11 +1452,11 @@ public class ProductionDispatchTest {
         """;
 
     private static final String NESTED_FIELD_PROVIDER_MAIN_SOURCE = """
-        import * as console from "std/console";
+        import * as outputx from "std/console";
         import * as ir from "./m/ir";
         export function main(): null {
           let x: ir.Ir = { inner: {b: 93}, a: 7 };
-          if (x.inner.b === 93 && x.a === 7) { console.log("ok"); }
+          if (x.inner.b === 93 && x.a === 7) { outputx.log("ok"); }
           return null;
         }
         """;
@@ -1477,11 +1477,11 @@ public class ProductionDispatchTest {
         """;
 
     private static final String TRANSITIVE_PROVIDER_MAIN_SOURCE = """
-        import * as console from "std/console";
+        import * as outputx from "std/console";
         import * as ir from "./m/ir";
         export function main(): null {
           let x: ir.Outer = { inner: {b: 93} };
-          if (x.inner.b === 93) { console.log("ok"); }
+          if (x.inner.b === 93) { outputx.log("ok"); }
           return null;
         }
         """;
@@ -1528,7 +1528,7 @@ public class ProductionDispatchTest {
         """;
 
     private static final String PLAN_IMPORTED_MAIN_SOURCE = """
-        import * as console from "std/console";
+        import * as outputx from "std/console";
         import * as other from "./other";
 
         export class Point { nick: string; }
@@ -1539,10 +1539,10 @@ public class ProductionDispatchTest {
         export function main(): null {
           let w: Wrap = {p: {a: 7}};
           let s: string = Wrap$toJson(w);
-          if (s !== "{\\\"p\\\":{\\\"a\\\":7.0}}") {
+          if (s !== "{\\\"p\\\":{\\\"a\\\":7}}") {
             throw { code: "WRONG", message: s };
           }
-          console.log("ok");
+          outputx.log("ok");
           return null;
         }
         """;
@@ -1559,7 +1559,7 @@ public class ProductionDispatchTest {
         """;
 
     private static final String PLAN_LOCAL_MAIN_SOURCE = """
-        import * as console from "std/console";
+        import * as outputx from "std/console";
         import * as other from "./other";
 
         // @jsonable
@@ -1574,7 +1574,7 @@ public class ProductionDispatchTest {
           if (s !== "{\\\"p\\\":{\\\"nick\\\":\\\"l\\\"}}") {
             throw { code: "WRONG", message: s };
           }
-          console.log("ok");
+          outputx.log("ok");
           return null;
         }
         """;
@@ -1619,7 +1619,7 @@ public class ProductionDispatchTest {
         """;
 
     private static final String LAYOUT_SIBLING_MAIN_SOURCE = """
-        import * as console from "std/console";
+        import * as outputx from "std/console";
         import * as other from "./other";
 
         export class Point { nick: string; }
@@ -1637,7 +1637,7 @@ public class ProductionDispatchTest {
           if (provided.nick !== "given") {
             throw { code: "WRONG", message: "provided" };
           }
-          console.log("ok");
+          outputx.log("ok");
           return null;
         }
         """;
@@ -1721,7 +1721,7 @@ public class ProductionDispatchTest {
         """;
 
     private static final String DECLARED_JSON_MODEL_MAIN = """
-        import * as console from "std/console";
+        import * as outputx from "std/console";
         import * as M from "model";
 
         // @jsonable
@@ -1730,7 +1730,7 @@ public class ProductionDispatchTest {
         export function main(): null {
           let h: Holder | null = Holder$fromJson("{\\\"m\\\":{}}");
           if (h !== null) {
-            console.log(Holder$toJson(h));
+            outputx.log(Holder$toJson(h));
           }
           return null;
         }
@@ -4620,7 +4620,7 @@ public class ProductionDispatchTest {
             int[] errorAt = argumentPositionOf(JSON_CARRIER_TUPLE_V13_SOURCE,
                 "json.stringify(holder.failure)", "holder.failure");
             String expected = String.join("\n",
-                "arrayCarrier|admitted|[1.0,2.0]",
+                "arrayCarrier|admitted|[1,2]",
                 "nullCarrier|admitted|null",
                 "classCarrier|admitted|{\"label\":\"b\"}",
                 "errorCarrier|admitted|{\"code\":\"\",\"message\":\"\"}", "");
@@ -6525,7 +6525,7 @@ public class ProductionDispatchTest {
 
     /** Subject 11 (exact raw body). */
     private static final String TRY_RETURN_CATCH_FALLTHROUGH_REJECT =
-        "export function f(): number {try {return 1;} catch(e) {} return 2;}\n";
+        "export function f(): number {try {return 1;} catch(e) {}}\n";
 
     /** The quiet entry importing one raw negative subject. */
     private static final String QUIET_SUBJECT_ENTRY = """
@@ -6672,13 +6672,13 @@ public class ProductionDispatchTest {
     }
 
     /**
-     * The retained corner-case negatives (ISSUE-0815 subjects 3 and
-     * 9-11) on all three production backends: each raw subject remains an
-     * imported file with unchanged origins, fails closed before any
+     * The retained corner-case negatives on all three production backends:
+     * each subject remains an imported file and fails closed before any
      * publication with the required code and exact range, and leaves a
      * previously published artifact set byte-identical. The legal
      * throwing-try/fallthrough-catch control compiles and completes
-     * normally on every target.
+     * normally on every target. The return negative omits the final return,
+     * so its whole body can fall through; catch fallthrough alone is legal.
      */
     private static void testRetainedCornerCaseNegatives() throws Exception {
         System.out.println("-- the retained corner-case negatives reject"
@@ -6700,7 +6700,7 @@ public class ProductionDispatchTest {
                 "try-return-catch-fallthrough-reject",
                 Map.of("src/main.deal", QUIET_SUBJECT_ENTRY,
                     "src/subject.deal", TRY_RETURN_CATCH_FALLTHROUGH_REJECT),
-                "E5002", "src/subject.deal", 1, 55, 1, 57, null);
+                "E5002", "src/subject.deal", 1, 8, 2, 2, null);
 
             // The legal control completes normally on every target.
             Path legal = Files.createTempDirectory("production-legal-try-");
@@ -6870,7 +6870,7 @@ public class ProductionDispatchTest {
                 corpus.resolve("retained_default." + extension)));
         }
         runReentrantDefaultSubject(hostSources, "re-entrant provided expression", """
-            import * as console from "std/console";
+            import * as outputx from "std/console";
             import * as state from "host/retained_default";
 
             class A { x: number; }
@@ -6894,12 +6894,12 @@ public class ProductionDispatchTest {
               if (a.x !== 1100) {
                 throw { code: "OPERAND_OVERWRITE", message: "a nested attempt overwrote the enclosing operands" };
               }
-              console.log("ok");
+              outputx.log("ok");
               return null;
             }
             """, Map.of());
         runReentrantDefaultSubject(hostSources, "failed nested attempt", """
-            import * as console from "std/console";
+            import * as outputx from "std/console";
             import * as state from "host/retained_default";
 
             class A { x: number; }
@@ -6926,12 +6926,12 @@ public class ProductionDispatchTest {
               if (a.x !== 5) {
                 throw { code: "OPERAND_OVERWRITE", message: "a failed nested attempt overwrote the enclosing operands" };
               }
-              console.log("ok");
+              outputx.log("ok");
               return null;
             }
             """, Map.of());
         runReentrantDefaultSubject(hostSources, "two required provided fields", """
-            import * as console from "std/console";
+            import * as outputx from "std/console";
             import * as state from "host/retained_default";
 
             class A { x: number; y: number; }
@@ -6954,12 +6954,12 @@ public class ProductionDispatchTest {
               if (a.y !== 7) {
                 throw { code: "ATTEMPT_VALUE_LOST", message: "the enclosing attempt's second default value is wrong" };
               }
-              console.log("ok");
+              outputx.log("ok");
               return null;
             }
             """, Map.of());
         runReentrantDefaultSubject(hostSources, "two required provided fields, failed nested attempt", """
-            import * as console from "std/console";
+            import * as outputx from "std/console";
             import * as state from "host/retained_default";
 
             class A { x: number; y: number; }
@@ -6985,12 +6985,12 @@ public class ProductionDispatchTest {
               if (a.y !== 7) {
                 throw { code: "ATTEMPT_VALUE_LOST", message: "the enclosing attempt's second default value is wrong" };
               }
-              console.log("ok");
+              outputx.log("ok");
               return null;
             }
             """, Map.of());
         runReentrantDefaultSubject(hostSources, "imported class, two required defaults", """
-            import * as console from "std/console";
+            import * as outputx from "std/console";
             import * as lib from "lib";
 
             export function main(): null {
@@ -7001,7 +7001,7 @@ public class ProductionDispatchTest {
               if (a.y !== 7) {
                 throw { code: "ATTEMPT_VALUE_LOST", message: "the transferred second default value is wrong" };
               }
-              console.log("ok");
+              outputx.log("ok");
               return null;
             }
             """, Map.of("src/lib.deal", """
@@ -7020,7 +7020,7 @@ public class ProductionDispatchTest {
             }
             """));
         runReentrantDefaultSubject(hostSources, "imported class, failed nested attempt", """
-            import * as console from "std/console";
+            import * as outputx from "std/console";
             import * as lib from "lib";
 
             export function main(): null {
@@ -7031,7 +7031,7 @@ public class ProductionDispatchTest {
               if (a.y !== 7) {
                 throw { code: "ATTEMPT_VALUE_LOST", message: "the transferred second default value is wrong" };
               }
-              console.log("ok");
+              outputx.log("ok");
               return null;
             }
             """, Map.of("src/lib.deal", """
@@ -7199,7 +7199,7 @@ public class ProductionDispatchTest {
      * {@code ok} line: every row throws its own {@code TEST_FAIL} error
      * when the counter's value or call target is wrong.
      */
-    private static final String FOR_LET_FUNCTION_COUNTER_SOURCE = "import * as console from \"std/console\";\n\nfunction one(): number { return 1; }\nfunction two(): number { return 2; }\n\nfunction fib(n: number): number {\n  if (n < 2) { return n; }\n  return fib(n - 1) + fib(n - 2);\n}\n\nexport function main(): null {\n  let visits: number = 0;\n  { let v14Loop2: () => number = one; while (v14Loop2() === 1) { let f: () => number = v14Loop2; {\n    visits = visits + 1;\n    if (visits > 4) { break; }\n  } v14Loop2 = f; v14Loop2 = two; } }\n  if (visits !== 1) {\n    throw { code: \"TEST_FAIL\", message: \"the update did not select two\" };\n  }\n\n  let bodyVisits: number = 0;\n  { let v14Loop3: () => number = one; while (v14Loop3() === 1) { let f: () => number = v14Loop3; {\n    bodyVisits = bodyVisits + 1;\n    f = two;\n    if (bodyVisits > 4) { break; }\n  } v14Loop3 = f;  } }\n  if (bodyVisits !== 1) {\n    throw { code: \"TEST_FAIL\", message: \"the body assignment did not reach the test\" };\n  }\n\n  let adapted: number = 0;\n  { let v14Loop4: (x: number) => number = one; while (v14Loop4(0) === 1) { let f: (x: number) => number = v14Loop4; {\n    adapted = adapted + 1;\n    if (adapted > 4) { break; }\n  } v14Loop4 = f; v14Loop4 = two; } }\n  if (adapted !== 1) {\n    throw { code: \"TEST_FAIL\", message: \"the adapted counter visited wrongly\" };\n  }\n\n  let captured: number = 0;\n  { let v14Loop5: () => number = one; while (captured < 2) { let f: () => number = v14Loop5; {\n    if (f() !== (captured + 1)) {\n      throw { code: \"TEST_FAIL\", message: \"the per-iteration value is stale\" };\n    }\n    captured = captured + 1;\n  } v14Loop5 = f; v14Loop5 = two; } }\n  if (captured !== 2) {\n    throw { code: \"TEST_FAIL\", message: \"the per-iteration rows did not finish\" };\n  }\n\n  let recursive: number = 0;\n  { let v14Loop6: (n: number) => number = fib; while (v14Loop6(5) === 5) { let f: (n: number) => number = v14Loop6; {\n    recursive = recursive + 1;\n    if (recursive > 4) { break; }\n  } v14Loop6 = f; v14Loop6 = one; } }\n  if (recursive !== 1) {\n    throw { code: \"TEST_FAIL\", message: \"the recursive counter visited wrongly\" };\n  }\n\n  console.log(\"ok\");\n  return null;\n}\n";
+    private static final String FOR_LET_FUNCTION_COUNTER_SOURCE = "import * as outputx from \"std/console\";\n\nfunction one(): number { return 1; }\nfunction two(): number { return 2; }\n\nfunction fib(n: number): number {\n  if (n < 2) { return n; }\n  return fib(n - 1) + fib(n - 2);\n}\n\nexport function main(): null {\n  let visits: number = 0;\n  { let v14Loop2: () => number = one; while (v14Loop2() === 1) { let f: () => number = v14Loop2; {\n    visits = visits + 1;\n    if (visits > 4) { break; }\n  } v14Loop2 = f; v14Loop2 = two; } }\n  if (visits !== 1) {\n    throw { code: \"TEST_FAIL\", message: \"the update did not select two\" };\n  }\n\n  let bodyVisits: number = 0;\n  { let v14Loop3: () => number = one; while (v14Loop3() === 1) { let f: () => number = v14Loop3; {\n    bodyVisits = bodyVisits + 1;\n    f = two;\n    if (bodyVisits > 4) { break; }\n  } v14Loop3 = f;  } }\n  if (bodyVisits !== 1) {\n    throw { code: \"TEST_FAIL\", message: \"the body assignment did not reach the test\" };\n  }\n\n  let adapted: number = 0;\n  { let v14Loop4: (x: number) => number = one; while (v14Loop4(0) === 1) { let f: (x: number) => number = v14Loop4; {\n    adapted = adapted + 1;\n    if (adapted > 4) { break; }\n  } v14Loop4 = f; v14Loop4 = two; } }\n  if (adapted !== 1) {\n    throw { code: \"TEST_FAIL\", message: \"the adapted counter visited wrongly\" };\n  }\n\n  let captured: number = 0;\n  { let v14Loop5: () => number = one; while (captured < 2) { let f: () => number = v14Loop5; {\n    if (f() !== (captured + 1)) {\n      throw { code: \"TEST_FAIL\", message: \"the per-iteration value is stale\" };\n    }\n    captured = captured + 1;\n  } v14Loop5 = f; v14Loop5 = two; } }\n  if (captured !== 2) {\n    throw { code: \"TEST_FAIL\", message: \"the per-iteration rows did not finish\" };\n  }\n\n  let recursive: number = 0;\n  { let v14Loop6: (n: number) => number = fib; while (v14Loop6(5) === 5) { let f: (n: number) => number = v14Loop6; {\n    recursive = recursive + 1;\n    if (recursive > 4) { break; }\n  } v14Loop6 = f; v14Loop6 = one; } }\n  if (recursive !== 1) {\n    throw { code: \"TEST_FAIL\", message: \"the recursive counter visited wrongly\" };\n  }\n\n  outputx.log(\"ok\");\n  return null;\n}\n";
 
     /**
      * The function-valued for-let counter on every production lane: the
