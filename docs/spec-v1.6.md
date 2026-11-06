@@ -9,7 +9,6 @@ Features not described in this specification do not exist in the language.
 ## Lexical elements
 
 - Tokens and property-name rules are defined by the [lexical grammar](#lexical-grammar-normative). Follow TypeScript module identifier rules by position: `switch`/`enum` cannot name bindings.
-- User-declared identifiers must not contain `$`.
 - `Record`, `Promise`, `Object`, `Array`, `String`, `JSON`, `Math`, `Date`, `console`, `undefined` are unshadowable builtins.
 
 ### Comment semantics
@@ -24,14 +23,19 @@ Line terminators are LF (`\n`), CRLF (`\r\n`), and CR (`\r`).
 
 | Escape | Meaning |
 |---|---|
-| `\n` | newline (U+000A) |
-| `\r` | carriage return (U+000D) |
-| `\t` | tab (U+0009) |
+| `\0` | U+0000 |
+| `\b` | U+0008 |
+| `\t` | U+0009 |
+| `\n` | U+000A |
+| `\v` | U+000B |
+| `\f` | U+000C |
+| `\r` | U+000D |
+| `\"` | U+0022 |
+| `\'` | U+0027 |
+| `\\` | U+005C |
 | `\xHH`, `\uHHHH` | UTF-16 code unit |
 | `\u{H…}` | Unicode code point |
-| `\\` | backslash (U+005C) |
-| `\"` | double quote (U+0022) |
-| `\'` | single quote (U+0027) |
+| `\` followed by a line terminator | empty sequence |
 
 A string is a sequence of UTF-16 code units, including lone surrogates. Every backend's host transport must preserve code units exactly and reject malformed encodings.
 
@@ -85,11 +89,14 @@ Literal ::= NullLiteral | UndefinedLiteral | BooleanLiteral | NumberLiteral | St
 NullLiteral ::= 'null'
 UndefinedLiteral ::= 'undefined'
 BooleanLiteral ::= 'true' | 'false'
-DecimalInteger ::= '0' | [1-9] [0-9]*
-NumberLiteral ::= DecimalInteger
- | (DecimalInteger? '.' [0-9]+ ([eE] [+-]? [0-9]+)?)
- | (DecimalInteger [eE] [+-]? [0-9]+)
-/* No leading-zero integer part except the single digit 0. */
+DecimalDigits ::= [0-9] ('_'? [0-9])*
+DecimalInteger ::= '0' | [1-9] ('_'? [0-9])*
+ExponentPart ::= [eE] [+-]? DecimalDigits
+NumberLiteral ::= DecimalInteger ('.' DecimalDigits?)? ExponentPart?
+ | '.' DecimalDigits ExponentPart?
+ | '0' [xX] HexDigit ('_'? HexDigit)*
+ | '0' [bB] [01] ('_'? [01])*
+ | '0' [oO] [0-7] ('_'? [0-7])*
 StringLiteral ::= '"' StringCharacter* '"' | '\'' StringCharacter* '\''
 
 TemplateLiteral ::= '`' (TemplateText | '${' Expression '}')* '`'
@@ -98,10 +105,12 @@ TemplateText ::= /* nonempty TypeScript TemplateCharacter sequence */
 StringCharacter ::= /* any SourceCharacter except backslash, line terminators and the enclosing quote */
  | StringEscape
 
-StringEscape ::= '\\' ('n' | 'r' | 't' | '\\' | '"' | '\''
+StringEscape ::= '\\' ('n' | 'r' | 't' | 'b' | 'f' | 'v' | '\\' | '"' | '\''
+ | '0' /* not followed by a decimal digit */
  | 'x' HexDigit HexDigit
  | 'u' HexDigit HexDigit HexDigit HexDigit
  | 'u' '{' HexDigit+ '}') /* braced value <= 0x10FFFF */
+ | '\\' LineTerminator
 
 HexDigit ::= [0-9a-fA-F]
 
@@ -286,7 +295,7 @@ Only [reassignable variables](#variables), declared class fields, Record keys an
 
 ```ts
 class User { name: string; }
-export function main(): null {
+export function main(): void {
  let x = 1;
  let xs: number[] = [0];
  let t: Record<string, unknown> = {};
@@ -295,7 +304,6 @@ export function main(): null {
  xs[0] = 5;
  t.key = "value";
  u.name = "Ada";
- return null;
 }
 ```
 
@@ -482,7 +490,7 @@ String concatenation uses `+`. Both operands must be `string`.
 | `await f(...)` for `f: (...) => Promise<R>` | `R`, including void |
 | `typeof e` / `e instanceof C` | `string` / `boolean` |
 | `e as T` | `T` |
-| `e.code` where `e: Error` | `string` |
+| `e.name` where `e: Error` | `string` |
 | `e.message` where `e: Error` | `string` |
 
 ### Assignment type checking
@@ -1043,22 +1051,12 @@ Evaluate the `T[]` or `string` iterable once. Arrays visit successive indexes fr
 
 ### Error type
 
-The builtin Error shape is equivalent to this descriptive pseudo-source:
-
-```ts
-class Error {
-  code: string;
-  message: string;
-}
-```
-
-`Error` values are produced by runtime exceptions or by class literal construction.
+Error values come from runtime exceptions or builtin `Error(message: string): Error`, which creates a fresh instance with name `"Error"` and the supplied message.
 
 ### throw
 
 ```ts
-throw { code: "", message: "capacity exceeded" };
-throw { code: "E_LIMIT", message: "index out of range" };
+throw Error("capacity exceeded");
 ```
 
 `throw` is a statement. The expression must have type `Error`. Execution transfers to the nearest enclosing `catch` block. If no `catch` encloses the `throw`, the error escapes to the host as a `DEALRuntimeError`.
@@ -1145,11 +1143,10 @@ Pre-await effects precede resumed effects. There are no source-level concurrent 
 
 Each file compiles to an export-table module. Top-level declarations are local; user-defined globals are forbidden.
 
-When a compiler invocation selects an entry module, that module must export `main` with non-async signature `(): null`; the backend invokes `main()` from that module.
+When a compiler invocation selects an entry module, that module must export `main` with non-async signature `(): void`; the backend invokes `main()` from that module.
 
 ```ts
-export function main(): null {
- return null;
+export function main(): void {
 }
 
 export function add(a: number, b: number): number {
@@ -1202,11 +1199,10 @@ export function add(a: number, b: number): number {
 // main.deal
 import * as mathlib from "./mathlib";
 
-export function main(): null {
+export function main(): void {
  let x: number = mathlib.add(1, 2); // OK, add: (number, number) => number
  let y = mathlib.add(1, 2); // OK, inferred number
  let z: number = mathlib.missing(1); // error: export 'missing' is not declared
- return null;
 }
 ```
 
@@ -1364,7 +1360,7 @@ A contextual target determines the call's result type and decoding schema. It co
 
 Without a target, or with target `unknown`, the result has type `unknown` and contains ordinary parsed data: Records, arrays with unknown element descriptors, primitives or null.
 
-A decoding target containing function types is a compile-time error, including within optional fields; `unknown` stops schema traversal. Recursive class schemas are allowed; encoding follows [runtime cycle rejection](#json-encoding).
+A decoding target containing function types or Error is a compile-time error, including within optional fields; `unknown` stops schema traversal. Recursive class schemas are allowed; encoding follows [runtime cycle rejection](#json-encoding).
 
 Decode recursively without coercion. Records require objects; arrays require arrays and receive fresh storage with validated target descriptors. Classes require objects and follow [construction](#construction) field validation, decoding fields in declaration order into fresh nominal instances.
 
