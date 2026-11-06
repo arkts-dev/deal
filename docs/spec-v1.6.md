@@ -1272,7 +1272,9 @@ Rules:
 
 ### Standard library builtins
 
-Builtins require no imports and support direct calls only, not value references.
+Builtin operations require no imports and support direct calls only, not value references.
+
+The listed string and array members are **receiver intrinsics**, selected by the receiver's static type.
 
 #### Object
 
@@ -1288,12 +1290,12 @@ Both accept Records or class instances. `hasOwn` tests own presence without narr
 #### Array
 
 ```txt
-Array.pop(xs: E[]): E | undefined
-Array.splice(xs: E[], start: number, deleteCount: number): E[]
+xs.pop(): E | undefined
+xs.splice(start: number, deleteCount: number): E[]
 Array.from(xs: E[], mapper: (value: E, index: number) => R): R[]
 ```
 
-E and R denote inferred data types, not source generics: E comes from xs, R from the synchronous mapper's result type.
+For xs of type E[], E and R are inferred data types, not source generics; R comes from the synchronous mapper's result type.
 
 `pop` removes and returns the last element; an empty array yields undefined.
 
@@ -1311,17 +1313,17 @@ console.error(x: string): void
 #### String
 
 ```txt
-String.length(s: string): number
-String.substring(s: string, start: number, end: number): string
-String.includes(s: string, part: string): boolean
-String.startsWith(s: string, part: string): boolean
-String.endsWith(s: string, part: string): boolean
-String.replace(s: string, search: string, replacement: string): string
-String.split(s: string, sep: string): string[]
-String.trim(s: string): string
+s.length: number
+s.substring(start: number, end: number): string
+s.includes(part: string): boolean
+s.startsWith(part: string): boolean
+s.endsWith(part: string): boolean
+s.replace(search: string, replacement: string): string
+s.split(sep: string): string[]
+s.trim(): string
 ```
 
-Follow [ECMAScript String semantics](https://tc39.es/ecma262/#sec-properties-of-the-string-prototype-object): `String.length(s)` reads s.length; other operations apply the corresponding method to s.
+s has type string; `length` is read-only. Follow corresponding [ECMAScript String semantics](https://tc39.es/ecma262/#sec-string-objects).
 
 #### Numeric conversion
 
@@ -1379,7 +1381,7 @@ Returns Unix-epoch wall-clock milliseconds with backend-dependent resolution; re
 Usage:
 
 ```ts
-let parts: string[] = String.split("a,b", ",");
+let parts: string[] = "a,b".split(",");
 let t = JSON.parse("{\"name\":\"Ada\"}") as Record<string, unknown>;
 ```
 
