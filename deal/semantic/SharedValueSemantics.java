@@ -121,7 +121,7 @@ public final class SharedValueSemantics {
         Objects.requireNonNull(selector, "selector must not be null");
         return switch (selector) {
 
-            case NUMBER_NEG, BOOL_NOT, TYPEOF, INSTANCEOF -> FailurePolicyId.NO_DEAL_FAILURE;
+            case NUMBER_NEG, NUMBER_TO_STRING, BOOL_NOT, TYPEOF, INSTANCEOF -> FailurePolicyId.NO_DEAL_FAILURE;
         };
     }
 

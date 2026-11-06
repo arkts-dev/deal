@@ -1575,15 +1575,16 @@ public final class TypeChecker {
                 for (int i = 0; i < tl.parts().size(); i++) {
                     ExpressionNode part = tl.parts().get(i);
                     Type partType = checkExpression(part);
-                    // The interpolation's string requirement is the whole
+                    // The interpolation's string/number requirement is the whole
                     // context of an embedded expression (docs/spec-v1.6.md
                     // §Template literals): it grants no contextual-read
                     // position, and an already-rejected part is not
                     // re-reported against it.
                     if (i % 2 == 1 && partType != Type.Error.INSTANCE
-                            && !(partType instanceof Type.String)) {
+                            && !(partType instanceof Type.String)
+                            && !(partType instanceof Type.Number)) {
                         error(DiagnosticCode.E3016,
-                            "Template literal interpolation must have type string, got "
+                            "Template literal interpolation must have type string or number, got "
                             + typeName(partType), part.span());
                     }
                 }

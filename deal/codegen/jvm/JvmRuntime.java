@@ -2340,6 +2340,9 @@ case "NUMBER_EQ" -> {
             return !((Boolean) v);
         }
 
+        if ("NUMBER_TO_STRING".equals(selector)) {
+            return deal.semantic.ir.NumberSemantics.toString(((Number) v).doubleValue());
+        }
         return -((Number) v).doubleValue();
     }
 

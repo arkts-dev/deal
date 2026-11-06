@@ -108,6 +108,7 @@ public final class LlvmSelectorArms {
     public enum UnaryForm {
         XOR_TRUE,
         FNEG,
+        NUMBER_TEXT,
         TYPE_NAME,
         CLASS_TAG
     }
@@ -182,6 +183,8 @@ public final class LlvmSelectorArms {
                 "xor i1 %s, true");
             case NUMBER_NEG -> new UnaryArm(selector, UnaryForm.FNEG,
                 "fneg double %s");
+            case NUMBER_TO_STRING -> new UnaryArm(selector, UnaryForm.NUMBER_TEXT,
+                "call %struct.deal_string* @deal_number_to_string(double %s)");
             case TYPEOF -> new UnaryArm(selector, UnaryForm.TYPE_NAME,
                 "call %struct.deal_string* @deal_descriptor_type_name"
                     + "(%struct.deal_data* %s)");

@@ -93,6 +93,89 @@ static double deal_json_decode_number(const unsigned char *token,
     return value;
 }
 
+/* Exact binary64 expansion makes shortest-decimal rounding independent of
+ * host printf's intermediate precision. Neighbours cover asymmetric intervals. */
+deal_string *deal_number_to_string(double value) {
+    char exact[1400], digits[1400], candidate[64], output[64];
+    if (value != value) return deal_text_new("NaN", 3);
+    if (value == 0) return deal_text_new("0", 1);
+    if (value > 0x1.fffffffffffffp1023) return deal_text_new("Infinity", 8);
+    if (value < -0x1.fffffffffffffp1023) return deal_text_new("-Infinity", 9);
+    int negative = value < 0;
+    double magnitude = negative ? -value : value;
+    locale_t previous = uselocale(deal_json_numeric_locale());
+    int size = snprintf(exact, sizeof(exact), "%.1074f", magnitude);
+    (void)uselocale(previous);
+    if (size <= 0 || (size_t)size >= sizeof(exact))
+        deal_platform_fault("number: exact text overflow");
+    int decimal = 0, count = 0, first = -1;
+    for (int i = 0; i < size; i++) {
+        if (exact[i] == '.') { decimal = count; continue; }
+        if (first < 0 && exact[i] != '0') first = count;
+        digits[count++] = exact[i];
+    }
+    int exponent = decimal - first - 1;
+    int length = count - first;
+    (void)memmove(digits, digits + first, (size_t)length);
+    while (length > 1 && digits[length - 1] == '0') length--;
+    uint64_t chosen = 0;
+    int power = 0;
+    for (int precision = 1; precision <= 17; precision++) {
+        uint64_t significand = 0;
+        for (int i = 0; i < precision; i++)
+            significand = significand * 10 + (i < length ? (uint64_t)(digits[i] - '0') : 0);
+        int up = 0;
+        if (precision < length) {
+            int tail = 0;
+            for (int i = precision + 1; i < length; i++) tail |= digits[i] != '0';
+            up = digits[precision] > '5' || (digits[precision] == '5'
+                && (tail || (significand & 1)));
+        }
+        uint64_t rounded = significand + (uint64_t)up;
+        power = exponent - precision + 1;
+        for (int neighbour = 0; neighbour < 2; neighbour++) {
+            uint64_t trial = neighbour == 0 ? rounded : up ? rounded - 1 : rounded + 1;
+            int n = snprintf(candidate, sizeof(candidate), "%llue%d",
+                (unsigned long long)trial, power);
+            if (n <= 0 || (size_t)n >= sizeof(candidate))
+                deal_platform_fault("number: candidate overflow");
+            if (deal_json_decode_number((const unsigned char *)candidate, (size_t)n) == magnitude) {
+                chosen = trial; break;
+            }
+        }
+        if (chosen != 0) break;
+    }
+    if (chosen == 0) deal_platform_fault("number: missing roundtrip");
+    while (chosen % 10 == 0) { chosen /= 10; power++; }
+    int n = snprintf(digits, sizeof(digits), "%llu", (unsigned long long)chosen);
+    int e = n + power - 1;
+    int used = 0;
+    if (negative) output[used++] = '-';
+    if (e >= -6 && e < 21) {
+        int point = n + power;
+        if (point <= 0) {
+            output[used++] = '0'; output[used++] = '.';
+            for (int i = 0; i < -point; i++) output[used++] = '0';
+        }
+        for (int i = 0; i < n; i++) {
+            if (i == point && point > 0) output[used++] = '.';
+            output[used++] = digits[i];
+        }
+        for (int i = n; i < point; i++) output[used++] = '0';
+    } else {
+        output[used++] = digits[0];
+        if (n > 1) {
+            output[used++] = '.';
+            for (int i = 1; i < n; i++) output[used++] = digits[i];
+        }
+        int suffix = snprintf(output + used, sizeof(output) - (size_t)used, "e%+d", e);
+        if (suffix <= 0 || (size_t)suffix >= sizeof(output) - (size_t)used)
+            deal_platform_fault("number: exponent overflow");
+        used += suffix;
+    }
+    return deal_text_new(output, (size_t)used);
+}
+
 /* Renders one magnitude with `%.*e` under the private C locale. */
 static int deal_json_format_exponent(char *buffer, size_t size, int precision,
                                      double magnitude) {

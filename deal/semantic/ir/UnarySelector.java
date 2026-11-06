@@ -4,7 +4,7 @@ package deal.semantic.ir;
  * The closed unary selector set of {@code deal.semantic-ir/2} (parent
  * "Closed selectors"; schema S3).
  *
- * <p>Closed set — {@link #BOOL_NOT}, {@link #NUMBER_NEG}, {@link #TYPEOF},
+ * <p>Closed set — {@link #BOOL_NOT}, {@link #NUMBER_NEG}, {@link #NUMBER_TO_STRING}, {@link #TYPEOF},
  * and {@link #INSTANCEOF};
  * no open or unknown fallback member and no external extension point exist.
  * Unknown or reserved selectors fail validation (R-ENUM).
@@ -17,6 +17,9 @@ public enum UnarySelector implements ClosedSelector {
 
     /** IEEE-754 number negation (policy {@code NO_DEAL_FAILURE}). */
     NUMBER_NEG,
+
+    /** ECMAScript Number::toString in radix ten; returns string. */
+    NUMBER_TO_STRING,
 
     /** Type vocabulary projection over supported language data; returns string. */
     TYPEOF,

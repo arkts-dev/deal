@@ -635,6 +635,11 @@ public final class LlvmExpressionEmissionTest {
                     check(arm.instruction().startsWith("fneg double "),
                         "NUMBER_NEG renders `fneg double x`, never fsub");
                 }
+                case NUMBER_TO_STRING -> {
+                    checkEq("NUMBER_TEXT", arm.form().name(), "number text is its explicit conversion form");
+                    check(arm.instruction().contains("@deal_number_to_string(double %s)"),
+                        "number text calls the published conversion entry");
+                }
                 case TYPEOF -> {
                     checkEq("TYPE_NAME", arm.form().name(),
                         "TYPEOF is the six-name projection");

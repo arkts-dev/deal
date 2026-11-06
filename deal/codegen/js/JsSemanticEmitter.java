@@ -1210,6 +1210,7 @@ public final class JsSemanticEmitter {
                 case TYPEOF -> "$rt.typeOf(" + operand + ")";
                 case INSTANCEOF -> "$rt.isInstance(" + operand + ", " + jsString(payload.target().canonicalSpecText()) + ")";
 
+                case NUMBER_TO_STRING -> "String(" + numeric(operand) + ")";
                 case NUMBER_NEG -> "-" + numeric(operand);
             };
             emit(slotOf(op) + " = " + expression + ";");

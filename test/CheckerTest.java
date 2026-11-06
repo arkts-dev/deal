@@ -3743,7 +3743,7 @@ public class CheckerTest {
      * compiler-resolved intrinsic on strings (only arrays have it —
      * string lengths come from stdlib string.length), for-of over a
      * string yields one `string` per scalar value per iteration, and
-     * template interpolation still requires string.
+     * template interpolation accepts string or number.
      */
     static void testV12StringTypeFacingChecks() {
         System.out.println("-- v1.2 string Unicode scalar-value type-facing checks --");
@@ -3771,7 +3771,7 @@ public class CheckerTest {
         assertNoErrors(out, "for-of over string with string loop var");
 
         out = checkProgram("let n: number = 1; let s: string = `x${n}`;");
-        assertError(out, "E3016", "template interpolation of number is not string");
+        assertNoErrors(out, "template interpolation of number is accepted");
     }
 
     /** Ordinary user declarations named bytes follow lexical resolution. */
@@ -4016,13 +4016,13 @@ public class CheckerTest {
     }
 
     static void testTemplateLiteral_nonStringInterpolation() {
-        System.out.println("-- Template Literal: non-string interpolation -> E3016 --");
+        System.out.println("-- Template Literal: numeric interpolation --");
         CheckerOutput out = checkProgram(
             "function f(n: number): string {\n" +
             "  return `Value: ${n}`;\n" +
             "}"
         );
-        assertError(out, "E3016", "template literal with number interpolation -> E3016");
+        assertNoErrors(out, "template literal with number interpolation");
     }
 
     static void testTemplateLiteral_typeInference() {

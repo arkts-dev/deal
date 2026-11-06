@@ -1001,7 +1001,7 @@ public final class LlvmStageClassifier {
                 ? Optional.empty()
                 : Optional.of(reject(op, "UNARY BOOL_NOT over '"
                     + operand.canonicalSpecText() + "'"));
-            case NUMBER_NEG -> operand instanceof RuntimeDescriptor.Number
+            case NUMBER_NEG, NUMBER_TO_STRING -> operand instanceof RuntimeDescriptor.Number
                 ? Optional.empty()
                 : Optional.of(reject(op, "UNARY NUMBER_NEG over '"
                     + operand.canonicalSpecText() + "'"));

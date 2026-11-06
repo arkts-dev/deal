@@ -1871,9 +1871,9 @@ public final class SemanticIrValidator {
                 String selector = optionalString(payload, "selector");
                 String operandType = op.operandTypes().getFirst();
                 String resultType = "NUMBER_NEG".equals(selector) ? "number"
-                    : "TYPEOF".equals(selector) ? "string" : "boolean";
+                    : "TYPEOF".equals(selector) || "NUMBER_TO_STRING".equals(selector) ? "string" : "boolean";
                 String requiredOperand = "BOOL_NOT".equals(selector) ? "boolean"
-                    : "NUMBER_NEG".equals(selector) ? "number" : null;
+                    : "NUMBER_NEG".equals(selector) || "NUMBER_TO_STRING".equals(selector) ? "number" : null;
                 if (!Objects.equals(producedType, operandType)
                         || requiredOperand != null && !requiredOperand.equals(operandType)
                         || !resultType.equals(op.resultType()) || op.resultValue() == null) {

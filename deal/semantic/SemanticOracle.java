@@ -2026,6 +2026,8 @@ record NumValue(double value) implements Value {
                 case BOOL_NOT -> publish(op,
                     new Value.BoolValue(!((Value.BoolValue) input).value()));
 
+                case NUMBER_TO_STRING -> publish(op, new Value.StrValue(
+                    deal.semantic.ir.NumberSemantics.toString(numberUse(input))));
                 case NUMBER_NEG -> publish(op,
                     new Value.NumValue(-numberUse(input)));
             };

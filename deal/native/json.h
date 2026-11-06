@@ -63,6 +63,9 @@
  * may be any JSON value (the `std` group's `record` return boundary decides
  * the root shape, never this entry).
  */
+/* ECMAScript radix-ten number text, separate from JSON presentation. */
+deal_string *deal_number_to_string(double value);
+
 deal_outcome_data deal_json_parse(deal_string *text, const deal_origin *origin);
 
 /*

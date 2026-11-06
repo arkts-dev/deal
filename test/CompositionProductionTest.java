@@ -196,6 +196,59 @@ public final class CompositionProductionTest {
                 + "throw {code:\"TEST\",message:\"escape decoding\"};}return null;}";
             execute(escapes, "", root.resolve("string-escapes"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
+            // Node supplies an independent ECMAScript reference, never a host
+            // default formatter from the implementation under test.
+            var random = new java.util.Random(1616);
+            var numberSamples = new ArrayList<Double>();
+            for (int i = 0; i < 256; i++) numberSamples.add(Double.longBitsToDouble(random.nextLong()));
+            for (int e : new int[] {-1074,-1022,-100,-20,-1,0,1,20,52,53,100,1023}) {
+                double v = Math.scalb(1.0, e);
+                numberSamples.add(v); numberSamples.add(Math.nextDown(v)); numberSamples.add(Math.nextUp(v));
+            }
+            String referenceScript = "const a=" + numberSamples.stream()
+                .map(v -> "\"" + Long.toUnsignedString(Double.doubleToRawLongBits(v),16) + "\"")
+                .collect(java.util.stream.Collectors.joining(",", "[", "]"))
+                + ";for(const s of a){const b=Buffer.alloc(8);b.writeBigUInt64BE(BigInt('0x'+s));"
+                + "console.log(String(b.readDoubleBE()));}";
+            var reference = BoundedProcess.runCaptured(List.of("node", "-e", referenceScript), Path.of("").toAbsolutePath());
+            if (reference.exitCode()!=0 || reference.stdoutTruncated() || reference.stderrTruncated()
+                    || !reference.stderr().isEmpty()) throw new AssertionError(reference);
+            var expectedNumbers = reference.stdout().lines().toList();
+            if (expectedNumbers.size()!=numberSamples.size()) throw new AssertionError("number reference population");
+            StringBuilder numericSource = new StringBuilder("export function main():null{let values:number[]=[");
+            for (int i=0;i<numberSamples.size();i++) {
+                if(i>0) numericSource.append(',');
+                double value = numberSamples.get(i);
+                numericSource.append(Double.isNaN(value) ? "0/0" : value==Double.POSITIVE_INFINITY ? "1/0"
+                    : value==Double.NEGATIVE_INFINITY ? "-1/0" : Double.toString(value));
+                String actual = deal.semantic.ir.NumberSemantics.toString(value);
+                if(!actual.equals(expectedNumbers.get(i))) throw new AssertionError("Oracle number text: " + value + " " + actual);
+            }
+            numericSource.append("];let expected:string[]=[");
+            for(int i=0;i<expectedNumbers.size();i++) {
+                if(i>0) numericSource.append(',');
+                numericSource.append('"').append(expectedNumbers.get(i)).append('"');
+            }
+            numericSource.append("];let i=0;while(i<values.length){if(`${values[i]}`!==expected[i]){"
+                + "throw {code:\"NUMBER_TEXT\",message:`${i}: ${values[i]}`};}i=i+1;}return null;}");
+            execute(numericSource.toString(), "", root.resolve("number-text-reference"), null,
+                List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
+            String interpolation = "export function main():null{"
+                + "let values:number[]=[0,-0,1,-1,1.5,0/0,1/0,-1/0,1e-6,1e-7,1e20,1e21,"
+                + "5e-324,1.7976931348623157e308,1000000000000000100,2.2250738585072014e-308];"
+                + "let expected:string[]=[\"0\",\"0\",\"1\",\"-1\",\"1.5\",\"NaN\",\"Infinity\",\"-Infinity\","
+                + "\"0.000001\",\"1e-7\",\"100000000000000000000\",\"1e+21\",\"5e-324\","
+                + "\"1.7976931348623157e+308\",\"1000000000000000100\",\"2.2250738585072014e-308\"];"
+                + "let i=0;while(i<values.length){if(`${values[i]}`!==expected[i]){"
+                + "throw {code:\"TEXT\",message:`${i}: ${values[i]}`};}i=i+1;}"
+                + "let state=0;let step=(n:number):number=>{state=state*10+n;return n;};"
+                + "if(`a${step(1)}b${step(2)}c`!==\"a1b2c\" || state!==12){"
+                + "throw {code:\"ORDER\",message:\"interpolation order\"};}"
+                + "let fail=():number=>{throw {code:\"STOP\",message:\"stop\"};};"
+                + "try{let text=`${step(3)}${fail()}${step(4)}`;}catch(e){}"
+                + "if(state!==123){throw {code:\"ABRUPT\",message:\"interpolation failure\"};}return null;}";
+            execute(interpolation, "", root.resolve("numeric-templates"), null,
+                List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             String multiline = "export function main():null{"
                 + "if(`A\r\nB\rC\nD` !== \"A\\nB\\nC\\nD\""
                 + " || `A\\\r\nB` !== \"AB\" || `x${`a\nb`}y` !== \"xa\\nby\"){"
@@ -226,7 +279,7 @@ public final class CompositionProductionTest {
                     + "){throw {code:\"TEST\",message:\"value\"};}c.log(\"COMPOSE_OK\");return null;}";
                 execute(source, "COMPOSE_OK\n", root.resolve("seed" + seed), null);
             }
-            System.out.println("Composition production: 15 composition lanes and 56 revised-syntax executions passed");
+            System.out.println("Composition production: 15 composition lanes and 70 revised-syntax executions passed");
         } finally { remove(root); }
     }
 }

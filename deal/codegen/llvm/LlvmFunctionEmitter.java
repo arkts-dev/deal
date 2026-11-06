@@ -791,6 +791,11 @@ final class LlvmFunctionEmitter {
                 + loadRepresentation(input, operandDescriptor, op) + ", true");
             case FNEG -> emitTemporary(op, "fneg double "
                 + loadRepresentation(input, operandDescriptor, op));
+            case NUMBER_TEXT -> {
+                session.referenceRuntimeEntry("deal_number_to_string");
+                yield emitTemporary(op, arm.instruction().replace("%s)",
+                    loadRepresentation(input, operandDescriptor, op) + ")"));
+            }
             case TYPE_NAME -> emitTypeName(op, input, operandDescriptor);
             case CLASS_TAG -> emitInstanceOf(op, payload, input,
                 operandDescriptor);

@@ -13476,7 +13476,15 @@ public final class SemanticLowerer {
                     }
                     fragments.add(lowerConst(literal));
                 } else {
-                    fragments.add(lowerOperand(part));
+                    ValueId value = lowerOperand(part);
+                    if (checkedType(part) instanceof Type.Number) {
+                        value = emitOperandOp(SemanticOpKind.UNARY,
+                            new KindPayload.UnaryPayload(UnarySelector.NUMBER_TO_STRING),
+                            List.of(value), List.of(RuntimeDescriptor.Number.INSTANCE),
+                            part.span(), RuntimeDescriptor.String.INSTANCE,
+                            FailurePolicyId.NO_DEAL_FAILURE, null);
+                    }
+                    fragments.add(value);
                 }
             }
             return emitValueOp(SemanticOpKind.STRING_CONCAT,

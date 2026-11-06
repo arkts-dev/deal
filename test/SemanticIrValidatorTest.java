@@ -1226,6 +1226,36 @@ public class SemanticIrValidatorTest {
                 "R-ENUM", "STDLIB_TIME_CONFLICT");
         }
 
+        for (RuntimeDescriptor operand : List.of(INT, BOOL)) {
+            SemanticOp value = op(SemanticOpKind.CONST,
+                new KindPayload.ConstPayload(operand.equals(INT) ? new ScalarValue.Number(1)
+                    : new ScalarValue.Boolean(true)), nextValue(), operand, FailurePolicyId.NO_DEAL_FAILURE, null);
+            for (RuntimeDescriptor result : List.of(STR, BOOL)) {
+                var payload = new KindPayload.UnaryPayload(UnarySelector.NUMBER_TO_STRING);
+                var contract = contractFor(SemanticOpKind.UNARY, payload, result, List.of(operand),
+                    FailurePolicyId.NO_DEAL_FAILURE, "placeholder");
+                contract = contractFor(SemanticOpKind.UNARY, payload, result, List.of(operand),
+                    FailurePolicyId.NO_DEAL_FAILURE, ContractSnapshotCanonicalizer.digest(contract));
+                SemanticOp conversion = new SemanticOp(nextOpId(), SemanticOpKind.UNARY, origin(null),
+                    nextValue(), result, List.of((ValueId)value.result()), List.of(operand), payload,
+                    FailurePolicyId.NO_DEAL_FAILURE, contract);
+                var converted = unit("mod.a", Set.of(SemanticCapability.FOUNDATION_VALUES),
+                    Map.of(), Map.of(), List.of(value, conversion,
+                        op(SemanticOpKind.BINARY,
+                            new KindPayload.BinaryPayload(BinarySelector.NUMBER_ADD, null, null),
+                            nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null),
+                        op(SemanticOpKind.STRING_CONCAT,
+                            new KindPayload.StringConcatPayload(List.of((ValueId)conversion.result())),
+                            nextValue(), STR, FailurePolicyId.NO_DEAL_FAILURE, null)));
+                boolean valid = operand.equals(INT) && result.equals(STR);
+                check(SemanticIrValidator.validate(converted, FACTS).isEmpty() == valid,
+                    "typed number-text conversion requires number -> string: " + operand + " -> " + result
+                        + " " + SemanticIrValidator.validate(converted, FACTS));
+                check(SemanticIrValidator.validateText(SemanticIrValidator.toUnitText(converted), FACTS).isEmpty() == valid,
+                    "text number-text conversion requires number -> string: " + operand + " -> " + result);
+            }
+        }
+
         // Fact 2 — no produced op set can satisfy the removed
         // routing-marker claim: the position is closed, so a unit that
         // fully satisfies its other claims still fails at the claim name
