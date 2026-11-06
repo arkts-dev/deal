@@ -1306,16 +1306,21 @@ Both accept Records or class instances. `hasOwn` tests own presence without narr
 #### Array
 
 ```txt
+xs.push(value: E): number
 xs.pop(): E | undefined
 xs.splice(start: number, deleteCount: number): E[]
+xs.map(mapper: (value: E, index: number) => R): R[]
+xs.filter(predicate: (value: E, index: number) => boolean): E[]
+xs.slice(start: number, end: number): E[]
+ss.join(separator: string): string
 Array.from(xs: E[], mapper: (value: E, index: number) => R): R[]
 ```
 
-For xs of type E[], E and R are inferred data types, not source generics; R comes from the synchronous mapper's result type.
+For xs of type E[] and ss of type string[], E and R are inferred data types, not source generics; R comes from the synchronous mapper's result type.
 
-`pop` removes and returns the last element; an empty array yields undefined.
+Receiver operations follow [ECMAScript semantics](https://tc39.es/ecma262/#sec-array-objects), except `map` raises E8002 for missing indexes within its initial length. `push`, `pop` and `splice` validate affected elements before mutation.
 
-`splice` follows ECMAScript argument normalization and deletion, without insertion arguments. Both `pop` and `splice` validate removed elements before mutation.
+`map`/`filter` callbacks receive only value and index.
 
 `from` traverses xs as [for-of](#for-of) does, invoking mapper with each value and index; returns its results in a fresh array.
 
@@ -1330,13 +1335,21 @@ console.error(x: string): void
 
 ```txt
 s.length: number
+s.substring(start: number): string
 s.substring(start: number, end: number): string
+s.slice(start: number): string
+s.slice(start: number, end: number): string
 s.includes(part: string): boolean
+s.includes(part: string, position: number): boolean
 s.startsWith(part: string): boolean
+s.startsWith(part: string, position: number): boolean
 s.endsWith(part: string): boolean
+s.endsWith(part: string, endPosition: number): boolean
 s.replace(search: string, replacement: string): string
 s.split(sep: string): string[]
 s.trim(): string
+s.toLowerCase(): string
+s.toUpperCase(): string
 ```
 
 s has type string; `length` is read-only. Follow corresponding [ECMAScript String semantics](https://tc39.es/ecma262/#sec-string-objects).
