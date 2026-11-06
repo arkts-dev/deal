@@ -140,6 +140,12 @@ public final class CompositionProductionTest {
             execute(ConformanceHarnessMetadata.productionCorpusSource(Files.readString(
                 Path.of("test/conformance/backend-runtime").resolve(fixture)), fixture),
                 "NESTED_OK\n", root.resolve("nested"), null);
+            for (String commas : List.of("trailing-argument-comma", "trailing-parameter-comma")) {
+                Path fixturePath = Path.of("test/conformance/backend-runtime/functions/" + commas + ".deal");
+                execute(ConformanceHarnessMetadata.productionCorpusSource(Files.readString(fixturePath),
+                    fixturePath.toString()), "", root.resolve(commas), null,
+                    List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
+            }
             // Each seed changes values and composition depth, not the language
             // contract. Integer arithmetic here is exactly representable binary64.
             for (int seed = 0; seed < 4; seed++) {
@@ -164,7 +170,7 @@ public final class CompositionProductionTest {
                     + "){throw {code:\"TEST\",message:\"value\"};}c.log(\"COMPOSE_OK\");return null;}";
                 execute(source, "COMPOSE_OK\n", root.resolve("seed" + seed), null);
             }
-            System.out.println("Composition production: 15 lane executions passed");
+            System.out.println("Composition production: 15 composition lanes and 14 trailing-comma executions passed");
         } finally { remove(root); }
     }
 }

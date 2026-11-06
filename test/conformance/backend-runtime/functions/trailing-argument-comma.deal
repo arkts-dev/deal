@@ -1,0 +1,16 @@
+// @spec: Syntactic grammar — ArgumentList
+// @description: Trailing call commas preserve argument count, left-to-right effects and nested calls
+// @expected: runtime-ok
+// @features: parser, arguments, trailing-comma
+
+function one(x: number): number { return x; }
+export function main(): null {
+  let order: number = 0;
+  let next: () => number = function(): number { order = order + 1; return order; };
+  let pair: (a: number, b: number) => number = function(a: number, b: number): number {
+    return a * 10 + b;
+  };
+  let n: number = pair(one(next(),), next(),);
+  if (n !== 12 || order !== 2) { throw { code: "TEST", message: "trailing call effects" }; }
+  return null;
+}

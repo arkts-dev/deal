@@ -868,11 +868,8 @@ public class ParserTest {
             check(call.callee() instanceof IdentifierExpr, "callee is ident");
         }
 
-        // Trailing comma is outside the v1.2 ArgumentList grammar (E1055);
-        // the single argument still parses so recovery keeps the call shape.
         r = parse("f(1,);");
-        check(r.diagnostics().stream().anyMatch(d -> d.code().equals("E1055")),
-            "call trailing comma -> E1055");
+        assertNoParseErrors(r, "call trailing comma");
         if (!r.program().statements().isEmpty()) {
             es = (ExpressionStatement) r.program().statements().get(0);
             call = assertExprInstance(es.expr(), CallExpr.class, "call trailing comma");
@@ -1023,27 +1020,31 @@ public class ParserTest {
         assertNoParseErrors(owned, "terminator owned by a declaration");
     }
 
-    /**
-     * ParameterList carries no trailing comma (spec §Syntactic grammar);
-     * the array and object literal lists keep the permitted commas
-     * (ISSUE-0717 defect snippet 60).
-     */
+    /** Nonempty parameter, argument and literal lists admit one trailing comma. */
     static void testTrailingParameterComma() {
         System.out.println("-- Trailing parameter comma --");
 
         ParseResult r = parse("function one(x: number,): number { return x; }\n");
-        assertParseError(r, "E1054", "declaration parameter trailing comma");
+        assertNoParseErrors(r, "declaration parameter trailing comma");
         if (!r.program().statements().isEmpty()
                 && r.program().statements().get(0)
                     instanceof FunctionDeclaration fd) {
             check(fd.params().size() == 1,
-                "the single parameter still parses (recovery keeps the shape)");
+                "trailing comma does not add a parameter");
         }
 
         ParseResult functionType = parse(
             "let f: (x: number,) => number = function(x: number): number { return x; };\n");
-        assertParseError(functionType, "E1054",
-            "function-type parameter trailing comma");
+        assertNoParseErrors(functionType, "function-type parameter trailing comma");
+        assertNoParseErrors(parse("let f = function(x: number,): number { return x; };"),
+            "function-expression parameter trailing comma");
+        assertNoParseErrors(parseFile("export function f(x: number,): number;", "host.d.deal"),
+            "external declaration parameter trailing comma");
+        for (String malformed : List.of("f(,);", "f(1,,);",
+                "function f(,): void {}", "function f(x: number,,): void {}",
+                "let f: (,) => void = function(): void {};")) {
+            check(parse(malformed).hasErrors(), "reject empty/doubled comma: " + malformed);
+        }
 
         ParseResult literals = parse(
             "let a: number[] = [1, 2,];\nlet o: Record<string, unknown> = { x: 1, };\n");

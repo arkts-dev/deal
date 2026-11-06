@@ -796,9 +796,6 @@ public final class Parser {
 
                 while (match(TokenType.COMMA)) {
                     if (peek().type() == TokenType.RPAREN) {
-                        // FunctionTypeParams carries no trailing comma.
-                        error(DiagnosticCode.E1054,
-                            "Trailing comma in parameter list is not allowed", peek());
                         break;
                     }
                     if (peek().type() == TokenType.ELLIPSIS) {
@@ -1059,9 +1056,6 @@ public final class Parser {
 
         while (match(TokenType.COMMA)) {
             if (peek().type() == TokenType.RPAREN) {
-                // ParameterList carries no trailing comma (v1.2 grammar).
-                error(DiagnosticCode.E1054,
-                    "Trailing comma in parameter list is not allowed", peek());
                 break;
             }
             if (peek().type() == TokenType.ELLIPSIS) {
@@ -1240,9 +1234,6 @@ public final class Parser {
                     if (first != null) args.add(first);
                     while (match(TokenType.COMMA)) {
                         if (peek().type() == TokenType.RPAREN) {
-                            // ArgumentList carries no trailing comma (v1.2 grammar).
-                            error(DiagnosticCode.E1055,
-                                "Trailing comma in argument list is not allowed", peek());
                             break;
                         }
                         ExpressionNode arg = parseExpression();

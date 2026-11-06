@@ -1,0 +1,12 @@
+// @spec: Syntactic grammar — ParameterList
+// @description: Trailing declaration, expression and function-type commas preserve signatures
+// @expected: runtime-ok
+// @features: parser, parameters, trailing-comma
+
+function one(x: number,): number { return x; }
+export function main(): null {
+  let f: (x: number,) => number = function(x: number,): number { return one(x); };
+  let n: number = f(7,);
+  if (n !== 7) { throw { code: "TEST", message: "trailing parameter signature" }; }
+  return null;
+}
