@@ -25,12 +25,15 @@ Line terminators are LF (`\n`), CRLF (`\r\n`), and CR (`\r`).
 | Escape | Meaning |
 |---|---|
 | `\n` | newline (U+000A) |
+| `\r` | carriage return (U+000D) |
 | `\t` | tab (U+0009) |
+| `\xHH`, `\uHHHH` | UTF-16 code unit |
+| `\u{H…}` | Unicode code point |
 | `\\` | backslash (U+005C) |
 | `\"` | double quote (U+0022) |
 | `\'` | single quote (U+0027) |
 
-A string is a sequence of UTF-16 code units, including lone surrogates. Literals admit only these escapes. Every backend's host transport must preserve code units exactly and reject malformed encodings.
+A string is a sequence of UTF-16 code units, including lone surrogates. Every backend's host transport must preserve code units exactly and reject malformed encodings.
 
 ### Template literals
 
@@ -41,11 +44,12 @@ let name: string = "Ada";
 let msg: string = `Hello ${name}!`; // "Hello Ada!"
 ```
 
-Interpolations require `string`; no implicit conversion. Escape decoding follows TypeScript untagged templates.
+Interpolations accept `string` or `number`; numbers use [numeric conversion](#numeric-conversion). Multiline text and escape decoding follow TypeScript untagged templates.
 
 ```ts
 let n: number = 42;
-let bad: string = `Value: ${n}`; // error: number is not string
+let msg: string = `Value:
+${n}`; // "Value:\n42"
 ```
 
 ```ts
@@ -89,10 +93,17 @@ NumberLiteral ::= DecimalInteger
 StringLiteral ::= '"' StringCharacter* '"' | '\'' StringCharacter* '\''
 
 TemplateLiteral ::= '`' (TemplateText | '${' Expression '}')* '`'
-TemplateText ::= /* nonempty TypeScript TemplateCharacter sequence; no unescaped line-terminators */
+TemplateText ::= /* nonempty TypeScript TemplateCharacter sequence */
 
-StringCharacter ::= /* any SourceCharacter except line terminators and unescaped quote */
- | '\n' | '\t' | '\\' | '\"' | '\''
+StringCharacter ::= /* any SourceCharacter except backslash, line terminators and the enclosing quote */
+ | StringEscape
+
+StringEscape ::= '\\' ('n' | 'r' | 't' | '\\' | '"' | '\''
+ | 'x' HexDigit HexDigit
+ | 'u' HexDigit HexDigit HexDigit HexDigit
+ | 'u' '{' HexDigit+ '}') /* braced value <= 0x10FFFF */
+
+HexDigit ::= [0-9a-fA-F]
 
 LineTerminator ::= '\n' | '\r\n' | '\r'
 
@@ -431,7 +442,7 @@ Strings compare lexicographically by UTF-16 code-unit value; a proper prefix sor
 
 ### Type-of-expression rules
 
-String concatenation uses `+`. Both operands must be `string`. No implicit string conversions exist.
+String concatenation uses `+`. Both operands must be `string`.
 
 | Expression | Type |
 |---|---|
