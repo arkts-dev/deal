@@ -1010,7 +1010,7 @@ public class CompositeTerminatorAnalysisTest {
     static void testTestlessForLetProductionArtifacts() throws Exception {
         System.out.println("-- the omitted-test for-let loop through the two "
             + "release-owned production lanes (the all-return shape) --");
-        String source = "import * as console from \"std/console\";\n\nexport function terminateForLetTestless(): null {\n  while (true) { {\n    console.log(\"testless-for-let-terminate\");\n    return null;\n  } }\n}\n\nexport function main(): null {\n  terminateForLetTestless();\n  return null;\n}\n";
+        String source = "import * as output from \"std/console\";\n\nexport function terminateForLetTestless(): null {\n  while (true) { {\n    output.log(\"testless-for-let-terminate\");\n    return null;\n  } }\n}\n\nexport function main(): null {\n  terminateForLetTestless();\n  return null;\n}\n";
         Path root = Files.createTempDirectory("testless-for-let-production-");
         try {
             writeFileIn(root, "src/main.deal", source);

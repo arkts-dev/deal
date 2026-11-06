@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: functions, arity-extension, classes, arrays, closures
 
-import * as console from "std/console";
+import * as output from "std/console";
 import * as lib from "./arity-extension-positions-lib";
 
 class Marker {
@@ -141,6 +141,6 @@ export function main(): null {
     "the ignored target argument is evaluated and never forwarded");
   check(extraMarker.count === 1, "the ignored target argument evaluates exactly once");
 
-  console.log("OK");
+  output.log("OK");
   return null;
 }

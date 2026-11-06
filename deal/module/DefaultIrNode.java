@@ -43,6 +43,7 @@ public record DefaultIrNode(
         ASSIGNMENT,
         AWAIT,
         BINARY,
+        CONDITIONAL,
         CALL,
         FUNCTION_EXPRESSION,
         HAS,

@@ -26,6 +26,8 @@ Lower checked refined binding reads through NARROWED_READ where no owning typed 
 
 Address-chain receiver/key/normalize/commit facts reference the admitted operands without changing child order. Slot-threaded logical operands republish the caller's preallocated condition identity. For-of evaluates once and preserves live traversal and fresh mutable captured iteration cells. String receiver calls lower to the existing closed string algorithm selectors, with the admitted receiver before left-to-right admitted arguments. Import-free algorithms carry no invented source export-read or function binding.
 
+Conditional BRANCH operations own two lazy arm blocks and explicit arm result links. Evaluate/admit the boolean condition once before entering only the selected block; the join publishes that block's checked value. Contextual function adapters capture once within their selected arm and wire through its CONDITIONAL_BRANCH cell to the owning join, never through a runtime-read boundary. Joined function values register dynamic dispatch facts; discarded void joins publish no data representation.
+
 Object.hasOwn consumes its receiver and dynamic string key through operand admission in receiver/key order, tests presence without reading values, and never narrows fields. Error owns code/message presence independently of stored values.
 
 Error throw/catch/rethrow keeps one reference identity, current code/message, original diagnostic facts and linked causes. Catch bindings obey ordinary lexical shadowing and fresh per-execution cells; closures retain the captured incarnation. A bare assignment target owns ASSIGNMENT, not an invented identifier read.

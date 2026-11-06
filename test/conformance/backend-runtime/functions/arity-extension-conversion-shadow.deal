@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: functions, arity-extension, classes, arrays, intrinsics, name-resolution
 
-import * as console from "std/console";
+import * as output from "std/console";
 
 // The user callees the shadowed names hold. The unshadowed intrinsics are
 // (number)->int, (int)->number and (int)->bytes, so an adapter built over
@@ -145,6 +145,6 @@ export function main(): null {
   check(widenedBytes(9, 9, 9)[0] === 18,
     "the return position adapted the bytes allocation intrinsic");
 
-  console.log("OK");
+  output.log("OK");
   return null;
 }

@@ -4958,6 +4958,17 @@ public final class JvmSemanticEmitter {
             emitStart(op, indent);
             String condition = slot(payload.condition());
             switch (payload.selector()) {
+                case CONDITIONAL -> {
+                    String target = slot((ValueId) op.result());
+                    out.append(indent(indent)).append("if (((Boolean) ").append(condition).append(").booleanValue()) {\n");
+                    emitBlockOps(payload.selectedBlock(), indent + 1);
+                    out.append(indent(indent + 1)).append(target).append(" = ").append(slot(payload.selectedValue())).append(";\n");
+                    out.append(indent(indent)).append("} else {\n");
+                    emitBlockOps(payload.alternateBlock(), indent + 1);
+                    out.append(indent(indent + 1)).append(target).append(" = ").append(slot(payload.alternateValue())).append(";\n");
+                    out.append(indent(indent)).append("}\n");
+                    emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType(), indent);
+                }
                 case IF -> {
                     out.append(indent(indent)).append("if (((Boolean) ").append(condition)
                         .append(").booleanValue()) {\n");

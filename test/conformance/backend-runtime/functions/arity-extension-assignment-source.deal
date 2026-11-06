@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: functions, arity-extension, classes, arrays, assignment
 
-import * as console from "std/console";
+import * as output from "std/console";
 
 class Marker {
   count: number;
@@ -150,6 +150,6 @@ export function main(): null {
   check(nested(5, 6, 7) === 5,
     "a nested assignment chain produces and adapts the inner target-typed value");
 
-  console.log("OK");
+  output.log("OK");
   return null;
 }

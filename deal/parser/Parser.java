@@ -1111,7 +1111,8 @@ public final class Parser {
     }
 
     private ExpressionNode parseAssignment() {
-        ExpressionNode left = parseBinary(PREC_OR);
+        ExpressionNode left = parseConditional();
+        if (left == null) return null;
 
         if (match(TokenType.EQ_SIGN)) {
             ExpressionNode right = parseAssignment();
@@ -1126,6 +1127,17 @@ public final class Parser {
         }
 
         return left;
+    }
+
+    private ExpressionNode parseConditional() {
+        ExpressionNode condition = parseBinary(PREC_OR);
+        if (condition == null || !match(TokenType.QUESTION)) return condition;
+        ExpressionNode consequent = parseAssignment();
+        expect(TokenType.COLON, DiagnosticCode.E1007, "Expected ':' in conditional expression");
+        ExpressionNode alternate = parseAssignment();
+        if (consequent == null || alternate == null) return condition;
+        return new ConditionalExpr(spanBetween(condition.span(), alternate.span()),
+            condition, consequent, alternate);
     }
 
     private ExpressionNode parseBinary(int minPrec) {
@@ -1750,6 +1762,10 @@ public final class Parser {
 
     /** A typed arrow head is distinguished without consuming grouped expressions. */
     private boolean looksLikeArrow(int start) {
+        // A grouped consequent followed by ':' is not an arrow head.
+        // Nonempty arrow heads always start with an annotated parameter.
+        if (start + 2 < tokens.size() && tokens.get(start + 1).type() != TokenType.RPAREN
+                && tokens.get(start + 2).type() != TokenType.COLON) return false;
         int depth = 0;
         for (int index = start; index < tokens.size(); index++) {
             TokenType type = tokens.get(index).type();

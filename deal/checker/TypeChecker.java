@@ -1562,6 +1562,7 @@ public final class TypeChecker {
             case AssertionExpr assertion -> checkAssertion(assertion);
             case InstanceofExpr test -> checkInstanceof(test);
             case BinaryExpr bin        -> checkBinary(bin);
+            case ConditionalExpr conditional -> checkConditional(conditional);
             case UnaryExpr un          -> checkUnary(un);
             case CallExpr call         -> checkCall(call);
             case MemberAccessExpr mae  -> checkMemberAccess(mae);
@@ -2713,6 +2714,50 @@ public final class TypeChecker {
         return Type.Boolean.INSTANCE;
     }
 
+    private Type checkConditional(ConditionalExpr conditional) {
+        Type context = expectedType;
+        expectedType = Type.Boolean.INSTANCE;
+        Type condition = checkExpression(conditional.condition());
+        if (condition != Type.Error.INSTANCE && !(condition instanceof Type.Boolean))
+            error(DiagnosticCode.E3007, "Conditional condition must be boolean, got " + typeName(condition), conditional.condition().span());
+        NullNarrowing entry = narrowing.branch();
+        narrowing = entry.branch();
+        narrowCondition(conditional.condition(), true);
+        expectedType = context;
+        Type consequent = checkExpression(conditional.consequent());
+        NullNarrowing selected = narrowing;
+        narrowing = entry.branch();
+        narrowCondition(conditional.condition(), false);
+        expectedType = context;
+        Type alternate = checkExpression(conditional.alternate());
+        selected.merge(narrowing);
+        narrowing = selected;
+        expectedType = context;
+        if (consequent == Type.Error.INSTANCE || alternate == Type.Error.INSTANCE) return Type.Error.INSTANCE;
+        if (context != null && isAssignable(context, consequent) && isAssignable(context, alternate)) return context;
+        if (Types.equals(consequent, alternate)) return consequent;
+        if (consequent instanceof Type.Void || alternate instanceof Type.Void) {
+            error(DiagnosticCode.E3006, "Void conditional branches must both return void", conditional.span());
+            return Type.Error.INSTANCE;
+        }
+        if (consequent instanceof Type.Null) return Types.withNullish(alternate, false, false);
+        if (alternate instanceof Type.Null) return Types.withNullish(consequent, false, false);
+        if (consequent instanceof Type.Undefined) return Types.withNullish(alternate, true, false);
+        if (alternate instanceof Type.Undefined) return Types.withNullish(consequent, true, false);
+        Type leftBase = consequent instanceof Type.Nullable n ? n.inner() : consequent;
+        Type rightBase = alternate instanceof Type.Nullable n ? n.inner() : alternate;
+        if (Types.equals(leftBase, rightBase)) {
+            Type result = leftBase;
+            if ((consequent instanceof Type.Nullable n && n.admitsNull())
+                    || (alternate instanceof Type.Nullable other && other.admitsNull())) result = Types.withNullish(result, false, false);
+            if ((consequent instanceof Type.Nullable n && n.admitsUndefined())
+                    || (alternate instanceof Type.Nullable other && other.admitsUndefined())) result = Types.withNullish(result, true, false);
+            return result;
+        }
+        error(DiagnosticCode.E3006, "Incompatible conditional branches: " + typeName(consequent) + " and " + typeName(alternate), conditional.span());
+        return Type.Error.INSTANCE;
+    }
+
     private Type checkHas(HasExpr has) {
         Type objType = checkExpression(has.object());
         Type keyType = checkExpression(has.key());
@@ -3078,6 +3123,7 @@ public final class TypeChecker {
             case IndexExpr idx -> exprType;
             case UnaryExpr un -> exprType;
             case BinaryExpr bin -> exprType;
+            case ConditionalExpr conditional -> exprType;
             case MemberAccessExpr mae -> exprType;
             case HasExpr has -> exprType;
             case AssertionExpr assertion -> exprType;

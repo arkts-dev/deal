@@ -492,6 +492,11 @@ public final class NameResolver {
     private void walkExpression(ExpressionNode expr) {
         switch (expr) {
             case FunctionExpr fe -> walkFunctionExpr(fe);
+            case ConditionalExpr conditional -> {
+                walkExpression(conditional.condition());
+                walkExpression(conditional.consequent());
+                walkExpression(conditional.alternate());
+            }
             case BinaryExpr bin -> {
                 walkExpression(bin.left());
                 walkExpression(bin.right());

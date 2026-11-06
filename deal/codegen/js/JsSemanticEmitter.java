@@ -2811,6 +2811,15 @@ private void emitBindingLoad(SemanticOp op) {
             LoweredModuleUnit unit = units.get(opModule.get(op.opId()));
             String condition = slot(payload.condition());
             switch (payload.selector()) {
+                case CONDITIONAL -> {
+                    emit("if (" + condition + ") {"); indent++;
+                    emitBlockContent(unit, payload.selectedBlock());
+                    emit(slotOf(op) + " = " + slot(payload.selectedValue()) + ";"); indent--;
+                    emit("} else {"); indent++;
+                    emitBlockContent(unit, payload.alternateBlock());
+                    emit(slotOf(op) + " = " + slot(payload.alternateValue()) + ";"); indent--;
+                    emit("}");
+                }
                 case IF -> {
                     emit("if (" + condition + ") {");
                     indent++;

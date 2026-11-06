@@ -828,7 +828,7 @@ public class LoweringSupportTest {
             // declaration itself).
             RequirementManifestResult stdlib = compileAndCompute(tmp.resolve("stdimp"),
                 Map.of("main.deal", """
-                    import * as console from "std/console";
+                    import * as output from "std/console";
 
                     export function main(): null {
                       return null;

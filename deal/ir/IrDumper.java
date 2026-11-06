@@ -304,6 +304,7 @@ public final class IrDumper implements Visitor<String> {
             case LiteralExpr le            -> visit(le);
             case IdentifierExpr ie         -> visit(ie);
             case BinaryExpr be             -> visit(be);
+            case ConditionalExpr c -> "(" + dispatchExpr(c.condition()) + " ? " + dispatchExpr(c.consequent()) + " : " + dispatchExpr(c.alternate()) + ")";
             case UnaryExpr ue              -> visit(ue);
             case CallExpr ce               -> visit(ce);
             case MemberAccessExpr mae      -> visit(mae);

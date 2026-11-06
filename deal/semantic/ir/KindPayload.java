@@ -788,16 +788,32 @@ public sealed interface KindPayload
     /**
      * {@code BRANCH} — the closed control selector, the condition value,
      * and the child block ids; executes only the selected block, and the
-     * logical selectors return the selected boolean. {@code alternateBlock}
-     * may be {@code null} when the shape has no alternate block.
+     * logical selectors return the selected boolean. CONDITIONAL carries
+     * both child blocks and their explicit result values; its condition
+     * precedes START and only the selected child's value is consumed.
+     * Other selectors carry no explicit arm values, and alternateBlock
+     * may be null when the shape has no alternate block.
      */
     record BranchPayload(ControlSelector selector, ValueId condition,
-                         BlockId selectedBlock, BlockId alternateBlock) implements KindPayload {
+                         BlockId selectedBlock, BlockId alternateBlock,
+                         ValueId selectedValue, ValueId alternateValue) implements KindPayload {
+
+        public BranchPayload(ControlSelector selector, ValueId condition,
+                             BlockId selectedBlock, BlockId alternateBlock) {
+            this(selector, condition, selectedBlock, alternateBlock, null, null);
+        }
 
         public BranchPayload {
             Objects.requireNonNull(selector, "selector must not be null");
             Objects.requireNonNull(condition, "condition must not be null");
             Objects.requireNonNull(selectedBlock, "selectedBlock must not be null");
+            if (selector == ControlSelector.CONDITIONAL) {
+                Objects.requireNonNull(alternateBlock, "conditional alternateBlock must not be null");
+                Objects.requireNonNull(selectedValue, "conditional selectedValue must not be null");
+                Objects.requireNonNull(alternateValue, "conditional alternateValue must not be null");
+            } else if (selectedValue != null || alternateValue != null) {
+                throw new IllegalArgumentException("only CONDITIONAL carries explicit branch values");
+            }
         }
     }
 

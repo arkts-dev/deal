@@ -1,0 +1,83 @@
+// @spec: Control flow — Contextual branches, nullish joins and lazy selection
+// @expected: runtime-ok
+// @features: control-flow, classes, closures, arrays
+class Item {x:number;}
+function check(ok:boolean,label:string):void{if(!ok){throw {code:label,message:label};}}
+function consume(item:Item):number{return item.x;}
+function make(flag:boolean):Item{return flag?{x:7}:{x:9};}
+async function asyncNumber(value:number):Promise<number>{return value;}
+export async function asyncConditional():Promise<number>{
+  let effects="";const take=async(value:number):Promise<number>=>{effects=effects+String(value);return value;};
+  const a=true?await take(1):await take(2);const b=false?await take(3):await take(4);
+  check(a===1 && b===4 && effects==="14","async selection");
+  const c=await asyncNumber(true?5:6);return a+b+c;
+}
+export function main():null {
+  let flag=true;let effects="";
+  const mark=(label:string,value:number):number=>{effects=effects+label;return value;};
+  let result=flag?mark("a",1):mark("b",2);
+  check(result===1 && effects==="a","selected true");
+  flag=false;result=flag?mark("c",3):mark("d",4);
+  check(result===4 && effects==="ad","selected false");
+  result=true?false?5:6:7;check(result===6,"right association");
+  result=false?5:true?6:7;check(result===6,"right alternate");
+  result=(false||true)?8:9;check(result===8,"precedence");
+  let assigned=0;result=flag?assigned=10:assigned=11;
+  check(result===11 && assigned===11,"assignment branches");
+  const item:Item=flag?{x:1}:{x:2};check(item.x===2,"context initializer");
+  check(consume(true?{x:3}:{x:4})===3,"context argument");
+  const items:Item[]=[flag?{x:5}:{x:6}];check(items[0].x===6,"context element");
+  check(make(true).x===7 && make(false).x===9,"context return");
+  const maybe=flag?null:3;if(maybe!==null){check(maybe===3,"nullish join");}else{throw {code:"NULL",message:"join"};}
+  const absent=flag?undefined:4;if(absent!==undefined){check(absent===4,"undefined join");}else{throw {code:"UNDEFINED",message:"join"};}
+  const both=flag?null:undefined;check(both===undefined,"two nullish");
+  const nan=true?0/0:7;check(nan!==nan,"NaN");
+  const zero=false?1:-0;check(1/zero===-1/0,"negative zero");
+  const text=true?"\ud800":"other";check(text.length===1,"UTF16");
+  const fail=():number=>{throw {code:"STOP",message:"stop"};};
+  result=true?12:fail();check(result===12,"skip failure");
+  let caught=false;try{result=false?13:fail();}catch(e){caught=(e as Error).code==="STOP";}
+  check(caught && result===12,"selected failure");
+  let stale:boolean|null=true;const clear=():void=>{stale=null;};caught=false;
+  if(stale!==null){clear();try{result=stale?mark("e",1):mark("f",2);}catch(e){caught=(e as Error).code==="E8001";}}
+  check(caught && effects==="ad","stale condition");
+  let value:number|null=9;const invalidate=():void=>{value=null;};caught=false;
+  if(value!==null){invalidate();try{result=true?value:0;}catch(e){caught=(e as Error).code==="E8001";}}
+  check(caught,"stale branch");
+  const original:Item={x:21};const alias=flag?original:original;alias.x=22;check(original.x===22,"identity");
+  const only=flag?{x:1}:{x:2};check((only.x as number)===2,"record branches");
+  let once=0;const condition=():boolean=>{once=once+1;return true;};
+  result=condition()?1:2;check(once===1 && result===1,"condition once");
+  const badCondition=():boolean=>{throw {code:"CONDITION",message:"stop"};};caught=false;
+  try{result=badCondition()?mark("i",1):mark("j",2);}catch(e){caught=(e as Error).code==="CONDITION";}
+  check(caught && effects==="ad","abrupt condition");
+  const f1=(n:number):number=>n+1;const f2=(n:number):number=>n+2;
+  const chosen=flag?f1:f2;check(chosen(5)===7,"function branch");
+  const falsy=flag?true:false;check(!falsy,"false value");
+  const ns:number|null=true?1:null;const joined=flag?ns:2;
+  if(joined!==null){check(joined===2,"nullable arm");}
+  const adapted:(n:number,extra:string)=>number=flag?f1:():number=>9;
+  check(adapted(5,"ignored")===9,"context function adapters");
+  const adaptedTrue:(n:number,extra:string)=>number=true?f1:():number=>9;
+  check(adaptedTrue(5,"ignored")===6,"selected source adapter");
+  let stored:(n:number,extra:string)=>number=adapted;stored=flag?():number=>40:f1;
+  check(stored(5,"ignored")===6,"function assignment context");
+  const need=(fn:(n:number,extra:string)=>number):number=>fn(6,"ignored");
+  check(need(flag?():number=>40:f1)===7,"function argument context");
+  const make=(which:boolean):(n:number,extra:string)=>number=>which?f1:():number=>40;
+  check(make(true)(7,"ignored")===8,"function return context");
+  const functionElements:((n:number,extra:string)=>number)[]=[flag?():number=>40:f1];
+  check(functionElements[0](8,"ignored")===9,"function element context");
+  let sourceCount=0;const source=():(n:number)=>number=>{sourceCount=sourceCount+1;return f1;};
+  const sourced:(n:number,extra:string)=>number=true?source():source();
+  check(sourceCount===1 && sourced(9,"ignored")===10,"selected adapter source once");
+  const holder:Item=flag?{x:30}:{x:31};holder.x=flag?32:33;check(holder.x===33,"context field assignment");
+  const cells:number[]=[0];cells[0]=flag?34:35;check(cells[0]===35,"context array assignment");
+  const recurse=(n:number):number=>n===0?0:n+recurse(n-1);check(recurse(4)===10,"recursive branch");
+  const capture=(n:number):()=>number=>true?():number=>n:():number=>0;
+  check(capture(7)()===7 && capture(8)()===8,"fresh branch captures");
+  const dynamic:unknown=flag?1:"text";check((dynamic as string)==="text","context unknown");
+  const say=(label:string):void=>{effects=effects+label;};
+  flag?say("g"):say("h");check(effects==="adh","void selection");
+  return null;
+}

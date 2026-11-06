@@ -395,7 +395,15 @@ public class CanonicalJsonTest {
         testRoundTripSnapshot(pinnedSnapshot(), "the pinned snapshot round-trips byte-exactly");
         testRoundTripSnapshot(richSnapshot(), "the rich nested snapshot round-trips byte-exactly");
 
-        // Every closed payload shape (55 kinds).
+        var conditional = new KindPayload.BranchPayload(ControlSelector.CONDITIONAL, new ValueId(1),
+            new BlockId(2), new BlockId(3), new ValueId(4), new ValueId(5));
+        String conditionalText = CanonicalJson.serializeText(ContractSnapshotCanonicalizer.payloadJson(conditional));
+        check(conditionalText.equals("{\"alternateBlock\":{\"id\":3,\"type\":\"block\"},\"alternateValue\":{\"id\":5,\"type\":\"value\"},\"condition\":{\"id\":1,\"type\":\"value\"},\"selectedBlock\":{\"id\":2,\"type\":\"block\"},\"selectedValue\":{\"id\":4,\"type\":\"value\"},\"selector\":\"CONDITIONAL\"}"),
+            "conditional canonical keys and arm identities are independently pinned");
+        testRoundTripSnapshot(snapshotFor(conditional, SemanticOpKind.BRANCH, RuntimeDescriptor.Number.INSTANCE,
+            List.of(), FailurePolicyId.NO_DEAL_FAILURE, PLACEHOLDER_DIGEST), "conditional explicit arm values round-trip");
+
+        // Every closed operation payload shape.
         for (SemanticOpKind kind : SemanticOpKind.values()) {
             KindPayload payload = minimalPayload(kind);
             OperationContractSnapshot snapshot = snapshotFor(payload, kind,

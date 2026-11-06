@@ -78,6 +78,7 @@ final class DeclarationReferences {
             case LiteralExpr ignored -> { }
             case MemberAccessExpr n -> expression(n.object(), scope);
             case CallExpr n -> { expression(n.callee(), scope); n.args().forEach(e -> expression(e, scope)); }
+            case ConditionalExpr n -> { expression(n.condition(), scope); expression(n.consequent(), scope); expression(n.alternate(), scope); }
             case BinaryExpr n -> { expression(n.left(), scope); expression(n.right(), scope); }
             case UnaryExpr n -> expression(n.expr(), scope);
             case AssertionExpr n -> { expression(n.value(), scope); type(n.target()); }

@@ -836,7 +836,13 @@ public final class ContractSnapshotCanonicalizer {
                 CanonicalJson.e("completionBoundaryOpId", semanticIdJson(p.completionBoundaryOpId())),
                 CanonicalJson.e("completionDescriptor", descriptorText(p.completionDescriptor())),
                 CanonicalJson.e("token", semanticIdJson(p.token())));
-            case KindPayload.BranchPayload p -> CanonicalJson.obj(
+            case KindPayload.BranchPayload p -> p.selector() == ControlSelector.CONDITIONAL ? CanonicalJson.obj(
+                CanonicalJson.e("alternateBlock", semanticIdJson(p.alternateBlock())),
+                CanonicalJson.e("alternateValue", semanticIdJson(p.alternateValue())),
+                CanonicalJson.e("condition", semanticIdJson(p.condition())),
+                CanonicalJson.e("selectedBlock", semanticIdJson(p.selectedBlock())),
+                CanonicalJson.e("selectedValue", semanticIdJson(p.selectedValue())),
+                CanonicalJson.e("selector", CanonicalJson.str(p.selector().name()))) : CanonicalJson.obj(
                 CanonicalJson.e("alternateBlock", p.alternateBlock() == null
                     ? CanonicalJson.nullValue() : semanticIdJson(p.alternateBlock())),
                 CanonicalJson.e("condition", semanticIdJson(p.condition())),

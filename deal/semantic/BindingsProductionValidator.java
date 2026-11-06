@@ -2396,7 +2396,7 @@ public final class BindingsProductionValidator {
         BoundaryKind.FUNCTION_PARAMETER, BoundaryKind.EXTERNAL_PARAMETER,
         BoundaryKind.STDLIB_PARAMETER, BoundaryKind.FUNCTION_RETURN,
         BoundaryKind.EXTERNAL_RETURN, BoundaryKind.DEAL_TO_HOST,
-        BoundaryKind.CLASS_LITERAL_FIELD,
+        BoundaryKind.CLASS_LITERAL_FIELD, BoundaryKind.CONDITIONAL_BRANCH,
         BoundaryKind.ARRAY_LITERAL_ELEMENT, BoundaryKind.ARRAY_ELEMENT_ASSIGNMENT,
         BoundaryKind.CLASS_FIELD_ASSIGNMENT);
 
@@ -2636,6 +2636,15 @@ public final class BindingsProductionValidator {
             return returnPositionFailure(model, adapterValue, cell);
         }
         switch (kind) {
+            case CONDITIONAL_BRANCH -> {
+                SemanticOp parent = parentOpOf(model, cell);
+                if (parent != null && parent.payload() instanceof KindPayload.BranchPayload branch
+                        && branch.selector() == deal.semantic.ir.ControlSelector.CONDITIONAL
+                        && (adapterValue.equals(branch.selectedValue()) || adapterValue.equals(branch.alternateValue()))
+                        && java.util.Objects.equals(model.blockOf(adaptOp.opId()), model.blockOf(cell.opId()))
+                        && model.nextOpInBlock(adaptOp) == cell) return null;
+                return "conditional arm adapter must feed its own selected branch value";
+            }
             case VARIABLE_DECLARATION, VARIABLE_ASSIGNMENT -> {
                 return variablePositionFailure(model, adaptOp, adapterValue, cell, kind);
             }

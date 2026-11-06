@@ -260,6 +260,7 @@ public final class ModuleShapeValidator {
                 checkExpression(ae.target(), diagnostics, isDeclarationFile);
                 checkExpression(ae.value(), diagnostics, isDeclarationFile);
             }
+            case ConditionalExpr c -> { checkExpression(c.condition(), diagnostics, isDeclarationFile); checkExpression(c.consequent(), diagnostics, isDeclarationFile); checkExpression(c.alternate(), diagnostics, isDeclarationFile); }
             case BinaryExpr be -> {
                 checkExpression(be.left(), diagnostics, isDeclarationFile);
                 checkExpression(be.right(), diagnostics, isDeclarationFile);

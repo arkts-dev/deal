@@ -6084,6 +6084,10 @@ private static IllegalStateException dynamicFunctionValueDefect(
             Value condition = valueOf(payload.condition());
             boolean truthy = ((Value.BoolValue) condition).value();
             switch (payload.selector()) {
+                case CONDITIONAL -> {
+                    runBlock(truthy ? payload.selectedBlock() : payload.alternateBlock());
+                    return publish(op, valueOf(truthy ? payload.selectedValue() : payload.alternateValue()));
+                }
                 case IF -> {
                     if (truthy) {
                         runBlock(payload.selectedBlock());

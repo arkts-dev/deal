@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: functions, arity-extension, closures, arrays, classes
 
-import * as console from "std/console";
+import * as output from "std/console";
 
 class State { calls: number; }
 class Holder { saved: (ignored: number) => number; }
@@ -14,7 +14,7 @@ function check(ok: boolean): void {
 }
 function make(state: State): () => number {
   state.calls = state.calls + 1;
-  console.log("factory");
+  output.log("factory");
   return one;
 }
 function widen(source: () => number): (ignored: number) => number {
@@ -36,7 +36,7 @@ export function main(): null {
 
   let state: State = {calls: 0};
   let made: (ignored: number) => number = make(state);
-  console.log("after");
+  output.log("after");
   check(state.calls === 1);
   check(made(0) === 1);
   check(made(0) === 1);
@@ -90,6 +90,6 @@ export function main(): null {
   }
   check(stringValues[0](0) === 1);
   check(stringValues[1](0) === 2);
-  console.log("OK");
+  output.log("OK");
   return null;
 }

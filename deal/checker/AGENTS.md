@@ -30,4 +30,6 @@ Object.hasOwn accepts Record/class receivers and string keys without field narro
 
 Object.keys is direct-call-only with exactly one checked Record/class argument and a string[] result; unknown, arrays, functions and nullish receivers require appropriate extraction/narrowing. It grants no contextual extraction and never narrows fields.
 
+Conditional conditions require boolean and receive no outer result context. Both arms inherit the result context and their guard refinements; merge invalidations at continuation. Context-free branches require identical types or permitted nullish joins. Contextual function arity extension requires selected-arm adapters; void joins require two void results and cannot be stored as data.
+
 Test acceptance/rejection independently of emitters.

@@ -58,6 +58,9 @@ public final class AdapterCreationRule {
         /** A class field write ({@code CLASS_FIELD_ASSIGNMENT}). */
         CLASS_FIELD_WRITE,
 
+        /** A selected contextual conditional arm. */
+        CONDITIONAL_BRANCH,
+
         /** Every other {@link BoundaryKind} — never adapts. */
         TYPED_BOUNDARY
     }
@@ -318,6 +321,7 @@ public final class AdapterCreationRule {
             case ARRAY_ELEMENT_ASSIGNMENT -> PositionKind.ARRAY_ELEMENT_WRITE;
             case ARRAY_LITERAL_ELEMENT -> PositionKind.ARRAY_LITERAL_ELEMENT;
             case CLASS_FIELD_ASSIGNMENT -> PositionKind.CLASS_FIELD_WRITE;
+            case CONDITIONAL_BRANCH -> PositionKind.CONDITIONAL_BRANCH;
             case ASSERTION, ARRAY_ELEMENT_READ,
                  ARRAY_ELEMENT_DELETE, ASYNC_COMPLETION,
                  UNTYPED_CLASS_INPUT, OPTIONAL_FIELD_READ, CONTEXTUAL_TABLE_READ,

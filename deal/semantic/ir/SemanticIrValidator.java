@@ -2143,8 +2143,42 @@ public final class SemanticIrValidator {
             case "BRANCH", "LOOP" -> {
                 failure = checkSlotEnum(op, unit, facts, "selector", optionalString(payload, "selector"),
                     ControlSelector.class);
-                if (failure.isPresent()) {
-                    return failure;
+                if (failure.isPresent()) return failure;
+                if (!"CONDITIONAL".equals(optionalString(payload, "selector"))
+                        && (payloadValue(payload, "selectedValue") != null || payloadValue(payload, "alternateValue") != null))
+                    return fail(op, unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
+                        origin(R_ENUM, "Only CONDITIONAL carries explicit branch result values"));
+                if ("CONDITIONAL".equals(optionalString(payload, "selector"))) {
+                    ValueId condition = parseValueIdQuiet(payloadValue(payload, "condition") instanceof CanonicalJson.Obj obj ? obj : null);
+                    ValueId selected = parseValueIdQuiet(payloadValue(payload, "selectedValue") instanceof CanonicalJson.Obj obj ? obj : null);
+                    ValueId alternate = parseValueIdQuiet(payloadValue(payload, "alternateValue") instanceof CanonicalJson.Obj obj ? obj : null);
+                    RawOp cond = null, left = null, right = null;
+                    boolean before = true;
+                    for (RawOp producer : unit.ops()) {
+                        if (producer.opId().equals(op.opId())) before = false;
+                        if (condition != null && condition.equals(producer.resultValue()) && before
+                                && unit.bodyTable() != null
+                                && java.util.Objects.equals(unit.bodyTable().opBlocks().get(producer.opId()),
+                                    unit.bodyTable().opBlocks().get(op.opId()))) cond = producer;
+                        if (unit.bodyTable() != null && unit.bodyTable().opBlocks().get(producer.opId()) != null) {
+                            var block = ContractSnapshotCanonicalizer.semanticIdJson(unit.bodyTable().opBlocks().get(producer.opId()));
+                            if (selected != null && selected.equals(producer.resultValue()) && block.equals(payloadValue(payload, "selectedBlock"))) left = producer;
+                            if (alternate != null && alternate.equals(producer.resultValue()) && block.equals(payloadValue(payload, "alternateBlock"))) right = producer;
+                        }
+                    }
+                    boolean blocks = left != null && right != null && unit.bodyTable() != null
+                        && unit.bodyTable().opBlocks().get(left.opId()) != null && unit.bodyTable().opBlocks().get(right.opId()) != null
+                        && java.util.Objects.equals(ContractSnapshotCanonicalizer.semanticIdJson(unit.bodyTable().opBlocks().get(left.opId())), payloadValue(payload, "selectedBlock"))
+                        && java.util.Objects.equals(ContractSnapshotCanonicalizer.semanticIdJson(unit.bodyTable().opBlocks().get(right.opId())), payloadValue(payload, "alternateBlock"));
+                    if (!op.kind().equals("BRANCH") || cond == null || !"boolean".equals(cond.resultType())
+                            || unit.bodyTable() == null || unit.bodyTable().opBlocks().get(op.opId()) == null
+                            || !java.util.Objects.equals(unit.bodyTable().opBlocks().get(cond.opId()), unit.bodyTable().opBlocks().get(op.opId()))
+                            || !op.operands().isEmpty() || !op.operandTypes().isEmpty()
+                            || java.util.Objects.equals(payloadValue(payload, "selectedBlock"), payloadValue(payload, "alternateBlock"))
+                            || !blocks || op.resultValue() == null || !conditionalTypeAdmits(op.resultType(), left.resultType())
+                            || !conditionalTypeAdmits(op.resultType(), right.resultType()))
+                        return fail(op, unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
+                            origin(R_ENUM, "CONDITIONAL requires a preceding boolean condition, two owned value-producing branches and a compatible result"));
                 }
             }
             case "FOR_EACH" -> {
@@ -2234,6 +2268,23 @@ public final class SemanticIrValidator {
         }
 
         return Optional.empty();
+    }
+
+    private static boolean conditionalTypeAdmits(String target, String source) {
+        RuntimeDescriptor result = parseDescriptorQuiet(target), value = parseDescriptorQuiet(source);
+        if (result == null || value == null) return false;
+        if (result.equals(value)) return true;
+        if (result instanceof RuntimeDescriptor.Unknown) return !(value instanceof RuntimeDescriptor.Void);
+        if (result instanceof RuntimeDescriptor.Nullable n) {
+            if (n.inner() instanceof RuntimeDescriptor.Void || value instanceof RuntimeDescriptor.Void) return false;
+            if (n.inner().equals(value)) return true;
+            if (value instanceof RuntimeDescriptor.Null) return n.admitsNull();
+            if (value instanceof RuntimeDescriptor.Undefined) return n.admitsUndefined();
+            if (value instanceof RuntimeDescriptor.Nullable v) return n.inner().equals(v.inner())
+                && (!v.admitsNull() || n.admitsNull()) && (!v.admitsUndefined() || n.admitsUndefined());
+            return n.inner().equals(value);
+        }
+        return false;
     }
 
     private static Optional<CompilerDiagnostic> checkSlotEnum(RawOp op, RawUnit unit,
@@ -2644,6 +2695,23 @@ public final class SemanticIrValidator {
                     return Optional.of(kind.name() + " boundary outside a CLASS_NEW field list");
                 }
                 return Optional.empty();
+            }
+            case CONDITIONAL_BRANCH -> {
+                RawOp parent = boundary.parentOpId() == null ? null : localOps.get(boundary.parentOpId());
+                ValueId input = parseBoundaryInput(boundary);
+                var block = unit.bodyTable() == null ? null : unit.bodyTable().opBlocks().get(boundary.opId());
+                var blockJson = block == null ? null : ContractSnapshotCanonicalizer.semanticIdJson(block);
+                var inputJson = input == null ? null : ContractSnapshotCanonicalizer.semanticIdJson(input);
+                boolean selected = parent != null && input != null && block != null
+                    && "BRANCH".equals(parent.kind())
+                    && "CONDITIONAL".equals(optionalString(parent.payload(), "selector"))
+                    && descriptor.canonicalSpecText().equals(parent.resultType())
+                    && ((inputJson.equals(payloadValue(parent.payload(), "selectedValue"))
+                            && blockJson.equals(payloadValue(parent.payload(), "selectedBlock")))
+                        || (inputJson.equals(payloadValue(parent.payload(), "alternateValue"))
+                            && blockJson.equals(payloadValue(parent.payload(), "alternateBlock"))));
+                return selected && descriptor instanceof RuntimeDescriptor.Func && matchesDescriptorKind(descriptor, policy) ? Optional.empty()
+                    : Optional.of("CONDITIONAL_BRANCH requires its selected value's conditional owner and descriptor policy");
             }
             case ASSERTION, VARIABLE_DECLARATION, VARIABLE_ASSIGNMENT, CLASS_FIELD_ASSIGNMENT,
                  UNTYPED_CLASS_INPUT, OPTIONAL_FIELD_READ, CONTEXTUAL_TABLE_READ,

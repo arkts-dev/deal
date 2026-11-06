@@ -6,7 +6,7 @@ package deal.ast;
 public sealed interface ExpressionNode
     permits AssertionExpr, InstanceofExpr, LiteralExpr,
             IdentifierExpr,
-            BinaryExpr,
+            BinaryExpr, ConditionalExpr,
             UnaryExpr,
             CallExpr,
             MemberAccessExpr,

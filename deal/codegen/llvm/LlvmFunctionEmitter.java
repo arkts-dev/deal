@@ -4670,9 +4670,28 @@ final class LlvmFunctionEmitter {
                 + (enterOnTrue ? selected : alternate) + ", label %"
                 + (enterOnTrue ? alternate : selected));
         }
-        emitBlock(payload.selectedBlock(), join);
+        boolean conditional = payload.selector() == deal.semantic.ir.ControlSelector.CONDITIONAL;
+        String selectedCopy = conditional ? newLabel("selectedvalue") : join;
+        String alternateCopy = conditional ? newLabel("alternatevalue") : join;
+        emitBlock(payload.selectedBlock(), selectedCopy);
+        if (conditional) {
+            startSegment(selectedCopy);
+            if (resultRepresentation(op).isPresent()) {
+                storeResult(op, resultRepresentation(op).orElseThrow(), convert(payload.selectedValue(),
+                    descriptorOfValue(payload.selectedValue()), (RuntimeDescriptor) op.resultType(), op));
+            }
+            terminate("br label %" + join);
+        }
         if (payload.alternateBlock() != null) {
-            emitBlock(payload.alternateBlock(), join);
+            emitBlock(payload.alternateBlock(), alternateCopy);
+            if (conditional) {
+                startSegment(alternateCopy);
+                if (resultRepresentation(op).isPresent()) {
+                    storeResult(op, resultRepresentation(op).orElseThrow(), convert(payload.alternateValue(),
+                        descriptorOfValue(payload.alternateValue()), (RuntimeDescriptor) op.resultType(), op));
+                }
+                terminate("br label %" + join);
+            }
         }
         startSegment(join);
     }

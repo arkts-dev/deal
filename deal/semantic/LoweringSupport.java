@@ -7,6 +7,7 @@ import deal.ast.ArrayLiteralExpr;
 import deal.ast.AssignmentExpr;
 import deal.ast.AwaitExpression;
 import deal.ast.BinaryExpr;
+import deal.ast.ConditionalExpr;
 import deal.ast.BinaryOp;
 import deal.ast.Block;
 import deal.ast.BreakStatement;
@@ -467,6 +468,12 @@ public final class LoweringSupport {
             case InstanceofExpr test -> {
                 scan.cover(ConstructKind.UNARY_ARITHMETIC_COMPARISON);
                 walkExpression(test.value(), module, scan, checkerScope);
+            }
+            case ConditionalExpr conditional -> {
+                scan.cover(ConstructKind.UNARY_ARITHMETIC_COMPARISON);
+                walkExpression(conditional.condition(), module, scan, checkerScope);
+                walkExpression(conditional.consequent(), module, scan, checkerScope);
+                walkExpression(conditional.alternate(), module, scan, checkerScope);
             }
             case BinaryExpr binaryExpr -> {
                 Type type = checkedType(module, binaryExpr);

@@ -672,7 +672,7 @@ public final class DefaultSemanticSerializer {
                         return null;
                     }
                 }
-                case ARRAY_LITERAL, ASSIGNMENT, AWAIT, BINARY, CALL,
+                case ARRAY_LITERAL, ASSIGNMENT, AWAIT, BINARY, CONDITIONAL, CALL,
                      HAS, IDENTIFIER, INDEX, MEMBER_ACCESS,
                      OBJECT_LITERAL, TEMPLATE_LITERAL, UNARY -> {
                     for (DefaultIrNode child : node.children()) {

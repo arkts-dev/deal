@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: functions, arity-extension, classes, stdlib
 
-import * as console from "std/console";
+import * as output from "std/console";
 import * as json from "std/json";
 import * as lib from "./arity-extension-boundaries-lib";
 
@@ -66,6 +66,6 @@ export function main(): null {
   check((json.stringify(parseWide("{}", 9)) as string) === "{}",
     "an adapter over a cataloged stdlib callable invokes its row");
 
-  console.log("OK");
+  output.log("OK");
   return null;
 }

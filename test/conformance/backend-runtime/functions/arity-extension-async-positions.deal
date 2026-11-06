@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: functions, arity-extension, async-await
 
-import * as console from "std/console";
+import * as output from "std/console";
 
 class Marker {
   count: number;
@@ -59,7 +59,7 @@ export async function test_arity_extension_async(): Promise<number> {
   check(fourth === 4, "the sync control keeps its sync marker");
   check(fifth === 106, "the async adaptation forwards its leading argument");
 
-  console.log("ASYNC OK");
+  output.log("ASYNC OK");
   return first + second + third + fourth + fifth;
 }
 

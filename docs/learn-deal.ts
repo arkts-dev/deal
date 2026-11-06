@@ -21,8 +21,14 @@ function values(): number {
   while (count > 0) {
     count = count - 1;
   }
-  if (enabled) { return rounded; }
-  return wide;
+  // Evaluate the boolean condition once and only the selected arm.
+  return enabled ? rounded : wide;
+}
+
+// Conditional arms inherit an annotated destination's contextual type.
+function selectedUser(enabled: boolean): User {
+  return enabled ? { name: "Ada", bio: null, active: true }
+                 : { name: "Grace", bio: null, active: false };
 }
 
 // Functions require parameter and return annotations. A caller may choose

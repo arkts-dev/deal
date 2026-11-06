@@ -26,6 +26,7 @@ import deal.ast.ForOfStatement;
 import deal.ast.FunctionDeclaration;
 import deal.ast.FunctionExpr;
 import deal.ast.HasExpr;
+import deal.ast.ConditionalExpr;
 import deal.ast.IdentifierExpr;
 import deal.ast.IfStatement;
 import deal.ast.ImportDeclaration;
@@ -6548,6 +6549,7 @@ public final class SemanticLowerer {
                         references.add(identifier.name());
                     }
                 }
+                case ConditionalExpr c -> { walkReferenceExpr(c.condition(), bound, references); walkReferenceExpr(c.consequent(), bound, references); walkReferenceExpr(c.alternate(), bound, references); }
                 case BinaryExpr binary -> {
                     walkReferenceExpr(binary.left(), bound, references);
                     walkReferenceExpr(binary.right(), bound, references);
@@ -6681,6 +6683,7 @@ public final class SemanticLowerer {
             switch (expr) {
                 case LiteralExpr ignored -> { }
                 case IdentifierExpr ignored -> { }
+                case ConditionalExpr c -> { collectAssignedNames(c.condition(), assigned); collectAssignedNames(c.consequent(), assigned); collectAssignedNames(c.alternate(), assigned); }
                 case BinaryExpr binary -> {
                     collectAssignedNames(binary.left(), assigned);
                     collectAssignedNames(binary.right(), assigned);
@@ -7136,6 +7139,7 @@ public final class SemanticLowerer {
                 case ObjectLiteralExpr object -> lowerTableNew(object, slot);
                 case MemberAccessExpr access -> lowerMemberAccess(access, slot);
                 case BinaryExpr binary -> lowerBinary(binary, slot);
+                case ConditionalExpr conditional -> lowerConditional(conditional, slot);
                 case TemplateLiteralExpr template -> lowerTemplate(template, slot);
                 case UnaryExpr unary -> lowerUnary(unary, slot);
                 case CallExpr call -> lowerCallSite(call, slot);
@@ -13307,6 +13311,43 @@ public final class SemanticLowerer {
             }
             emit(comparison);
             return (ValueId) comparison.result();
+        }
+
+        /** Evaluates one condition and publishes only its selected contextual arm. */
+        private ValueId lowerConditional(ConditionalExpr conditional, ValueId slot) {
+            ValueId condition = lowerOperand(conditional.condition());
+            BlockId selected = allocateBlock(), alternate = allocateBlock();
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            OpId op = ids.nextOpId(module, nextOrdinal++, 0);
+            ValueId result = slot != null ? slot : ids.nextValueId(module, nextOrdinal++, 0);
+            int mark = emitTarget().size();
+            ValueId left, right;
+            pushBlockParent(op);
+            pushBlock(selected);
+            try { left = lowerConditionalArm(conditional.consequent(), checkedType(conditional), op); }
+            finally { popBlock(); }
+            pushBlock(alternate);
+            try { right = lowerConditionalArm(conditional.alternate(), checkedType(conditional), op); }
+            finally { popBlock(); popBlockParent(); }
+            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(conditional.span()),
+                SourceOriginKind.USER, anchor, currentParent());
+            emitAt(mark, buildOp(op, SemanticOpKind.BRANCH,
+                new KindPayload.BranchPayload(ControlSelector.CONDITIONAL, condition, selected, alternate, left, right),
+                result, valueDescriptorOf(checkedType(conditional)), FailurePolicyId.NO_DEAL_FAILURE, origin));
+            registerDynamicMaterialization(result, op, valueDescriptorOf(checkedType(conditional)));
+            return result;
+        }
+
+        private ValueId lowerConditionalArm(ExpressionNode arm, Type resultType, OpId owner) {
+            RuntimeDescriptor target = valueDescriptorOf(resultType);
+            if (!positionAdapts(arm, target)) return lowerOperand(arm);
+            ValueId adapted = lowerPositionAdapter(arm, (RuntimeDescriptor.Func) target, () -> lowerOperand(arm));
+            OpId boundary = emitNullOp(SemanticOpKind.BOUNDARY,
+                new KindPayload.BoundaryPayload(BoundaryKind.CONDITIONAL_BRANCH, target, adapted,
+                    new BoundaryRealization.RuntimeValidation(CANONICAL_RUNTIME_VALIDATION_ID)),
+                arm.span(), FailurePolicyId.FUNCTION_SIGNATURE, SourceOriginKind.SYNTHETIC, owner);
+            recordPositionAdapterAt(adapted, boundary, BoundaryKind.CONDITIONAL_BRANCH);
+            return adapted;
         }
 
         /**

@@ -51,7 +51,9 @@ public enum BoundaryKind {
      * receiver — the refined class descriptor's nominal check) and carries
      * the descriptor-kind policy of its own descriptor.
      */
-    NARROWED_READ;
+    NARROWED_READ,
+    /** Contextual conditional arm adapter, consumed only in its selected block. */
+    CONDITIONAL_BRANCH;
 
     /**
      * The reserved boundary names, invalid as {@code BoundaryKind} values

@@ -245,7 +245,7 @@ public final class LlvmStageClassifier {
                  NARROWED_READ, CONTEXTUAL_TABLE_READ, OPTIONAL_FIELD_READ,
                  CLASS_FIELD_ASSIGNMENT, ARRAY_ELEMENT_ASSIGNMENT,
                  ARRAY_ELEMENT_READ, ARRAY_ELEMENT_DELETE,
-                 ARRAY_LITERAL_ELEMENT, CLASS_LITERAL_FIELD,
+                 ARRAY_LITERAL_ELEMENT, CONDITIONAL_BRANCH, CLASS_LITERAL_FIELD,
                  UNTYPED_CLASS_INPUT, JSON_FROM_FIELD, JSON_TO_FIELD,
                  STDLIB_PARAMETER, STDLIB_RETURN, ASYNC_COMPLETION -> STATIC_ONLY;
             // The host cell pair: `DEAL_TO_HOST` is the parameter position
@@ -307,7 +307,7 @@ public final class LlvmStageClassifier {
     public static StageSupport controlSelector(ControlSelector selector) {
         Objects.requireNonNull(selector, "selector must not be null");
         return switch (selector) {
-            case IF, WHILE -> STAGED;
+            case IF, CONDITIONAL, WHILE -> STAGED;
             case LOGICAL_AND, LOGICAL_OR -> STATIC_ONLY;
             case TRY_CATCH -> STAGED;
         };

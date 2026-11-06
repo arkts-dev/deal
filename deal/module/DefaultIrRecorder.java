@@ -24,6 +24,7 @@ import deal.ast.FunctionDeclaration;
 import deal.ast.FunctionExpr;
 import deal.ast.FunctionType;
 import deal.ast.HasExpr;
+import deal.ast.ConditionalExpr;
 import deal.ast.IdentifierExpr;
 import deal.ast.IfStatement;
 import deal.ast.ImportDeclaration;
@@ -343,6 +344,13 @@ final class DefaultIrRecorder {
                 return node(DefaultIrNode.NodeKind.UNARY, "INSTANCEOF", typeMap.get(test), contexts,
                     List.of(recordExpression(test.value(), scope, List.of(), evaluatorScope)),
                     null, null, null, test, test.span());
+            }
+            case ConditionalExpr c -> {
+                return node(DefaultIrNode.NodeKind.CONDITIONAL, null, typeMap.get(c), contexts,
+                    List.of(recordExpression(c.condition(), scope, List.of(), evaluatorScope),
+                        recordExpression(c.consequent(), scope, contexts, evaluatorScope),
+                        recordExpression(c.alternate(), scope, contexts, evaluatorScope)),
+                    null, null, null, c, c.span());
             }
             case BinaryExpr bin -> {
                 return node(DefaultIrNode.NodeKind.BINARY,

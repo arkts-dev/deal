@@ -42,7 +42,10 @@ public final class Language16RuntimeTest {
             boolean[] changed) {
         if (value instanceof deal.semantic.ir.CanonicalJson.Obj object) {
             boolean matches = object.entries().stream().anyMatch(e -> e.key().equals("kind")
-                && e.value() instanceof deal.semantic.ir.CanonicalJson.Str s && s.value().equals(kind));
+                && e.value() instanceof deal.semantic.ir.CanonicalJson.Str s
+                && (s.value().equals(kind) || (kind.equals("CONDITIONAL") && s.value().equals("BRANCH")
+                    && payload(object).entries().stream().anyMatch(p -> p.key().equals("selector")
+                        && p.value().equals(new deal.semantic.ir.CanonicalJson.Str("CONDITIONAL"))))));
             if (matches && !changed[0]) { changed[0] = true; return mutation.apply(object); }
             return new deal.semantic.ir.CanonicalJson.Obj(object.entries().stream()
                 .map(e -> new deal.semantic.ir.CanonicalJson.Entry(e.key(), mutateOp(e.value(), kind, mutation, changed))).toList());
@@ -90,7 +93,8 @@ public final class Language16RuntimeTest {
         }
         objectKeysAdmission(false);
         objectKeysAdmission(true);
-        hasOwnAdmission();
+        fixtureAdmission("tables/builtin-has-own.deal", deal.semantic.ir.SemanticOpKind.HAS_FIELD, 17);
+        fixtureAdmission("control-flow/conditional-expression.deal", deal.semantic.ir.SemanticOpKind.BRANCH, 102);
         arrayRemovalAdmission(false);
         arrayRemovalAdmission(true);
         callableBodyAdmission();
@@ -99,12 +103,12 @@ public final class Language16RuntimeTest {
         System.out.println("Language16RuntimeTest: passed (Oracle, JS, LuaJIT, JVM; deployed array descriptors)");
     }
 
-    private static void hasOwnAdmission() throws Exception {
+    private static void fixtureAdmission(String fixture, deal.semantic.ir.SemanticOpKind kind, long expected) throws Exception {
         Path work = Files.createTempDirectory(Path.of("build"), "has-admission-").toAbsolutePath();
         try {
             Path source = Files.createDirectories(work.resolve("src")).resolve("main.deal");
             Files.writeString(source, ConformanceHarnessMetadata.stripClassificationHeaders(Files.readString(
-                Path.of("test/conformance/backend-runtime/tables/builtin-has-own.deal")))
+                Path.of("test/conformance/backend-runtime/" + fixture)))
                 .replace("export function main():null", "export function run():null")
                 + "\nexport function main():null{return null;}\n");
             Files.writeString(work.resolve("deal.json"),
@@ -114,8 +118,9 @@ public final class Language16RuntimeTest {
                 deal.semantic.ReleaseConfiguration.releaseCapabilityRegistry());
             var compiler = new deal.module.CompilationOrchestrator(source, work.resolve("out"),
                 false, false, false, false, deal.codegen.Backend.JS, Map.of(), List.of(source.getParent()), null, null, invocation);
-            if (!compiler.compile()) throw new AssertionError("hasOwn Oracle compilation: " + compiler.diagnostics());
+            if (!compiler.compile()) throw new AssertionError(fixture + " Oracle compilation: " + compiler.diagnostics());
             var project = Objects.requireNonNull(compiler.producedProject());
+            if (fixture.contains("conditional")) conditionalAdmission(project, invocation);
             var tables = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.StructuredBodyTable>();
             var registries = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.ClassFactoryRegistry>();
             project.modules().forEach((id, unit) -> { tables.put(id, unit.bodyTable()); registries.put(id, unit.classFactories()); });
@@ -123,10 +128,96 @@ public final class Language16RuntimeTest {
                 new deal.semantic.SemanticOracle.HostResponder() {}, compiler.checkedProject().input().entryModule(), "run", List.of());
             if (!(result.terminal() instanceof deal.semantic.SemanticRuntimeModel.Terminal.Success success)
                     || !success.resultAtom().equals("null")) throw new AssertionError(result.comparisonReport());
-            long tests = result.trace().stream().filter(e -> e.kind()==deal.semantic.ir.SemanticOpKind.HAS_FIELD
+            long tests = result.trace().stream().filter(e -> e.kind()==kind
                 && e.phase()==deal.semantic.SemanticRuntimeModel.Phase.SUCCESS).count();
-            if (tests!=17) throw new AssertionError("hasOwn Oracle population: " + tests);
+            if (expected >= 0 && tests!=expected) throw new AssertionError(fixture + " Oracle population: " + tests);
         } finally { CompositionProductionTest.remove(work); }
+    }
+
+    private static void conditionalAdmission(deal.semantic.ir.ExecutableLoweredProject project,
+            deal.semantic.CompilerInvocation invocation) {
+        var facts = new deal.semantic.ir.SemanticIrValidator.ComparisonFacts(
+            project.interfaceIndex().interfaceIndexDigest(), project.semanticProfile(), invocation.capabilityRegistryHash());
+        String text = deal.semantic.ir.SemanticIrValidator.toProjectText(project);
+        if (deal.semantic.ir.SemanticIrValidator.validateText(text, facts).isPresent()) throw new AssertionError("conditional text admission");
+        for (var unit : project.modules().values()) {
+            var raw = deal.semantic.ir.RawUnit.fromTyped(unit);
+            var rebuilt = deal.semantic.ir.RawUnitMaterializer.materialize(raw);
+            if (!deal.semantic.ir.SemanticIrValidator.toUnitText(unit).equals(deal.semantic.ir.SemanticIrValidator.toUnitText(rebuilt)))
+                throw new AssertionError("conditional raw round trip");
+            for (var cell : unit.ops()) {
+                if (!(cell.payload() instanceof deal.semantic.ir.KindPayload.BoundaryPayload boundary)
+                        || boundary.kind() != deal.semantic.ir.BoundaryKind.CONDITIONAL_BRANCH) continue;
+                for (String defect : List.of("owner", "input", "descriptor", "read")) {
+                    var descriptor = defect.equals("descriptor") ? deal.semantic.ir.RuntimeDescriptor.parseCanonicalText("()->number") : boundary.descriptor();
+                    var payload = new deal.semantic.ir.KindPayload.BoundaryPayload(
+                        defect.equals("read") ? deal.semantic.ir.BoundaryKind.CONTEXTUAL_TABLE_READ : boundary.kind(), descriptor,
+                        defect.equals("input") ? pValue(unit, cell.origin().parentOpId()) : boundary.input(), boundary.realization());
+                    var origin = cell.origin();
+                    if (defect.equals("owner")) origin = new deal.semantic.ir.SourceOrigin(origin.sourceId(), origin.span(), origin.kind(), origin.anchorId(), cell.opId());
+                    var old = cell.contract();
+                    var provisional = new deal.semantic.ir.OperationContractSnapshot(old.version(), old.opKind(), cell.resultType(), cell.operandTypes(),
+                        old.selector(), payload, old.failurePolicy(), old.referencedSemanticIds(), "pending");
+                    var contract = new deal.semantic.ir.OperationContractSnapshot(old.version(), old.opKind(), cell.resultType(), cell.operandTypes(),
+                        old.selector(), payload, old.failurePolicy(), old.referencedSemanticIds(), deal.semantic.ir.ContractSnapshotCanonicalizer.digest(provisional));
+                    var changed = new deal.semantic.ir.SemanticOp(cell.opId(), cell.kind(), origin, cell.result(), cell.resultType(), cell.operands(), cell.operandTypes(), payload, cell.failurePolicy(), contract);
+                    var ops = unit.ops().stream().map(op -> op == cell ? changed : op).toList();
+                    var malformed = new deal.semantic.ir.LoweredModuleUnit(unit.formatVersion(),unit.semanticProfile(),unit.moduleId(),
+                        unit.interfaceHash(),unit.loweringContextHash(),unit.requiredCapabilities(),unit.constructCoverage(),unit.classLayouts(),
+                        unit.functions(),unit.moduleInit(),unit.exportPlan(),unit.functionBindings(),ops,unit.bodyTable(),unit.classFactories(),unit.classBindingFacts());
+                    var typed = deal.semantic.ir.SemanticIrValidator.validate(malformed,facts);
+                    var materialized = deal.semantic.ir.SemanticIrValidator.validate(deal.semantic.ir.RawUnitMaterializer.materialize(deal.semantic.ir.RawUnit.fromTyped(malformed)),facts);
+                    var transported = deal.semantic.ir.SemanticIrValidator.validateText(deal.semantic.ir.SemanticIrValidator.toUnitText(malformed),facts);
+                    if (typed.isEmpty() || !typed.equals(materialized) || !typed.equals(transported))
+                        throw new AssertionError("conditional adapter " + defect + ": " + typed + " / " + materialized + " / " + transported);
+                }
+            }
+            var branch = unit.ops().stream().filter(op -> op.payload() instanceof deal.semantic.ir.KindPayload.BranchPayload p
+                && p.selector()==deal.semantic.ir.ControlSelector.CONDITIONAL).findFirst().orElse(null);
+            if (branch == null) continue;
+            var p = (deal.semantic.ir.KindPayload.BranchPayload) branch.payload();
+            for (String key : List.of("condition", "selectedBlock", "alternateBlock", "selectedValue", "alternateValue")) {
+                rejectsOp(deal.semantic.ir.SemanticIrValidator.toUnitText(unit), "CONDITIONAL", op -> field(op, "payload",
+                    field(payload(op), key, deal.semantic.ir.CanonicalJson.Null.INSTANCE)), facts);
+                rejectsOp(deal.semantic.ir.SemanticIrValidator.toUnitText(unit), "CONDITIONAL", op -> field(op, "payload",
+                    new deal.semantic.ir.CanonicalJson.Obj(payload(op).entries().stream().filter(e -> !e.key().equals(key)).toList())), facts);
+            }
+            rejectsOp(deal.semantic.ir.SemanticIrValidator.toUnitText(unit), "CONDITIONAL", op -> field(op, "payload",
+                field(payload(op), "selector", new deal.semantic.ir.CanonicalJson.Str("IF"))), facts);
+            for (String defect : List.of("condition", "selected", "alternate", "block", "missingBlock", "result", "operand", "unavailable", "forward", "policy")) {
+                var payload = new deal.semantic.ir.KindPayload.BranchPayload(p.selector(),
+                    defect.equals("condition") ? p.selectedValue() : defect.equals("forward") ? (deal.semantic.ir.ValueId) branch.result() : p.condition(), p.selectedBlock(),
+                    defect.equals("block") ? p.selectedBlock() : defect.equals("missingBlock") ? new deal.semantic.ir.BlockId(Integer.MAX_VALUE) : p.alternateBlock(),
+                    defect.equals("selected") ? p.condition() : defect.equals("unavailable") ? new deal.semantic.ir.ValueId(Integer.MAX_VALUE) : p.selectedValue(),
+                    defect.equals("alternate") ? p.condition() : p.alternateValue());
+                var type = defect.equals("result") ? deal.semantic.ir.RuntimeDescriptor.String.INSTANCE : branch.resultType();
+                var operands = defect.equals("operand") ? List.of(p.condition()) : branch.operands();
+                var types = defect.equals("operand") ? List.<deal.semantic.ir.RuntimeDescriptor>of(deal.semantic.ir.RuntimeDescriptor.Boolean.INSTANCE) : branch.operandTypes();
+                var policy = defect.equals("policy") ? deal.semantic.ir.FailurePolicyId.TYPE_DESCRIPTOR : branch.failurePolicy();
+                var old = branch.contract();
+                var provisional = new deal.semantic.ir.OperationContractSnapshot(old.version(), old.opKind(), type, types,
+                    old.selector(), payload, policy, old.referencedSemanticIds(), "pending");
+                var contract = new deal.semantic.ir.OperationContractSnapshot(old.version(), old.opKind(), type, types,
+                    old.selector(), payload, policy, old.referencedSemanticIds(), deal.semantic.ir.ContractSnapshotCanonicalizer.digest(provisional));
+                var changed = new deal.semantic.ir.SemanticOp(branch.opId(), branch.kind(), branch.origin(), branch.result(), type,
+                    operands, types, payload, policy, contract);
+                var ops = unit.ops().stream().map(op -> op==branch ? changed : op).toList();
+                var malformed = new deal.semantic.ir.LoweredModuleUnit(unit.formatVersion(),unit.semanticProfile(),unit.moduleId(),
+                    unit.interfaceHash(),unit.loweringContextHash(),unit.requiredCapabilities(),unit.constructCoverage(),unit.classLayouts(),
+                    unit.functions(),unit.moduleInit(),unit.exportPlan(),unit.functionBindings(),ops,unit.bodyTable(),unit.classFactories(),unit.classBindingFacts());
+                var typed = deal.semantic.ir.SemanticIrValidator.validate(malformed,facts);
+                var materialized = deal.semantic.ir.SemanticIrValidator.validate(deal.semantic.ir.RawUnitMaterializer.materialize(
+                    deal.semantic.ir.RawUnit.fromTyped(malformed)),facts);
+                var transported = deal.semantic.ir.SemanticIrValidator.validateText(deal.semantic.ir.SemanticIrValidator.toUnitText(malformed),facts);
+                if (typed.isEmpty() || !typed.equals(materialized) || !typed.equals(transported)
+                        || (!typed.get().message().contains("R-ENUM") && !defect.equals("policy"))) throw new AssertionError("conditional " + defect + ": " + typed + " / " + materialized + " / " + transported);
+            }
+        }
+    }
+
+    private static deal.semantic.ir.ValueId pValue(deal.semantic.ir.LoweredModuleUnit unit, deal.semantic.ir.OpId owner) {
+        return ((deal.semantic.ir.KindPayload.BranchPayload) unit.ops().stream().filter(op -> op.opId().equals(owner))
+            .findFirst().orElseThrow().payload()).condition();
     }
 
     private static void objectKeysAdmission(boolean hostile) throws Exception {

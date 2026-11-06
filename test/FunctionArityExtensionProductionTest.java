@@ -330,7 +330,7 @@ public final class FunctionArityExtensionProductionTest {
      * value before the exact host cell, and an exact value stores directly.
      */
     private static final String HOST_PARAMETER_SOURCE = """
-        import * as console from "std/console";
+        import * as output from "std/console";
         import * as host from "host/arity_extension_host";
 
         function check(condition: boolean, message: string): null {
@@ -359,7 +359,7 @@ public final class FunctionArityExtensionProductionTest {
           check(host.useTriple(pair) === 5,
             "an adapter-valued source adapts at a host parameter");
 
-          console.log("OK");
+          output.log("OK");
           return null;
         }
         """;
@@ -371,7 +371,7 @@ public final class FunctionArityExtensionProductionTest {
      * invocation dispatches the stdlib row on LuaJIT and the JVM.
      */
     private static final String HOST_STDLIB_SOURCE = """
-        import * as console from "std/console";
+        import * as output from "std/console";
         import * as host from "host/arity_extension_host";
         import * as json from "std/json";
 
@@ -380,7 +380,7 @@ public final class FunctionArityExtensionProductionTest {
           if ((json.stringify(parsed) as string) !== "{}") {
             throw { code: "TEST_FAIL", message: "host stdlib adapter failed" };
           }
-          console.log("OK");
+          output.log("OK");
           return null;
         }
         """;

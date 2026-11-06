@@ -4793,6 +4793,16 @@ private void emitStdlib(SemanticOp op) {
             emitStart(op);
             String condition = slot(payload.condition());
             switch (payload.selector()) {
+                case CONDITIONAL -> {
+                    String selected = label(payload.selectedBlock()), alternate = label(payload.alternateBlock());
+                    String after = selected + "A", target = slot((ValueId) op.result());
+                    out.append("if ").append(condition).append(" then goto ").append(selected).append(" else goto ").append(alternate).append(" end\n");
+                    emitLabeledBlock(payload.selectedBlock());
+                    out.append(target).append(" = ").append(slot(payload.selectedValue())).append("\ngoto ").append(after).append("\n");
+                    emitLabeledBlock(payload.alternateBlock());
+                    out.append(target).append(" = ").append(slot(payload.alternateValue())).append("\n::").append(after).append("::\n");
+                    emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
+                }
                 case IF -> {
                     String selected = label(payload.selectedBlock());
                     String after = label(payload.selectedBlock()) + "A";

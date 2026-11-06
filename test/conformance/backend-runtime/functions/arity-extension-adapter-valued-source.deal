@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: functions, arity-extension, classes, arrays, closures
 
-import * as console from "std/console";
+import * as output from "std/console";
 
 class Marker {
   count: number;
@@ -98,6 +98,6 @@ export function main(): null {
   let exact: (x: number, y: number) => number = pair;
   check(needPair(exact) === 3, "an exact target stores the adapted value directly");
 
-  console.log("OK");
+  output.log("OK");
   return null;
 }

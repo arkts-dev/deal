@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: functions, arity-extension, async-await
 
-import * as console from "std/console";
+import * as output from "std/console";
 
 function check(condition: boolean, message: string): null {
   if (!condition) {
@@ -41,7 +41,7 @@ export async function test_arity_extension_async_adapter_source(): Promise<numbe
   let third: number = await widenedReturned(3, 2);
   check(third === 41, "a zero-to-one adapter value returned from an async function adapts");
 
-  console.log("ASYNC ADAPTER SOURCE OK");
+  output.log("ASYNC ADAPTER SOURCE OK");
   return first + second + third;
 }
 

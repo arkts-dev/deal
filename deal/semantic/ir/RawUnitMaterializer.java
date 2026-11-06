@@ -503,7 +503,11 @@ public final class RawUnitMaterializer {
             case AWAIT -> new KindPayload.AwaitPayload(
                 tokenAt(p, "token", where), descriptorAt(p, "completionDescriptor", where),
                 opIdAt(p, "completionBoundaryOpId", where));
-            case BRANCH -> new KindPayload.BranchPayload(
+            case BRANCH -> "CONDITIONAL".equals(optionalString(p, "selector")) ? new KindPayload.BranchPayload(
+                enumAt(p, "selector", ControlSelector.class, where),
+                valueIdAt(p, "condition", where), blockIdAt(p, "selectedBlock", where),
+                blockIdAt(p, "alternateBlock", where), valueIdAt(p, "selectedValue", where),
+                valueIdAt(p, "alternateValue", where)) : new KindPayload.BranchPayload(
                 enumAt(p, "selector", ControlSelector.class, where),
                 valueIdAt(p, "condition", where), blockIdAt(p, "selectedBlock", where),
                 optionalBlockId(p, "alternateBlock", where));
