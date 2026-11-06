@@ -1291,7 +1291,7 @@ Array.from(xs: E[], mapper: (value: E, index: number) => R): R[]
 
 For xs of type E[] and ss of type string[], E and R denote data types, not source generics; R is the synchronous mapper's explicit result type.
 
-Listed receiver operations follow corresponding [ECMAScript semantics](https://262.ecma-international.org/16.0/#sec-array-objects), except `map`, `find` and `findIndex` raise E8002 when visiting missing indexes. `push`, `pop` and `splice` validate affected elements before mutation.
+Listed receiver operations follow corresponding [ECMAScript semantics](https://262.ecma-international.org/16.0/#sec-array-objects), except `map`, `find` and `findIndex` raise E8002 instead of skipping or reading missing elements. `push`, `pop` and `splice` validate affected elements before mutation.
 
 `from` traverses xs as [for-of](#for-of) does, invoking mapper with each value and index; returns its results in a fresh array.
 
@@ -1340,7 +1340,7 @@ Number.isFinite(value: unknown): boolean
 Number.isNaN(value: unknown): boolean
 ```
 
-Follow corresponding [ECMAScript Number operations](https://262.ecma-international.org/16.0/#sec-properties-of-the-number-constructor).
+Follow ECMAScript [isFinite](https://262.ecma-international.org/16.0/#sec-number.isfinite) and [isNaN](https://262.ecma-international.org/16.0/#sec-number.isnan).
 
 #### JSON
 
