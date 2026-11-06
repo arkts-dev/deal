@@ -66,7 +66,7 @@ SourceCharacter ::= /* any Unicode scalar value */
 
 Token ::= Keyword | Identifier | Literal | Operator | Punctuator
 
-Keyword ::= 'let' | 'class' | 'function' | 'await' | 'return' | 'if' | 'else'
+Keyword ::= 'let' | 'const' | 'class' | 'function' | 'await' | 'return' | 'if' | 'else'
           | 'while' | 'for' | 'break' | 'continue'
           | 'null' | 'true' | 'false' | 'typeof' | 'instanceof'
           | 'import' | 'export' | 'delete'
@@ -143,7 +143,7 @@ Parameter ::= Identifier ':' Type
 
 ReturnType ::= Type | 'void' | 'Promise' '<' (Type | 'void') '>'
 
-VariableDeclaration ::= 'let' Identifier TypeAnnotation? '=' Expression ';'
+VariableDeclaration ::= ('let' | 'const') Identifier TypeAnnotation? '=' Expression ';'
 
 TypeAnnotation ::= ':' Type
 
@@ -155,7 +155,7 @@ IfStatement ::= 'if' '(' Expression ')' Block ('else' (IfStatement | Block))?
 
 WhileStatement ::= 'while' '(' Expression ')' Block
 
-ForOfStatement  ::= 'for' '(' 'let' Identifier 'of' Expression ')' Block
+ForOfStatement  ::= 'for' '(' ('let' | 'const') Identifier 'of' Expression ')' Block
 
 BreakStatement ::= 'break' ';'
 
@@ -266,7 +266,7 @@ Semantics:
 
 ### Assignment targets
 
-Only variables, declared class fields, Record keys and array elements are assignable; otherwise compile-time error.
+Only [reassignable variables](#variables), declared class fields, Record keys and array elements are assignable; otherwise compile-time error.
 
 ```ts
 class User { name: string; }
@@ -442,7 +442,7 @@ String concatenation uses `+`. Both operands must be `string`. No implicit strin
 | `"abc"` | `string` |
 | `` `a${x}b` `` | `string` |
 | `(e)` | same type as `e` |
-| variable declared `let x: T` | `T` |
+| variable declared with type `T` | `T` |
 | `a + b` where both `number` | `number` |
 | `a + b` where both `string` | `string` (concatenation; no implicit conversions) |
 | any other `+` | error |
@@ -793,10 +793,12 @@ if (n !== null) {
 
 ## Variables
 
+`const` uses `let` typing but forbids binding reassignment at compile time; referenced data remains mutable.
+
 ```ts
 let x: number = 1;
-let y = true; // boolean inferred
-let z = 1.0; // number inferred
+const y = true; // boolean inferred
+const z = 1.0; // number inferred
 ```
 
 ### Inference rules
@@ -852,8 +854,8 @@ Shadowing follows [Lexical elements](#lexical-elements) builtin-name restriction
 Declaration order:
 
 - Module-level functions/classes are hoisted for name resolution.
-- `let` declarations are visible only after declaration.
-- A function-expression initializer’s body sees its own `let` binding.
+- Local declarations are visible only after declaration.
+- A function-expression initializer’s body sees its own binding.
 
 ### Definite return analysis
 
@@ -1003,7 +1005,7 @@ while (boolean_expr) {
 
 ```ts
 let xs: number[] = [1, 2, 3];
-for (let x of xs) {
+for (const x of xs) {
   // x: number, each element in order
 }
 
@@ -1155,7 +1157,7 @@ Declaration files additionally support external function declarations:
 export function name(p1: T1, p2: T2): R;
 ```
 
-Declaration files may export only functions and classes. `export let` is forbidden.
+Declaration files may export only functions and classes.
 
 No named export lists, no default export, no re-export, no namespace export.
 
