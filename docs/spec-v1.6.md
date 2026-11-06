@@ -118,7 +118,8 @@ LineTerminator ::= '\n' | '\r\n' | '\r'
 
 Operator ::= '+' | '-' | '*' | '/' | '%'
  | '===' | '!==' | '<' | '<=' | '>' | '>='
- | '&&' | '||' | '!' | '=' | '.' | '=>' | '|'
+ | '&&' | '||' | '??' | '?.' | '!' | '=' | '.' | '=>' | '|'
+/* '?.' is not followed by a decimal digit. */
 
 Punctuator ::= '{' | '}' | '(' | ')' | '[' | ']' | ':' | ';' | ',' | '?'
 ```
@@ -205,7 +206,11 @@ AssignmentExpression ::= ConditionalExpression
  | LeftHandSideExpression '=' AssignmentExpression
  | ArrowFunction
 
-ConditionalExpression ::= LogicalOrExpression ('?' AssignmentExpression ':' AssignmentExpression)?
+ConditionalExpression ::= ShortCircuitExpression ('?' AssignmentExpression ':' AssignmentExpression)?
+
+ShortCircuitExpression ::= LogicalOrExpression | CoalesceExpression
+
+CoalesceExpression ::= EqualityExpression ('??' EqualityExpression)+
 
 LogicalOrExpression ::= LogicalAndExpression ('||' LogicalAndExpression)*
 
@@ -233,6 +238,9 @@ PostfixExpression ::= PrimaryExpression PostfixPart*
 PostfixPart ::= '.' Identifier
  | '[' Expression ']'
  | Arguments
+ | '?.' Identifier
+ | '?.' '[' Expression ']'
+ | '?.' Arguments
 
 Arguments ::= '(' ArgumentList? ')'
 
@@ -291,7 +299,7 @@ Semantics:
 
 ### Assignment targets
 
-Only [reassignable variables](#variables), declared class fields, Record keys and array elements are assignable; otherwise compile-time error.
+Only [reassignable variables](#variables), declared class fields, Record keys and array elements are assignable; otherwise compile-time error. Optional chains are not assignment targets.
 
 ```ts
 class User { name: string; }
@@ -1019,6 +1027,12 @@ if (b) { }
 ```ts
 let result = condition ? a : b;
 ```
+
+### Nullish coalescing and optional chaining
+
+`a ?? b` evaluates a once, evaluating b only for null/undefined. Contextual targets propagate to b. Combine a's non-nullish type and b's type by [conditional](#conditional) rules; if a is nullish-only, use b's type.
+
+Each optional segment tests its receiver/callee once. If null/undefined, skip the remaining chain and yield undefined; parentheses end chains. Otherwise use ordinary access/call rules on its non-nullish type. Add undefined only to the completed chain's result. Optional void calls are statement-only. Reject async calls in optional chains.
 
 ### While
 
