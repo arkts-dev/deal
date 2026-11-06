@@ -908,6 +908,23 @@ public class AsyncExportInvokerProductionTest {
     private static void testValueSevenBothTargets() throws Exception {
         System.out.println("-- the pinned value-7 project through both invokers");
         for (String backend : List.of("luajit", "jvm")) {
+            checkNumberCompletion(backend, "typed-arrows", """
+                async function done(): Promise<void> {}
+                export function main(): null { return null; }
+                export async function run(): Promise<number> {
+                  let base = 2;
+                  const value = async (x: number): Promise<number> => x + base;
+                  const block = async (): Promise<number> => { return await value(3); };
+                  const nothing = async (): Promise<void> => await done();
+                  await nothing();
+                  let recursive: (n: number) => Promise<number> = async (n: number): Promise<number> => {
+                    if (n === 0) { return base; }
+                    return (await recursive(n - 1)) + 1;
+                  };
+                  base = 3;
+                  return (await block()) + (await recursive(2));
+                }
+                """, "number", "11.0");
             Project project = compile("value7-" + backend, backend,
                 String.format(PLAIN_MANIFEST, backend), VALUE_SEVEN_SOURCE, null,
                 null);

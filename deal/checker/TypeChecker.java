@@ -2601,6 +2601,11 @@ public final class TypeChecker {
         int savedLoopDepth = loopDepth;
         loopDepth = 0;
         walkStatement(fe.body());
+        if (fe.expressionBody() && returnType instanceof Type.Void
+                && fe.body().statements().getFirst() instanceof ExpressionStatement expression
+                && !(typeOf(expression.expr()) instanceof Type.Void)) {
+            error(DiagnosticCode.E5003, "Void arrow body requires a void expression", expression.span());
+        }
         narrowing = savedNarrowing;
         loopAssignments = savedLoopAssignments;
         tryAssignments = savedTryAssignments;

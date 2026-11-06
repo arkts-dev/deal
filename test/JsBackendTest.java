@@ -853,7 +853,11 @@ public class JsBackendTest {
               if (r !== 7 || trace !== "ABF") {
                 throw { code: "ARITY_FAIL", message: "async extended arguments: " + trace };
               }
-              c.log("async-extended-argument-order");
+              const twice = async (x: number): Promise<number> => x * 2;
+              const block = async (): Promise<number> => { return await twice(4); };
+              const quiet = async (): Promise<void> => c.log("async-extended-argument-order");
+              if ((await block()) !== 8) { throw {code:"TEST", message:"async arrow result"}; }
+              await quiet();
               return null;
             }
             """, "production-arity-order", "run", "null");

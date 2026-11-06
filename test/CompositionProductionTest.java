@@ -184,6 +184,11 @@ public final class CompositionProductionTest {
                 + "if(20%6*2!==4 || 20/2%3!==1){throw {code:\"TEST\",message:\"remainder precedence\"};}return null;}";
             execute(remainders, "", root.resolve("remainders"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
+            String arrowFixture = "functions/typed-arrows.deal";
+            String arrows = ConformanceHarnessMetadata.productionCorpusSource(Files.readString(
+                Path.of("test/conformance/backend-runtime").resolve(arrowFixture)), arrowFixture);
+            execute(arrows, "", root.resolve("arrows"), null,
+                List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             // Each seed changes values and composition depth, not the language
             // contract. Integer arithmetic here is exactly representable binary64.
             for (int seed = 0; seed < 4; seed++) {
@@ -208,7 +213,7 @@ public final class CompositionProductionTest {
                     + "){throw {code:\"TEST\",message:\"value\"};}c.log(\"COMPOSE_OK\");return null;}";
                 execute(source, "COMPOSE_OK\n", root.resolve("seed" + seed), null);
             }
-            System.out.println("Composition production: 15 composition lanes and 35 revised-syntax executions passed");
+            System.out.println("Composition production: 15 composition lanes and 42 revised-syntax executions passed");
         } finally { remove(root); }
     }
 }

@@ -668,6 +668,15 @@ public final class LlvmAsyncRuntimeTest {
             completion-error:caught
             """;
         runExecuted(scratch, output, "values", 0, expected, 0, "");
+        Path arrows = compile(scratch, "arrow-values", VALUES_APP.replace(
+            "let synced: number = await probe.sync(1);", """
+            const value = async (n: number): Promise<number> => await probe.sync(n);
+            const nothing = async (): Promise<void> => await probe.voidOp();
+            const block = async (): Promise<number> => { await nothing(); return await value(1); };
+            let synced: number = await block();
+            """));
+        runExecuted(scratch, arrows, "arrow-values", 0, expected, 0, "");
+        runExecuted(scratch, arrows, "arrow-values", 2, expected, 0, "");
     }
 
     /**

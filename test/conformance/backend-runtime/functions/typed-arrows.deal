@@ -1,0 +1,33 @@
+// @spec: Functions — Function expressions
+// @description: Typed arrows preserve closures, recursion, expression returns and async completion
+// @expected: runtime-ok
+// @features: functions, arrows, closures, async
+
+class Box { value: number; }
+export function main(): null {
+  let n = 0;
+  const bump = (): void => { n = n + 1; };
+  const run = (): void => bump();
+  run();
+  const make = (x: number): Box => ({value: x});
+  const rec = (x: number): number => {
+    if (x === 0) { return 0; }
+    return rec(x - 1) + 1;
+  };
+  const outer = (x: number): ((y: number) => number) => (y: number): number => x + y;
+  const sum = outer(4);
+  let fs: (() => number)[] = [];
+  for (const x of [1, 2]) { fs[fs.length] = (): number => x; }
+  if (make(3).value !== 3 || rec(5) !== 5 || sum(6) !== 10 || n !== 1
+      || fs[0]() !== 1 || fs[1]() !== 2) {
+    throw {code: "TEST", message: "arrow semantics"};
+  }
+  return null;
+}
+export async function drive(): Promise<number> {
+  let base = 2;
+  const g = async (x: number): Promise<number> => x + base;
+  const block = async (): Promise<number> => { return await g(8); };
+  base = 3;
+  return await block();
+}

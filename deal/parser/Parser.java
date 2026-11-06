@@ -1315,6 +1315,7 @@ public final class Parser {
                 return new IdentifierExpr(spanOf(previous()), previous().lexeme());
             }
             case LPAREN -> {
+                if (looksLikeArrow(pos)) return parseArrowExpression();
                 advance();
                 ExpressionNode inner = parseExpression();
                 if (inner == null) {
@@ -1328,6 +1329,8 @@ public final class Parser {
             case LBRACE   -> { return parseObjectLiteral(); }
             case FUNCTION -> { return parseFunctionExpression(); }
             case ASYNC    -> {
+                if (pos + 1 < tokens.size() && tokens.get(pos + 1).type() == TokenType.LPAREN
+                        && looksLikeArrow(pos + 1)) return parseArrowExpression();
                 if (pos + 1 < tokens.size() && tokens.get(pos + 1).type() == TokenType.FUNCTION)
                     return parseFunctionExpression();
                 advance();
@@ -1745,6 +1748,56 @@ public final class Parser {
             new LiteralValue.StringLiteral(""));
     }
 
+    /** A typed arrow head is distinguished without consuming grouped expressions. */
+    private boolean looksLikeArrow(int start) {
+        int depth = 0;
+        for (int index = start; index < tokens.size(); index++) {
+            TokenType type = tokens.get(index).type();
+            if (type == TokenType.LPAREN) depth++;
+            if (type == TokenType.RPAREN && --depth == 0) {
+                return index + 1 < tokens.size() && tokens.get(index + 1).type() == TokenType.COLON;
+            }
+        }
+        return false;
+    }
+
+    private ExpressionNode parseArrowExpression() {
+        boolean async = match(TokenType.ASYNC);
+        Token start = async ? previous() : peek();
+        if (async && start.line() != peek().line()) {
+            error(DiagnosticCode.E1007, "No line terminator between async and (", peek());
+        }
+        expect(TokenType.LPAREN, DiagnosticCode.E1009, "Expected '(' before arrow parameters");
+        ParamListResult params = parseParameterList();
+        expect(TokenType.RPAREN, DiagnosticCode.E1010, "Expected ')' after arrow parameters");
+        expect(TokenType.COLON, DiagnosticCode.E1011, "Expected arrow result annotation");
+        ResultAnnotation result = parseResultAnnotation();
+        if (result.type() == null) return null;
+        if (peek().line() != previous().line()) {
+            error(DiagnosticCode.E1007, "No line terminator before =>", peek());
+        }
+        expect(TokenType.ARROW, DiagnosticCode.E1012, "Expected '=>' after arrow result");
+        if (async != result.isAsync()) {
+            error(DiagnosticCode.E1011, "Async implementations require Promise result notation; sync implementations forbid it", start);
+        }
+        boolean expressionBody = peek().type() != TokenType.LBRACE;
+        Block body;
+        if (!expressionBody) {
+            body = parseBlock();
+        } else {
+            ExpressionNode value = parseExpression();
+            if (value == null) return null;
+            // Retain the distinction for void-body typing; all execution uses ordinary body IR.
+            boolean voidResult = result.type() instanceof NamedType named && named.name().equals("void");
+            body = new Block(value.span(), voidResult
+                ? List.of(new ExpressionStatement(value.span(), value),
+                    new ReturnStatement(value.span(), Optional.empty()))
+                : List.of(new ReturnStatement(value.span(), Optional.of(value))));
+        }
+        return new FunctionExpr(spanBetween(start, previousOrCurrent()), params.params(),
+            result.type(), body, result.isAsync(), expressionBody);
+    }
+
     private ExpressionNode parseFunctionExpression() {
         boolean isAsync = match(TokenType.ASYNC);
         Token startToken = isAsync ? previous() : peek();
@@ -1915,11 +1968,21 @@ public final class Parser {
     private Token expect(TokenType type, DiagnosticCode code, String message) {
         if (type == TokenType.GT && peek().type() == TokenType.GTE) {
             Token t = peek();
+            // Promise<T>=> lexes as >= followed by >; recover the adjacent arrow.
+            boolean arrow = pos + 1 < tokens.size()
+                && tokens.get(pos + 1).type() == TokenType.GT
+                && tokens.get(pos + 1).line() == t.line()
+                && tokens.get(pos + 1).column() == t.column() + 2;
+            if (arrow) {
+                tokens.remove(pos + 1);
+                originalTokenIndices.remove(pos + 1);
+            }
             tokens.set(pos, new Token(TokenType.GT, ">", t.line(), t.column(), 1,
                 t.startScalarOffset(), 1));
             originalTokenIndices.add(pos + 1, originalTokenIndices.get(pos));
-            tokens.add(pos + 1, new Token(TokenType.EQ_SIGN, "=", t.line(), t.column() + 1, 1,
-                t.startScalarOffset() < 0 ? t.startScalarOffset() : t.startScalarOffset() + 1, 1));
+            tokens.add(pos + 1, new Token(arrow ? TokenType.ARROW : TokenType.EQ_SIGN,
+                arrow ? "=>" : "=", t.line(), t.column() + 1, arrow ? 2 : 1,
+                t.startScalarOffset() < 0 ? t.startScalarOffset() : t.startScalarOffset() + 1, arrow ? 2 : 1));
         }
         if (peek().type() == type || type == TokenType.IDENTIFIER && isIdentifier(peek().type())) {
             return advance();

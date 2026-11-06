@@ -3,14 +3,19 @@ package deal.ast;
 import java.util.List;
 
 /**
- * {@code function(p1: T1, ..., pN: TN): R { body }} (function expression).
- *
- * <p>DEAL v1.2: no rest parameters.</p>
+ * A function expression or explicitly typed arrow. Expression arrow bodies
+ * use an ordinary body block, retaining their source form for void-result typing.
  */
 public record FunctionExpr(
     Span span,
     List<Parameter> params,
     TypeNode returnType,
     Block body,
-    boolean isAsync
-) implements ExpressionNode {}
+    boolean isAsync,
+    boolean expressionBody
+) implements ExpressionNode {
+    public FunctionExpr(Span span, List<Parameter> params, TypeNode returnType,
+                        Block body, boolean isAsync) {
+        this(span, params, returnType, body, isAsync, false);
+    }
+}
