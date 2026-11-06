@@ -207,6 +207,11 @@ deal_outcome deal_check_live_value(deal_descriptor *expected, deal_check_input i
  */
 const char *deal_check_token(const deal_check_input *input);
 
+/* Validate the last element at the call origin before committing removal.
+ * Empty arrays return undefined; rejection leaves all storage unchanged. */
+deal_outcome_data deal_array_pop(deal_array *array, deal_descriptor *element,
+                                  const deal_origin *origin);
+
 /* The scalar boundary helpers (R4): admit one persistent datum at one declared
  * scalar position and project its native payload through the same arm tuple as
  * `deal_check_value`. */

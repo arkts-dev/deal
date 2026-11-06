@@ -1226,6 +1226,39 @@ public class SemanticIrValidatorTest {
                 "R-ENUM", "STDLIB_TIME_CONFLICT");
         }
 
+        for (String defect : List.of("none", "receiver", "unavailable", "result", "operand", "type", "policy", "forward")) {
+            var arrayType = new RuntimeDescriptor.Array(INT);
+            SemanticOp array = op(SemanticOpKind.ARRAY_NEW, new KindPayload.ArrayNewPayload(INT, List.of(), List.of()),
+                nextValue(), arrayType, FailurePolicyId.NO_DEAL_FAILURE, null);
+            ValueId receiver = defect.equals("unavailable") ? nextValue() : (ValueId) array.result();
+            if (defect.equals("receiver")) array = constOp();
+            var payload = new KindPayload.ArrayPopPayload(receiver);
+            RuntimeDescriptor result = defect.equals("result") ? INT : RuntimeDescriptor.optionalRead(INT);
+            List<ValueId> operands = List.of(defect.equals("operand") ? nextValue() : receiver);
+            List<RuntimeDescriptor> types = List.of(defect.equals("type") ? new RuntimeDescriptor.Array(STR) : arrayType);
+            FailurePolicyId policy = defect.equals("policy") ? FailurePolicyId.NO_DEAL_FAILURE : FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR;
+            var contract = contractFor(SemanticOpKind.ARRAY_POP, payload, result, types, policy, "placeholder");
+            contract = contractFor(SemanticOpKind.ARRAY_POP, payload, result, types, policy,
+                ContractSnapshotCanonicalizer.digest(contract));
+            SemanticOp pop = new SemanticOp(nextOpId(), SemanticOpKind.ARRAY_POP, origin(null), nextValue(),
+                result, operands, types, payload, policy, contract);
+            var fixture = unit(defect.equals("forward") ? List.of(pop, array) : List.of(array, pop));
+            if (defect.equals("none")) {
+                assertUnitPass(fixture, FACTS, "array pop admits its optional result");
+                var rebuilt = deal.semantic.ir.RawUnitMaterializer.materialize(RawUnit.fromTyped(fixture));
+                checkEq(SemanticIrValidator.toUnitText(fixture), SemanticIrValidator.toUnitText(rebuilt),
+                    "array pop raw materialization is lossless");
+            } else {
+                var typed = SemanticIrValidator.validate(fixture, FACTS);
+                var text = SemanticIrValidator.validateText(SemanticIrValidator.toUnitText(fixture), FACTS);
+                assertE6005(typed, defect.equals("policy") ? "R-POLICY-KIND" : "R-ENUM", "ARRAY_POP");
+                var rebuilt = deal.semantic.ir.RawUnitMaterializer.materialize(RawUnit.fromTyped(fixture));
+                var raw = SemanticIrValidator.validate(rebuilt, FACTS);
+                check(typed.equals(text) && typed.equals(raw),
+                    "array pop first diagnostic agrees on typed/raw/text surfaces: " + defect);
+            }
+        }
+
         for (RuntimeDescriptor operand : List.of(INT, BOOL)) {
             SemanticOp value = op(SemanticOpKind.CONST,
                 new KindPayload.ConstPayload(operand.equals(INT) ? new ScalarValue.Number(1)

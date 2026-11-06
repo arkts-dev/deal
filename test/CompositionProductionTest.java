@@ -146,6 +146,38 @@ public final class CompositionProductionTest {
                     fixturePath.toString()), "", root.resolve(commas), null,
                     List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             }
+            Path popHost = Files.createDirectories(root.resolve("pop-host"));
+            for (String extension : List.of("d.deal", "js", "lua", "java", "c"))
+                Files.copy(Path.of("test/conformance/host-fixtures/array_pop." + extension),
+                    popHost.resolve("probe." + extension));
+            execute(ConformanceHarnessMetadata.productionCorpusSource(Files.readString(Path.of(
+                "test/conformance/backend-runtime/arrays/pop-live-retry.deal")), "arrays/pop-live-retry.deal"),
+                "", root.resolve("pop-live"), popHost,
+                List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
+            String popCallable = "import * as host from \"host/probe\";export function main():null{"
+                + "let fn=():number=>9;let fs:((()=>number)|null)[]=[fn];"
+                + "let r:Record<string,unknown>={f:fn};let rs:Record<string,unknown>[]=[r];let us:unknown[]=[r];"
+                + "host.poison(fn);let caught=0;try{fs.pop();}catch(e){if((e as Error).code===\"E8003\"){caught=caught+1;}}"
+                + "try{rs.pop();}catch(e){if((e as Error).code===\"E8003\"){caught=caught+1;}}"
+                + "try{us.pop();}catch(e){if((e as Error).code===\"E8003\"){caught=caught+1;}}"
+                + "if(caught!==3 || fs.length!==1 || rs.length!==1 || us.length!==1){throw {code:\"POISON\",message:\"pop changed storage\"};}"
+                + "host.restoreFunction();let got=fs.pop() as ()=>number;"
+                + "if(got!==fn || got()!==9 || (rs.pop() as Record<string,unknown>)!==r || (us.pop() as Record<string,unknown>)!==r){"
+                + "throw {code:\"RETRY\",message:\"pop identity\"};}return null;}";
+            execute(popCallable, "", root.resolve("pop-callable"), popHost,
+                List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
+            execute(popCallable.replace("host.poison(fn)", "host.poisonSignature(fn)"), "",
+                root.resolve("pop-callable-signature"), popHost,
+                List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
+            String decodedPop = "import * as codec from \"std/json\";export function main():null{"
+                + "let r=codec.parse(\"{\\\"xs\\\":[1,-0,null,2]}\");let xs=r.xs as unknown[];let alias=xs;"
+                + "if((xs.pop() as number)!==2 || xs.pop()!==null || 1/(xs.pop() as number)!==-1/0 || xs.length!==1){"
+                + "throw {code:\"DECODED\",message:\"pop values\"};}"
+                + "xs[xs.length]=3;if(alias.length!==2 || (alias.pop() as number)!==3 || (xs.pop() as number)!==1"
+                + " || xs.pop()!==undefined || (JSON.stringify(r) as string)!==\"{\\\"xs\\\":[]}\"){"
+                + "throw {code:\"DECODED\",message:\"pop metadata\"};}return null;}";
+            execute(decodedPop, "", root.resolve("pop-decoded"), null,
+                List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             String receiverFixture = "stdlib/string/receiver-intrinsics.deal";
             execute(ConformanceHarnessMetadata.productionCorpusSource(Files.readString(
                 Path.of("test/conformance/backend-runtime").resolve(receiverFixture)), receiverFixture),
@@ -283,6 +315,31 @@ public final class CompositionProductionTest {
                 + "console.log(String(Math.abs(-1/0)));console.error(\"BUILTIN\");return null;}";
             execute(builtins, "Infinity\n", "BUILTIN\n", root.resolve("builtin-namespaces"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
+            String arrayPop = "class Item{v:number;}export function main():null{"
+                + "const xs:number[]=[1,-0,0/0];let alias=xs;let nan=xs.pop() as number;"
+                + "if(nan===nan || xs.length!==2 || alias.length!==2 || 1/(alias.pop() as number)!==-1/0"
+                + " || (xs.pop() as number)!==1 || xs.length!==0 || xs.pop()!==undefined || xs.length!==0){"
+                + "throw {code:\"POP\",message:\"numeric/empty/alias\"};}"
+                + "xs[xs.length]=7;if((alias.pop() as number)!==7){throw {code:\"GROW\",message:\"persistent array\"};}"
+                + "let item:Item={v:3};let items:Item[]=[item];if((items.pop() as Item)!==item){throw {code:\"ID\",message:\"class\"};}"
+                + "let fn=():number=>9;let fns:(()=>number)[]=[fn];let got=fns.pop() as ()=>number;"
+                + "if(got!==fn || got()!==9){throw {code:\"FN\",message:\"function\"};}"
+                + "let nulls:(number|null|undefined)[]=[null,undefined,5];"
+                + "if((nulls.pop() as number)!==5 || nulls.pop()!==undefined || nulls.pop()!==null || nulls.length!==0){"
+                + "throw {code:\"NULLISH\",message:\"elements\"};}"
+                + "let flags:boolean[]=[false,true];if((flags.pop() as boolean)!==true || (flags.pop() as boolean)!==false || flags.pop()!==undefined){throw {code:\"BOOL\",message:\"pop\"};}"
+                + "let optionalFns:((()=>number)|null|undefined)[]=[fn,null,undefined];"
+                + "if(optionalFns.pop()!==undefined || optionalFns.pop()!==null || (optionalFns.pop() as ()=>number)!==fn){throw {code:\"OPT_FN\",message:\"pop\"};}"
+                + "let texts:string[]=[\"\\uD800\",\"ok\"];if((texts.pop() as string)!==\"ok\" || (texts.pop() as string)!==\"\\uD800\"){throw {code:\"TEXT\",message:\"pop\"};}"
+                + "let count=0;let receiver=():number[]=>{count=count+1;return xs;};receiver().pop();"
+                + "if(count!==1){throw {code:\"ONCE\",message:\"receiver\"};}"
+                + "let maybe:number[]|null=[3];let invalidate=():void=>{maybe=null;};let caught=false;"
+                + "if(maybe!==null){invalidate();try{maybe.pop();}catch(e){if((e as Error).code===\"E8001\"){caught=true;}}}"
+                + "if(!caught){throw {code:\"STALE\",message:\"receiver\"};}"
+                + "let nils:(null|undefined)[]=[null,undefined];if(nils.pop()!==undefined || nils.pop()!==null || nils.pop()!==undefined){"
+                + "throw {code:\"NIL\",message:\"pop\"};}return null;}";
+            execute(arrayPop, "", root.resolve("array-pop"), null,
+                List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             String jsonEncoding = "class Item{z:number;a?:string;b:null;c:undefined;}"
                 + "export function main():null{let f=():number=>1;let mixed:unknown[]=[undefined,f,0/0,1/0,-0];"
                 + "if(JSON.stringify(undefined)!==undefined || JSON.stringify(f)!==undefined"
@@ -362,7 +419,7 @@ public final class CompositionProductionTest {
                     + "){throw {code:\"TEST\",message:\"value\"};}c.log(\"COMPOSE_OK\");return null;}";
                 execute(source, "COMPOSE_OK\n", root.resolve("seed" + seed), null);
             }
-            System.out.println("Composition production: 15 composition lanes and 105 revised-syntax executions passed");
+            System.out.println("Composition production: 15 composition lanes and 133 revised-syntax executions passed");
         } finally { remove(root); }
     }
 }

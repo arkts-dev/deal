@@ -867,7 +867,8 @@ record NumValue(double value) implements Value {
         static DealFailure of(BoundaryFailure failure, SourceOrigin origin,
                               List<FunctionId> frames) {
             return new DealFailure(failure.code().code(), failure.message(), origin,
-                failure.expected(), failure.actual(), null, frames);
+                failure.expected(), failure.actual(),
+                failure.cause() == null ? null : of(failure.cause(), origin, frames), frames);
         }
     }
 
@@ -1933,6 +1934,7 @@ record NumValue(double value) implements Value {
                 case ARRAY_NEW -> executeArrayNew(op);
                 case TABLE_NEW -> executeTableNew(op);
                 case ARRAY_LENGTH -> executeArrayLength(op);
+                case ARRAY_POP -> executeArrayPop(op);
                 case MEMBER_READ -> executeMemberRead(op);
                 case MEMBER_WRITE, MEMBER_DELETE, INDEX_WRITE, INDEX_DELETE,
                      FIELD_WRITE, FIELD_DELETE -> executeCommit(op);
@@ -2206,6 +2208,23 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                 entries.put(entry.key(), valueOf(entry.value()));
             }
             return publish(op, new Value.TableValue(entries));
+        }
+
+        private String executeArrayPop(SemanticOp op) {
+            KindPayload.ArrayPopPayload payload = (KindPayload.ArrayPopPayload) op.payload();
+            Value.ArrayValue array = (Value.ArrayValue) valueOf(payload.arrayValue());
+            int count = array.elements().size();
+            if (count == 0) return publish(op, Value.UndefinedValue.INSTANCE);
+            Value value = array.elements().get(count - 1);
+            RuntimeDescriptor.Array descriptor = (RuntimeDescriptor.Array) op.operandTypes().getFirst();
+            BoundaryOutcome outcome = BoundaryExecutor.execute(FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR,
+                descriptor.element(), viewOfValue(value), BoundaryContext.element(count),
+                new deal.semantic.ir.BoundaryRealization.RuntimeValidation("array-pop"));
+            if (outcome instanceof BoundaryOutcome.Fail fail)
+                throw DealFailure.of(fail.failure(), op.origin(), List.copyOf(frames));
+            Value admitted = valueOfView(((BoundaryOutcome.Pass) outcome).value(), value);
+            array.elements().remove(count - 1);
+            return publish(op, admitted);
         }
 
         private String executeArrayLength(SemanticOp op) {

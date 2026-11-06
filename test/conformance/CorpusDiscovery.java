@@ -152,6 +152,7 @@ public final class CorpusDiscovery {
         "Modules, declarations, standard library, and host ABI",
         "Runtime execution model",
         "Standard library declarations",
+        "Standard library builtins",
         "Test suite basis",
         "Diagnostics"
     );

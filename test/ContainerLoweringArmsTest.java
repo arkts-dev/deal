@@ -1562,9 +1562,9 @@ public class ContainerLoweringArmsTest {
         {
             StubModuleResolver resolver = new StubModuleResolver();
             CheckedSlice moduleAccess = checkSlice("""
-                import * as console from "std/console";
+                import * as output from "std/console";
                 function f(): null {
-                  let g: (x: string) => void = console.log;
+                  let g: (x: string) => void = output.log;
                   return null;
                 }
                 """, resolver);
@@ -1573,7 +1573,7 @@ public class ContainerLoweringArmsTest {
                     MemberAccessExpr.class);
                 if (access != null) {
                     SemanticLowerer.ModuleLowerer lowerer = lowerer(moduleAccess.checks());
-                    lowerer.setModuleImports(List.of(new ResolvedImport("console",
+                    lowerer.setModuleImports(List.of(new ResolvedImport("output",
                         "std/console", new ModuleId("std.console"),
                         ExternalModuleKind.STDLIB)));
                     RuntimeException defect = null;
@@ -1621,9 +1621,9 @@ public class ContainerLoweringArmsTest {
             resolver.register("std/console",
                 Map.of("log", new Type.Func(List.of(), Type.Void.INSTANCE)));
             CheckedSlice moduleAccess = checkSlice("""
-                import * as console from "std/console";
+                import * as output from "std/console";
                 function f(): null {
-                  let g: () => void = console.log;
+                  let g: () => void = output.log;
                   return null;
                 }
                 """, resolver);
@@ -1633,7 +1633,7 @@ public class ContainerLoweringArmsTest {
                 if (access != null) {
                     SemanticLowerer.ModuleLowerer lowerer =
                         lowerer(moduleAccess.checks());
-                    lowerer.setModuleImports(List.of(new ResolvedImport("console",
+                    lowerer.setModuleImports(List.of(new ResolvedImport("output",
                         "std/console", new ModuleId("std.console"),
                         ExternalModuleKind.STDLIB)));
                     RuntimeException defect = null;

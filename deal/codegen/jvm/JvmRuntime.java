@@ -1518,10 +1518,13 @@ public final class JvmRuntime {
                         // The canonical element text (the semantic oracle's
                         // closed canonical spelling), never the runtime's
                         // internal array(...) dialect.
-                        throw arm(deal.semantic.ir.FailureArmId.ARRAY_ELEMENT_KIND,
+                        DealError outer = arm(deal.semantic.ir.FailureArmId.ARRAY_ELEMENT_KIND,
                             java.util.Map.of("oneBasedIndex", Integer.toString(i + 1)),
                             "-", innerCanonical != null ? innerCanonical : inner,
                             elementActualOf(elem == MISSING ? "missing" : inner, elem));
+                        DealError cause = leaf.code.equals("E8003") && leaf.cause != null ? leaf.cause : leaf;
+                        throw new DealError(outer.code, outer.msg, outer.origin, outer.expected,
+                            outer.actual, outer.frames, cause);
                     }
                 }
                 return v;
@@ -3163,6 +3166,26 @@ case "NUMBER_ADD" -> {
     // =========================================================================
     // Array read/bounds cells (shared slot-space context)
     // =========================================================================
+
+    /** Validate the tail before committing the alias-visible length change. */
+    public static Object arrayPop(Array array, String descriptor, String canonical, String origin) {
+        int count = array.length();
+        if (count == 0) return UNDEFINED;
+        Object value = array.elements.get(count - 1);
+        try {
+            value = bcheck(descriptor, "unknown", value, canonical);
+        } catch (DealError cause) {
+            DealError outer = arm(deal.semantic.ir.FailureArmId.ARRAY_ELEMENT_KIND,
+                java.util.Map.of("oneBasedIndex", Integer.toString(count)), origin, canonical,
+                elementActualOf(value == MISSING ? "missing" : "unknown", value));
+            DealError leaf = cause.code.equals("E8003") && cause.cause != null ? cause.cause : cause;
+            throw new DealError(outer.code, outer.msg, outer.origin, outer.expected, outer.actual,
+                outer.frames, leaf);
+        }
+        array.elements.remove(count - 1);
+        array.length = count - 1;
+        return value;
+    }
 
     /**
      * The ARRAY_ELEMENT_READ cell: the pinned E8002 bounds check

@@ -335,6 +335,14 @@ void deal_container_array_append(deal_array *array, const void *element) {
     container->length += 1u;
 }
 
+void deal_container_array_remove_last(deal_array *array) {
+    struct deal_array *container = deal_container_array_of(array);
+    if (container->length == 0u) deal_platform_fault("container: remove from empty array");
+    container->length -= 1u;
+    size_t stride = deal_container_element_stride(container->element_layout);
+    memset((unsigned char *)container->block + container->length * stride, 0, stride);
+}
+
 size_t deal_container_array_trace(const deal_array *array, size_t position,
                                  size_t *budget, deal_reference_visit visit,
                                  void *context) {

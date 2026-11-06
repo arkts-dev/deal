@@ -164,7 +164,7 @@ public final class ContainerClaimingSeam {
         Objects.requireNonNull(op, "op must not be null");
         return switch (op.kind()) {
             case CONST, STRING_CONCAT -> List.of(SemanticCapability.FOUNDATION_VALUES);
-            case ARRAY_NEW, TABLE_NEW, ARRAY_LENGTH, MEMBER_READ, FOR_EACH ->
+            case ARRAY_NEW, TABLE_NEW, ARRAY_LENGTH, ARRAY_POP, MEMBER_READ, FOR_EACH ->
                 List.of(SemanticCapability.CONTAINERS_AND_STRINGS);
             // The CONTAINERS_AND_STRINGS extras (the step-1 cutover): the
             // OPTIONAL_READ envelope op homes to CONTAINERS_AND_STRINGS

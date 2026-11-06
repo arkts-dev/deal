@@ -11,6 +11,7 @@ public sealed interface KindPayload
             KindPayload.ArrayNewPayload,
             KindPayload.TableNewPayload,
             KindPayload.ArrayLengthPayload,
+            KindPayload.ArrayPopPayload,
             KindPayload.MemberReadPayload,
             KindPayload.MemberWritePayload,
             KindPayload.MemberDeletePayload,
@@ -281,6 +282,11 @@ public sealed interface KindPayload
         public TableNewPayload(List<TableEntry> entries) {
             this.entries = List.copyOf(entries);
         }
+    }
+
+    /** Validate the last element before removing it; empty yields undefined. */
+    record ArrayPopPayload(ValueId arrayValue) implements KindPayload {
+        public ArrayPopPayload { Objects.requireNonNull(arrayValue, "arrayValue"); }
     }
 
     /** {@code ARRAY_LENGTH} — the array value; result is a binary64 count. */

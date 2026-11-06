@@ -1555,6 +1555,7 @@ public final class LuaSemanticEmitter {
                 case ARRAY_NEW -> emitArrayNew(op);
                 case TABLE_NEW -> emitTableNew(op);
                 case ARRAY_LENGTH -> emitArrayLength(op);
+                case ARRAY_POP -> emitArrayPop(op);
                 case MEMBER_READ -> emitMemberRead(op);
                 case MEMBER_WRITE -> emitMemberWrite(op);
                 case MEMBER_DELETE -> emitMemberDelete(op);
@@ -1957,6 +1958,26 @@ public final class LuaSemanticEmitter {
                     .append(isNumberKind(producerKind(entry.value())) ? "true" : "false")
                     .append(")\n");
             }
+            emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
+        }
+
+        private void emitArrayPop(SemanticOp op) {
+            KindPayload.ArrayPopPayload payload = (KindPayload.ArrayPopPayload) op.payload();
+            RuntimeDescriptor element = ((RuntimeDescriptor.Array) op.operandTypes().getFirst()).element();
+            String array = slot(payload.arrayValue());
+            String target = slot((ValueId) op.result());
+            emitStart(op);
+            out.append("do local a = ").append(array).append("; local n = a[__dealCarrierKeys.n] or 0\n")
+                .append("while rawget(a, n + 1) ~= nil do n = n + 1 end\n")
+                .append("if n == 0 then ").append(target).append(" = __UNDEFINED else\n")
+                .append("local v = rawget(a, n); __okB, __chkB = pcall(__bcheck, ")
+                .append(bcheckArgs(element, "v")).append(")\n")
+                .append("if not __okB then local failure = __arm(\"ARRAY_ELEMENT_KIND\", {oneBasedIndex=n}, ")
+                .append(luaString(originOf(op))).append(", ").append(luaString(element.canonicalSpecText()))
+                .append(", __elemRefKind(").append(luaString(staticKind(element)))
+                .append(", v)); failure.cause = (__chkB.code == \"E8003\" and __chkB.cause) or __chkB; error(failure, 0) end\n")
+                .append(target).append(" = __chkB; rawset(a, n, nil); __numKey(a, n, nil, false); ")
+                .append("a[__dealCarrierKeys.n] = n - 1 end end\n");
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
         }
 
@@ -11070,8 +11091,10 @@ local function __bcheck(desc, staticKind, v, csig, completion, classSeen)
         if not ok then
           local actualKind = __elemRefKind(
             (elem == __MISSING) and "missing" or inner, elem)
-          return error(__arm("ARRAY_ELEMENT_KIND", {oneBasedIndex = i}, "-",
-            innerExpected, actualKind), 0)
+          local failure = __arm("ARRAY_ELEMENT_KIND", {oneBasedIndex = i}, "-",
+            innerExpected, actualKind)
+          failure.cause = (checked.code == "E8003" and checked.cause) or checked
+          return error(failure, 0)
         end
       end
       return v

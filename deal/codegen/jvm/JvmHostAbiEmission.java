@@ -1308,6 +1308,8 @@ final class JvmHostAbiEmission {
         out.append("        public void add(int i, java.lang.Object value) { int n = size(); java.util.Objects.checkIndex(i, n + 1); ")
             .append(carrier).append(".data = java.util.Arrays.copyOf(").append(carrier).append(".data, n + 1); ")
             .append("java.lang.System.arraycopy(").append(carrier).append(".data, i, ").append(carrier).append(".data, i + 1, n - i); if (value != null) set(i, value); }\n");
+        out.append("        public java.lang.Object remove(int i) { int n = size(); if (i != n - 1) throw new java.lang.UnsupportedOperationException(\"tail removal only\"); java.lang.Object old = get(i); ")
+            .append(carrier).append(".data = java.util.Arrays.copyOf(").append(carrier).append(".data, n - 1); absent.remove(i); return old; }\n");
         out.append("      };\n");
     }
 

@@ -1349,9 +1349,9 @@ static deal_check_input deal_live_element(deal_array *array, size_t index) {
     return deal_live_datum(datum);
 }
 
-deal_outcome deal_check_live_value(deal_descriptor *expected, deal_check_input input,
+static deal_outcome deal_check_live_value_core(deal_descriptor *expected, deal_check_input input,
                                    uint32_t boundary_kind,
-                                   const deal_check_context *context) {
+                                   const deal_check_context *context, int wrap_elements) {
     deal_outcome outcome = deal_check_value(expected, input, boundary_kind, context);
     if (outcome.error != NULL || input.presentation != DEAL_PRESENT_DATUM) return outcome;
     deal_live_walk walk = {0};
@@ -1404,13 +1404,10 @@ deal_outcome deal_check_live_value(deal_descriptor *expected, deal_check_input i
             }
         } else if (datum.tag == DEAL_DATA_ARRAY) {
             deal_array *array = datum.reference;
-            uint32_t recorded = deal_container_array_element_descriptor(array);
             deal_descriptor *declared = descriptor;
             while (declared->kind == DEAL_DESCRIPTOR_NULLISH) declared = declared->inner;
             deal_descriptor *element = declared->kind == DEAL_DESCRIPTOR_ARRAY
-                ? declared->inner
-                : recorded == 0u ? deal_descriptor_intern("unknown")
-                    : deal_descriptor_of_reference(recorded);
+                ? declared->inner : deal_descriptor_intern("unknown");
             for (size_t index = deal_container_array_count(array); index != 0u; index--) {
                 deal_check_input child = deal_live_element(array, index - 1u);
                 deal_live_push(&walk, child, element, &item);
@@ -1442,13 +1439,16 @@ deal_outcome deal_check_live_value(deal_descriptor *expected, deal_check_input i
         } else if (datum.tag == DEAL_DATA_CLASS) {
             const deal_host_class_access *access = deal_host_class_access_of(item.input.class_atom);
             if (access == NULL) deal_platform_fault("check: class has no declared access plan");
+            deal_descriptor *declared = descriptor;
+            while (declared->kind == DEAL_DESCRIPTOR_NULLISH) declared = declared->inner;
+            int typed_class = declared->kind == DEAL_DESCRIPTOR_CLASS;
             for (size_t index = access->declared->field_count; index != 0u; index--) {
                 const deal_class_field *field = &access->declared->fields[index - 1u];
                 deal_check_input child = {0};
                 uint8_t present = 0u;
                 if (!access->read(&datum, index - 1u, &child, &present, access->context))
                     deal_platform_fault("check: class access rejected its instance");
-                if (present == 0u && field->optional) continue;
+                if (present == 0u && (field->optional || !typed_class)) continue;
                 if (present == 0u) {
                     child.presentation = DEAL_PRESENT_MISSING;
                     deal_classification missing = deal_check_classify(&child);
@@ -1460,12 +1460,13 @@ deal_outcome deal_check_live_value(deal_descriptor *expected, deal_check_input i
                 }
                 if (child.presentation == DEAL_PRESENT_DATUM)
                     child = deal_live_datum(child.datum);
-                deal_live_push(&walk, child, field->descriptor, &item);
+                deal_live_push(&walk, child, typed_class ? field->descriptor
+                    : deal_descriptor_intern("unknown"), &item);
             }
             if (outcome.error != NULL) break;
         }
     }
-    if (outcome.error != NULL && item.element_index != 0u) {
+    if (wrap_elements && outcome.error != NULL && item.element_index != 0u) {
         /* The outer checked array owns its first failing element; nested
          * arrays propagate the leaf cause without adding another wrapper. */
         char index_text[3u * sizeof(size_t) + 1u];
@@ -1484,6 +1485,45 @@ deal_outcome deal_check_live_value(deal_descriptor *expected, deal_check_input i
     deal_platform_release(walk.items);
     deal_platform_release(walk.seen);
     return outcome;
+}
+
+deal_outcome deal_check_live_value(deal_descriptor *expected, deal_check_input input,
+                                   uint32_t boundary_kind,
+                                   const deal_check_context *context) {
+    return deal_check_live_value_core(expected, input, boundary_kind, context, 1);
+}
+
+deal_outcome_data deal_array_pop(deal_array *array, deal_descriptor *element,
+                                  const deal_origin *origin) {
+    deal_outcome_data result = {0};
+    result.value = deal_data_of_undefined();
+    size_t count = deal_container_array_count(array);
+    if (count == 0u) return result;
+    deal_check_input input = deal_live_element(array, count - 1u);
+    deal_check_context context = {0};
+    context.origin = origin;
+    uint32_t boundary = deal_descriptor_type(element) == DEAL_DESCRIPTOR_FUNCTION
+        ? DEAL_BOUNDARY_FUNCTION_SIGNATURE : DEAL_BOUNDARY_TYPE_DESCRIPTOR;
+    /* Pop owns the outer position even when the removed value is an array. */
+    deal_outcome checked = deal_check_live_value_core(element, input, boundary, &context, 0);
+    if (checked.error != NULL) {
+        char index_text[3u * sizeof(size_t) + 1u];
+        size_t end = sizeof(index_text) - 1u;
+        index_text[end] = '\0';
+        size_t index = count;
+        do {
+            index_text[--end] = (char)('0' + index % 10u);
+            index /= 10u;
+        } while (index != 0u);
+        deal_arm_parameter parameter = {"oneBasedIndex", &index_text[end]};
+        result.error = deal_error_materialize(DEAL_ARM_ID_ARRAY_ELEMENT_KIND,
+            &parameter, 1u, deal_descriptor_text(element), deal_check_token(&input),
+            origin, checked.error);
+        return result;
+    }
+    result.value = input.datum;
+    deal_container_array_remove_last(array);
+    return result;
 }
 
 /* -- the typed-boundary token (R4) -------------------------------------- */

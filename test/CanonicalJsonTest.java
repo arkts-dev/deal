@@ -829,6 +829,7 @@ public class CanonicalJsonTest {
             case TABLE_NEW -> new KindPayload.TableNewPayload(
                 List.of(new KindPayload.TableEntry("k", v0)));
             case ARRAY_LENGTH -> new KindPayload.ArrayLengthPayload(v0);
+            case ARRAY_POP -> new KindPayload.ArrayPopPayload(v0);
             case MEMBER_READ -> new KindPayload.MemberReadPayload(v0, "k");
             case MEMBER_WRITE -> new KindPayload.MemberWritePayload(v0, "k", v1);
             case MEMBER_DELETE -> new KindPayload.MemberDeletePayload(v0, "k");

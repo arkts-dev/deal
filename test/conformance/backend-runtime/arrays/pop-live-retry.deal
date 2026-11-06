@@ -1,0 +1,50 @@
+// @spec: Arrays
+// @description: Pop validates before removal and preserves live aliases across rejection, repair and regrowth
+// @expected: runtime-ok
+// @features: arrays, host-abi
+import * as host from "host/probe";
+class Item {x:number; stable:number;}
+function check(ok:boolean):void { if(!ok){throw {code:"POP",message:"mismatch"};} }
+export function main():null {
+  let xs:number[]=[4,9]; let alias=xs;
+  let nested:number[][]=[xs]; let dynamic:unknown[]=[xs]; let dynamicAlias:unknown=xs;
+  host.keep(xs); host.corrupt(); let caught=false;
+  try { nested.pop(); } catch(e) {
+    check((e as Error).code==="E8003");
+    check((e as Error).message==="array element 1 type mismatch");
+    caught=true;
+  }
+  check(caught && nested.length===1 && host.size()===2); caught=false;
+  check(dynamic.pop()===dynamicAlias && dynamic.length===0);
+  try { xs.pop(); } catch(e) {
+    check((e as Error).code==="E8003");
+    check((e as Error).message==="array element 2 type mismatch");
+    caught=true;
+  }
+  check(caught && host.size()===2 && alias.length===2 && xs[0]===4);
+  host.repair(); check((nested.pop() as number[])===alias && nested.length===0);
+  check((xs.pop() as number)===9);
+  check(alias.length===1 && host.size()===1 && xs[0]===4);
+  check((host.echo(xs) as number[])===alias);
+  xs[xs.length]=7; check((alias.pop() as number)===7 && host.size()===1);
+  check((xs.pop() as number)===4 && alias.length===0 && host.size()===0);
+  check(xs.pop()===undefined && host.size()===0);
+  let live=host.make(); let liveAlias=live;
+  check((live.pop() as number)===9 && host.size()===1 && liveAlias.length===1);
+  host.grow(); check(live.length===2 && live[1]===11);
+  check((live.pop() as number)===11 && host.size()===1);
+  live[live.length]=13; check(host.size()===2 && (liveAlias.pop() as number)===13);
+  let item:Item={x:9,stable:4}; let items:Item[]=[item];
+  let record:Record<string,unknown>={child:item}; let records:Record<string,unknown>[]=[record];
+  let data:unknown[]=[record];
+  host.damage(item,false); caught=false;
+  try { items.pop(); } catch(e) {check((e as Error).code==="E8003");caught=true;}
+  check(caught && items.length===1);
+  // Dynamic descendants are data-checked, not reinterpreted as typed fields.
+  check((records.pop() as Record<string,unknown>)===record);
+  check((data.pop() as Record<string,unknown>)===record);
+  host.damage(null,true);
+  check((items.pop() as Item)===item && item.x===9 && item.stable===4);
+  check(records.length===0 && data.length===0);
+  return null;
+}

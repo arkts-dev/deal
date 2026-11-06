@@ -118,6 +118,10 @@ void deal_container_array_store(deal_array *array, size_t index,
 /* Appends one element at `length`, growing the element storage when required. */
 void deal_container_array_append(deal_array *array, const void *element);
 
+/* Commits removal of the last slot after the caller has validated its value.
+ * Empty storage is a producer defect. No allocation or layout change occurs. */
+void deal_container_array_remove_last(deal_array *array);
+
 /*
  * Visits the managed references of the array's present elements from
  * `position` onward, consuming one unit of `*budget` per reference slot

@@ -689,6 +689,8 @@ public final class ContractSnapshotCanonicalizer {
             case KindPayload.TableNewPayload p -> CanonicalJson.obj(
                 CanonicalJson.e("entries", CanonicalJson.arr(
                     p.entries().stream().map(ContractSnapshotCanonicalizer::tableEntryJson).toList())));
+            case KindPayload.ArrayPopPayload p -> CanonicalJson.obj(
+                CanonicalJson.e("arrayValue", semanticIdJson(p.arrayValue())));
             case KindPayload.ArrayLengthPayload p -> CanonicalJson.obj(
                 CanonicalJson.e("arrayValue", semanticIdJson(p.arrayValue())));
             case KindPayload.MemberReadPayload p -> CanonicalJson.obj(

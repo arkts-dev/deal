@@ -9,6 +9,7 @@ public enum SemanticOpKind {
     ARRAY_NEW,
     TABLE_NEW,
     ARRAY_LENGTH,
+    ARRAY_POP,
     MEMBER_READ,
     MEMBER_WRITE,
     MEMBER_DELETE,
@@ -72,6 +73,7 @@ public enum SemanticOpKind {
             case ARRAY_NEW -> KindPayload.ArrayNewPayload.class;
             case TABLE_NEW -> KindPayload.TableNewPayload.class;
             case ARRAY_LENGTH -> KindPayload.ArrayLengthPayload.class;
+            case ARRAY_POP -> KindPayload.ArrayPopPayload.class;
             case MEMBER_READ -> KindPayload.MemberReadPayload.class;
             case MEMBER_WRITE -> KindPayload.MemberWritePayload.class;
             case MEMBER_DELETE -> KindPayload.MemberDeletePayload.class;

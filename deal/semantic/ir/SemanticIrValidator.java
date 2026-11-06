@@ -1944,6 +1944,23 @@ public final class SemanticIrValidator {
                     return failure;
                 }
             }
+            case "ARRAY_POP" -> {
+                ValueId receiver = parseValueIdQuiet(payloadValue(payload, "arrayValue")
+                    instanceof CanonicalJson.Obj obj ? obj : null);
+                RuntimeDescriptor.Array array = null;
+                for (RawOp producer : unit.ops()) {
+                    if (producer.opId().equals(op.opId())) break;
+                    if (receiver != null && receiver.equals(producer.resultValue())
+                            && parseDescriptorQuiet(producer.resultType()) instanceof RuntimeDescriptor.Array found)
+                        array = found;
+                }
+                if (array == null || !RuntimeDescriptor.optionalRead(array.element()).canonicalSpecText().equals(op.resultType())
+                        || !List.of(receiver).equals(op.operands())
+                        || !List.of(array.canonicalSpecText()).equals(op.operandTypes())) {
+                    return fail(op, unit, facts, R_ENUM, SemanticCapability.CONTAINERS_AND_STRINGS,
+                        origin(R_ENUM, "ARRAY_POP requires one preceding array receiver and its optional element result"));
+                }
+            }
             case "ARRAY_NEW" -> {
                 failure = checkSlotDescriptor(op, unit, facts, "elementDescriptor",
                     optionalString(payload, "elementDescriptor"));
@@ -2407,6 +2424,7 @@ public final class SemanticIrValidator {
     /** The closed per-kind allowed failure-policy sets (parent operation rows). */
     private static Set<FailurePolicyId> allowedPolicies(SemanticOpKind kind) {
         return switch (kind) {
+            case ARRAY_POP -> Set.of(FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR);
             case ARRAY_LENGTH -> Set.of(FailurePolicyId.NO_DEAL_FAILURE);
             case OPTIONAL_READ -> Set.of(FailurePolicyId.NO_DEAL_FAILURE,
                 FailurePolicyId.TYPE_DESCRIPTOR);

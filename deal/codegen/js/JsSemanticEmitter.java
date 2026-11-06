@@ -1137,6 +1137,7 @@ public final class JsSemanticEmitter {
                 case ARRAY_NEW -> emitArrayNew(op);
                 case TABLE_NEW -> emitTableNew(op);
                 case ARRAY_LENGTH -> emitArrayLength(op);
+                case ARRAY_POP -> emitArrayPop(op);
                 case MEMBER_READ -> emitMemberRead(op);
                 case MEMBER_WRITE -> emitMemberWrite(op);
                 case MEMBER_DELETE -> emitMemberDelete(op);
@@ -1406,6 +1407,13 @@ case NUMBER_ADD -> "(" + numeric(left) + " + "
             }
             expression.append("})");
             emit(slotOf(op) + " = " + expression + ";");
+        }
+
+        private void emitArrayPop(SemanticOp op) {
+            KindPayload.ArrayPopPayload payload = (KindPayload.ArrayPopPayload) op.payload();
+            RuntimeDescriptor.Array array = (RuntimeDescriptor.Array) op.operandTypes().getFirst();
+            emit(slotOf(op) + " = $rt.arrayPop(" + slot(payload.arrayValue()) + ", "
+                + jsString(array.element().canonicalSpecText()) + ", " + spanArgs(op) + ");");
         }
 
         private void emitArrayLength(SemanticOp op) {

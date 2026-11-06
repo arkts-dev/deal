@@ -404,6 +404,7 @@ public final class RawUnitMaterializer {
                 opIds(p, "elementBoundaryOpIds", where));
             case TABLE_NEW -> new KindPayload.TableNewPayload(tableEntries(p, where));
             case ARRAY_LENGTH -> new KindPayload.ArrayLengthPayload(valueIdAt(p, "arrayValue", where));
+            case ARRAY_POP -> new KindPayload.ArrayPopPayload(valueIdAt(p, "arrayValue", where));
             case MEMBER_READ -> new KindPayload.MemberReadPayload(
                 valueIdAt(p, "table", where), stringAt(p, "key", where));
             case MEMBER_WRITE -> new KindPayload.MemberWritePayload(

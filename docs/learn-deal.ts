@@ -52,6 +52,8 @@ function counter(start: number): () => number {
 
 // Arrays are homogeneous and zero-based. Indexes must be finite whole
 // numbers. Reads require index < length; writes may append at length.
+// pop() validates before removal and returns the element or undefined.
+// It preserves the array's identity and persistent element descriptor.
 function sumAll(values: number[]): number {
   let total: number = 0;
   for (let value of values) { total = total + value; }
@@ -60,6 +62,8 @@ function sumAll(values: number[]): number {
 function arrays(): number {
   let values: number[] = [10, 20, 30];
   values[values.length] = 40;
+  let tail: number | undefined = values.pop();
+  if (tail !== undefined) { values[values.length] = tail; }
   values[0] = 99;
   let maybe: (number | null)[] = [1, null, 3];
   let selected: number | null = maybe[1];

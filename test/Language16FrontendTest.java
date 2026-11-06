@@ -70,6 +70,14 @@ public final class Language16FrontendTest {
         for (String expression : List.of("JSON", "JSON.stringify", "JSON.stringify()", "JSON.stringify(1,2)")) {
             check("function f():void{let value=" + expression + ";}", false);
         }
+        check("function f(xs:number[]):number|undefined{return xs.pop();}", true);
+        check("function f(xs:unknown[]):unknown{return xs.pop();}", true);
+        check("function f(xs:(number|null)[]):number|null|undefined{return xs.pop();}", true);
+        check("function f(xs:number[]):number{return xs.pop();}", false);
+        check("function f(xs:number[]):void{let method=xs.pop;}", false);
+        check("function f(xs:number[]):void{xs.pop(1);}", false);
+        check("function f(xs:number[]|null):void{xs.pop();}", false);
+        check("function f():number{let r:Record<string,unknown>={pop:():number=>4};return (r.pop as ()=>number)();}", true);
         check("function f(s:string):number{return s.length;}", true);
         check("function f(s:string):string{return s.substring(1,2).trim().replace(\"a\",\"b\");}", true);
         check("function f(s:string):boolean{return s.includes(\"a\") && s.startsWith(\"a\") && s.endsWith(\"a\");}", true);

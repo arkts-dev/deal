@@ -1719,20 +1719,20 @@ public class ContainerBoundaryProductionTest {
 
     /** A runtime-ok program that prints one unexpected stdout line. */
     private static final String EXTRA_STDOUT_SOURCE = """
-        import * as console from "std/console";
+        import * as output from "std/console";
 
         export function main(): null {
-          console.log("UNEXPECTED_STDOUT");
+          output.log("UNEXPECTED_STDOUT");
           return null;
         }
         """;
 
     /** A runtime-ok program that prints one unexpected stderr line. */
     private static final String EXTRA_STDERR_SOURCE = """
-        import * as console from "std/console";
+        import * as output from "std/console";
 
         export function main(): null {
-          console.error("UNEXPECTED_STDERR");
+          output.error("UNEXPECTED_STDERR");
           return null;
         }
         """;

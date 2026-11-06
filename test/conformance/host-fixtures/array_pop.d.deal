@@ -1,0 +1,11 @@
+export function keep(value:unknown):void;
+export function corrupt():void;
+export function repair():void;
+export function size():number;
+export function echo(value:unknown):unknown;
+export function make():number[];
+export function grow():void;
+export function damage(value:unknown, restore:boolean):void;
+export function poison(value:unknown):void;
+export function poisonSignature(value:unknown):void;
+export function restoreFunction():void;

@@ -648,6 +648,7 @@ final class LlvmFunctionEmitter {
             case ARRAY_NEW -> emitArrayNew(op);
             case TABLE_NEW -> emitTableNew(op);
             case ARRAY_LENGTH -> emitArrayLength(op);
+            case ARRAY_POP -> emitArrayPop(op);
             case MEMBER_READ -> emitMemberRead(op);
             case OPTIONAL_READ -> emitOptionalRead(op);
             case MEMBER_WRITE -> emitMemberWrite(op);
@@ -4959,6 +4960,24 @@ final class LlvmFunctionEmitter {
         emit("store " + LlvmTypeMapper.DATA + " " + datum + ", "
             + LlvmTypeMapper.DATA + "* " + slot);
         return slot;
+    }
+
+    private void emitArrayPop(SemanticOp op) {
+        KindPayload.ArrayPopPayload payload = (KindPayload.ArrayPopPayload) op.payload();
+        RuntimeDescriptor element = ((RuntimeDescriptor.Array) op.operandTypes().getFirst()).element();
+        session.referenceRuntimeEntry("deal_descriptor_intern");
+        session.referenceRuntimeEntry("deal_array_pop");
+        String atom = emitTemporary(op, "call %struct.deal_descriptor* @deal_descriptor_intern("
+            + session.data.operand(session.data.intern(element.canonicalSpecText())) + ")");
+        String array = loadValue(payload.arrayValue(), LlvmTypeMapper.ARRAY, op);
+        String outcome = callRecord(op, "%struct.deal_outcome_data", "deal_array_pop",
+            LlvmTypeMapper.ARRAY + " " + array + ", %struct.deal_descriptor* " + atom
+                + ", %struct.deal_origin* " + originValue(op));
+        String error = emitTemporary(op, "extractvalue %struct.deal_outcome_data " + outcome + ", 0");
+        branchOnFailure(op, error, "arraypop");
+        String datum = emitTemporary(op, "extractvalue %struct.deal_outcome_data " + outcome + ", 1");
+        RuntimeDescriptor result = (RuntimeDescriptor) op.resultType();
+        storeResult(op, resultRepresentation(op).orElseThrow(), datumToRepresentation(result, datum, op));
     }
 
     /** {@code ARRAY_LENGTH}: the exact element count as one binary64 (R2). */

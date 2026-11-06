@@ -2125,6 +2125,13 @@ public final class TypeChecker {
                 return intrinsic.signature();
             }
         }
+        if (objType instanceof Type.Array array && field.equals("pop")) {
+            if (mae != directBuiltinCallee) {
+                error(DiagnosticCode.E3001, "Receiver intrinsics support direct calls only", mae.span());
+                return Type.Error.INSTANCE;
+            }
+            return new Type.Func(List.of(), Types.optionalRead(array.element()), false);
+        }
         if ((objType instanceof Type.Array || objType instanceof Type.String) && field.equals("length")) {
             return Type.Number.INSTANCE;
         }

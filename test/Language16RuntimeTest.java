@@ -88,10 +88,122 @@ public final class Language16RuntimeTest {
                 if (!expected.code.equals("E8001")) throw new AssertionError(expected);
             }
         }
+        arrayPopAdmission();
         callableBodyAdmission();
         errorGraphAdmission();
         for (String fixture : List.of("core", "refinement", "assertion", "failures", "equality-loops", "json-values", "audit-scalars")) executeFixture(fixture);
         System.out.println("Language16RuntimeTest: passed (Oracle, JS, LuaJIT, JVM; deployed array descriptors)");
+    }
+
+    /** Execute the same retained-mutation contract in the Oracle with genuine lowered bodies. */
+    private static void arrayPopAdmission() throws Exception {
+        Path work = Files.createTempDirectory(Path.of("build"), "pop-admission-").toAbsolutePath();
+        try {
+            Path source = Files.createDirectories(work.resolve("src")).resolve("main.deal");
+            Files.writeString(source, ConformanceHarnessMetadata.stripClassificationHeaders(Files.readString(
+                Path.of("test/conformance/backend-runtime/arrays/pop-live-retry.deal")))
+                .replace("export function main():null", "export function run():null")
+                + "\nexport function main():null{return null;}\n");
+            Path declaration = source.resolveSibling("probe.d.deal");
+            Files.copy(Path.of("test/conformance/host-fixtures/array_pop.d.deal"), declaration);
+            Files.writeString(work.resolve("deal.json"),
+                "{\"languageVersion\":\"1.6\",\"stdlib\":\"1.6\",\"moduleRoots\":[\"src\"]}");
+            var invocation = deal.semantic.CompilerProfileProvider.resolve(
+                deal.semantic.ReleaseConfiguration.CURRENT_RELEASE_STATE,
+                deal.semantic.ReleaseConfiguration.releaseCapabilityRegistry());
+            var compiler = new deal.module.CompilationOrchestrator(source, work.resolve("out"),
+                false, false, false, false, deal.codegen.Backend.JS,
+                Map.of("host/probe", declaration.toString()), List.of(source.getParent()), null, null, invocation);
+            if (!compiler.compile()) throw new AssertionError("pop Oracle compile failed: " + compiler.diagnostics());
+            var project = Objects.requireNonNull(compiler.producedProject());
+            var facts = new deal.semantic.ir.SemanticIrValidator.ComparisonFacts(
+                project.interfaceIndex().interfaceIndexDigest(), project.semanticProfile(), invocation.capabilityRegistryHash());
+            String raw = deal.semantic.ir.SemanticIrValidator.toProjectText(project);
+            if (deal.semantic.ir.SemanticIrValidator.validate(project, facts).isPresent()
+                    || deal.semantic.ir.SemanticIrValidator.validateText(raw, facts).isPresent())
+                throw new AssertionError("pop project transport rejected");
+            for (var unit : project.modules().values()) {
+                var rebuilt = deal.semantic.ir.RawUnitMaterializer.materialize(deal.semantic.ir.RawUnit.fromTyped(unit));
+                if (!deal.semantic.ir.SemanticIrValidator.toUnitText(unit).equals(
+                        deal.semantic.ir.SemanticIrValidator.toUnitText(rebuilt)))
+                    throw new AssertionError("pop typed/raw roundtrip changed content");
+            }
+            var empty = new deal.semantic.ir.CanonicalJson.Arr(List.of());
+            var missing = deal.semantic.ir.ContractSnapshotCanonicalizer.semanticIdJson(
+                new deal.semantic.ir.ValueId(Integer.MAX_VALUE));
+            rejectsOp(raw, "ARRAY_POP", op -> field(op, "payload", field(payload(op), "arrayValue", missing)), facts);
+            rejectsOp(raw, "ARRAY_POP", op -> field(op, "payload", field(payload(op), "arrayValue",
+                deal.semantic.ir.CanonicalJson.Null.INSTANCE)), facts);
+            rejectsOp(raw, "ARRAY_POP", op -> field(field(op, "operands", empty), "operandTypes", empty), facts);
+            rejectsOp(raw, "ARRAY_POP", op -> field(op, "operandTypes", new deal.semantic.ir.CanonicalJson.Arr(
+                List.of(new deal.semantic.ir.CanonicalJson.Str("[string]")))), facts);
+            rejectsOp(raw, "ARRAY_POP", op -> field(op, "resultType", new deal.semantic.ir.CanonicalJson.Str("number")), facts);
+            var tables = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.StructuredBodyTable>();
+            var registries = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.ClassFactoryRegistry>();
+            project.modules().forEach((id, unit) -> { tables.put(id, unit.bodyTable()); registries.put(id, unit.classFactories()); });
+            var responder = new deal.semantic.SemanticOracle.HostResponder() {
+                private deal.semantic.SemanticOracle.Value.ArrayValue saved;
+                private deal.semantic.SemanticOracle.Value.ClassValue damaged;
+                public SyncOutcome call(deal.semantic.ir.ModuleId module, String export,
+                        deal.semantic.ir.RuntimeDescriptor.Func descriptor,
+                        List<deal.semantic.SemanticOracle.Value> arguments) {
+                    deal.semantic.SemanticOracle.Value result = deal.semantic.SemanticOracle.Value.UndefinedValue.INSTANCE;
+                    switch (export) {
+                        case "keep" -> saved = (deal.semantic.SemanticOracle.Value.ArrayValue)arguments.getFirst();
+                        case "corrupt" -> saved.elements().set(saved.elements().size()-1,
+                            new deal.semantic.SemanticOracle.Value.StrValue("bad"));
+                        case "repair" -> saved.elements().set(saved.elements().size()-1,
+                            new deal.semantic.SemanticOracle.Value.NumValue(9));
+                        case "size" -> result = new deal.semantic.SemanticOracle.Value.NumValue(saved.elements().size());
+                        case "echo" -> result = arguments.getFirst();
+                        case "make" -> {
+                            saved = new deal.semantic.SemanticOracle.Value.ArrayValue(new ArrayList<>(List.of(
+                                new deal.semantic.SemanticOracle.Value.NumValue(4),
+                                new deal.semantic.SemanticOracle.Value.NumValue(9))),
+                                deal.semantic.ir.RuntimeDescriptor.Number.INSTANCE, false);
+                            result = saved;
+                        }
+                        case "grow" -> saved.elements().add(new deal.semantic.SemanticOracle.Value.NumValue(11));
+                        case "damage" -> {
+                            boolean restore=((deal.semantic.SemanticOracle.Value.BoolValue)arguments.get(1)).value();
+                            if (!restore) damaged=(deal.semantic.SemanticOracle.Value.ClassValue)arguments.getFirst();
+                            damaged.fields().set(0,new deal.semantic.SemanticOracle.Value.ClassFieldState.Present(restore
+                                ? new deal.semantic.SemanticOracle.Value.NumValue(9)
+                                : new deal.semantic.SemanticOracle.Value.StrValue("bad")));
+                        }
+                        default -> throw new AssertionError(export);
+                    }
+                    return new SyncOutcome.Returned(result);
+                }
+            };
+            var result = deal.semantic.SemanticOracle.invokeSyncEntry(project, tables, registries,
+                responder, compiler.checkedProject().input().entryModule(), "run", List.of());
+            if (!(result.terminal() instanceof deal.semantic.SemanticRuntimeModel.Terminal.Success success)
+                    || !success.resultAtom().equals("null"))
+                throw new AssertionError("pop Oracle: " + result.comparisonReport() + "\n" + result.trace().stream()
+                    .filter(e -> e.phase()==deal.semantic.SemanticRuntimeModel.Phase.FAILURE).toList());
+            var failures = result.trace().stream().filter(e -> e.kind()==deal.semantic.ir.SemanticOpKind.ARRAY_POP
+                && e.phase()==deal.semantic.SemanticRuntimeModel.Phase.FAILURE).toList();
+            if (failures.size()!=3) throw new AssertionError("pop failure trace population: " + failures);
+            for (int i=0; i<3; i++) {
+                var error = failures.get(i).error();
+                String expected=i==0 ? "[number]" : i==1 ? "number" : "@src/main.deal/Item";
+                String actual=i==0 ? "array" : i==1 ? "string" : expected;
+                if (!error.code().equals("E8003") || !error.expected().equals(expected)
+                        || !error.actual().equals(actual)
+                        || !error.message().equals("array element " + (i==1 ? 2 : 1) + " type mismatch") || error.cause()==null
+                        || !error.cause().code().equals("E8001") || !error.cause().expected().equals("number")
+                        || !error.cause().actual().equals("string") || error.frames().isEmpty())
+                    throw new AssertionError("pop projection: " + error);
+                var failedId=failures.get(i).op();
+                var op=project.modules().get(failedId.module()).ops().stream()
+                    .filter(o -> o.opId().equals(failedId)).findFirst().orElseThrow();
+                String expectedOrigin=op.origin().sourceId()+":"+op.origin().span().startLine()+":"+op.origin().span().startColumn();
+                if (!error.origin().equals(expectedOrigin) || !error.cause().origin().equals(expectedOrigin)
+                        || !error.cause().frames().equals(error.frames()))
+                    throw new AssertionError("pop origin/frames " + error);
+            }
+        } finally { CompositionProductionTest.remove(work); }
     }
 
     /** Exercise the evaluator adapter, not just a hand-built BoundaryValueView. */

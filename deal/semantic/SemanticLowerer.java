@@ -8743,6 +8743,16 @@ public final class SemanticLowerer {
          */
         private ValueId lowerCallSite(CallExpr call, ValueId slot) {
             if (call.callee() instanceof MemberAccessExpr member
+                    && checkedType(member.object()) instanceof Type.Array array
+                    && member.field().equals("pop")) {
+                ValueId receiver = lowerOperand(member.object());
+                RuntimeDescriptor descriptor = ContainerPayloadDescriptors.resultDescriptorOf(array);
+                return emitOperandOp(SemanticOpKind.ARRAY_POP,
+                    new KindPayload.ArrayPopPayload(receiver), List.of(receiver), List.of(descriptor),
+                    call.span(), RuntimeDescriptor.optionalRead(((RuntimeDescriptor.Array) descriptor).element()),
+                    FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, slot);
+            }
+            if (call.callee() instanceof MemberAccessExpr member
                     && member.object() instanceof IdentifierExpr namespace) {
                 deal.checker.BuiltinCall builtin = deal.checker.BuiltinCall.resolve(namespace.name(), member.field());
                 if (builtin != null) {

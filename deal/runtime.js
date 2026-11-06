@@ -2757,7 +2757,10 @@ const $rt = {
         try {
           $rt.checkType($element, $value, file, line, column);
         } catch ($e) {
-          $rt.fail("E8003", "array element " + $i + " type mismatch", file, line, column, $element, $elemKindOf($value));
+          const failure = new $DEALError("E8003", "array element " + $i + " type mismatch",
+            file, line, column, $element, $elemKindOf($value));
+          failure.cause = $e.code === "E8003" && $e.cause ? $e.cause : $e;
+          throw failure;
         }
       }
       return v;
@@ -2766,7 +2769,10 @@ const $rt = {
       try {
         $rt.checkType($element, v[$i], file, line, column);
       } catch ($e) {
-        $rt.fail("E8003", "array element " + ($i + 1) + " type mismatch", file, line, column, $element, $elemKindOf(v[$i]));
+        const failure = new $DEALError("E8003", "array element " + ($i + 1) + " type mismatch",
+          file, line, column, $element, $elemKindOf(v[$i]));
+        failure.cause = $e.code === "E8003" && $e.cause ? $e.cause : $e;
+        throw failure;
       }
     }
     return v;
@@ -2883,6 +2889,31 @@ const $rt = {
     v[i] = value;
     $setNumberVariant(v, String(i), $variant);
     return value;
+  },
+
+  // Pop validates the live tail before changing storage or private metadata.
+  arrayPop: function $arrayPop(v, descriptor, file, line, column) {
+    const n = $rt.arrayLength(v);
+    if (n === 0) return $undefined;
+    const value = $rt.arrayAt(v, n - 1);
+    let admitted;
+    try {
+      admitted = $rt.checkType(descriptor, value, file, line, column);
+    } catch (cause) {
+      const failure = new $DEALError("E8003", "array element " + n + " type mismatch",
+        file, line, column, descriptor, $elemKindOf(value));
+      failure.cause = cause.code === "E8003" && cause.cause ? cause.cause : cause;
+      throw failure;
+    }
+    if (!$Array.isArray(v) && $rt.isJsonArrayTable(v)) {
+      v.delete(String(n));
+      $clearNumberVariant(v, String(n));
+    } else {
+      v.pop();
+      $clearNumberVariant(v, String(n - 1));
+    }
+    $arrayDeleted.get(v)?.delete(n - 1);
+    return admitted;
   },
 
   // arrayDelete: the committed step of an emitted array-element delete
