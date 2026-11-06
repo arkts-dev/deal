@@ -212,6 +212,10 @@ const char *deal_check_token(const deal_check_input *input);
 deal_outcome_data deal_array_pop(deal_array *array, deal_descriptor *element,
                                   const deal_origin *origin);
 
+/* All removed elements are checked before fresh-result allocation and mutation. */
+deal_outcome_data deal_array_splice(deal_array *array, double from, double delete_count,
+                                     deal_descriptor *element, const deal_origin *origin);
+
 /* The scalar boundary helpers (R4): admit one persistent datum at one declared
  * scalar position and project its native payload through the same arm tuple as
  * `deal_check_value`. */

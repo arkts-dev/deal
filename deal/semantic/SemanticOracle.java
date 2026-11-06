@@ -1935,6 +1935,7 @@ record NumValue(double value) implements Value {
                 case TABLE_NEW -> executeTableNew(op);
                 case ARRAY_LENGTH -> executeArrayLength(op);
                 case ARRAY_POP -> executeArrayPop(op);
+                case ARRAY_SPLICE -> executeArraySplice(op);
                 case MEMBER_READ -> executeMemberRead(op);
                 case MEMBER_WRITE, MEMBER_DELETE, INDEX_WRITE, INDEX_DELETE,
                      FIELD_WRITE, FIELD_DELETE -> executeCommit(op);
@@ -2208,6 +2209,26 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                 entries.put(entry.key(), valueOf(entry.value()));
             }
             return publish(op, new Value.TableValue(entries));
+        }
+
+        private String executeArraySplice(SemanticOp op) {
+            KindPayload.ArraySplicePayload payload = (KindPayload.ArraySplicePayload) op.payload();
+            Value.ArrayValue array = (Value.ArrayValue) valueOf(payload.arrayValue());
+            int start = deal.semantic.ir.NumberSemantics.spliceStart(numberUse(valueOf(payload.start())), array.elements().size());
+            int count = deal.semantic.ir.NumberSemantics.spliceCount(numberUse(valueOf(payload.deleteCount())), array.elements().size() - start);
+            RuntimeDescriptor element = ((RuntimeDescriptor.Array) op.operandTypes().getFirst()).element();
+            List<Value> removed = new ArrayList<>();
+            for (int i = 0; i < count; i++) {
+                Value value = array.elements().get(start + i);
+                BoundaryOutcome outcome = BoundaryExecutor.execute(FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR,
+                    element, viewOfValue(value), BoundaryContext.element(start + i + 1),
+                    new deal.semantic.ir.BoundaryRealization.RuntimeValidation("array-splice"));
+                if (outcome instanceof BoundaryOutcome.Fail fail)
+                    throw DealFailure.of(fail.failure(), op.origin(), List.copyOf(frames));
+                removed.add(valueOfView(((BoundaryOutcome.Pass) outcome).value(), value));
+            }
+            array.elements().subList(start, start + count).clear();
+            return publish(op, new Value.ArrayValue(removed, element, false));
         }
 
         private String executeArrayPop(SemanticOp op) {

@@ -1556,6 +1556,7 @@ public final class LuaSemanticEmitter {
                 case TABLE_NEW -> emitTableNew(op);
                 case ARRAY_LENGTH -> emitArrayLength(op);
                 case ARRAY_POP -> emitArrayPop(op);
+                case ARRAY_SPLICE -> emitArraySplice(op);
                 case MEMBER_READ -> emitMemberRead(op);
                 case MEMBER_WRITE -> emitMemberWrite(op);
                 case MEMBER_DELETE -> emitMemberDelete(op);
@@ -1958,6 +1959,31 @@ public final class LuaSemanticEmitter {
                     .append(isNumberKind(producerKind(entry.value())) ? "true" : "false")
                     .append(")\n");
             }
+            emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
+        }
+
+        private void emitArraySplice(SemanticOp op) {
+            KindPayload.ArraySplicePayload payload = (KindPayload.ArraySplicePayload) op.payload();
+            RuntimeDescriptor element = ((RuntimeDescriptor.Array) op.operandTypes().getFirst()).element();
+            String target = slot((ValueId) op.result());
+            emitStart(op);
+            out.append("do local a = ").append(slot(payload.arrayValue()))
+                .append("; local n = a[__dealCarrierKeys.n] or 0; while rawget(a, n + 1) ~= nil do n = n + 1 end\n")
+                .append("local s = __num(").append(slot(payload.start())).append("); if s ~= s then s = 0 elseif s < 0 then s = math.ceil(s) else s = math.floor(s) end\n")
+                .append("if s < 0 then s = math.max(0, n + s) else s = math.min(s, n) end\n")
+                .append("local c = __num(").append(slot(payload.deleteCount())).append("); if c ~= c or c <= 0 then c = 0 else c = math.min(n - s, math.floor(c)) end\n")
+                .append("local removed = {[__dealCarrierKeys.a]=true, [__dealCarrierKeys.n]=c, [__dealCarrierKeys.elementDescriptor]=")
+                .append(luaString(element.canonicalSpecText())).append("}\n")
+                .append("for i = 1, c do local v = rawget(a, s + i); __okB, __chkB = pcall(__bcheck, ")
+                .append(bcheckArgs(element, "v")).append(")\n")
+                .append("if not __okB then local failure = __arm(\"ARRAY_ELEMENT_KIND\", {oneBasedIndex=s+i}, ")
+                .append(luaString(originOf(op))).append(", ").append(luaString(element.canonicalSpecText()))
+                .append(", __elemRefKind(").append(luaString(staticKind(element)))
+                .append(", v)); failure.cause = (__chkB.code == \"E8003\" and __chkB.cause) or __chkB; error(failure, 0) end\n")
+                .append("rawset(removed, i, __chkB == nil and __NULL or __chkB); local marks = a[__dealCarrierKeys.nK]; __numKey(removed, i, v, marks ~= nil and marks[s+i] == true) end\n")
+                .append("if c > 0 then for i = s + 1, n - c do local v = rawget(a, i+c); rawset(a, i, v); local marks = a[__dealCarrierKeys.nK]; __numKey(a, i, v, marks ~= nil and marks[i+c] == true) end\n")
+                .append("for i = n - c + 1, n do rawset(a, i, nil); __numKey(a, i, nil, false) end; a[__dealCarrierKeys.n] = n - c end\n")
+                .append(target).append(" = removed end\n");
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
         }
 

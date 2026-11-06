@@ -1308,8 +1308,11 @@ final class JvmHostAbiEmission {
         out.append("        public void add(int i, java.lang.Object value) { int n = size(); java.util.Objects.checkIndex(i, n + 1); ")
             .append(carrier).append(".data = java.util.Arrays.copyOf(").append(carrier).append(".data, n + 1); ")
             .append("java.lang.System.arraycopy(").append(carrier).append(".data, i, ").append(carrier).append(".data, i + 1, n - i); if (value != null) set(i, value); }\n");
-        out.append("        public java.lang.Object remove(int i) { int n = size(); if (i != n - 1) throw new java.lang.UnsupportedOperationException(\"tail removal only\"); java.lang.Object old = get(i); ")
-            .append(carrier).append(".data = java.util.Arrays.copyOf(").append(carrier).append(".data, n - 1); absent.remove(i); return old; }\n");
+        out.append("        protected void removeRange(int from, int to) { int n = size(); java.util.Objects.checkFromToIndex(from, to, n); int count = to - from; if (count == 0) return; ")
+            .append("java.lang.System.arraycopy(").append(carrier).append(".data, to, ").append(carrier).append(".data, from, n - to); ")
+            .append(carrier).append(".data = java.util.Arrays.copyOf(").append(carrier).append(".data, n - count); ")
+            .append("java.util.Map<java.lang.Integer, java.lang.Object> shifted = new java.util.HashMap<>(); for (var e : absent.entrySet()) { int i = e.getKey(); if (i < from) shifted.put(i, e.getValue()); else if (i >= to) shifted.put(i - count, e.getValue()); } absent.clear(); absent.putAll(shifted); }\n");
+        out.append("        public java.lang.Object remove(int i) { java.util.Objects.checkIndex(i, size()); java.lang.Object old = get(i); removeRange(i, i + 1); return old; }\n");
         out.append("      };\n");
     }
 

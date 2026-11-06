@@ -88,7 +88,8 @@ public final class Language16RuntimeTest {
                 if (!expected.code.equals("E8001")) throw new AssertionError(expected);
             }
         }
-        arrayPopAdmission();
+        arrayRemovalAdmission(false);
+        arrayRemovalAdmission(true);
         callableBodyAdmission();
         errorGraphAdmission();
         for (String fixture : List.of("core", "refinement", "assertion", "failures", "equality-loops", "json-values", "audit-scalars")) executeFixture(fixture);
@@ -96,12 +97,14 @@ public final class Language16RuntimeTest {
     }
 
     /** Execute the same retained-mutation contract in the Oracle with genuine lowered bodies. */
-    private static void arrayPopAdmission() throws Exception {
+    private static void arrayRemovalAdmission(boolean splice) throws Exception {
+        String fixture = splice ? "splice-live-retry" : "pop-live-retry";
+        String operation = splice ? "ARRAY_SPLICE" : "ARRAY_POP";
         Path work = Files.createTempDirectory(Path.of("build"), "pop-admission-").toAbsolutePath();
         try {
             Path source = Files.createDirectories(work.resolve("src")).resolve("main.deal");
             Files.writeString(source, ConformanceHarnessMetadata.stripClassificationHeaders(Files.readString(
-                Path.of("test/conformance/backend-runtime/arrays/pop-live-retry.deal")))
+                Path.of("test/conformance/backend-runtime/arrays/" + fixture + ".deal")))
                 .replace("export function main():null", "export function run():null")
                 + "\nexport function main():null{return null;}\n");
             Path declaration = source.resolveSibling("probe.d.deal");
@@ -121,7 +124,9 @@ public final class Language16RuntimeTest {
             String raw = deal.semantic.ir.SemanticIrValidator.toProjectText(project);
             if (deal.semantic.ir.SemanticIrValidator.validate(project, facts).isPresent()
                     || deal.semantic.ir.SemanticIrValidator.validateText(raw, facts).isPresent())
-                throw new AssertionError("pop project transport rejected");
+                throw new AssertionError(operation + " project transport rejected: "
+                    + deal.semantic.ir.SemanticIrValidator.validate(project, facts) + " / "
+                    + deal.semantic.ir.SemanticIrValidator.validateText(raw, facts));
             for (var unit : project.modules().values()) {
                 var rebuilt = deal.semantic.ir.RawUnitMaterializer.materialize(deal.semantic.ir.RawUnit.fromTyped(unit));
                 if (!deal.semantic.ir.SemanticIrValidator.toUnitText(unit).equals(
@@ -131,13 +136,20 @@ public final class Language16RuntimeTest {
             var empty = new deal.semantic.ir.CanonicalJson.Arr(List.of());
             var missing = deal.semantic.ir.ContractSnapshotCanonicalizer.semanticIdJson(
                 new deal.semantic.ir.ValueId(Integer.MAX_VALUE));
-            rejectsOp(raw, "ARRAY_POP", op -> field(op, "payload", field(payload(op), "arrayValue", missing)), facts);
-            rejectsOp(raw, "ARRAY_POP", op -> field(op, "payload", field(payload(op), "arrayValue",
+            rejectsOp(raw, operation, op -> field(op, "payload", field(payload(op), "arrayValue", missing)), facts);
+            rejectsOp(raw, operation, op -> field(op, "payload", field(payload(op), "arrayValue",
                 deal.semantic.ir.CanonicalJson.Null.INSTANCE)), facts);
-            rejectsOp(raw, "ARRAY_POP", op -> field(field(op, "operands", empty), "operandTypes", empty), facts);
-            rejectsOp(raw, "ARRAY_POP", op -> field(op, "operandTypes", new deal.semantic.ir.CanonicalJson.Arr(
+            rejectsOp(raw, operation, op -> field(field(op, "operands", empty), "operandTypes", empty), facts);
+            if (!splice) rejectsOp(raw, operation, op -> field(op, "operandTypes", new deal.semantic.ir.CanonicalJson.Arr(
                 List.of(new deal.semantic.ir.CanonicalJson.Str("[string]")))), facts);
-            rejectsOp(raw, "ARRAY_POP", op -> field(op, "resultType", new deal.semantic.ir.CanonicalJson.Str("number")), facts);
+            if (splice) {
+                for (String key : List.of("start", "deleteCount")) {
+                    rejectsOp(raw, operation, op -> field(op, "payload", field(payload(op), key, missing)), facts);
+                    rejectsOp(raw, operation, op -> field(op, "payload", field(payload(op), key,
+                        deal.semantic.ir.CanonicalJson.Null.INSTANCE)), facts);
+                }
+            }
+            rejectsOp(raw, operation, op -> field(op, "resultType", new deal.semantic.ir.CanonicalJson.Str("number")), facts);
             var tables = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.StructuredBodyTable>();
             var registries = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.ClassFactoryRegistry>();
             project.modules().forEach((id, unit) -> { tables.put(id, unit.bodyTable()); registries.put(id, unit.classFactories()); });
@@ -182,16 +194,17 @@ public final class Language16RuntimeTest {
                     || !success.resultAtom().equals("null"))
                 throw new AssertionError("pop Oracle: " + result.comparisonReport() + "\n" + result.trace().stream()
                     .filter(e -> e.phase()==deal.semantic.SemanticRuntimeModel.Phase.FAILURE).toList());
-            var failures = result.trace().stream().filter(e -> e.kind()==deal.semantic.ir.SemanticOpKind.ARRAY_POP
+            var failures = result.trace().stream().filter(e -> e.kind()==deal.semantic.ir.SemanticOpKind.valueOf(operation)
                 && e.phase()==deal.semantic.SemanticRuntimeModel.Phase.FAILURE).toList();
-            if (failures.size()!=3) throw new AssertionError("pop failure trace population: " + failures);
-            for (int i=0; i<3; i++) {
+            int population = 3;
+            if (failures.size()!=population) throw new AssertionError(operation + " failure trace population: " + failures);
+            for (int i=0; i<population; i++) {
                 var error = failures.get(i).error();
                 String expected=i==0 ? "[number]" : i==1 ? "number" : "@src/main.deal/Item";
                 String actual=i==0 ? "array" : i==1 ? "string" : expected;
                 if (!error.code().equals("E8003") || !error.expected().equals(expected)
                         || !error.actual().equals(actual)
-                        || !error.message().equals("array element " + (i==1 ? 2 : 1) + " type mismatch") || error.cause()==null
+                        || !error.message().equals("array element " + (splice ? (i==0 ? 2 : i==1 ? 3 : 1) : (i==1 ? 2 : 1)) + " type mismatch") || error.cause()==null
                         || !error.cause().code().equals("E8001") || !error.cause().expected().equals("number")
                         || !error.cause().actual().equals("string") || error.frames().isEmpty())
                     throw new AssertionError("pop projection: " + error);

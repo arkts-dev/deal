@@ -8744,6 +8744,18 @@ public final class SemanticLowerer {
         private ValueId lowerCallSite(CallExpr call, ValueId slot) {
             if (call.callee() instanceof MemberAccessExpr member
                     && checkedType(member.object()) instanceof Type.Array array
+                    && member.field().equals("splice")) {
+                ValueId receiver = lowerOperand(member.object());
+                ValueId start = lowerOperand(call.args().get(0));
+                ValueId count = lowerOperand(call.args().get(1));
+                RuntimeDescriptor descriptor = ContainerPayloadDescriptors.resultDescriptorOf(array);
+                return emitOperandOp(SemanticOpKind.ARRAY_SPLICE,
+                    new KindPayload.ArraySplicePayload(receiver, start, count), List.of(receiver, start, count),
+                    List.of(descriptor, RuntimeDescriptor.Number.INSTANCE, RuntimeDescriptor.Number.INSTANCE),
+                    call.span(), descriptor, FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, slot);
+            }
+            if (call.callee() instanceof MemberAccessExpr member
+                    && checkedType(member.object()) instanceof Type.Array array
                     && member.field().equals("pop")) {
                 ValueId receiver = lowerOperand(member.object());
                 RuntimeDescriptor descriptor = ContainerPayloadDescriptors.resultDescriptorOf(array);

@@ -70,6 +70,14 @@ public final class Language16FrontendTest {
         for (String expression : List.of("JSON", "JSON.stringify", "JSON.stringify()", "JSON.stringify(1,2)")) {
             check("function f():void{let value=" + expression + ";}", false);
         }
+        check("function f(xs:number[]):number[]{return xs.splice(1,2);}", true);
+        check("function f(xs:(number|null)[]):(number|null)[]{return xs.splice(1,2);}", true);
+        check("function f(xs:unknown[]):unknown[]{return xs.splice(1,2);}", true);
+        for (String expression : List.of("xs.splice", "xs.splice()", "xs.splice(1)", "xs.splice(1,2,3)",
+                "xs.splice(\"a\",2)", "xs.splice(1,true)"))
+            check("function f(xs:number[]):void{" + expression + ";}", false);
+        check("function f(xs:number[]|null):void{xs.splice(0,1);}", false);
+        check("function f():number{let r:Record<string,unknown>={splice:():number=>4};return (r.splice as ()=>number)();}", true);
         check("function f(xs:number[]):number|undefined{return xs.pop();}", true);
         check("function f(xs:unknown[]):unknown{return xs.pop();}", true);
         check("function f(xs:(number|null)[]):number|null|undefined{return xs.pop();}", true);

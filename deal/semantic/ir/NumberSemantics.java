@@ -8,6 +8,18 @@ import java.math.RoundingMode;
 public final class NumberSemantics {
     private NumberSemantics() {}
 
+    /** ECMAScript ToIntegerOrInfinity, clamped before any host integer cast. */
+    public static int spliceStart(double value, int length) {
+        if (Double.isNaN(value) || value == 0) return 0;
+        double integer = value < 0 ? Math.ceil(value) : Math.floor(value);
+        return (int) Math.max(0, Math.min(length, integer < 0 ? length + integer : integer));
+    }
+
+    public static int spliceCount(double value, int available) {
+        if (Double.isNaN(value) || value <= 0) return 0;
+        return (int) Math.min(available, Math.floor(value));
+    }
+
     public static String toString(double value) {
         if (Double.isNaN(value)) return "NaN";
         if (value == Double.POSITIVE_INFINITY) return "Infinity";

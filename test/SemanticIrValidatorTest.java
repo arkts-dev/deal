@@ -1259,6 +1259,40 @@ public class SemanticIrValidatorTest {
             }
         }
 
+        for (String defect : List.of("none", "receiver", "start", "count", "result", "operand", "type", "policy", "forward")) {
+            var arrayType = new RuntimeDescriptor.Array(INT);
+            SemanticOp array = op(SemanticOpKind.ARRAY_NEW, new KindPayload.ArrayNewPayload(INT, List.of(), List.of()),
+                nextValue(), arrayType, FailurePolicyId.NO_DEAL_FAILURE, null);
+            SemanticOp start = nextConst(), count = nextConst();
+            var payload = new KindPayload.ArraySplicePayload(
+                defect.equals("receiver") ? nextValue() : (ValueId)array.result(),
+                defect.equals("start") ? nextValue() : (ValueId)start.result(),
+                defect.equals("count") ? nextValue() : (ValueId)count.result());
+            RuntimeDescriptor result = defect.equals("result") ? INT : arrayType;
+            List<ValueId> operands = List.of((ValueId)array.result(), (ValueId)start.result(),
+                defect.equals("operand") ? nextValue() : (ValueId)count.result());
+            List<RuntimeDescriptor> types = List.of(arrayType, defect.equals("type") ? STR : INT, INT);
+            FailurePolicyId policy = defect.equals("policy") ? FailurePolicyId.NO_DEAL_FAILURE : FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR;
+            var contract = contractFor(SemanticOpKind.ARRAY_SPLICE, payload, result, types, policy, "placeholder");
+            contract = contractFor(SemanticOpKind.ARRAY_SPLICE, payload, result, types, policy,
+                ContractSnapshotCanonicalizer.digest(contract));
+            SemanticOp splice = new SemanticOp(nextOpId(), SemanticOpKind.ARRAY_SPLICE, origin(null), nextValue(),
+                result, operands, types, payload, policy, contract);
+            var fixture = unit(defect.equals("forward") ? List.of(array, start, splice, count) : List.of(array, start, count, splice));
+            var rebuilt = deal.semantic.ir.RawUnitMaterializer.materialize(RawUnit.fromTyped(fixture));
+            if (defect.equals("none")) {
+                assertUnitPass(fixture, FACTS, "array splice admits its exact array result");
+                assertUnitPass(rebuilt, FACTS, "array splice raw admission");
+                checkEq(SemanticIrValidator.toUnitText(fixture), SemanticIrValidator.toUnitText(rebuilt), "splice lossless raw transport");
+            } else {
+                var typed = SemanticIrValidator.validate(fixture, FACTS);
+                assertE6005(typed, defect.equals("policy") ? "R-POLICY-KIND" : "R-ENUM", "ARRAY_SPLICE");
+                check(typed.equals(SemanticIrValidator.validate(rebuilt, FACTS))
+                    && typed.equals(SemanticIrValidator.validateText(SemanticIrValidator.toUnitText(fixture), FACTS)),
+                    "splice typed/raw/text rejection agrees: " + defect);
+            }
+        }
+
         for (RuntimeDescriptor operand : List.of(INT, BOOL)) {
             SemanticOp value = op(SemanticOpKind.CONST,
                 new KindPayload.ConstPayload(operand.equals(INT) ? new ScalarValue.Number(1)

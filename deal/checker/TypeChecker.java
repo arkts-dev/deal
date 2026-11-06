@@ -2125,12 +2125,14 @@ public final class TypeChecker {
                 return intrinsic.signature();
             }
         }
-        if (objType instanceof Type.Array array && field.equals("pop")) {
+        if (objType instanceof Type.Array array && (field.equals("pop") || field.equals("splice"))) {
             if (mae != directBuiltinCallee) {
                 error(DiagnosticCode.E3001, "Receiver intrinsics support direct calls only", mae.span());
                 return Type.Error.INSTANCE;
             }
-            return new Type.Func(List.of(), Types.optionalRead(array.element()), false);
+            return field.equals("pop")
+                ? new Type.Func(List.of(), Types.optionalRead(array.element()), false)
+                : new Type.Func(List.of(Type.Number.INSTANCE, Type.Number.INSTANCE), array, false);
         }
         if ((objType instanceof Type.Array || objType instanceof Type.String) && field.equals("length")) {
             return Type.Number.INSTANCE;

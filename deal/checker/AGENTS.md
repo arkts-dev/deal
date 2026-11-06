@@ -24,6 +24,6 @@ Expression-bodied arrows check their expression against the declared result, inc
 
 String receiver length is read-only and number-typed. Resolve receiver methods from the checked string type, not member spelling alone; require direct calls and exact declared argument types/arity. Record/class function fields remain ordinary callable values.
 
-Array pop is a zero-argument, direct-call-only receiver intrinsic selected by checked array type; its result is the optional element type, including independent null/undefined flags. Class/Record callable fields named pop remain ordinary values.
+Array pop and splice are direct-call-only receiver intrinsics selected by checked array type. Pop takes no arguments and returns the optional element type, including independent null/undefined flags. Splice takes exactly two numbers and returns the same array element type in fresh storage. Class/Record callable fields with these names remain ordinary values.
 
 Test acceptance/rejection independently of emitters.

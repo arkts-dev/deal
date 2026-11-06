@@ -17,6 +17,7 @@
 #include "deal/native/descriptor.h"
 
 #include <string.h>
+#include <math.h>
 
 #include "deal/native/container.h"
 #include "deal/native/error.h"
@@ -1523,6 +1524,49 @@ deal_outcome_data deal_array_pop(deal_array *array, deal_descriptor *element,
     }
     result.value = input.datum;
     deal_container_array_remove_last(array);
+    return result;
+}
+
+deal_outcome_data deal_array_splice(deal_array *array, double from, double delete_count,
+                                     deal_descriptor *element, const deal_origin *origin) {
+    deal_outcome_data result = {0};
+    size_t length = deal_container_array_count(array);
+    double integer = isnan(from) ? 0.0 : trunc(from);
+    double first = integer < 0.0 ? fmax(0.0, (double)length + integer)
+                                : fmin((double)length, integer);
+    size_t start = (size_t)first;
+    size_t count = isnan(delete_count) || delete_count <= 0.0 ? 0u
+        : (size_t)fmin((double)(length - start), trunc(delete_count));
+    deal_root_scope_push();
+    (void)deal_root_scope_hold(array);
+    for (size_t i = 0u; i < count; i++) {
+        deal_check_input input = deal_live_element(array, start + i);
+        deal_check_context context = {0};
+        context.origin = origin;
+        uint32_t boundary = deal_descriptor_type(element) == DEAL_DESCRIPTOR_FUNCTION
+            ? DEAL_BOUNDARY_FUNCTION_SIGNATURE : DEAL_BOUNDARY_TYPE_DESCRIPTOR;
+        deal_outcome checked = deal_check_live_value_core(element, input, boundary, &context, 0);
+        if (checked.error != NULL) {
+            char index_text[3u * sizeof(size_t) + 1u];
+            size_t end = sizeof(index_text) - 1u;
+            index_text[end] = '\0';
+            size_t index = start + i + 1u;
+            do { index_text[--end] = (char)('0' + index % 10u); index /= 10u; } while (index != 0u);
+            deal_arm_parameter parameter = {"oneBasedIndex", &index_text[end]};
+            result.error = deal_error_materialize(DEAL_ARM_ID_ARRAY_ELEMENT_KIND,
+                &parameter, 1u, deal_descriptor_text(element), deal_check_token(&input), origin, checked.error);
+            deal_root_scope_pop();
+            return result;
+        }
+    }
+    deal_array *removed = deal_container_array_new_typed(deal_container_array_element_layout(array),
+        deal_descriptor_reference(element), count);
+    (void)deal_root_scope_hold(removed);
+    for (size_t i = 0u; i < count; i++)
+        deal_container_array_store(removed, i, deal_container_array_element(array, start + i));
+    deal_container_array_remove_range(array, start, count);
+    result.value = deal_data_of_reference(DEAL_DATA_ARRAY, removed);
+    deal_root_scope_pop();
     return result;
 }
 

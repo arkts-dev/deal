@@ -335,6 +335,17 @@ void deal_container_array_append(deal_array *array, const void *element) {
     container->length += 1u;
 }
 
+void deal_container_array_remove_range(deal_array *array, size_t start, size_t count) {
+    struct deal_array *container = deal_container_array_of(array);
+    if (start > container->length || count > container->length - start)
+        deal_platform_fault("container: removal outside the element count");
+    if (count == 0u) return;
+    size_t length = container->length;
+    for (size_t i = start; i < length - count; i++)
+        deal_container_array_store(array, i, deal_container_array_element(array, i + count));
+    for (size_t i = 0u; i < count; i++) deal_container_array_remove_last(array);
+}
+
 void deal_container_array_remove_last(deal_array *array) {
     struct deal_array *container = deal_container_array_of(array);
     if (container->length == 0u) deal_platform_fault("container: remove from empty array");

@@ -122,6 +122,9 @@ void deal_container_array_append(deal_array *array, const void *element);
  * Empty storage is a producer defect. No allocation or layout change occurs. */
 void deal_container_array_remove_last(deal_array *array);
 
+/* Shift surviving typed slots through their barriers, then clear the tail. */
+void deal_container_array_remove_range(deal_array *array, size_t start, size_t count);
+
 /*
  * Visits the managed references of the array's present elements from
  * `position` onward, consuming one unit of `*budget` per reference slot

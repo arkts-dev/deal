@@ -12,6 +12,7 @@ public sealed interface KindPayload
             KindPayload.TableNewPayload,
             KindPayload.ArrayLengthPayload,
             KindPayload.ArrayPopPayload,
+            KindPayload.ArraySplicePayload,
             KindPayload.MemberReadPayload,
             KindPayload.MemberWritePayload,
             KindPayload.MemberDeletePayload,
@@ -287,6 +288,15 @@ public sealed interface KindPayload
     /** Validate the last element before removing it; empty yields undefined. */
     record ArrayPopPayload(ValueId arrayValue) implements KindPayload {
         public ArrayPopPayload { Objects.requireNonNull(arrayValue, "arrayValue"); }
+    }
+
+    /** Deletion-only splice, with receiver/start/count evaluated once in that order. */
+    record ArraySplicePayload(ValueId arrayValue, ValueId start, ValueId deleteCount) implements KindPayload {
+        public ArraySplicePayload {
+            Objects.requireNonNull(arrayValue, "arrayValue");
+            Objects.requireNonNull(start, "start");
+            Objects.requireNonNull(deleteCount, "deleteCount");
+        }
     }
 
     /** {@code ARRAY_LENGTH} — the array value; result is a binary64 count. */

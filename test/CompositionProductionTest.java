@@ -154,6 +154,10 @@ public final class CompositionProductionTest {
                 "test/conformance/backend-runtime/arrays/pop-live-retry.deal")), "arrays/pop-live-retry.deal"),
                 "", root.resolve("pop-live"), popHost,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
+            execute(ConformanceHarnessMetadata.productionCorpusSource(Files.readString(Path.of(
+                "test/conformance/backend-runtime/arrays/splice-live-retry.deal")), "arrays/splice-live-retry.deal"),
+                "", root.resolve("splice-live"), popHost,
+                List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             String popCallable = "import * as host from \"host/probe\";export function main():null{"
                 + "let fn=():number=>9;let fs:((()=>number)|null)[]=[fn];"
                 + "let r:Record<string,unknown>={f:fn};let rs:Record<string,unknown>[]=[r];let us:unknown[]=[r];"
@@ -169,6 +173,11 @@ public final class CompositionProductionTest {
             execute(popCallable.replace("host.poison(fn)", "host.poisonSignature(fn)"), "",
                 root.resolve("pop-callable-signature"), popHost,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
+            execute(popCallable.replace(".pop()", ".splice(0,1)[0]"), "", root.resolve("splice-callable"), popHost,
+                List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
+            execute(popCallable.replace(".pop()", ".splice(0,1)[0]").replace("host.poison(fn)", "host.poisonSignature(fn)"), "",
+                root.resolve("splice-callable-signature"), popHost,
+                List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             String decodedPop = "import * as codec from \"std/json\";export function main():null{"
                 + "let r=codec.parse(\"{\\\"xs\\\":[1,-0,null,2]}\");let xs=r.xs as unknown[];let alias=xs;"
                 + "if((xs.pop() as number)!==2 || xs.pop()!==null || 1/(xs.pop() as number)!==-1/0 || xs.length!==1){"
@@ -177,6 +186,15 @@ public final class CompositionProductionTest {
                 + " || xs.pop()!==undefined || (JSON.stringify(r) as string)!==\"{\\\"xs\\\":[]}\"){"
                 + "throw {code:\"DECODED\",message:\"pop metadata\"};}return null;}";
             execute(decodedPop, "", root.resolve("pop-decoded"), null,
+                List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
+            String decodedSplice = "import * as codec from \"std/json\";export function main():null{"
+                + "let r=codec.parse(\"{\\\"xs\\\":[1,-0,null,2,3]}\");let xs=r.xs as unknown[];let alias=xs;"
+                + "let out=xs.splice(1,2);if(out.length!==2 || 1/(out[0] as number)!==-1/0 || out[1]!==null"
+                + " || alias.length!==3 || (alias[1] as number)!==2 || (JSON.stringify(r) as string)!==\"{\\\"xs\\\":[1,2,3]}\"){"
+                + "throw {code:\"DECODED\",message:\"splice shift\"};}xs[xs.length]=4;out[out.length]=9;"
+                + "if((alias.splice(1,9)[2] as number)!==4 || (JSON.stringify(r) as string)!==\"{\\\"xs\\\":[1]}\")"
+                + "{throw {code:\"DECODED\",message:\"splice append\"};}return null;}";
+            execute(decodedSplice, "", root.resolve("splice-decoded"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             String receiverFixture = "stdlib/string/receiver-intrinsics.deal";
             execute(ConformanceHarnessMetadata.productionCorpusSource(Files.readString(
@@ -419,7 +437,7 @@ public final class CompositionProductionTest {
                     + "){throw {code:\"TEST\",message:\"value\"};}c.log(\"COMPOSE_OK\");return null;}";
                 execute(source, "COMPOSE_OK\n", root.resolve("seed" + seed), null);
             }
-            System.out.println("Composition production: 15 composition lanes and 133 revised-syntax executions passed");
+            System.out.println("Composition production: 15 composition lanes and 173 revised-syntax executions passed");
         } finally { remove(root); }
     }
 }

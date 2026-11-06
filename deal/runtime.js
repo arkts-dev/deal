@@ -2891,6 +2891,43 @@ const $rt = {
     return value;
   },
 
+  // ECMAScript deletion-only splice. Admission completes before any mutation.
+  arraySplice: function(v, start, deleteCount, descriptor, file, line, column) {
+    const length = $rt.arrayLength(v);
+    const integer = Number.isNaN(start) ? 0 : Math.trunc(start);
+    const first = Math.max(0, Math.min(length, integer < 0 ? length + integer : integer));
+    const count = Number.isNaN(deleteCount) ? 0 : Math.max(0, Math.min(length - first, Math.trunc(deleteCount)));
+    const removed = $rt.tagArray([], descriptor);
+    for (let i = 0; i < count; i++) {
+      const value = $rt.arrayAt(v, first + i);
+      try { removed.push($rt.checkType(descriptor, value, file, line, column)); }
+      catch (cause) {
+        const failure = new $DEALError("E8003", "array element " + (first + i + 1) + " type mismatch",
+          file, line, column, descriptor, $elemKindOf(value));
+        failure.cause = cause.code === "E8003" && cause.cause ? cause.cause : cause;
+        throw failure;
+      }
+    }
+    if (count === 0) return removed;
+    const decoded = !$Array.isArray(v) && $rt.isJsonArrayTable(v);
+    const key = i => String(decoded ? i + 1 : i);
+    const deleted = $arrayDeleted.get(v);
+    for (let i = first; i < length - count; i++) {
+      const source = i + count;
+      const value = decoded ? v.get(key(source)) : v[source];
+      if (decoded) v.set(key(i), value); else v[i] = value;
+      $setNumberVariant(v, key(i), $isNumberVariant(v, key(source)));
+      if (deleted) { if (deleted.has(source)) deleted.add(i); else deleted.delete(i); }
+    }
+    for (let i = length - count; i < length; i++) {
+      if (decoded) v.delete(key(i));
+      $clearNumberVariant(v, key(i));
+      deleted?.delete(i);
+    }
+    if (!decoded) v.length = length - count;
+    return removed;
+  },
+
   // Pop validates the live tail before changing storage or private metadata.
   arrayPop: function $arrayPop(v, descriptor, file, line, column) {
     const n = $rt.arrayLength(v);

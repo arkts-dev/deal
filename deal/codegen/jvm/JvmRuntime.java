@@ -3167,6 +3167,32 @@ case "NUMBER_ADD" -> {
     // Array read/bounds cells (shared slot-space context)
     // =========================================================================
 
+    /** Admit every removed value before shifting any live storage. */
+    public static Array arraySplice(Array array, double from, double deleteCount,
+                                    String descriptor, String canonical, String origin) {
+        int length = array.length();
+        int start = deal.semantic.ir.NumberSemantics.spliceStart(from, length);
+        int count = deal.semantic.ir.NumberSemantics.spliceCount(deleteCount, length - start);
+        Array removed = new Array(count);
+        removed.elementDescriptor = canonical;
+        for (int i = 0; i < count; i++) {
+            Object value = array.elements.get(start + i);
+            try { removed.elements.add(bcheck(descriptor, "unknown", value, canonical)); }
+            catch (DealError cause) {
+                DealError outer = arm(deal.semantic.ir.FailureArmId.ARRAY_ELEMENT_KIND,
+                    java.util.Map.of("oneBasedIndex", Integer.toString(start + i + 1)), origin, canonical,
+                    elementActualOf(value == MISSING ? "missing" : "unknown", value));
+                DealError leaf = cause.code.equals("E8003") && cause.cause != null ? cause.cause : cause;
+                throw new DealError(outer.code, outer.msg, outer.origin, outer.expected, outer.actual, outer.frames, leaf);
+            }
+        }
+        if (count != 0) {
+            array.elements.subList(start, start + count).clear();
+            array.length = length - count;
+        }
+        return removed;
+    }
+
     /** Validate the tail before committing the alias-visible length change. */
     public static Object arrayPop(Array array, String descriptor, String canonical, String origin) {
         int count = array.length();

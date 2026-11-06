@@ -54,6 +54,9 @@ function counter(start: number): () => number {
 // numbers. Reads require index < length; writes may append at length.
 // pop() validates before removal and returns the element or undefined.
 // It preserves the array's identity and persistent element descriptor.
+// splice(start, deleteCount) deletes without insertion, normalizing numbers
+// like ECMAScript. It checks every removed value before changing the array
+// and returns a fresh array with the same element type; aliases see the shift.
 function sumAll(values: number[]): number {
   let total: number = 0;
   for (let value of values) { total = total + value; }
@@ -64,6 +67,8 @@ function arrays(): number {
   values[values.length] = 40;
   let tail: number | undefined = values.pop();
   if (tail !== undefined) { values[values.length] = tail; }
+  let removed: number[] = values.splice(1, 2);
+  values[values.length] = removed[0];
   values[0] = 99;
   let maybe: (number | null)[] = [1, null, 3];
   let selected: number | null = maybe[1];
