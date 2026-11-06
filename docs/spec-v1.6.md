@@ -9,7 +9,7 @@ Features not described in this specification do not exist in the language.
 ## Lexical elements
 
 - Tokens and property-name rules are defined by the [lexical grammar](#lexical-grammar-normative). Follow TypeScript module identifier rules by position: `switch`/`enum` cannot name bindings.
-- User-declared identifiers must not contain `$`. Compiler-generated names containing `$` are source-visible only when specified, such as `C$fromJson` and `C$toJson`.
+- User-declared identifiers must not contain `$`.
 - `Record`, `Promise`, `Object`, `Array`, `String`, `JSON`, `Math`, `Date`, `console`, `undefined` are unshadowable builtins.
 
 ### Comment semantics
@@ -18,12 +18,7 @@ Line terminators are LF (`\n`), CRLF (`\r\n`), and CR (`\r`).
 
 - `//` comments extend to end-of-line (line-ending character consumed, not emitted).
 - `/* */` comments do **not** nest. `/* /* */` ends at the first `*/`.
-- Comments are equivalent to whitespace except recognized compiler directive comments.
-- A compiler directive comment is a line comment matching `CompilerDirectiveComment` in the lexical grammar.
-- A compiler directive comment with an unrecognized directive name is a compile-time error.
-- `// @jsonable` is a declaration directive. A declaration directive block is the maximal contiguous sequence of declaration directive comments and whitespace immediately before a declaration, with no intervening non-comment token or non-directive comment. The block attaches to that declaration.
-- Attaching a declaration directive to an incompatible declaration is a compile-time error.
-- `// @jsonable` must have no argument other than horizontal whitespace.
+- Comments are equivalent to whitespace.
 
 ### String escapes and Unicode
 
@@ -98,12 +93,6 @@ TemplateText ::= /* nonempty TypeScript TemplateCharacter sequence; no unescaped
 
 StringCharacter ::= /* any SourceCharacter except line terminators and unescaped quote */
  | '\n' | '\t' | '\\' | '\"' | '\''
-
-CompilerDirectiveComment ::= '//' [ \t]* '@' DirectiveName DirectiveArgument? LineTerminator?
-
-DirectiveName ::= 'jsonable'
-
-DirectiveArgument ::= [^\r\n]*
 
 LineTerminator ::= '\n' | '\r\n' | '\r'
 
@@ -472,7 +461,8 @@ String concatenation uses `+`. Both operands must be `string`. No implicit strin
 | index `a[b]` where `a: T[]`, `b: number` | `T` |
 | record member/index read | `unknown`; absent key yields undefined |
 | class member `a.p` | declared type; optional adds undefined |
-| sync call `f(...)` | declared result, including void |
+| `JSON.parse(s)` | see [JSON decoding](#json-decoding) |
+| other sync call `f(...)` | declared result, including void |
 | `await f(...)` for `f: (...) => Promise<R>` | `R`, including void |
 | `typeof e` / `e instanceof C` | `string` / `boolean` |
 | `e as T` | `T` |
@@ -485,7 +475,7 @@ String concatenation uses `+`. Both operands must be `string`. No implicit strin
 let x: T_target = expr;
 ```
 
-1. Infer the RHS type, using target context for literals.
+1. Infer the RHS type, using target context for literals and [JSON decoding](#json-decoding).
 2. Accept equal types, nullish widening with an unchanged base, singleton null/undefined into a target admitting that member, or any data value into unknown.
 3. Accept direct function compatibility under [Function type compatibility](#function-type-compatibility), not lifted through arrays/nullish wrappers.
 4. Otherwise reject; unknown-to-concrete assignment needs explicit validation.
@@ -519,70 +509,6 @@ f: T | null; required-present, nullable
 
 Field initializers are compile-time errors.
 
-### JSON serialization (`@jsonable`)
-
-The `@jsonable` directive generates serialization functions for an `export class`:
-
-```ts
-// @jsonable
-export class User {
-  name: string;
-  nick?: string;
-  bio: string | null;
-}
-```
-
-**Jsonable field types.** A `// @jsonable` class may contain fields of:
-
-- `null`, `undefined`, `boolean`, `number`, `string`
-- `Record<string, unknown>`
-- `T[]` and nullish unions where the base is jsonable
-- class type `C` with visible generated or declared `C$fromJson` and `C$toJson` of the signatures below
-
-Non-jsonable fields produce compile-time errors at their declarations.
-
-Allow recursive `@jsonable` schemas; apply [runtime cycle rejection](#json-encoding).
-
-In declaration files, `// @jsonable` has no effect; compatible `C$fromJson` and `C$toJson` functions may be declared explicitly.
-
-**Generated functions.** For a `@jsonable` class `C`, the compiler emits two module-level export functions:
-
-```ts
-export function C$fromJson(s: string): C | null;
-export function C$toJson(v: C): string;
-```
-
-**fromJson.** Parses an object; rejects extra keys, missing required-present keys, and duplicate decoded property names at every object nesting level. Decodes fields recursively in declaration order; array fields receive validated element descriptors; missing optionals stay absent. Failure returns `null`, never throws or publishes partial instances.
-
-```ts
-let invalid: User | null = User$fromJson("{\"name\":\"Ada\",\"naem\":\"Bob\"}"); // null: extra key
-```
-
-**toJson.** Applies [JSON encoding](#json-encoding) to declared fields; class input guarantees a string. Required undefined-valued fields are omitted, so encoded JSON need not decode successfully.
-
-Record fields decode object roots to dynamic data. JSON decoding never creates stored undefined. Required fields must be present even when their type admits undefined.
-
-**Optional-field encoding.** For JSON-representable values:
-
-| State | fromJson input | toJson output |
-|---|---|---|
-| missing | key absent | key omitted |
-| present, null | `"field": null` | `"field": null` |
-| present, value | `"field": value` | `"field": value` |
-| present, undefined | no JSON representation | key omitted |
-
-**Usage:**
-
-```ts
-import * as models from "./models/user";
-
-let u: models.User | null = models.User$fromJson("{\"name\":\"Ada\",\"bio\":null}");
-
-if (u !== null) {
-  let s: string = models.User$toJson(u);
-}
-```
-
 ### Nominal typing
 
 Classes are nominal. Two identically-shaped classes are distinct types:
@@ -598,7 +524,7 @@ let c: B = { x: 1 }; // OK
 
 ### Construction
 
-Classes are initialized with **object literals** in a typed context. There is no `new` operator.
+Classes are constructed by **object literals** in a typed context or [JSON decoding](#json-decoding).
 
 ```ts
 let u: User = { id: 1, name: "Ada", bio: null, active: true };
@@ -1158,7 +1084,7 @@ import * as http from "host/http";
 
 async function fetchUser(path: string): Promise<User | null> {
   let json: string = await http.get(path);
-  return User$fromJson(json);
+  return JSON.parse(json);
 }
 ```
 
@@ -1408,7 +1334,24 @@ JSON.parse(s: string): unknown
 JSON.stringify(value: unknown): string | undefined
 ```
 
-`parse` accepts objects, arrays, strings, numbers, booleans or null. Malformed JSON or duplicate decoded keys raise Error. Parsed arrays have unknown element descriptors. Numbers follow [Numbers](#numbers), including class decoding.
+##### JSON decoding
+
+`parse` accepts any JSON root; malformed JSON, duplicate decoded keys at any depth or target mismatches raise Error. Numbers follow [Numbers](#numbers).
+
+A contextual target determines the call's result type and decoding schema. It comes from an annotated initializer, assignment destination, class field type, array element type, parameter type for an argument, or [function return type](#return-type-requirements). Parentheses preserve the target; literals and [conditional branches](#conditional) propagate their contextual types. An `as T` assertion does not supply a decoding target.
+
+Without a target, or with target `unknown`, the result has type `unknown` and contains ordinary parsed data: Records, arrays with unknown element descriptors, primitives or null.
+
+A decoding target containing function types is a compile-time error, including within optional fields; `unknown` stops schema traversal. Recursive class schemas are allowed; encoding follows [runtime cycle rejection](#json-encoding).
+
+Decode recursively without coercion. Records require objects; arrays require arrays and receive fresh storage with validated target descriptors. Classes require objects and follow [construction](#construction) field validation, decoding fields in declaration order into fresh nominal instances.
+
+```ts
+class OpaqueRef { payload: unknown; }
+class Handler { run: () => void; }
+let ref: OpaqueRef = JSON.parse("{\"payload\":{\"x\":1}}");
+let handler: Handler = JSON.parse("{}"); // compile-time error: function field
+```
 
 ##### JSON encoding
 
@@ -1518,7 +1461,7 @@ Observable behavior includes:
 - function type identity, including the async marker
 - evaluation order
 - binary64 arithmetic, signed-zero behavior, and discrete-position validation
-- JSON encoding/decoding, including generated class helpers
+- JSON encoding/decoding
 
 A backend may choose any internal representation, including erased, partially erased, statically typed, boxed, unboxed, interpreted, source-generated, or bytecode-generated representation, if observable behavior is unchanged.
 
@@ -1543,8 +1486,8 @@ Typed boundaries are:
 - value exposed through module export table
 - value crossing from host into DEAL through `.d.deal`
 - value crossing from DEAL into host through `.d.deal`
-- `@jsonable` `fromJson` field validation
-- `@jsonable` `toJson` field serialization input validation
+- contextual `JSON.parse` reconstruction and field validation
+- `JSON.stringify` field serialization input validation
 
 ### Runtime type descriptor format
 
