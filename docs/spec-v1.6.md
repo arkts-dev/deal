@@ -148,7 +148,7 @@ AsyncPrefix ::= 'async' /* line-break restrictions: Semicolon rules */
 
 ExternalFunctionDeclaration ::= 'function' Identifier '(' ParameterList? ')' ':' ReturnType ';' /* declaration files only */
 
-ParameterList ::= Parameter (',' Parameter)*
+ParameterList ::= Parameter (',' Parameter)* ','?
 
 Parameter ::= Identifier ':' Type
 
@@ -227,7 +227,7 @@ PostfixPart ::= '.' Identifier
 
 Arguments ::= '(' ArgumentList? ')'
 
-ArgumentList ::= Expression (',' Expression)*
+ArgumentList ::= Expression (',' Expression)* ','?
 
 PrimaryExpression ::= NullLiteral
  | UndefinedLiteral
@@ -332,7 +332,7 @@ BuiltinType ::= 'null' | 'undefined' | 'boolean' | 'number' | 'string' | 'unknow
 
 FunctionType ::= '(' FunctionTypeParams? ')' '=>' ReturnType
 
-FunctionTypeParams ::= FunctionTypeParam (',' FunctionTypeParam)*
+FunctionTypeParams ::= FunctionTypeParam (',' FunctionTypeParam)* ','?
 FunctionTypeParam ::= Identifier ':' Type
 ```
 
