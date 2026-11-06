@@ -196,6 +196,12 @@ public final class CompositionProductionTest {
                 + "throw {code:\"TEST\",message:\"escape decoding\"};}return null;}";
             execute(escapes, "", root.resolve("string-escapes"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
+            String multiline = "export function main():null{"
+                + "if(`A\r\nB\rC\nD` !== \"A\\nB\\nC\\nD\""
+                + " || `A\\\r\nB` !== \"AB\" || `x${`a\nb`}y` !== \"xa\\nby\"){"
+                + "throw {code:\"TEST\",message:\"multiline decoding\"};}return null;}";
+            execute(multiline, "", root.resolve("multiline-templates"), null,
+                List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             // Each seed changes values and composition depth, not the language
             // contract. Integer arithmetic here is exactly representable binary64.
             for (int seed = 0; seed < 4; seed++) {
@@ -220,7 +226,7 @@ public final class CompositionProductionTest {
                     + "){throw {code:\"TEST\",message:\"value\"};}c.log(\"COMPOSE_OK\");return null;}";
                 execute(source, "COMPOSE_OK\n", root.resolve("seed" + seed), null);
             }
-            System.out.println("Composition production: 15 composition lanes and 49 revised-syntax executions passed");
+            System.out.println("Composition production: 15 composition lanes and 56 revised-syntax executions passed");
         } finally { remove(root); }
     }
 }

@@ -746,8 +746,7 @@ public final class Lexer {
     // =========================================================================
 
     /**
-     * Reads a backtick-delimited template literal (v1.4 template lexical
-     * states).
+     * Reads one backtick-delimited template token, retaining physical newlines.
      *
      * <p>The lexeme is the raw content between the backticks (backticks not
      * included). {@link TemplateScanner} owns the structure: TemplateText
@@ -769,13 +768,9 @@ public final class Lexer {
      * an interpolation is scanned by its own expression-level lexical
      * pass, which reports its own violations.</p>
      *
-     * <p>Failure handling keeps the single-line TemplateText contract: a
-     * line terminator in TemplateText, or the end of the input inside an
-     * unterminated template or interpolation, produces the existing E1003
-     * at the token-start range and a recovery token whose lexeme is the raw
-     * content scanned so far. After a TemplateText line terminator the
-     * terminator is consumed (CRLF as one line break, two scalars) so the
-     * remaining source keeps lexing.</p>
+     * <p>EOF inside an unterminated template or interpolation produces E1003
+     * at the token start and a recovery token retaining all scanned raw text.
+     * Physical CRLF counts as one line break while retaining both units.</p>
      */
     private Token readTemplateLiteral() {
         bump(); // opening backtick
@@ -789,21 +784,6 @@ public final class Lexer {
                 int endIndex = scan.endIndex();
                 String lexeme = source.substring(contentStart, endIndex - 1);
                 advanceTo(endIndex);
-                return makeToken(TokenType.TEMPLATE_LITERAL, lexeme);
-            }
-            case TEXT_LINE_TERMINATOR -> {
-                int stop = scan.endIndex();
-                error(DiagnosticCode.E1003,
-                    "Unterminated template literal: missing closing backtick",
-                    tokenStartRange());
-                String lexeme = source.substring(contentStart, stop);
-                advanceTo(stop);
-                boolean carriageReturn = source.charAt(pos) == '\r';
-                newline();
-                if (carriageReturn && pos < source.length()
-                        && source.charAt(pos) == '\n') {
-                    skipCrlfLf();
-                }
                 return makeToken(TokenType.TEMPLATE_LITERAL, lexeme);
             }
             case EOF, UNTERMINATED_INTERPOLATION -> {

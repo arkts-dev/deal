@@ -14,8 +14,6 @@ public final class TemplateScanner {
     public enum Status {
         /** A closing backtick was reached; {@code endIndex} is past it. */
         TERMINATED,
-        /** TemplateText hit a line terminator; {@code endIndex} is at it. */
-        TEXT_LINE_TERMINATOR,
         /** The scanned text ended inside TemplateText (no closing backtick). */
         EOF,
         /**
@@ -85,11 +83,6 @@ public final class TemplateScanner {
         while (pos < source.length()) {
             char c = source.charAt(pos);
 
-            if (c == '\n' || c == '\r') {
-                addText(segments, textStart, pos);
-                return new Scan(Status.TEXT_LINE_TERMINATOR, pos,
-                    List.copyOf(segments), List.copyOf(violations));
-            }
             if (c == '`') {
                 addText(segments, textStart, pos);
                 return new Scan(Status.TERMINATED, pos + 1,
@@ -154,6 +147,11 @@ public final class TemplateScanner {
         StringBuilder out = new StringBuilder();
         for (int i = 0; i < raw.length(); i++) {
             char c = raw.charAt(i);
+            if (c == '\r') {
+                out.append('\n');
+                if (i + 1 < raw.length() && raw.charAt(i + 1) == '\n') i++;
+                continue;
+            }
             if (c != '\\' || i + 1 == raw.length()) {
                 out.append(c);
                 continue;
@@ -249,9 +247,8 @@ public final class TemplateScanner {
     /**
      * Scans one interpolation expression starting just after its
      * {@code ${} opener. Returns the index of the closing {@code }} for a
-     * terminated interpolation, or the propagation of the nested stop (a
-     * line terminator inside a nested template's TemplateText, or the end
-     * of the scanned text).
+     * terminated interpolation, or the propagation of the nested stop at
+     * the end of the scanned text.
      */
     private static InterpolationScan scanInterpolation(String source, int start) {
         int pos = start;

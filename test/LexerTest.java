@@ -553,48 +553,15 @@ public class LexerTest {
         check(r.tokens().get(0).lexeme().equals("unterminated"),
             "unterminated template lexeme is content before EOF");
 
-        // =====================================================================
-        // Newline inside TemplateText → E1003
-        // =====================================================================
-        r = tokenize("`hello\nworld`");
-        assertDiagnosticCode(r.diagnostics(), "E1003", "newline in template");
-        check(r.tokens().get(0).type() == TokenType.TEMPLATE_LITERAL,
-            "template with newline produces TEMPLATE_LITERAL");
-        check(r.tokens().get(0).lexeme().equals("hello"),
-            "template lexeme is content before newline");
-        // After the newline, remaining source should still tokenize
-        boolean hasWorld = r.tokens().stream()
-            .anyMatch(t -> t.type() == TokenType.IDENTIFIER && t.lexeme().equals("world"));
-        check(hasWorld, "'world' identifier found after unterminated template");
-
-        // =====================================================================
-        // Carriage return inside template literal → E1003
-        // =====================================================================
-        r = tokenize("`hello\rworld`");
-        assertDiagnosticCode(r.diagnostics(), "E1003", "CR in template");
-        check(r.tokens().get(0).type() == TokenType.TEMPLATE_LITERAL,
-            "template with CR produces TEMPLATE_LITERAL");
-        check(r.tokens().get(0).lexeme().equals("hello"),
-            "template lexeme is content before CR");
-
-        // =====================================================================
-        // Windows CRLF inside template literal → E1003, line incremented once
-        // =====================================================================
-        r = tokenize("`hello\r\nworld`");
-        assertDiagnosticCode(r.diagnostics(), "E1003", "CRLF in template");
-        check(r.tokens().get(0).lexeme().equals("hello"),
-            "template lexeme is content before CRLF");
-        // Verify that 'world' is on line 2 (line incremented exactly once)
-        Token worldToken = null;
-        for (Token t : r.tokens()) {
-            if (t.type() == TokenType.IDENTIFIER && t.lexeme().equals("world")) {
-                worldToken = t;
-                break;
-            }
+        // Physical line terminators remain inside the raw template token.
+        for (String newline : List.of("\n", "\r", "\r\n")) {
+            r = tokenize("`hello" + newline + "world` let x = 1;");
+            assertNoDiagnostics(r.diagnostics(), "multiline template");
+            assertToken(r.tokens().get(0), TokenType.TEMPLATE_LITERAL, "hello" + newline + "world", 1, 1);
+            check(r.tokens().get(1).type() == TokenType.LET
+                    && r.tokens().get(1).line() == 2 && r.tokens().get(1).column() == 8,
+                "following token keeps physical multiline position");
         }
-        check(worldToken != null, "world token found after CRLF template");
-        check(worldToken.line() == 2,
-            "world token on line 2 after CRLF (got " + worldToken.line() + ")");
 
         // =====================================================================
         // Escaped line terminators continue one token, with raw ranges intact.
@@ -610,35 +577,15 @@ public class LexerTest {
                 "following token has physical line and column");
         }
 
-        // =====================================================================
-        // After \r\n in template, subsequent tokens report correct line numbers
-        // =====================================================================
+        // EOF remains an error and does not expose template text as source tokens.
         r = tokenize("`bad\r\nlet x = 1;");
-        assertDiagnosticCode(r.diagnostics(), "E1003", "CRLF template continued");
-        // LET should be on line 2
-        Token letToken = null;
-        for (Token t : r.tokens()) {
-            if (t.type() == TokenType.LET) {
-                letToken = t;
-                break;
-            }
-        }
-        check(letToken != null, "LET found after CRLF template");
-        check(letToken.line() == 2,
-            "LET on line 2 after CRLF template (got " + letToken.line() + ")");
-        check(letToken.column() == 1,
-            "LET column is 1 after CRLF template (got " + letToken.column() + ")");
-
-        // Two LF scalars are two line breaks, not a CRLF pair.
+        assertDiagnosticCode(r.diagnostics(), "E1003", "multiline template missing close");
+        check(r.tokens().size() == 2 && r.tokens().get(1).type() == TokenType.EOF
+                && r.tokens().get(1).line() == 2,
+            "unterminated template consumes through EOF");
         r = tokenize("`hello\n\nworld");
-        assertDiagnosticCode(r.diagnostics(), "E1003", "two LF after TemplateText");
-        Token afterTwoLf = r.tokens().stream()
-            .filter(t -> t.type() == TokenType.IDENTIFIER
-                && t.lexeme().equals("world"))
-            .findFirst().orElse(null);
-        check(afterTwoLf != null && afterTwoLf.line() == 3
-                && afterTwoLf.column() == 1,
-            "world follows two LF on line 3, column 1");
+        assertDiagnosticCode(r.diagnostics(), "E1003", "two LF in unterminated template");
+        check(r.tokens().get(1).line() == 3, "two LF advance to line 3");
 
         // =====================================================================
         // Template literal followed by another token on next line
