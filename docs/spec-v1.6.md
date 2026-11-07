@@ -286,10 +286,11 @@ Require grammatical semicolons; no automatic insertion. Forbid line terminators,
 
 ### Statement semantics
 
-- An `if` without `else` evaluates the condition; if true the branch executes.
+- `if` evaluates its condition once: if true, execute its body; otherwise execute its `else` branch if present.
 - A `while` loop evaluates the condition before each iteration.
 - `break` exits the nearest enclosing loop.
 - `continue` proceeds to the next iteration of the nearest enclosing loop.
+- Reject `break`/`continue` without an enclosing loop in the same function.
 - `return` transfers control to the caller; result rules are defined in [Return type requirements](#return-type-requirements).
 
 ### Assignment targets
@@ -621,7 +622,7 @@ let untyped = [{ name: "Ada" }]; // error: no class target type
 let empty: User[] = [];
 ```
 
-Nested object literals receive their field's class target type; elements of a contextually typed `C[]` receive class type `C`.
+Nested object literals receive their field's class target type; array elements follow [Array literals](#array-literals).
 
 ### Class vs record
 
@@ -1102,7 +1103,7 @@ Require `await E` inside async bodies, where E is a call with signature `(...) =
 
 ### Async operation semantics
 
-Calls create internal operations, not data: no storage, passing, returning, comparison or inspection, including through unknown.
+Async calls create internal operations, not data: no storage, passing, returning, comparison or inspection, including through unknown.
 
 Each operation completes once with the Promise result (undefined for void), or an Error.
 
@@ -1416,7 +1417,7 @@ See [Backend contracts](#backend-contracts) for backend-specific representations
 
 Host arrays without DEAL descriptors acquire them on first typed admission; existing descriptors survive crossings.
 
-Unknown preserves supported data identity, not opaque hosts. Cycle-safe validation rejects unsupported leaves before publication, including unread Record/container descendants; cycles/sharing retain original identities. See [assertions](#narrowing-and-checked-assertions) and [validation](#backend-conformance-contract).
+Unknown preserves supported data identity, not opaque hosts. Cycle-safe validation rejects unsupported leaves before publication, including unread Record/container descendants; cycles/sharing retain original identities. See [assertions](#narrowing-and-checked-assertions) and [Typed boundaries](#typed-boundaries).
 
 
 #### Function ABI
@@ -1557,7 +1558,7 @@ async(number)->string // (x:number)=>Promise<string>
 async()->void // () => Promise<void>
 ```
 
-Nullish prefixes require a non-nullish/non-unknown base; no nesting. Descriptors encode canonical types from [Type grammar](#type-grammar-normative), including result-only void. They are internal ABI text, not source syntax.
+Nullish prefixes require a non-nullish/non-unknown base. Descriptors encode canonical types from [Type grammar](#type-grammar-normative), including result-only void. They are internal ABI text, not source syntax.
 
 ## Backend contracts
 
