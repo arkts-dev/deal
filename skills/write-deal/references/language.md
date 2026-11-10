@@ -8,7 +8,7 @@ Imports precede module-level functions, classes and exports; executable statemen
 
 Comments: // or /* ... */. `$` bindings are compiler-owned. Property keys need explicit values. Assign with x = x + 1. Function expressions use function or explicitly typed arrows, such as (x: number): number => x * 2. Arrows admit block or expression bodies; a void expression body must itself produce void. Async arrows use Promise<T> results and await normally. Keep async with its parameter opening and the result annotation with => on the same line.
 
-Ordinary strings decode newline, carriage-return, tab, backslash and quote escapes, hexadecimal \\xHH/\\uHHHH units and \\u{H…} code points. Strings retain UTF-16 lone surrogates across backends and host transport. Untagged templates admit multiline text, normalize physical CR/CRLF to LF and remove escaped line continuations.
+Ordinary strings decode newline, carriage-return, tab, backspace (\\b), form-feed (\\f), vertical-tab (\\v), NUL (\\0, not followed by a digit), backslash and quote escapes, hexadecimal \\xHH/\\uHHHH units and \\u{H…} code points. Backslash plus LF/CR/CRLF continues a string without adding text. Strings retain UTF-16 lone surrogates across backends and host transport. Untagged templates admit multiline text, normalize physical CR/CRLF to LF and remove escaped line continuations.
 
 ## Types
 
@@ -16,7 +16,7 @@ Data: null, undefined, unknown, boolean, number, string, Record<string, unknown>
 
 Unknown requires checked extraction or typeof/instanceof refinement. Unlike TypeScript's erased as, DEAL assertions check once without coercion, preserving identity; mismatch raises E8001.
 
-Numbers are binary64, preserving signed zero, infinities and NaN; division is nontrapping. The % operator is ECMAScript remainder, retaining the dividend's sign (including signed zero), not floor modulo. Array indexes require finite whole numbers. Round deliberately through Math.floor/ceil; use String(n) for ECMAScript decimal text. Conditions require boolean. String concatenation requires strings; template interpolations accept strings or numbers and format numbers with ECMAScript decimal conversion (including NaN and infinities, with either zero rendered as 0). Use ===/!== with compatible types or admitted nullish comparisons.
+Numbers are binary64, preserving signed zero, infinities and NaN; division is nontrapping. Literals admit decimal fractions/exponents, trailing decimal points, 0x/0b/0o radix prefixes and underscores between digits (for example 0xff, 0b10_01 and 1_234.5). Radix integers round once to binary64. The % operator is ECMAScript remainder, retaining the dividend's sign (including signed zero), not floor modulo. Array indexes require finite whole numbers. Round deliberately through Math.floor/ceil; use String(n) for ECMAScript decimal text. Conditions require boolean. String concatenation requires strings; template interpolations accept strings or numbers and format numbers with ECMAScript decimal conversion (including NaN and infinities, with either zero rendered as 0). Use ===/!== with compatible types or admitted nullish comparisons.
 
 ## Classes
 

@@ -1,0 +1,24 @@
+// @spec: Lexical elements — Numeric overflow, NaN, and Infinity
+// @description: Radix and separated literals round to binary64 once; decimal points may trail digits.
+// @expected: runtime-ok
+// @features: number, binary64, numeric-separator, radix
+
+function check(ok:boolean):void {
+  if (!ok) { throw {code:"TEST",message:"numeric literal value"}; }
+}
+
+export function main():null {
+  check(0xF_f === 255 && 0Xff === 255);
+  check(0b10_01 === 9 && 0B101 === 5);
+  check(0o7_1 === 57 && 0O17 === 15);
+  check(1_234.5_6e-1 === 123.456);
+  check(.1_2 === 0.12 && 1. === 1 && 1.e2 === 100);
+  check(0x20_0000_0000_0001 === 9007199254740992);
+  check(0x20_0000_0000_0003 === 9007199254740996);
+  check(0b1_0000000000_0000000000_0000000000_0000000000_0000000000_001 === 9007199254740992);
+  check(-0x0 === 0 && 1 / -0b0 === -1 / 0);
+  check(`${0xF_f}|${1_2.}|${0o10}` === "255|12|8");
+  let values:number[] = [0xff,0b11,0o10,1_0];
+  check((JSON.stringify(values) as string) === "[255,3,8,10]");
+  return null;
+}

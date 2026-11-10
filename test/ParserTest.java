@@ -768,9 +768,11 @@ public class ParserTest {
     static void testNumberLiterals() {
         System.out.println("-- Binary64 Literals --");
         String[] literals = {"2147483647", "2147483648", "9007199254740993",
-            "1e309", "5e-324", "1e-9999"};
+            "1e309", "5e-324", "1e-9999", "0x20_0000_0000_0001", "0x20_0000_0000_0003",
+            "0b1_010", "0O7_1", "1_234.5_6e-1", "1.", "1.e2", ".1_2", "0x1" + "0".repeat(256)};
         double[] expected = {2147483647d, 2147483648d, 9007199254740992d,
-            Double.POSITIVE_INFINITY, Double.MIN_VALUE, 0d};
+            Double.POSITIVE_INFINITY, Double.MIN_VALUE, 0d, 9007199254740992d, 9007199254740996d,
+            10d, 57d, 123.456d, 1d, 100d, 0.12d, Double.POSITIVE_INFINITY};
         for (int i = 0; i < literals.length; i++) {
             ParseResult r = parse("let a: number = " + literals[i] + ";");
             assertNoParseErrors(r, literals[i]);

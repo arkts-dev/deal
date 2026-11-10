@@ -984,26 +984,28 @@ public class LexerTest {
             .anyMatch(t -> t.type() == TokenType.LET);
         check(hasContinuation, "tokenization continues after malformed number");
 
-        // 1..2 — correct tokenization: INT(1) + DOT + NUMBER(.2)
+        // Maximal numeric tokens retain a trailing decimal point.
         r = tokenize("1..2");
-        List<Token> tokens = r.tokens();
-        check(tokens.get(0).type() == TokenType.NUMBER_LITERAL
-                && tokens.get(0).lexeme().equals("1"),
-            "1..2: first token is INT 1");
-        check(tokens.get(1).type() == TokenType.DOT,
-            "1..2: second token is DOT");
-        check(tokens.get(2).type() == TokenType.NUMBER_LITERAL
-                && tokens.get(2).lexeme().equals(".2"),
-            "1..2: third token is NUMBER .2");
-        assertNoDiagnostics(r.diagnostics(), "1..2 valid");
-        check(tokens.get(0).type() == TokenType.NUMBER_LITERAL
-                && tokens.get(0).lexeme().equals("1"),
-            "1..2: first token INT 1");
-        check(tokens.get(1).type() == TokenType.DOT,
-            "1..2: second token DOT");
-        check(tokens.get(2).type() == TokenType.NUMBER_LITERAL
-                && tokens.get(2).lexeme().equals(".2"),
-            "1..2: third token NUMBER .2");
+        assertToken(r.tokens().get(0), TokenType.NUMBER_LITERAL, "1.", 1, 1);
+        assertToken(r.tokens().get(1), TokenType.NUMBER_LITERAL, ".2", 1, 3);
+        assertNoDiagnostics(r.diagnostics(), "1..2 tokenization (not a valid expression)");
+        for (String spelling : List.of("0xF_f", "0Xff", "0b10_01", "0B1", "0o7_1", "0O0",
+                "1_234.5_6e+7_8", ".1_2", "1.", "1.e2", "0.0_1")) {
+            r = tokenize(spelling + ";@");
+            assertDiagnosticCount(r.diagnostics(), 1, "only following token diagnoses: " + spelling);
+            assertToken(r.tokens().getFirst(), TokenType.NUMBER_LITERAL, spelling, 1, 1);
+            assertRange(findDiag(r, "E1001"), "test.deal", 1, spelling.length() + 2,
+                1, spelling.length() + 3, spelling.length() + 1, spelling.length() + 2,
+                "range after numeric literal");
+        }
+        for (String spelling : List.of("0x", "0x_1", "0x1_", "0x1g", "0b2", "0b102", "0o8",
+                "1__0", "1_", "1_.0", "1._0", "1e", "1e+", "1e_2", "1e2_", "123abc", "1n")) {
+            r = tokenize(spelling + ";let x=1;");
+            assertDiagnosticCount(r.diagnostics(), 1, "one numeric diagnostic: " + spelling);
+            assertDiagnosticCode(r.diagnostics(), "E1002", spelling);
+            check(r.tokens().getFirst().lexeme().equals(spelling), "whole malformed spelling retained");
+            check(r.tokens().get(2).type() == TokenType.LET, "recovery after malformed literal");
+        }
     }
 
     // =========================================================================
@@ -1109,19 +1111,19 @@ public class LexerTest {
         System.out.println("-- Dot-Number Edge Cases --");
 
         LexResult r = tokenize("1.toString");
-        assertNoDiagnostics(r.diagnostics(), "1.toString");
-        List<Token> tokens = r.tokens();
-        check(tokens.size() == 4, "1.toString: 3 tokens + EOF, got " + tokens.size());
-        assertToken(tokens.get(0), TokenType.NUMBER_LITERAL, "1", 1, 1);
-        assertToken(tokens.get(1), TokenType.DOT, ".", 1, 2);
-        assertToken(tokens.get(2), TokenType.IDENTIFIER, "toString", 1, 3);
+        assertDiagnosticCode(r.diagnostics(), "E1002", "identifier immediately after number");
+        assertToken(r.tokens().getFirst(), TokenType.NUMBER_LITERAL, "1.toString", 1, 1);
+
+        r = tokenize("1..toString");
+        assertNoDiagnostics(r.diagnostics(), "separate member dot after trailing decimal point");
+        assertToken(r.tokens().get(0), TokenType.NUMBER_LITERAL, "1.", 1, 1);
+        assertToken(r.tokens().get(1), TokenType.DOT, ".", 1, 3);
+        assertToken(r.tokens().get(2), TokenType.IDENTIFIER, "toString", 1, 4);
 
         r = tokenize("1.");
         assertNoDiagnostics(r.diagnostics(), "1. at EOF");
-        tokens = r.tokens();
-        check(tokens.size() == 3, "1. at EOF: 2 tokens + EOF, got " + tokens.size());
-        assertToken(tokens.get(0), TokenType.NUMBER_LITERAL, "1", 1, 1);
-        assertToken(tokens.get(1), TokenType.DOT, ".", 1, 2);
+        check(r.tokens().size() == 2, "trailing-dot number plus EOF");
+        assertToken(r.tokens().get(0), TokenType.NUMBER_LITERAL, "1.", 1, 1);
 
         r = tokenize(".");
         assertNoDiagnostics(r.diagnostics(), "dot alone");

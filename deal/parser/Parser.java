@@ -1144,7 +1144,16 @@ public final class Parser {
                 advance();
                 double value;
                 try {
-                    value = Double.parseDouble(previous().lexeme());
+                    String spelling = previous().lexeme().replace("_", "");
+                    int radix = spelling.length() > 2 && spelling.charAt(0) == '0'
+                        ? switch (spelling.charAt(1)) {
+                            case 'x', 'X' -> 16;
+                            case 'b', 'B' -> 2;
+                            case 'o', 'O' -> 8;
+                            default -> 0;
+                        } : 0;
+                    value = radix == 0 ? Double.parseDouble(spelling)
+                        : new java.math.BigInteger(spelling.substring(2), radix).doubleValue();
                 } catch (NumberFormatException e) {
                     error(DiagnosticCode.E1002, "Invalid number literal: " + previous().lexeme(), previous());
                     value = 0.0;

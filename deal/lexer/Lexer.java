@@ -297,99 +297,92 @@ public final class Lexer {
     // =========================================================================
 
     /**
-     * Reads a number literal: decimal digits with an optional fractional
-     * or exponent part, or a leading decimal point followed by digits.
-     *
-     * <p>Multiple decimal points produce E1002.</p>
+     * Reads decimal or radix-prefixed numbers, preserving raw spelling.
+     * Separators require a digit on both sides. Decimal points may trail
+     * digits; identifier suffixes and malformed exponents produce E1002.
      */
     private Token readNumber() {
         int startPos = pos;
-        boolean hasDot = false;
-        boolean hasExponent = false;
+        if (source.charAt(pos) == '0' && pos + 1 < source.length()) {
+            int radix = switch (source.charAt(pos + 1)) {
+                case 'x', 'X' -> 16;
+                case 'b', 'B' -> 2;
+                case 'o', 'O' -> 8;
+                default -> 0;
+            };
+            if (radix != 0) {
+                bump();
+                bump();
+                boolean valid = readNumberDigits(radix);
+                if (pos < source.length() && isIdentifierPart(source.charAt(pos))) {
+                    valid = false;
+                    while (pos < source.length() && isIdentifierPart(source.charAt(pos))) bump();
+                }
+                if (!valid) error(DiagnosticCode.E1002,
+                    "Malformed number literal: invalid radix digits or separators", tokenStartRange());
+                return makeToken(TokenType.NUMBER_LITERAL, source.substring(startPos, pos));
+            }
+        }
 
-        // Integer part (optional if starts with dot)
-        while (pos < source.length() && isDigit(source.charAt(pos))) {
+        boolean valid = true;
+        if (source.charAt(pos) != '.') {
+            valid = readNumberDigits(10);
+            if (pos - startPos > 1 && source.charAt(startPos) == '0') {
+                error(DiagnosticCode.E1002, "Leading-zero decimal literals are not supported", tokenStartRange());
+            }
+        }
+        boolean hasDot = pos < source.length() && source.charAt(pos) == '.';
+        if (hasDot) {
+            bump();
+            if (pos < source.length() && (isDigit(source.charAt(pos)) || source.charAt(pos) == '_')) {
+                valid &= readNumberDigits(10);
+            }
+        }
+        if (hasDot && pos < source.length() && source.charAt(pos) == '.'
+                && pos + 1 < source.length() && isDigit(source.charAt(pos + 1))
+                && source.charAt(pos - 1) != '.') {
+            error(DiagnosticCode.E1002, "Malformed number literal: multiple decimal points", tokenStartRange());
+        }
+        if (pos < source.length() && (source.charAt(pos) == 'e' || source.charAt(pos) == 'E')) {
+            bump();
+            if (pos < source.length() && (source.charAt(pos) == '+' || source.charAt(pos) == '-')) bump();
+            if (!readNumberDigits(10)) {
+                error(DiagnosticCode.E1002, "Malformed number literal: exponent without digits or invalid separators", tokenStartRange());
+            }
+        }
+        if (pos < source.length() && isIdentifierPart(source.charAt(pos))) {
+            valid = false;
+            while (pos < source.length() && isIdentifierPart(source.charAt(pos))) bump();
+        }
+        if (!valid) error(DiagnosticCode.E1002,
+            "Malformed number literal: invalid digits or separators", tokenStartRange());
+        return makeToken(TokenType.NUMBER_LITERAL, source.substring(startPos, pos));
+    }
+
+    /** Consumes one digit sequence, admitting separators only between radix digits. */
+    private boolean readNumberDigits(int radix) {
+        boolean previousDigit = false;
+        boolean valid = true;
+        while (pos < source.length()) {
+            char c = source.charAt(pos);
+            if (numberDigit(c, radix)) {
+                previousDigit = true;
+            } else if (c == '_') {
+                valid &= previousDigit && pos + 1 < source.length() && numberDigit(source.charAt(pos + 1), radix);
+                previousDigit = false;
+            } else {
+                break;
+            }
             bump();
         }
+        return valid && previousDigit;
+    }
 
-        if (pos - startPos > 1 && source.charAt(startPos) == '0') {
-            error(DiagnosticCode.E1002,
-                "Leading-zero decimal literals are not supported",
-                tokenStartRange());
-        }
-
-        // Fractional part: '.' followed by digits
-        if (pos < source.length() && source.charAt(pos) == '.') {
-            if (pos + 1 < source.length() && isDigit(source.charAt(pos + 1))) {
-                // Guard: if we already saw a dot, this is a malformed number.
-                // (This fires for patterns like .5.3 where leading dot was consumed
-                //  as integer part, but also catches internal double-dot in theory.)
-                if (hasDot) {
-                    error(DiagnosticCode.E1002,
-                        "Malformed number literal: multiple decimal points",
-                        tokenStartRange());
-                    String lexeme = source.substring(startPos, pos);
-                    return makeToken(TokenType.NUMBER_LITERAL, lexeme);
-                }
-                hasDot = true;
-                bump(); // '.'
-                while (pos < source.length() && isDigit(source.charAt(pos))) {
-                    bump();
-                }
-            }
-        }
-
-        // After consuming the fractional part, check whether the next
-        // character is another dot followed by digits (e.g. "1.2.3").
-        if (hasDot && pos < source.length() && source.charAt(pos) == '.'
-                && pos + 1 < source.length() && isDigit(source.charAt(pos + 1))) {
-            error(DiagnosticCode.E1002,
-                "Malformed number literal: multiple decimal points",
-                tokenStartRange());
-        }
-
-        // Exponent part
-        if (pos < source.length()
-                && (source.charAt(pos) == 'e' || source.charAt(pos) == 'E')) {
-
-            int lookahead = pos + 1;
-            if (lookahead < source.length()) {
-                char nc = source.charAt(lookahead);
-                if (nc == '+' || nc == '-') {
-                    lookahead++;
-                }
-                if (lookahead < source.length() && isDigit(source.charAt(lookahead))) {
-                    hasExponent = true;
-                    bump(); // 'e' or 'E'
-                    if (pos < source.length()
-                            && (source.charAt(pos) == '+' || source.charAt(pos) == '-')) {
-                        bump(); // sign
-                    }
-                    while (pos < source.length() && isDigit(source.charAt(pos))) {
-                        bump();
-                    }
-                } else if (hasDot) {
-                    hasExponent = true;
-                    bump(); // 'e' or 'E'
-                    if (pos < source.length()
-                            && (source.charAt(pos) == '+' || source.charAt(pos) == '-')) {
-                        bump(); // sign
-                    }
-                    error(DiagnosticCode.E1002,
-                        "Malformed number literal: exponent without digits",
-                        tokenStartRange());
-                }
-            } else if (hasDot) {
-                hasExponent = true;
-                bump();
-                error(DiagnosticCode.E1002,
-                    "Malformed number literal: exponent without digits",
-                    tokenStartRange());
-            }
-        }
-
-        String lexeme = source.substring(startPos, pos);
-        return makeToken(TokenType.NUMBER_LITERAL, lexeme);
+    private static boolean numberDigit(char c, int radix) {
+        int digit = c >= '0' && c <= '9' ? c - '0'
+            : c >= 'a' && c <= 'f' ? c - 'a' + 10
+            : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+        return digit >= 0 && digit < radix;
     }
 
     // =========================================================================

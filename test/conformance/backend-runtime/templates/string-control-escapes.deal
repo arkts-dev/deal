@@ -1,4 +1,4 @@
-// @spec: Lexical grammar — StringEscape
+// @spec: Lexical elements — String literals — Escape decoding
 // @description: Control escapes and LF/CR/CRLF continuations decode once and retain UTF-16 units.
 // @expected: runtime-ok
 // @features: string, escape, line-continuation
