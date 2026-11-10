@@ -441,7 +441,10 @@ public final class Lexer {
                         "Unsupported string escape: \\" + escaped,
                         tokenStartRange());
                 }
-                bump(); // the escaped character
+                bump(); // the escaped character, including a continued line
+                if (escaped == '\r' && pos < source.length() && source.charAt(pos) == '\n') {
+                    skipCrlfLf();
+                }
             } else if (c == quote) {
                 bump(); // closing quote
                 String lexeme = source.substring(startPos, pos);

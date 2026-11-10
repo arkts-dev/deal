@@ -743,6 +743,22 @@ public class ParserTest {
         vd = (VariableDeclaration) r.program().statements().get(0);
         lit = (LiteralExpr) vd.initializer();
         check(((LiteralValue.StringLiteral) lit.value()).value().equals("hello"), "string lit");
+        for (String quote : List.of("\"", "'")) {
+            r = parse("let a:string=" + quote + "\\b\\f\\v\\0" + quote + ";");
+            assertNoParseErrors(r, "control escapes");
+            vd = (VariableDeclaration) r.program().statements().getFirst();
+            lit = (LiteralExpr) vd.initializer();
+            check(((LiteralValue.StringLiteral) lit.value()).value().equals("\b\f\u000b\0"),
+                "control escapes decode once");
+            for (String ending : List.of("\n", "\r", "\r\n")) {
+                r = parse("let a:string=" + quote + "a\\" + ending + "b" + quote + ";");
+                assertNoParseErrors(r, "continued string");
+                vd = (VariableDeclaration) r.program().statements().getFirst();
+                lit = (LiteralExpr) vd.initializer();
+                check(((LiteralValue.StringLiteral) lit.value()).value().equals("ab"),
+                    "line continuation decodes to empty text");
+            }
+        }
     }
 
     // =========================================================================

@@ -196,8 +196,8 @@ public final class TemplateScanner {
     public static boolean validStringEscape(String source, int pos) {
         char next = source.charAt(pos);
         return switch (next) {
-            case 'n', 'r', 't', '\\', '\"', '\'' -> true;
-            case 'x', 'u' -> !invalidEscape(source, pos, next);
+            case 'n', 'r', 't', 'b', 'f', 'v', '\\', '\"', '\'', '\n', '\r' -> true;
+            case '0', 'x', 'u' -> !invalidEscape(source, pos, next);
             default -> false;
         };
     }

@@ -1,0 +1,26 @@
+// @spec: Lexical grammar — StringEscape
+// @description: Control escapes and LF/CR/CRLF continuations decode once and retain UTF-16 units.
+// @expected: runtime-ok
+// @features: string, escape, line-continuation
+
+function check(ok:boolean):void {
+  if (!ok) { throw {code:"TEST",message:"string escape decoding"}; }
+}
+
+export function main():null {
+  check("\b\f\v\0" === `\u0008\u000c\u000b\u0000`);
+  check('\b\f\v\0' === "\x08\x0c\x0b\x00");
+  check("\0".length === 1);
+  check("\\b\\0" === `\\b\\0`);
+  check("a\
+b" === "ab");
+  check('a\
+b' === 'ab');
+  check(`${"a\
+b"}` === "ab");
+  check("a\
+b" === "ab");
+  check("a\
+b" === "ab");
+  return null;
+}

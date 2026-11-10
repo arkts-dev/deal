@@ -455,7 +455,18 @@ public class LexerTest {
         for (String source : List.of("\"\\r\\x41\\u0042\\u{1f600}\"", "\"\\uD800\\uDC00\"")) {
             assertNoDiagnostics(tokenize(source).diagnostics(), "Unicode and hex escapes");
         }
-        for (String source : List.of("\"\\u{}\"", "\"\\u{110000}\"", "\"\\u123\"", "\"\\x1\"")) {
+        assertNoDiagnostics(tokenize("\"\\b\\f\\v\\0\"").diagnostics(), "control escapes");
+        for (String ending : List.of("\n", "\r", "\r\n")) {
+            String source = "\"a\\" + ending + "b\";@";
+            LexResult continued = tokenize(source);
+            assertDiagnosticCount(continued.diagnostics(), 1, "only the following invalid token diagnoses");
+            assertToken(continued.tokens().getFirst(), TokenType.STRING_LITERAL,
+                source.substring(0, source.indexOf(';')), 1, 1);
+            assertToken(continued.tokens().get(1), TokenType.SEMICOLON, ";", 2, 3);
+            assertRange(findDiag(continued, "E1001"), "test.deal", 2, 4, 2, 5,
+                source.length() - 1, source.length(), "diagnostic after continued string");
+        }
+        for (String source : List.of("\"\\01\"", "\"\\09\"", "\"\\u{}\"", "\"\\u{110000}\"", "\"\\u123\"", "\"\\x1\"")) {
             assertDiagnosticCode(tokenize(source).diagnostics(), "E1052", "malformed escape");
         }
     }
