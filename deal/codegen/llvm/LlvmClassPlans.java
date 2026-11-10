@@ -12,9 +12,8 @@ import java.util.Objects;
 
 /**
  * The emitted per-layout class and JSON plan surface of the native backend
- * ({@code llvm-native-codegen-cfg-ssa} C2/C3, {@code llvm-native-runtime-value-
- * model} R2/R4/R6, {@code ConstructClass}, {@code JsonFromClass}/
- * {@code JsonToClass}).
+ * for ordinary construction, contextual {@code JSON_PARSE} reconstruction
+ * and builtin stringify traversal.
  *
  * <p>For every declared class this member emits, once per layout:</p>
  * <ul>
@@ -414,7 +413,7 @@ final class LlvmClassPlans {
     static final String PLAN_TYPE = "%struct.deal_json_class_plan";
 
     /**
-     * The {@code construct} seam of {@code JsonFromClass}: the runtime hands
+     * The contextual JSON reconstruction seam: the runtime hands
      * the already validated and decoded field data of one plan, and this seam
      * materializes exactly one instance of the emitted typed record, tags it
      * with the class atom and roots nothing itself (the runtime roots the
@@ -574,7 +573,7 @@ final class LlvmClassPlans {
     }
 
     /**
-     * The {@code read_field} seam of {@code JsonToClass}: one declaration-order
+     * The builtin stringify {@code read_field} seam: one declaration-order
      * field as its actual closed check presentation, or 0 when the datum is
      * not an instance of the plan's class. Any absent field answers presence 0;
      * validation distinguishes required absence from an admitted undefined. The

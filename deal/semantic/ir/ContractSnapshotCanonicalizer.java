@@ -913,12 +913,9 @@ public final class ContractSnapshotCanonicalizer {
                 CanonicalJson.e("classId", semanticIdJson(p.classId())),
                 CanonicalJson.e("classValue", semanticIdJson(p.classValue())),
                 CanonicalJson.e("field", CanonicalJson.str(p.field())));
-            case KindPayload.JsonFromClassPayload p -> CanonicalJson.obj(
+            case KindPayload.JsonParsePayload p -> CanonicalJson.obj(
                 CanonicalJson.e("jsonString", semanticIdJson(p.jsonString())),
-                CanonicalJson.e("layout", layoutJson(p.layout())));
-            case KindPayload.JsonToClassPayload p -> CanonicalJson.obj(
-                CanonicalJson.e("classValue", semanticIdJson(p.classValue())),
-                CanonicalJson.e("layout", layoutJson(p.layout())));
+                CanonicalJson.e("target", CanonicalJson.str(p.target().canonicalSpecText())));
             case KindPayload.ModuleInitPayload p -> CanonicalJson.obj(
                 CanonicalJson.e("imports", CanonicalJson.arr(
                     p.imports().stream().map(ContractSnapshotCanonicalizer::semanticIdJson).toList())),

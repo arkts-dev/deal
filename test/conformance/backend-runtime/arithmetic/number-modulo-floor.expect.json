@@ -1,10 +1,9 @@
 {
   "version": 1,
-  "mode": "compile-error",
-  "diagnostic": {
-    "code": "E1001",
-    "line": 7,
-    "column": 24,
-    "message": "Unrecognized character: '%'"
+  "backends": ["js", "luajit", "jvm"],
+  "expected": {
+    "mode": "runtime-ok",
+    "transcript": {"stdout": "", "stderr": ""},
+    "exitCode": 0
   }
 }

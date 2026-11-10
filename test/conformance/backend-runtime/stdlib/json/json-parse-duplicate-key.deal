@@ -1,12 +1,12 @@
-// @spec: Standard library declarations — std/json.d.deal
-// @description: json.parse rejects a decoded-key duplicate at the second key's opening quote through the E8001 JSON_PARSE_SYNTAX tuple (v1.4 exact classification and duplicate rule)
+// @spec: Standard library builtins — JSON decoding
+// @description: JSON.parse rejects a decoded-key duplicate at the second key's opening quote with E8001
 // @expected: runtime-error E8001
 // @features: stdlib, json, duplicate-key, v1.4
 
-import * as json from "std/json";
+
 
 export function test_json_parse_duplicate_key(): Record<string, unknown> {
-  return json.parse("{\"a\":1,\"a\":2}");
+  return JSON.parse("{\"a\":1,\"a\":2}");
 }
 
 export function main(): null {

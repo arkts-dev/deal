@@ -1,13 +1,13 @@
-// @spec: Classes — @jsonable minimal table nested arrays
+// @spec: Standard library builtins — JSON decoding
 // @description: Consuming an unknown record member as a typed array requires an assertion
 // @expected: compile-error E3001
 // @features: jsonable, tables, arrays, diagnostics
 
-// @jsonable
+
 export class Wrap { data: Record<string, unknown>; }
 
 export function test_jsonable_minimal_table_nested_array_access(): null {
-  let w: Wrap | null = Wrap$fromJson("{\"data\":{\"values\":[[1,2],[3,4]]}}");
+  let w: Wrap | null = JSON.parse("{\"data\":{\"values\":[[1,2],[3,4]]}}");
   if (w !== null) {
     let values: number[][] = w.data.values;
     return null;

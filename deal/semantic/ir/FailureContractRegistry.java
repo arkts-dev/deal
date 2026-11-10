@@ -145,36 +145,27 @@ rows.put(FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR,
             makeRow(FailurePolicyId.JSON_PARSE_SYNTAX, DiagnosticCode.E8001,
                 List.of("JSON parse error at position {oneBasedByteOffset}: {reason}"),
                 List.of("oneBasedByteOffset", "reason"),
-                "the STDLIB_CALL(JSON_PARSE) call origin", CAUSE_NONE, FRAMES_ACTIVE,
-                "parameter boundaries first, then the parse; a successful parse whose "
-                    + "top-level value is not a table then fails the STDLIB_RETURN boundary"));
+                "the JSON parse call origin", CAUSE_NONE, FRAMES_ACTIVE,
+                "strict syntax and duplicate decoded keys at any depth; every JSON root is data"));
 
-        rows.put(FailurePolicyId.JSON_FROM_NULL, makeRow(FailurePolicyId.JSON_FROM_NULL,
-            null, List.of(), List.of(),
-            "no visible failure: the conversion returns language null",
-            "no visible failure: the swallowed failure never escapes",
-            "no visible failure: the swallowed failure never escapes",
-            "any syntax, unknown-key, descriptor, default, or field failure returns language "
-                + "null; no partial instance is visible"));
+        rows.put(FailurePolicyId.JSON_RECONSTRUCTION,
+            makeRow(FailurePolicyId.JSON_RECONSTRUCTION, null, List.of(), List.of(),
+                ORIGIN_OPERATION, CAUSE_NONE, FRAMES_ACTIVE,
+                "strict syntax first (JSON_PARSE_SYNTAX); target-directed reconstruction then "
+                    + "uses CLASS_CONSTRUCTION for extra keys before declaration-order fields, "
+                    + "and TYPE_DESCRIPTOR for required absence and mismatched leaves; "
+                    + "the first nested failure wins and no partial target is published"));
 
-        // Three projections share the row: template 0 is the @jsonable
-        // C$toJson walk's first declaration-order failure (the generated
-        // body's pinned fieldPath spelling), template 1 is the
-        // STDLIB_CALL(JSON_STRINGIFY) rejection aligned to the corpus
-        // pins (the canonical actual-kind token; the walker's fieldPath
-        // stays internal metadata, never part of the visible projection),
-        // and template 2 is the walk family's cycle arm, appended together
-        // with its declaration so the row/arm consistency invariant holds
-        // at every merge boundary (jsonable-tojson-walk-arm-binding W4).
+        // Builtin encoding owns unsupported presentations and path-local cycles.
+        // Reached typed positions retain their ordinary descriptor/signature arms.
         rows.put(FailurePolicyId.JSON_TO_ERROR, makeRow(FailurePolicyId.JSON_TO_ERROR,
             DiagnosticCode.E8001,
-            List.of("value at {fieldPath} is not JSON serializable: {actual}",
-                "unsupported type for JSON encoding: {actual}",
+            List.of("unsupported type for JSON encoding: {actual}",
                 "cyclic value cannot be encoded as JSON"),
-            List.of("fieldPath", "actual"),
-            "call origin", CAUSE_NONE, FRAMES_ACTIVE,
-            "first declaration-order unsupported value, wrong identity, cycle, missing "
-                + "required value, or nonfinite number"));
+            List.of("actual"),
+            ORIGIN_OPERATION, CAUSE_NONE, FRAMES_ACTIVE,
+            "first reached unsupported presentation or path-local cycle; typed positions "
+                + "validate before omission/substitution; nonfinite numbers encode as null"));
 
         rows.put(FailurePolicyId.THROW_TRANSFER, makeRow(FailurePolicyId.THROW_TRANSFER,
             null, List.of(), List.of(),
@@ -382,24 +373,14 @@ declared.add(arm(FailureArmId.ARRAY_ELEMENT_KIND,
             FailureArm.OriginConvention.CALL_EXPRESSION, FailureArm.RenderScope.TOP_LEVEL,
             "oneBasedByteOffset", FailureArm.ParameterSource.ONE_BASED_BYTE_OFFSET,
             "reason", FailureArm.ParameterSource.REASON));
-        declared.add(arm(FailureArmId.JSON_TO_WALK, FailurePolicyId.JSON_TO_ERROR, 0,
-            FailureArm.ExpectedSource.NONE, null,
-            FailureArm.ActualProjection.TYPED_BOUNDARY,
-            FailureArm.OriginConvention.CALL_EXPRESSION, FailureArm.RenderScope.TOP_LEVEL,
-            "fieldPath", FailureArm.ParameterSource.FIELD_PATH,
-            "actual", FailureArm.ParameterSource.TYPED_BOUNDARY_ACTUAL));
         declared.add(arm(FailureArmId.JSON_STRINGIFY_UNSUPPORTED,
-            FailurePolicyId.JSON_TO_ERROR, 1,
+            FailurePolicyId.JSON_TO_ERROR, 0,
             FailureArm.ExpectedSource.PINNED_TEXT, "string, number, boolean, or table",
             FailureArm.ActualProjection.CARRIER_KIND,
             FailureArm.OriginConvention.CALL_EXPRESSION, FailureArm.RenderScope.TOP_LEVEL,
             "actual", FailureArm.ParameterSource.CARRIER_KIND_ACTUAL));
-        // The walk family's cycle arm lands together with its appended row
-        // template (jsonable-tojson-walk-arm-binding W4): template index 2
-        // keeps the walk arm at 0 and the std/json arm at 1, so the
-        // row/arm consistency invariant holds at every merge boundary.
         declared.add(arm(FailureArmId.JSON_TO_WALK_CYCLE,
-            FailurePolicyId.JSON_TO_ERROR, 2,
+            FailurePolicyId.JSON_TO_ERROR, 1,
             FailureArm.ExpectedSource.NONE, null,
             FailureArm.ActualProjection.NONE,
             FailureArm.OriginConvention.CALL_EXPRESSION, FailureArm.RenderScope.TOP_LEVEL));
@@ -511,7 +492,7 @@ declared.add(arm(FailureArmId.ARRAY_ELEMENT_KIND,
                 throw new IllegalStateException("arm " + arm.id() + " carries a "
                     + "sibling-owned marker in its projection binding, its origin "
                     + "convention, or its parameter sources; no declared arm may "
-                    + "carry one (jsonable-tojson-walk-arm-binding W5)");
+                    + "carry one");
             }
             FailurePolicyRow row = rows.get(arm.policy());
             if (row == null) {
@@ -837,8 +818,7 @@ declared.add(arm(FailureArmId.ARRAY_ELEMENT_KIND,
     }
 
     /**
-     * Enforces the declared parameter-source binding (the {@code @jsonable}
-     * walk arm's W1 same-token rule): a parameter whose declared source
+     * Enforces the declared parameter-source binding: a parameter whose declared source
      * carries a tuple field's own value — the expected-field sources
      * ({@code CELL_DESCRIPTOR}, {@code ELEMENT_DESCRIPTOR},
      * {@code DECLARED_SIGNATURE}, {@code CLASS_ATOM}) and the actual-field
@@ -980,8 +960,8 @@ declared.add(arm(FailureArmId.ARRAY_ELEMENT_KIND,
     /**
      * The closed typed-boundary token check (the carried canonical class
      * atom included). The superseded composed {@code class:<ClassId>}
-     * spelling is never a typed-boundary token (jsonable-tojson-walk-arm-
-     * binding W1): only the closed vocabulary and a carried canonical class
+     * spelling is never a typed-boundary token: only the closed vocabulary
+     * and a carried canonical class
      * atom are admissible, so a caller that composes the removed spelling
      * fails closed.
      */
@@ -1486,8 +1466,8 @@ declared.add(arm(FailureArmId.ARRAY_ELEMENT_KIND,
      * placeholder is replaced by the value the render supplied for that
      * name, and the inserted value is never rescanned — a parameter value
      * that contains braces or the literal spelling of another placeholder
-     * (a table key such as {@code {actual}} reaches the walk's
-     * {@code fieldPath} verbatim) is published byte-for-byte. The
+     * (an extra field key such as {@code {actual}} reaches the class
+     * construction arm verbatim) is published byte-for-byte. The
      * fail-closed checks therefore inspect the template only, never the
      * inserted data: an unclosed or undeclared placeholder, or a stray
      * brace of the template itself, remains a producer defect.

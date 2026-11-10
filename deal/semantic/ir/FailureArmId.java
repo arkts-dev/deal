@@ -13,7 +13,7 @@ package deal.semantic.ir;
  * projection or absence, its origin convention, and its render scope.</p>
  *
  * <p>A policy with no DEAL-visible arm ({@code NO_DEAL_FAILURE},
- * {@code JSON_FROM_NULL}, {@code THROW_TRANSFER},
+ * {@code THROW_TRANSFER},
  * {@code INFRASTRUCTURE_ONLY}) declares no arm and keeps an empty template
  * list. The arm set grows only by the slice that makes an arm reachable —
  * never as a text without its arm.</p>
@@ -54,7 +54,6 @@ public enum FailureArmId {
     // CLASS_CONSTRUCTION / JSON_PARSE_SYNTAX / JSON_TO_ERROR
     CLASS_EXTRA_FIELD,
     JSON_PARSE_ERROR,
-    JSON_TO_WALK,
     JSON_STRINGIFY_UNSUPPORTED,
     JSON_TO_WALK_CYCLE;
 }

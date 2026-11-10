@@ -454,8 +454,7 @@ public final class CatchBindingProductionTest {
     private static String envelope(AsyncExport export) {
         return LuaJitAsyncExportInvoker.RESULT_PREFIX + "{\"status\":\"value\","
             + "\"descriptor\":\"" + export.descriptor() + "\",\"value\":"
-            + jsonString("number".equals(export.descriptor())
-                ? Double.toString(Double.parseDouble(export.valueJson())) : export.valueJson()) + "}";
+            + jsonString(export.valueJson()) + "}";
     }
 
     private static String expectedAsyncTranscript() {

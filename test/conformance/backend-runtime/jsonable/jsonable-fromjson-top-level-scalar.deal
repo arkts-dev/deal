@@ -1,51 +1,34 @@
-// @spec: Classes — @jsonable fromJson top-level input gate
-// @description: fromJson rejects scalar, null, array and missing-required documents; a complete object decodes.
+// @spec: Standard library builtins — JSON decoding
+// @description: A class target rejects scalar, null, array and missing-required documents; a complete object decodes.
 // @expected: runtime-ok
-// @features: jsonable, fromJson, validation
+// @features: json, classes, validation
 
-// @jsonable
 export class C {
   x: number;
 }
 
+function rejects(text: string): void {
+  let rejected = false;
+  try { let value: C = JSON.parse(text); }
+  catch (e) { let error = e as Error; rejected = error.code === "E8001"; }
+  if (!rejected) { throw {code: "TEST_FAIL", message: "class target accepted " + text}; }
+}
+
 export function test_fromJson_top_level_scalars(): null {
-  if (C$fromJson("42") !== null) {
-    throw { code: "TEST_FAIL", message: "fromJson(\"42\") should return null" };
-  }
-  if (C$fromJson("\"x\"") !== null) {
-    throw { code: "TEST_FAIL", message: "fromJson(\"x\") should return null" };
-  }
-  if (C$fromJson("true") !== null) {
-    throw { code: "TEST_FAIL", message: "fromJson(true) should return null" };
-  }
-  if (C$fromJson("null") !== null) {
-    throw { code: "TEST_FAIL", message: "fromJson(null) should return null" };
-  }
-  if (C$fromJson("[1,2]") !== null) {
-    throw { code: "TEST_FAIL", message: "fromJson(\"[1,2]\") should return null" };
-  }
+  rejects("42");
+  rejects("\"x\"");
+  rejects("true");
+  rejects("null");
+  rejects("[1,2]");
   return null;
 }
 
 export function test_fromJson_empty_documents(): null {
-  if (C$fromJson("{}") !== null) {
-    throw { code: "TEST_FAIL", message: "fromJson({}) must reject missing required x" };
-  }
-  let from_obj: C | null = C$fromJson("{\"x\":0}");
-  if (from_obj === null) {
-    throw { code: "TEST_FAIL", message: "complete object should decode" };
-  } else {
-    if (from_obj.x !== 0) {
-      throw { code: "TEST_FAIL", message: "provided zero field was lost" };
-    }
-  }
-  // An empty JSON array is never a class object.
-  if (C$fromJson("[]") !== null) {
-    throw { code: "TEST_FAIL", message: "fromJson([]) should return null" };
-  }
-  if (C$fromJson(" [ ] ") !== null) {
-    throw { code: "TEST_FAIL", message: "fromJson(\" [ ] \") should return null" };
-  }
+  rejects("{}");
+  let from_obj: C = JSON.parse("{\"x\":0}");
+  if (from_obj.x !== 0) { throw {code: "TEST_FAIL", message: "provided zero field was lost"}; }
+  rejects("[]");
+  rejects(" [ ] ");
   return null;
 }
 

@@ -2,10 +2,8 @@
 
 // DEAL Runtime Library v1.6 — JavaScript backend (deal/runtime.js).
 // The single hand-written CommonJS runtime module exporting $rt, the JS
-// analog of deal/runtime.lua (js-backend-runtime D1-D9, pinned by
-// js-backend-runtime-artifact), plus the shared D9 JSON conversion and
-// the @jsonable runtime walkers (js-v12-jsonable-completion D2-D5), the
-// production async-export invoker (js-v12-async-export-invocation D1-D4),
+// analog of deal/runtime.lua, plus contextual JSON reconstruction,
+// builtin serialization, the production async-export invoker,
 // and the implementation-module registry the JavaScript semantic-IR renderer
 // links through (initModule/moduleSurface/moduleState/publishModule/
 // readModule/callExport/throwValue) and the carrier-neutral table index
@@ -84,20 +82,14 @@ class $DEALError extends Error {
 const $MISSING = {};
 
 // ===== Runtime-private JSON shape marks (js-backend-runtime-artifact D2) =====
-// Unspoofable WeakSets: the exact JSON members
-// (jsonParseText/jsonParseValue/jsonStringifyText — the std/json module
-// and the @jsonable walkers' table branches) consume them, and the
-// language-null / table / array boundary members (isNilEquivalent,
-// checkNull, checkTable, checkArray and the diagnostic-kind projection)
-// read them so a decoded JSON null is language null and a decoded JSON
-// array is the array carrier — never a plain table — at every declared
-// boundary and through every emitted array read/length/write/delete.
-// Never exported; no $rt member exposes them.
+// Private WeakSets distinguish marked host array/null carriers from Records.
+// Boundary checks, host projections and serialization consume the same marks;
+// contextual JSON.parse itself reconstructs native arrays and language null.
+// Query/mark adapters expose no WeakSet or forgeable user-string metadata.
 const $jsonArrayTables = new WeakSet();
 const $jsonNullTables = new WeakSet();
 const $classFieldOrder = new WeakMap();
 const $hostClassPlans = new Map();
-const $classChecks = new WeakMap();
 const $instanceClassPlans = new WeakMap();
 const $hostArrayViews = new WeakMap();
 const $hostArraySources = new WeakMap();
@@ -163,7 +155,7 @@ function $completionKind($v) {
 }
 
 // $elemKindOf: the array-element arm's reference-kind projection (the
-// decoded-array mark, B3) — an element carrying the std/json decode mark
+// decoded-array provenance mark) — an element carrying that mark
 // renders the reference value model's kind "table", never the "array"
 // token $kindOf projects for the carrier itself; every other element keeps
 // $kindOf. The LuaJIT prelude's __elemRefKind and the JVM's elementActual
@@ -512,116 +504,11 @@ function $isPlainObject($v) {
   return $proto === Object.prototype || $proto === null;
 }
 
-// ===== Exact JSON (binary64) — scanner, classification, marks, text
-// encoder, and shape conversion =====
-// The members std/json and the @jsonable runtime walkers share:
-// jsonParseText is the conforming RFC-8259 scanner (exact decimal
-// classification, decoded-key duplicates, the shared reason texts and
-// the 1-based UTF-8 byte offset), jsonParseValue converts a scanned
-// native document into the runtime's marked-Map table shape, and
-// jsonStringifyText is the finite-acyclic text encoder with the closed
-// unsupported/cycle arms. They live here because the walkers depend on
-// them through $rt and std/json depends on the runtime (the reverse
-// dependency is forbidden — js-backend-runtime D9). The walks are pure:
-// fresh Maps/Arrays/objects only, no input mutation.
-
-// $fromJsonConvert: stack-safe conversion of a native $JSON.parse result
-// into the runtime's table representation. JSON null -> a fresh empty
-// Map registered via $rt.markJsonNullTable at every depth (the
-// reference's __NULL, std/json.lua:226); JSON array -> a fresh Map with
-// the string keys "1".."n" in element order, registered via
-// $rt.markJsonArrayTable (an empty array registers an empty marked Map);
-// JSON object -> a fresh Map iterating own enumerable string keys
-// (Object.keys — never for...in, which walks the prototype chain;
-// $JSON.parse creates __proto__ as an own data property, so a __proto__
-// key converts like any other); number/boolean/string scalars pass
-// through, preserving every UTF-16 unit in keys and values. Maps use
-// $rt.makeTable({}) plus .set calls — the only Map construction path —
-// so the products are the runtime's own Map shapes and the mark members
-// accept them by construction; the boundary members read the marks — a
-// decoded array is the array carrier and a decoded null is language
-// null, so neither passes $rt.checkTable. Fresh Maps, independent of
-// inputs; a parsed JSON null never aliases a shared sentinel.
-function $fromJsonConvert($value, $file, $line, $column) {
-  const $stack = [];
-  let $completed = null;
-  let $haveCompleted = false;
-  const $start = function ($input) {
-    if ($input === null) {
-      $completed = $rt.markJsonNullTable($rt.makeTable({}));
-      $haveCompleted = true;
-      return;
-    }
-    if (typeof $input === "string") {
-      $completed = $input;
-      $haveCompleted = true;
-      return;
-    }
-    if ($Array.isArray($input)) {
-      $stack.push({ array: true, source: $input, index: 0,
-        table: $rt.makeTable({}), keys: null });
-      return;
-    }
-    if (typeof $input === "object") {
-      // JSON object: fresh Map iterating own enumerable string keys
-      // (Object.keys — never for...in, which walks the prototype chain;
-      // $JSON.parse creates __proto__ as an own data property, so a
-      // __proto__ key converts like any other).
-      $stack.push({ array: false, source: $input, index: 0,
-        table: $rt.makeTable({}), keys: Object.keys($input) });
-      return;
-    }
-    // number / boolean scalars pass through.
-    $completed = $input;
-    $haveCompleted = true;
-  };
-  $start($value);
-  while (true) {
-    if ($haveCompleted) {
-      if ($stack.length === 0) {
-        return $completed;
-      }
-      const $frame = $stack[$stack.length - 1];
-      if ($frame.array) {
-        const $key = String($frame.index + 1);
-        $frame.table.set($key, $completed);
-        if ($isNumberVariant($frame.source, String($frame.index))) {
-          $markNumberVariant($frame.table, $key);
-        }
-        $frame.index++;
-      } else {
-        const $key = $frame.keys[$frame.index];
-        $frame.table.set($key, $completed);
-        if ($isNumberVariant($frame.source, $key)) {
-          $markNumberVariant($frame.table, $key);
-        }
-        $frame.index++;
-      }
-      $completed = null;
-      $haveCompleted = false;
-      continue;
-    }
-    const $frame = $stack[$stack.length - 1];
-    if ($frame.array) {
-      if ($frame.index >= $frame.source.length) {
-        $stack.pop();
-        $completed = $rt.markJsonArrayTable($frame.table);
-        $haveCompleted = true;
-        continue;
-      }
-      $start($frame.source[$frame.index]);
-      continue;
-    }
-    if ($frame.index >= $frame.keys.length) {
-      $stack.pop();
-      $completed = $frame.table;
-      $haveCompleted = true;
-      continue;
-    }
-    const $key = $frame.keys[$frame.index];
-    $start($frame.source[$key]);
-  }
-}
+// ===== Exact JSON (binary64) — scanner, contextual reconstruction and encoder =====
+// Scanning owns grammar, decoded-key duplicates and first-bad-byte reasons.
+// Contextual reconstruction publishes fresh Records, native arrays and nominal
+// instances. Encoding validates reached declared positions and detects path-local
+// cycles without invoking hooks or mutating input storage.
 
 // $arrayFormIndex: the array-form key predicate — returns the integer
 // index for a key that is an integer-string matching ^[1-9][0-9]*$ (a
@@ -743,7 +630,7 @@ function $isNumericDescriptor($desc) {
 //   - a declared array position hands the host-visible native Array the
 //     declared array ABI names (the JVM __hostArrayFromDeal carrier and
 //     the LuaJIT 1..n table), whatever carrier the checked value had —
-//     the std/json decoded-array marked Map included;
+//     the JSON decoded-array marked Map included;
 //   - a class position hands a class instance whose declared fields are
 //     projected the same way (a decoded-array field is a native Array, a
 //     decoded-null field is the language null, an unwrapped numeric
@@ -785,7 +672,7 @@ function $hostProjectArg($desc, $v, $memo) {
 //
 //   - a read-side numeric carrier becomes the number it carries, at the
 //     top level and at every nested leaf;
-//   - the std/json decoded-null carrier becomes the language null (the
+//   - the JSON decoded-null carrier becomes the language null (the
 //     reference's __NULL projection): JS null is DEAL null, and both the
 //     shared encoder and the boundary members read it as the same null
 //     leaf, so a decoded object/array keeps its null slots;
@@ -828,7 +715,7 @@ function $hostProjectCompletion($v) {
 //   - a read-side numeric carrier becomes the number it carries, at the
 //     top level and at every nested leaf (a carrier's own recorded kind
 //     stays on the copied container's slot marks below);
-//   - the std/json decoded-null carrier becomes the language null (the
+//   - the JSON decoded-null carrier becomes the language null (the
 //     reference's __NULL projection) — JS null is DEAL null, and both
 //     the shared encoder and the boundary members read it as the same
 //     null leaf, so a decoded object/array keeps its null slots;
@@ -888,7 +775,58 @@ function $hostProjectValue($v, $nativeArrays, $memo) {
     if ($isNumCarrier($value)) {
       return $value.d;
     }
-    if ($Array.isArray($value)) return $value;
+    if ($Array.isArray($value)) {
+      if ($nativeArrays !== true || $hostArraySources.has($value)) return $value;
+      const $cached = $hostArrayViews.get($value);
+      if ($cached !== $undefined) return $cached;
+      // Parsed arrays and source arrays share the same live host contract.
+      // The original storage is the target: native length descriptors remain
+      // coherent, while rejected reflection cannot first damage that storage.
+      const $index = key => typeof key === "string" && /^(0|[1-9][0-9]*)$/.test(key)
+        && Number(key) < 4294967295;
+      const $view = new Proxy($value, {
+        get(target, key, receiver) {
+          if ($index(key)) return $project(Reflect.get(target, key));
+          return Reflect.get(target, key, receiver);
+        },
+        set(target, key, member) {
+          if (key === "length") {
+            if (!Number.isInteger(member) || member < 0 || member > target.length) return false;
+            return Reflect.set(target, key, member);
+          }
+          if ($index(key)) {
+            if (Number(key) > target.length) return false;
+            return Reflect.set(target, key, $rt.reverseHostGraph(member));
+          }
+          return Reflect.set(target, key, member);
+        },
+        defineProperty(target, key, descriptor) {
+          if (key === "length" || $index(key)) {
+            if (!("value" in descriptor) || "get" in descriptor || "set" in descriptor
+                || descriptor.writable === false
+                || (key === "length" && (descriptor.configurable === true || descriptor.enumerable === true))
+                || (key !== "length" && (descriptor.configurable === false || descriptor.enumerable === false))) return false;
+            return this.set(target, key, descriptor.value);
+          }
+          return Reflect.defineProperty(target, key, descriptor);
+        },
+        deleteProperty(target, key) {
+          if (key === "length" || $index(key)) return false;
+          return Reflect.deleteProperty(target, key);
+        },
+        preventExtensions() { return false; },
+        getOwnPropertyDescriptor(target, key) {
+          const descriptor = Reflect.getOwnPropertyDescriptor(target, key);
+          if ($index(key) && descriptor && descriptor.configurable && "value" in descriptor)
+            return {...descriptor, value: $project(descriptor.value)};
+          return descriptor;
+        }
+      });
+      $hostArrayViews.set($value, $view);
+      $hostArraySources.set($view, $value);
+      if ($arrayDescriptors.has($value)) $arrayDescriptors.set($view, $arrayDescriptors.get($value));
+      return $view;
+    }
     if ($value instanceof $Map) {
       // The decoded JSON null is the language null, not a table: it has
       // no content to copy, so it projects to the host null directly.
@@ -1392,39 +1330,20 @@ function $numText($v) {
   return String($v);
 }
 
-// ===== The shared JSON text encoder (the std/json and class-walk rows) =====
+// ===== Builtin JSON text encoding =====
 
-// $carrierToken: the closed std/json carrier-kind projection of a value
+// $carrierToken: the closed stringify carrier-kind projection of a value
 // (the pinned actual vocabulary).
 function $carrierToken($v) {
   if ($v === $undefined || $v === $MISSING) return "nil";
   if ($v === null) return "table";
   if (typeof $v === "boolean") return "boolean";
-  // A read-side variant carrier is a number carrier on the std/json row's
+  // A read-side variant carrier is a number carrier in stringify's
   // closed vocabulary (the shared JsonStringify projection), whichever
   // variant it records.
   if (typeof $v === "number" || $isNumCarrier($v)) return "number";
   if (typeof $v === "string") return "string";
   if (typeof $v === "function" || $v.$kind === "function") return "function";
-  return "table";
-}
-
-// $walkToken: the typed-boundary projection of one failing walk value.
-// Numbers and UTF-16 strings retain their kinds; classes carry canonical atoms.
-function $walkToken($v) {
-  if ($v === $undefined || $v === $MISSING) return "undefined";
-  if ($v === null) return "null";
-  if (typeof $v === "boolean") return "boolean";
-  // A read-side variant carrier projects its own variant (the shared
-  // Value.Int/Value.Number typed-boundary tokens).
-  if ($isNumCarrier($v)) return $v.k;
-  if (typeof $v === "number") return "number";
-  if (typeof $v === "string") return "string";
-  if (typeof $v === "function" || $v.$kind === "function") return "function";
-  if ($Array.isArray($v)) return "array";
-  if ($v.$kind === "class") {
-    return typeof $v.$classname === "string" ? $v.$classname : "table";
-  }
   return "table";
 }
 
@@ -1453,38 +1372,73 @@ function $jsonEscapeText($s) {
   return $out + "\"";
 }
 
-// $encodeJsonText: the shared finite-acyclic JSON text walk (an explicit
-// frame stack, so a finite nested value has no call-stack bound). $typed is
-// false for the std/json row (carrier-kind failures through
-// JSON_STRINGIFY_UNSUPPORTED) and true for the class-walk row
-// (typed-boundary failures through JSON_TO_WALK at the pinned position).
-// $active is the path-local container stack; a re-entry is the closed
-// cycle arm. $variant marks one scalar number slot whose token carried
-// the number variant (the container marks), which therefore spells
-// through the canonical decimal text; an int-variant or unmarked slot
-// keeps the integer/default spelling.
-function $encodeJsonText($v, $active, $file, $line, $column, $typed, $path, $variant) {
-  const $unsupported = function ($value, $valuePath) {
-    if ($typed) {
-      const $token = $walkToken($value);
-      $rt.fail("E8001", "value at " + $valuePath + " is not JSON serializable: "
-        + $token, $file, $line, $column, $undefined, $token);
-    }
+// Builtin stringify uses an explicit frame stack and path-local active
+// identities: shared acyclic children are legal, active re-entry is a cycle.
+// Unsupported carriers render at the stringify operation's own origin.
+function $encodeJsonText($v, $active, $file, $line, $column, $variant) {
+  const $unsupported = function ($value) {
     const $token = $carrierToken($value);
     $rt.fail("E8001", "unsupported type for JSON encoding: " + $token,
       $file, $line, $column, "string, number, boolean, or table", $token);
   };
   const $omit = $value => $value === $undefined || $value === $MISSING
     || typeof $value === "function" || ($value !== null && typeof $value === "object" && $value.$kind === "function");
-  if ($omit($v)) {
-    if ($typed) $unsupported($v, $path);
-    return $undefined;
-  }
+  if ($omit($v)) return $undefined;
   const $out = [];
   const $stack = [];
-  const $emit = function ($value, $valuePath, $valueVariant) {
+  // Validate declared positions as the encoder reaches them, rather than
+  // validating a second graph walk ahead of serialization. This preserves
+  // declaration/index order when an earlier member contains a cycle.
+  const $checkPosition = function ($descriptor, $value) {
+    if ($descriptor === null) return;
+    let $parsed = $parse($descriptor);
+    while ($parsed && $parsed.$t === "nullable") {
+      if ($parsed.$null && ($value === null || $jsonNullTables.has($value))
+          || $parsed.$undefined && ($value === $undefined || $value === $MISSING)) return;
+      $descriptor = $parsed.$inner;
+      $parsed = $parse($descriptor);
+    }
+    if ($parsed && $parsed.$t === "class") {
+      if ($value === null || $value === $undefined || $value === $MISSING || $value.$kind !== "class")
+        $rt.fail("E8001", "expected class instance", $file, $line, $column, "class", $kindOf($value));
+      if ($value.$classname !== $parsed.$name)
+        $rt.fail("E8001", "expected instance of " + $parsed.$name + ", got " + $value.$classname,
+          $file, $line, $column, $parsed.$name, $value.$classname);
+    } else if ($parsed && $parsed.$t === "array") {
+      if (!$Array.isArray($value) && !$rt.isJsonArrayTable($value))
+        $rt.fail("E8001", "expected array", $file, $line, $column, "array", $kindOf($value));
+      const $persistent = $arrayDescriptors.get($value);
+      if ($persistent !== $undefined && $persistent !== $parsed.$element)
+        $rt.fail("E8001", "expected array", $file, $line, $column, "array", "array");
+    } else if ($parsed && $parsed.$t === "primitive" && $parsed.$name === "record") {
+      if (!($value instanceof $Map) || $rt.isJsonArrayTable($value))
+        $rt.fail("E8001", "expected table", $file, $line, $column, "table", $kindOf($value));
+    } else if (!($parsed && $parsed.$t === "primitive" && $parsed.$name === "unknown")) {
+      $rt.checkTypeLeaf($descriptor, $value, $file, $line, $column);
+    }
+  };
+  const $elementDescriptor = function ($descriptor) {
+    if ($descriptor === null) return null;
+    let $parsed = $parse($descriptor);
+    while ($parsed && $parsed.$t === "nullable") $parsed = $parse($parsed.$inner);
+    return $parsed && $parsed.$t === "array" ? $parsed.$element : null;
+  };
+  let $arrays = null;
+  const $boundary = function ($action) {
+    try { return $action(); } catch ($error) {
+      for (let $array = $arrays; $array; $array = $array.parent) {
+        const $failure = new $DEALError("E8003", "array element " + $array.index + " type mismatch",
+          $file, $line, $column, $array.descriptor, $elemKindOf($array.value));
+        $failure.cause = $error.code === "E8003" && $error.cause ? $error.cause : $error;
+        $error = $failure;
+      }
+      throw $error;
+    }
+  };
+  const $check = ($descriptor, $value) => $boundary(() => $checkPosition($descriptor, $value));
+  const $emit = function ($value, $valueVariant, $descriptor = null) {
+    $check($descriptor, $value);
     if ($omit($value)) {
-      if ($typed) $unsupported($value, $valuePath);
       $out.push("null"); return;
     }
     if ($value === null) {
@@ -1498,13 +1452,12 @@ function $encodeJsonText($v, $active, $file, $line, $column, $typed, $path, $var
     }
     if ($type === "number") {
       if ($value !== $value || $value === Infinity || $value === -Infinity) {
-        if ($typed) $unsupported($value, $valuePath);
         $out.push("null"); return;
       }
       if ($valueVariant === true) {
         const $text = $numText($value);
         if ($text === null) {
-          $unsupported($value, $valuePath);
+          $unsupported($value);
         }
         $out.push($text);
         return;
@@ -1519,7 +1472,6 @@ function $encodeJsonText($v, $active, $file, $line, $column, $typed, $path, $var
     if ($isNumCarrier($value)) {
       const $d = $value.d;
       if ($d !== $d || $d === Infinity || $d === -Infinity) {
-        if ($typed) $unsupported($value, $valuePath);
         $out.push("null"); return;
       }
       if ($value.k === "number") {
@@ -1535,7 +1487,7 @@ function $encodeJsonText($v, $active, $file, $line, $column, $typed, $path, $var
     }
     if ($type === "function"
         || ($type === "object" && $value.$kind === "function")) {
-      $unsupported($value, $valuePath);
+      $unsupported($value);
     }
     if ($value instanceof $Map && $rt.isJsonNullTable($value)) {
       $out.push("null");
@@ -1559,7 +1511,8 @@ function $encodeJsonText($v, $active, $file, $line, $column, $typed, $path, $var
         }
         if ($arrayForm) {
           $out.push("[");
-          $stack.push({ map: $value, path: $valuePath, kind: 1, index: 1, max: $max });
+          $stack.push({ map: $value, kind: 1, index: 1, max: $max,
+            descriptor: $elementDescriptor($descriptor), arrays: $arrays });
           return;
         }
       }
@@ -1573,19 +1526,24 @@ function $encodeJsonText($v, $active, $file, $line, $column, $typed, $path, $var
         return $ai < 0 ? ($bi < 0 ? 0 : 1) : ($bi < 0 ? -1 : $ai - $bi);
       });
       $out.push("{");
-      $stack.push({ map: $value, path: $valuePath, kind: 2, index: 0, emitted: 0, keys: $keys });
+      $stack.push({ map: $value, kind: 2, index: 0, emitted: 0, keys: $keys, arrays: $arrays });
       return;
     }
-    if (!$typed && $type === "object" && $value.$kind === "class") {
+    if ($type === "object" && $value.$kind === "class") {
       const $keys = $classFieldOrder.get($value);
-      if (!$keys) $unsupported($value, $valuePath);
+      if (!$keys) $unsupported($value);
       if ($active.includes($value)) {
         $rt.fail("E8001", "cyclic value cannot be encoded as JSON", $file, $line, $column);
       }
       $active.push($value);
       $out.push("{");
-      $stack.push({ map: { get: key => $value[key] }, path: $valuePath,
-        kind: 2, index: 0, emitted: 0, keys: $keys });
+      const $plan = $instanceClassPlans.get($value) || $hostClassPlans.get($value.$classname)
+        || ($value.$classname === "Error" ? [
+          {name: "code", descriptor: "string", optional: false},
+          {name: "message", descriptor: "string", optional: false}] : null);
+      if (!$plan) throw new Error("JSON class value has no exact field plan");
+      $stack.push({ map: { get: key => $value[key] }, owner: $value, plan: $plan,
+        kind: 2, index: 0, emitted: 0, keys: $keys, arrays: $arrays });
       return;
     }
     if ($Array.isArray($value)) {
@@ -1594,20 +1552,21 @@ function $encodeJsonText($v, $active, $file, $line, $column, $typed, $path, $var
       }
       $active.push($value);
       $out.push("[");
-      $stack.push({ array: $value, path: $valuePath, kind: 3, index: 0 });
+      $stack.push({ array: $value, kind: 3, index: 0,
+        descriptor: $elementDescriptor($descriptor), arrays: $arrays });
       return;
     }
-    $unsupported($value, $valuePath);
+    $unsupported($value);
   };
   const $base = $active.length;
   try {
-    $emit($v, $path, $variant);
+    $emit($v, $variant);
     while ($stack.length > 0) {
       const $frame = $stack[$stack.length - 1];
+      $arrays = $frame.arrays;
       if ($frame.kind === 1) {
-        // A marked array-shaped Map: dense indices 1..max; an absent
-        // element is the internal missing value (the general emit arm
-        // reports the closed nil failure).
+        // A marked array-shaped Map: dense indices 1..max; omitted
+        // positions substitute null without mutating the source.
         if ($frame.index > $frame.max) {
           $out.push("]");
           $active.pop();
@@ -1618,13 +1577,9 @@ function $encodeJsonText($v, $active, $file, $line, $column, $typed, $path, $var
         if ($i > 1) $out.push(",");
         const $key = String($i);
         const $element = $frame.map.get($key);
-        const $elementPath = $frame.path === "" ? "[" + ($i - 1) + "]"
-          : $frame.path + "[" + ($i - 1) + "]";
-        // An absent (deleted) slot is the internal missing value, never a
-        // fabricated present JSON null: the shared encoder rejects it as
-        // a value-representation failure at this position (the general
-        // emit arm projects the pinned nil token for both rows).
-        $emit($element, $elementPath, $isNumberVariant($frame.map, $key));
+        if ($frame.descriptor !== null) $arrays = {index: $i, descriptor: $frame.descriptor,
+          value: $element, parent: $arrays};
+        $emit($element, $isNumberVariant($frame.map, $key), $frame.descriptor);
         continue;
       }
       if ($frame.kind === 2) {
@@ -1638,25 +1593,30 @@ function $encodeJsonText($v, $active, $file, $line, $column, $typed, $path, $var
         const $key = $frame.keys[$i];
         if (typeof $key !== "string") {
           // Record keys must be strings; every UTF-16 string is legal.
-          if ($typed) {
-            $rt.fail("E8001", "value at " + $frame.path
-              + " is not JSON serializable: invalid-unicode",
-              $file, $line, $column, $undefined, "invalid-unicode");
-          }
           $rt.fail("E8001", "unsupported type for JSON encoding: string",
             $file, $line, $column, "string, number, boolean, or table", "string");
         }
         const $element = $frame.map.get($key);
-        if (!$typed && $omit($element)) continue;
+        let $descriptor = null;
+        if ($frame.plan) {
+          const $field = $frame.plan[$i];
+          if (!$field || $field.name !== $key) throw new Error("JSON class field plan/order mismatch");
+          if (!Object.prototype.hasOwnProperty.call($frame.owner, $key) || $element === $MISSING) {
+            if (!$field.optional) $boundary(() => $rt.fail("E8001", "expected class instance",
+              $file, $line, $column, "class", $frame.owner.$classname));
+            continue;
+          }
+          $descriptor = $field.descriptor;
+          $check($descriptor, $element);
+        }
+        if ($omit($element)) continue;
         if ($frame.emitted++ > 0) $out.push(",");
-        const $elementPath = $frame.path === "" ? $key : $frame.path + "." + $key;
         $out.push($jsonEscapeText($key) + ":");
-        $emit($element, $elementPath, $isNumberVariant($frame.map, $key));
+        $emit($element, $isNumberVariant($frame.map, $key), $descriptor);
         continue;
       }
-      // A native Array: elements in index order; an absent (deleted)
-      // element is the internal missing value and takes the same closed
-      // representation failure as a decoded array's absent slot.
+      // A native Array: elements in index order; omitted positions
+      // substitute null, just as in a decoded array.
       if ($frame.index >= $frame.array.length) {
         $out.push("]");
         $active.pop();
@@ -1666,414 +1626,13 @@ function $encodeJsonText($v, $active, $file, $line, $column, $typed, $path, $var
       const $i = $frame.index++;
       if ($i > 0) $out.push(",");
       const $element = $frame.array[$i];
-      const $elementPath = $frame.path === "" ? "[" + $i + "]" : $frame.path + "[" + $i + "]";
-      $emit($element, $elementPath, $isNumberVariant($frame.array, String($i)));
+      if ($frame.descriptor !== null) $arrays = {index: $i + 1, descriptor: $frame.descriptor,
+        value: $element, parent: $arrays};
+      $emit($element, $isNumberVariant($frame.array, String($i)), $frame.descriptor);
     }
     return $out.join("");
   } finally {
     $active.length = $base;
-  }
-}
-
-// ===== @jsonable runtime walkers (js-v12-jsonable-completion D2-D5) =====
-// $rt.jsonFromJson/$rt.jsonToJson over the pinned field-descriptor
-// shape — { name: string, jtype: "null"|"boolean"|"number"|
-// "string"|"table"|"class"|"array", element?: entry, className?:
-// string, fields?: entry[] | imported C$fields ref, optional: boolean,
-// nullable: boolean } — entries in declaration order. fromJson decodes
-// supplied fields, requires every nonoptional key, validates and publishes.
-// Every failure returns DEAL null; toJson serializes declared fields in
-// declaration order and raises E8001 on failure. Both walkers mutate no
-// inputs and publish nothing on failure.
-
-// $jsonEntryDescriptor: the canonical descriptor text of one entry —
-// final validation routes every present field through the canonical
-// matcher rows ($rt.checkType), so the text is reconstructed exactly as
-// the emitter's descriptor service would spell it: the primitive name,
-// the class identity text (className), "[" + element descriptor + "]"
-// for arrays, and the "?" prefix for nullable entries. An unknown jtype
-// yields null and the caller fails (malformed descriptors).
-function $jsonEntryDescriptor($entry) {
-  let $base;
-  switch ($entry.jtype) {
-    case "null": $base = "null"; break;
-    case "undefined": $base = "undefined"; break;
-    case "boolean": $base = "boolean"; break;
-    case "number": $base = "number"; break;
-    case "string": $base = "string"; break;
-    case "table": $base = "record"; break;
-    case "class": $base = $entry.className; break;
-    case "array": $base = "[" + $jsonEntryDescriptor($entry.element) + "]"; break;
-    default: return null;
-  }
-  if ($base === "undefined" && $entry.nullable) return "null|undefined";
-  return ($entry.nullable ? "?" : "") + ($entry.undefinedable && $base !== "undefined" ? "!" : "") + $base;
-}
-
-// Decode a structural class without hooks or input mutation. Required
-// omissions, extras and invalid nested values reject the entire document.
-// The public caller converts every thrown validation failure to DEAL null.
-function $jsonFromDocument($identity, $doc, $fields, $file, $line, $column) {
-  // Top-level gate (D3): only a JSON object may decode; a scalar, JSON
-  // null, or an array document — the empty array included — returns the
-  // DEAL null. The class helper accepts exactly its specified object
-  // shape, so no root or nested class value is an empty-array collapse.
-  if ($doc === null || typeof $doc !== "object" || $Array.isArray($doc)) {
-    return null;
-  }
-  if (!$Array.isArray($fields)) {
-    return null; // defensive: malformed descriptors never crash
-  }
-  // Extra-key rejection (D2 step 4): the parsed document's own keys in
-  // document order; any key that is not a declared field name is a
-  // rejection.
-  const $names = new $Map();
-  for (let $i = 0; $i < $fields.length; $i++) {
-    const $entry = $fields[$i];
-    if ($entry === null || typeof $entry !== "object" || typeof $entry.name !== "string") {
-      return null;
-    }
-    $names.set($entry.name, true);
-  }
-  const $docKeys = Object.keys($doc);
-  for (let $k = 0; $k < $docKeys.length; $k++) {
-    if (!$names.has($docKeys[$k])) {
-      return null;
-    }
-  }
-  // Provided-field decode in class source order (the descriptor-array
-  // order, not document key order — D2 step 5).
-  const $provided = new $Map();
-  for (let $i = 0; $i < $fields.length; $i++) {
-    const $entry = $fields[$i];
-    if (!Object.prototype.hasOwnProperty.call($doc, $entry.name)) {
-      continue; // a field absent from the document is omitted
-    }
-    $provided.set($entry.name,
-      $jsonFromValue($entry, $doc[$entry.name], $file, $line, $column,
-        $isNumberVariant($doc, $entry.name)));
-  }
-  // Required fields must be provided. Missing optionals remain absent;
-  // no evaluator or host hook runs during decoding.
-  for (const $entry of $fields) {
-    if (!$entry.optional && !$provided.has($entry.name)) return null;
-  }
-  const $instance = {};
-  for (let $i = 0; $i < $fields.length; $i++) {
-    const $entry = $fields[$i];
-    const $name = $entry.name;
-    if ($provided.has($name)) {
-      $rt.setProp($instance, $name, $provided.get($name));
-    } else if ($entry.optional) {
-      $rt.setProp($instance, $name, $MISSING);
-    }
-  }
-  // Final validation (D2 step 7): every present field through the
-  // canonical matcher rows — a mismatch returns null end-to-end. Absent
-  // optionals (MISSING) and absent nested-required fields are skipped
-  // (present-only).
-  for (let $i = 0; $i < $fields.length; $i++) {
-    const $entry = $fields[$i];
-    if (!Object.prototype.hasOwnProperty.call($instance, $entry.name)) {
-      continue;
-    }
-    const $value = $instance[$entry.name];
-    if ($value === $MISSING) {
-      continue;
-    }
-    const $descriptor = $jsonEntryDescriptor($entry);
-    if ($descriptor === null) {
-      $rt.fail("E8001", "malformed field descriptors", $file, $line, $column);
-    }
-    $rt.checkType($descriptor, $value, $file, $line, $column);
-  }
-  // Publish: the class tag pair on the fully validated instance.
-  $rt.setProp($instance, "$kind", "class");
-  $rt.setProp($instance, "$classname", $identity);
-  $classFieldOrder.set($instance, $fields.map($field => $field.name));
-  return $instance;
-}
-
-// $jsonFromValue: decode one provided field/element value per its
-// descriptor. Throws on every failure (jsonFromJson collapses throws to
-// the DEAL null); a JSON null is present-null on a nullable entry or a
-// null-typed entry and a shape violation everywhere else. Primitives
-// route through the pinned typed-boundary kind checks; class entries re-run the full instance
-// decode with the nested fields; array entries decode element-wise via
-// element; table entries accept only a JSON object and convert it to
-// the D9 Map shape (nested arrays as the array-marked Maps).
-function $jsonFromValue($entry, $raw, $file, $line, $column, $numberVariant) {
-  if ($raw === null) {
-    if ($entry.nullable || $entry.jtype === "null") {
-      return null;
-    }
-    $rt.fail("E8001", "expected non-null value", $file, $line, $column);
-  }
-  switch ($entry.jtype) {
-    case "null":
-      // Only JSON null decodes to null (handled above).
-      $rt.fail("E8001", "expected null", $file, $line, $column, "null", $kindOf($raw));
-    case "boolean":
-      if (typeof $raw !== "boolean") {
-        $rt.fail("E8001", "expected boolean", $file, $line, $column, "boolean", $kindOf($raw));
-      }
-      return $raw;
-    case "string":
-      return $rt.checkString($raw, $file, $line, $column);
-    case "number":
-      return $rt.checkNumber($raw, $file, $line, $column);
-    case "table":
-      if (!$isPlainObject($raw)) {
-        $rt.fail("E8001", "expected table", $file, $line, $column, "table", $kindOf($raw));
-      }
-      return $rt.jsonParseValue($raw, $file, $line, $column);
-    case "class":
-      // The nested class value is a JSON object, exactly the root gate's
-      // own shape: an array value of any length, the empty array
-      // included, is a validation failure (no empty-object collapse).
-      if (!$isPlainObject($raw)) {
-        $rt.fail("E8001", "expected class instance", $file, $line, $column, "class", $kindOf($raw));
-      }
-      if (typeof $entry.className !== "string" || !$Array.isArray($entry.fields)) {
-        $rt.fail("E8001", "malformed field descriptors", $file, $line, $column);
-      }
-      const $nested = $jsonFromDocument($entry.className, $raw,
-        $entry.fields, $file, $line, $column);
-      if ($nested === null) {
-        // A nested decode has no successful-null outcome: every gate and
-        // every validation failure collapses to the language null of the
-        // whole C$fromJson call (the public entry's own catch), so a
-        // nullable class field or nullable class-array element never
-        // absorbs a failed nested decode as a present null — only a JSON
-        // null token reaches the null arm above, and no partial instance
-        // publishes.
-        $rt.fail("E8001", "nested @jsonable decode failed", $file, $line,
-          $column);
-      }
-      return $nested;
-    case "array":
-      if (!$Array.isArray($raw)) {
-        $rt.fail("E8001", "expected array", $file, $line, $column, "array", $kindOf($raw));
-      }
-      if ($entry.element === null || typeof $entry.element !== "object") {
-        $rt.fail("E8001", "malformed field descriptors", $file, $line, $column);
-      }
-      const $arr = [];
-      for (let $i = 0; $i < $raw.length; $i++) {
-        $arr.push($jsonFromValue($entry.element, $raw[$i], $file, $line, $column,
-          $isNumberVariant($raw, String($i))));
-      }
-      if (typeof $entry.elementDescriptor === "string") {
-        $arrayDescriptors.set($arr, $entry.elementDescriptor);
-      }
-      return $arr;
-    default:
-      $rt.fail("E8001", "unknown jtype in field descriptor", $file, $line, $column);
-  }
-}
-
-// $jsonToDocument: serialize the declared fields of a tagged class
-// instance into its JSON text in declaration order. Absent optionals
-// ($rt.MISSING) are omitted (the three-state roundtrip); present nulls
-// serialize as JSON null; a missing required field fails through the
-// walk arm. The shared $path stack keeps nested class/array/table graphs
-// cycle-checked end to end. $fieldPath is the pinned walk position
-// spelling (the root has the empty path).
-function $jsonToDocument($identity, $v, $fields, $path, $fieldPath, $file, $line, $column) {
-  if (!$Array.isArray($fields)) {
-    $rt.fail("E8001", "malformed field descriptors", $file, $line, $column);
-  }
-  const $parts = [];
-  for (let $i = 0; $i < $fields.length; $i++) {
-    const $entry = $fields[$i];
-    if ($entry === null || typeof $entry !== "object" || typeof $entry.name !== "string") {
-      $rt.fail("E8001", "malformed field descriptors", $file, $line, $column);
-    }
-    const $name = $entry.name;
-    if (!Object.prototype.hasOwnProperty.call($v, $name)) {
-      if ($entry.optional) {
-        continue; // missing optional: omit the key
-      }
-      const $token = "nil";
-      $rt.fail("E8001", "value at " + $fieldPathFor($fieldPath, $name)
-        + " is not JSON serializable: " + $token, $file, $line, $column,
-        $undefined, $token);
-    }
-    const $value = $v[$name];
-    if ($value === $MISSING) {
-      continue; // absent optional: omitted (three-state roundtrip)
-    }
-    // The field's recorded numeric variant: a projected class-instance
-    // completion records the variant of every numeric field it unwrapped
-    // ($hostProjectCompletion), so the declared int/number rows spell the
-    // copy exactly like the DEAL-side instance. A DEAL-side instance
-    // records nothing and keeps the declared-type spelling.
-    const $fieldVariant = $isNumberVariant($v, $name) ? true : $undefined;
-    const $encoded = $jsonToValue($entry, $value, $path, $fieldPathFor($fieldPath, $name),
-      $file, $line, $column, $fieldVariant);
-    if ($encoded !== $undefined) $parts.push($jsonEscapeText($name) + ":" + $encoded);
-  }
-  return "{" + $parts.join(",") + "}";
-}
-
-// $fieldPathFor: the pinned walk position spelling (a dot-joined path).
-function $fieldPathFor($base, $name) {
-  return $base === "" ? $name : $base + "." + $name;
-}
-
-// $jsonToValue: encode one declared field/element value into its JSON
-// text. Every failure is the closed walk arm (E8001 "value at
-// {fieldPath} is not JSON serializable: {actual}") through the fail
-// spine with the forwarded location, except the int32 range gate
-// (E8004). Table fields walk the shared finite-acyclic JSON text
-// encoder with the typed-boundary projection. $variant is the recorded
-// variant of the walked position: $true for the number classification
-// and $false for the int classification of a decoded-array slot or of a
-// host-projected class-instance field ($hostProjectCompletion records
-// the variant of every field it unwrapped), $undefined outside such a
-// record. The "int" and "number" rows consult it for a plain number. A
-// read-side variant carrier is judged by its own recorded kind first
-// (the shared model's Value.Int/Value.Number rows, never the declared
-// position).
-function $jsonToValue($entry, $value, $path, $fieldPath, $file, $line, $column,
-    $variant) {
-  const $walkFail = function () {
-    const $token = $walkToken($value);
-    $rt.fail("E8001", "value at " + $fieldPath + " is not JSON serializable: "
-      + $token, $file, $line, $column, $undefined, $token);
-  };
-  // Language null has the two representations the boundary knows: the
-  // JS null and the std/json decoded-null marked Map. A decoded JSON
-  // array legally stores the second in a nullable-element slot (the
-  // carrier-aware element check of checkArray admits it and returns the
-  // carrier unchanged), so both encode as JSON null here — the same
-  // null leaf the native path stores.
-  if ($value === null || $rt.isJsonNullTable($value)) {
-    if ($entry.nullable || $entry.jtype === "null") {
-      return "null";
-    }
-    $walkFail();
-  }
-  if ($value === $undefined && $entry.undefinedable) return $undefined;
-  switch ($entry.jtype) {
-    case "null":
-      // Only language null encodes (handled above).
-      $walkFail();
-    case "boolean":
-      if (typeof $value !== "boolean") {
-        $walkFail();
-      }
-      return $value ? "true" : "false";
-    case "string":
-      if (typeof $value !== "string") {
-        $walkFail();
-      }
-      return $jsonEscapeText($value);
-    case "number":
-      if ($isNumCarrier($value)) {
-        // The value's own variant decides the spelling: an int-variant
-        // carrier keeps the integer spelling and a number-variant carrier
-        // the canonical decimal text, exactly the shared
-        // Value.Int/Value.Number rows.
-        const $carried = $value.d;
-        if ($carried !== $carried
-            || $carried > 1.7976931348623157e308
-            || $carried < -1.7976931348623157e308) return "null";
-        return $carried === 0 ? "0" : $numText($carried);
-      }
-      if (typeof $value !== "number") $walkFail();
-      if ($value !== $value || $value > 1.7976931348623157e308 || $value < -1.7976931348623157e308) return "null";
-      // A decoded-array slot keeps the decoded graph's own
-      // classification: the number-variant slot (a fractional token, or
-      // an integral token written in fraction/exponent form) spells the
-      // canonical decimal text, while the int-classified slot keeps the
-      // integer spelling — exactly the $encodeJsonText rule and exactly
-      // the shared model's Value.Number rows. A native Array
-      // or a declared scalar position records no variant and keeps the
-      // declared number spelling.
-      return $value === 0 ? "0" : $numText($value);
-    case "table":
-      // The declared table row walks the JSON-shaped content only: a
-      // class instance, a stored function, an absent marker, an
-      // invalid scalar, or a nonfinite leaf fails the walk arm at its
-      // position.
-      return $encodeJsonText($value, $path, $file, $line, $column, false,
-        $fieldPath, false);
-    case "class":
-      if (typeof $value !== "object" || $value === null || $value.$kind !== "class") {
-        $walkFail();
-      }
-      if (typeof $entry.className !== "string" || !$Array.isArray($entry.fields)) {
-        $rt.fail("E8001", "malformed field descriptors", $file, $line, $column);
-      }
-      if ($value.$classname !== $entry.className) {
-        $walkFail();
-      }
-      if ($path.includes($value)) {
-        $rt.fail("E8001", "cyclic value cannot be encoded as JSON", $file, $line, $column);
-      }
-      $path.push($value);
-      try {
-        return $jsonToDocument($entry.className, $value, $entry.fields, $path,
-          $fieldPath, $file, $line, $column);
-      } finally {
-        $path.pop();
-      }
-    case "array":
-      // The declared array reads through the carrier-agnostic members,
-      // exactly like every emitted array read and the boundary's own
-      // checkArray: a native Array and the std/json decoded-array
-      // marked Map both encode, so a decoded JSON array stored in a
-      // declared array field serializes as its declared DEAL array and
-      // performs identically on the JS lane and the LuaJIT/JVM lanes.
-      // The length is read once (the reference's 1..#v bound) and each
-      // position through $rt.arrayAt, so the walk never reads an
-      // invisible native property off the carrier.
-      if (!$Array.isArray($value) && !$rt.isJsonArrayTable($value)) {
-        $walkFail();
-      }
-      if ($entry.element === null || typeof $entry.element !== "object") {
-        $rt.fail("E8001", "malformed field descriptors", $file, $line, $column);
-      }
-      if ($path.includes($value)) {
-        $rt.fail("E8001", "cyclic value cannot be encoded as JSON", $file, $line, $column);
-      }
-      $path.push($value);
-      try {
-        const $parts = [];
-        const $isDecoded = $rt.isJsonArrayTable($value);
-        const $wantsNumber = $entry.element.jtype === "number";
-        const $length = $rt.arrayLength($value);
-        for (let $i = 0; $i < $length; $i++) {
-          const $element = $rt.arrayAt($value, $i, $wantsNumber);
-          const $elementPath = $fieldPath + "[" + $i + "]";
-          if ($element === $undefined && !$entry.element.undefinedable) {
-            // A deleted slot is language undefined, not present null.
-            $rt.fail("E8001", "value at " + $elementPath
-              + " is not JSON serializable: undefined", $file, $line, $column,
-              $undefined, "undefined");
-          }
-          // A decoded carrier records its per-slot number variant under
-          // the same 1-based key $rt.arrayAt reads (only the number
-          // variant is marked) and materializes a variant carrier for the
-          // positions whose variant the read's declared kind cannot
-          // express, so the element row reaches the same spelling the
-          // shared model's Value.Int/Value.Number carry; a native Array
-          // records no decoded variant and keeps the declared-type
-          // spelling.
-          const $elementVariant = $isDecoded && typeof $element === "number"
-            ? $isNumberVariant($value, String($i + 1))
-            : $undefined;
-          const $encoded = $jsonToValue($entry.element, $element, $path, $elementPath,
-            $file, $line, $column, $elementVariant);
-          $parts.push($encoded === $undefined ? "null" : $encoded);
-        }
-        return "[" + $parts.join(",") + "]";
-      } finally {
-        $path.pop();
-      }
-    default:
-      $rt.fail("E8001", "unknown jtype in field descriptor", $file, $line, $column);
   }
 }
 
@@ -2289,7 +1848,7 @@ const $rt = {
 
   // The mark members require a Map argument: WeakSet.add on a primitive
   // input throws the native TypeError — the documented defensive exception
-  // of the JSON-mark contract, reachable only through std/json mis-emission
+  // of the JSON-mark contract, reachable only through runtime mis-emission
   // (js-backend-runtime-artifact D2). No DEALError arm exists here.
   markJsonArrayTable: function $markJsonArrayTable(map) {
     $jsonArrayTables.add(map);
@@ -2314,34 +1873,20 @@ const $rt = {
 
   // ===== Exact JSON members (binary64 numbers) =====
 
-  // jsonParseText: the conforming RFC-8259 scanner over one string — the
-  // decode open of std/json.parse and the @jsonable fromJson walkers. It
-  // rejects every syntax defect (a decoded-key duplicate at the second
-  // key's opening quote included) with the shared E8001 "JSON parse error
-  // at position N: reason" projection, classifies every numeric lexeme
-  // exactly before binary64 rounding, and records the per-slot variant
-  // marks. No fixed nesting bound.
+  // jsonParseText: the stack-safe RFC-8259 scanner used by contextual
+  // decoding. Syntax defects and decoded-key duplicates report E8001
+  // "JSON parse error at position N: reason" at the operation origin;
+  // numeric lexemes round to binary64 and preserve signed zero.
   jsonParseText: function $jsonParseText(text, file, line, column) {
     return $parseJsonText(text, file, line, column);
   },
 
-  // jsonParseValue: the decode-side conversion of one scanned native
-  // document into the marked-Map table shape — the shared walk behind
-  // std/json.parse and the @jsonable walkers' table-field decode
-  // (js-v12-jsonable-completion D2/D4). Pure: fresh Maps only, no input
-  // mutation; the container number-variant marks are copied.
-  jsonParseValue: function $jsonParseValue(v, file, line, column) {
-    return $fromJsonConvert(v, file, line, column);
-  },
-
-  // jsonStringifyText: the std/json encode row — finite acyclic
-  // JSON-shaped data only; unsupported carriers and nonfinite numbers
-  // raise the closed JSON_STRINGIFY_UNSUPPORTED E8001 and a path-local
-  // container re-entry raises the closed cycle arm. Pure and
-  // non-mutating.
+  // jsonStringifyText: builtin encoding with omission/substitution,
+  // nonfinite-to-null spelling, reached-position validation and path-local
+  // cycle rejection. Shared acyclic children encode independently; no input
+  // storage or private descriptors are changed.
   jsonStringifyText: function $jsonStringifyText(v, path, file, line, column) {
-    return $encodeJsonText(v, $Array.isArray(path) ? path : [], file, line, column,
-      false, "", false);
+    return $encodeJsonText(v, $Array.isArray(path) ? path : [], file, line, column, false);
   },
 
   // ===== Error spine members (js-backend-runtime-artifact D8) =====
@@ -2466,7 +2011,7 @@ const $rt = {
 
   // checkTable: the strict split (js-backend-runtime D3) — an unmarked
   // instanceof-Map table passes; the two D2 JSON decode carriers do not:
-  // a decoded JSON array is the array carrier (the std/json decode mark)
+  // a decoded JSON array is the array carrier (the JSON provenance mark)
   // and a decoded JSON null is language null, so both are rejected at a
   // table boundary with the shared boundary executor's own closed tuple
   // (E8001 "expected table", expected "table", actual "array"/"null" —
@@ -2577,6 +2122,83 @@ const $rt = {
   },
 
   checkType: function $checkType(descriptor, v, file, line, column) {
+    const pending = [{descriptor, value: v, arrays: null}], seen = new WeakMap();
+    while (pending.length) {
+      const task = pending.pop();
+      let value = task.field ? task.owner[task.field.name] : task.value;
+      let current = task.descriptor;
+      try {
+        if (task.field && (!Object.prototype.hasOwnProperty.call(task.owner, task.field.name)
+            || value === $MISSING)) {
+          if (!task.field.optional) $rt.fail("E8001", "missing required field: " + task.field.name, file, line, column);
+          continue;
+        }
+        if (value === $MISSING) value = $undefined;
+        let parsed = $parse(current), acceptedNullish = false;
+        while (parsed && parsed.$t === "nullable") {
+          if (parsed.$null && (value === null || $jsonNullTables.has(value))
+              || parsed.$undefined && value === $undefined) { acceptedNullish = true; break; }
+          current = parsed.$inner;
+          parsed = $parse(current);
+        }
+        if (acceptedNullish) continue;
+        if (!parsed || parsed.$t !== "class" && parsed.$t !== "array") {
+          $rt.checkTypeLeaf(current, value, file, line, column);
+          continue;
+        }
+        if (parsed.$t === "class") {
+          if (value === $undefined || value === null || value.$kind !== "class")
+            $rt.fail("E8001", "expected class instance", file, line, column, "class", $kindOf(value));
+          if (value.$classname !== parsed.$name)
+            $rt.fail("E8001", "expected instance of " + parsed.$name + ", got " + value.$classname,
+              file, line, column, parsed.$name, value.$classname);
+        } else {
+          if (!$Array.isArray(value) && !$rt.isJsonArrayTable(value))
+            $rt.fail("E8001", "expected array", file, line, column, "array", $kindOf(value));
+          const persistent = $arrayDescriptors.get(value);
+          if (persistent !== $undefined && persistent !== parsed.$element)
+            $rt.fail("E8001", "array element descriptor mismatch", file, line, column, current, "array");
+        }
+        let checked = seen.get(value);
+        if (!checked) { checked = new Set(); seen.set(value, checked); }
+        if (checked.has(current)) continue;
+        checked.add(current);
+        if (parsed.$t === "class") {
+          const plan = $instanceClassPlans.get(value) || $hostClassPlans.get(parsed.$name);
+          if (plan) {
+            if (!$classFieldOrder.has(value)) $classFieldOrder.set(value, plan.map(field => field.name));
+            for (let i = plan.length - 1; i >= 0; --i)
+              pending.push({descriptor: plan[i].descriptor, owner: value, field: plan[i], arrays: task.arrays});
+          }
+        } else {
+          const mapped = !$Array.isArray(value);
+          let count = value.length;
+          if (mapped) {
+            count = 0;
+            for (const key of value.keys()) { const index = $arrayFormIndex(key); if (index !== null && index > count) count = index; }
+          }
+          for (let i = count - 1; i >= 0; --i) {
+            const member = mapped ? value.get(String(i + 1)) : value[i];
+            pending.push({descriptor: parsed.$element, value: member,
+              arrays: {index: i + 1, descriptor: parsed.$element, value: member, parent: task.arrays}});
+          }
+        }
+      } catch (error) {
+        for (let array = task.arrays; array; array = array.parent) {
+          const failure = new $DEALError("E8003", "array element " + array.index + " type mismatch",
+            file, line, column, array.descriptor, $elemKindOf(array.value));
+          failure.cause = error.code === "E8003" && error.cause ? error.cause : error;
+          error = failure;
+        }
+        throw error;
+      }
+    }
+    return $jsonNullTables.has(v) ? null : v === $MISSING ? $undefined : v;
+  },
+
+  // Scalar/data/function leaves of the stack-safe descriptor walk. Composite
+  // positions are always consumed by checkType's operation-local work stack.
+  checkTypeLeaf: function $checkTypeLeaf(descriptor, v, file, line, column) {
     if (v === $MISSING) v = $undefined;
     if (descriptor === null) {
       $rt.fail("E8001", "internal: nil type descriptor", file, line, column);
@@ -2615,14 +2237,6 @@ const $rt = {
       }
       $rt.fail("E8001", "unknown primitive type: " + $parsed.$name, file, line, column);
     }
-    if ($parsed.$t === "nullable") {
-      if ($parsed.$null && (v === null || $jsonNullTables.has(v))) return null;
-      if ($parsed.$undefined && v === $undefined) return v;
-      return $rt.checkType($parsed.$inner, v, file, line, column);
-    }
-    if ($parsed.$t === "array") {
-      return $rt.checkArray(descriptor, v, file, line, column);
-    }
     if ($parsed.$t === "function") {
       // Function branch: the wrapper $kind tag first, then the exact
       // signature compare against the full descriptor string
@@ -2637,34 +2251,6 @@ const $rt = {
       }
       return v;
     }
-    if ($parsed.$t === "class") {
-      // Class branch: the $kind tag, then nominal identity — byte-for-byte
-      // equality between $classname and the parsed class atom's full text
-      // (deal/runtime.lua:459-468; canonical-type-system-and-runtime-descriptors
-      // D4). The builtin Error atom is the bare "Error".
-      if (v === $undefined || v === null || v.$kind !== "class") {
-        $rt.fail("E8001", "expected class instance", file, line, column, "class", $kindOf(v));
-      }
-      if (v.$classname !== $parsed.$name) {
-        $rt.fail("E8001", "expected instance of " + $parsed.$name + ", got " + v.$classname, file, line, column, $parsed.$name, v.$classname);
-      }
-      const plan = $instanceClassPlans.get(v) || $hostClassPlans.get($parsed.$name);
-      if (plan) {
-        let checking = $classChecks.get(v);
-        if (!checking) { checking = new Set(); $classChecks.set(v, checking); }
-        if (checking.has(descriptor)) return v;
-        checking.add(descriptor);
-        try {
-          for (const field of plan) {
-            if (!Object.prototype.hasOwnProperty.call(v, field.name) || v[field.name] === $MISSING) {
-              if (!field.optional) $rt.fail("E8001", "missing required field: " + field.name, file, line, column);
-            } else $rt.checkType(field.descriptor, v[field.name], file, line, column);
-          }
-        } finally { checking.delete(descriptor); }
-        if (!$classFieldOrder.has(v)) $classFieldOrder.set(v, plan.map(field => field.name));
-      }
-      return v;
-    }
     // Defensive: the parser is total over strings and every record kind is
     // dispatched above, so no parsed record reaches this arm (A3).
     $rt.fail("E8001", "internal: unhandled descriptor kind: " + $parsed.$t, file, line, column);
@@ -2672,7 +2258,7 @@ const $rt = {
 
   // checkArray: the strict array split (D3) — Array.isArray via the T1
   // $Array capture (never the bare spelling), plus the json-array-marked
-  // Map table (the std/json decode of a JSON array, the D2 array mark —
+  // Map table (the decoded JSON array provenance mark —
   // ISSUE-0331 gate closure): a plain Map, class instance, or primitive
   // is rejected with "expected array". Element extraction realizes the
   // canonical "[D]" prefix form only ($arrayElementDescriptor); the
@@ -2801,7 +2387,7 @@ const $rt = {
   // the carrier split is checkArray's own (a native Array first, the
   // json-array-marked Map second), so an emitted consumer sees exactly
   // the elements the boundary checked. A native Array reads v[i] (the
-  // real-Array walk's 0-based position); a marked Map — the std/json
+  // real-Array walk's 0-based position); a marked Map — the JSON
   // decode of a JSON array, whose elements are the string keys "1".."n"
   // in element order — reads the key "i+1", the same positions the
   // marked-Map check walk validates (1..max). A position outside the
@@ -2844,7 +2430,7 @@ const $rt = {
 
   // arrayLength: the length read of an array value checkArray admitted —
   // the carrier split is checkArray's own. A native Array reads its
-  // native length; a marked Map — the std/json decode of a JSON array,
+  // native length; a marked Map — the decoded representation of a JSON array,
   // whose elements are the string keys "1".."n" in element order —
   // reads the highest array-form key, exactly the 1..max range the
   // marked-Map check walk validates, so the count an empty decoded array
@@ -2867,7 +2453,7 @@ const $rt = {
 
   // arraySet: the commit step of an emitted array-element write whose
   // E8002 bounds gate and element check already ran — a native Array
-  // assigns the slot and a marked Map (the std/json decode of a JSON
+  // assigns the slot and a marked Map (the decoded representation of a JSON
   // array) sets the array-form key "i+1", so a write through one
   // reference is observed by every alias and by the shared JSON encode
   // walk. Returns the written value (the assignment's expression value).
@@ -3008,6 +2594,89 @@ const $rt = {
   // Reject extras and required omissions, validate unpublished slots, then tag.
   // Supplied references retain identity; failures publish nothing and do not
   // roll back completed effects. Absent optionals store MISSING.
+  // Explicit target reconstruction; descriptor assertions never call this.
+  jsonDecode: function(text, descriptor, file, line, column) {
+    const layouts = name => name === "Error" ? [
+      {name: "code", descriptor: "string", optional: false},
+      {name: "message", descriptor: "string", optional: false}
+    ] : $hostClassPlans.get(name);
+    const pending = [descriptor], visited = new Set();
+    while (pending.length) {
+      const d = $parse(pending.pop());
+      if (!d || d.$t === "function" || d.$name === "void") throw new Error("invalid JSON decoding schema");
+      if (d.$t === "nullable") pending.push(d.$inner);
+      else if (d.$t === "array") pending.push(d.$element);
+      else if (d.$t === "class" && !visited.has(d.$name)) {
+        visited.add(d.$name);
+        const plan = layouts(d.$name);
+        if (!plan) throw new Error("JSON decoding target has no exact class plan: " + d.$name);
+        for (let i = plan.length - 1; i >= 0; --i) pending.push(plan[i].descriptor);
+      }
+    }
+    const mismatch = (d, value) => {
+      const kind = d.$t === "class" ? "class instance" : d.$t === "array" ? "array"
+        : d.$name === "record" ? "table" : d.$name;
+      $rt.fail("E8001", "expected " + kind, file, line, column,
+        d.$t === "class" ? "class" : kind, $kindOf(value));
+    };
+    const stack = [{raw: $rt.jsonParseText(text, file, line, column), descriptor, opened: false}];
+    let completed;
+    while (stack.length) {
+      const f = stack[stack.length - 1];
+      if (!f.opened) {
+        f.opened = true;
+        let d = $parse(f.descriptor);
+        let acceptsNull = d.$t === "nullable" && d.$null;
+        if (d.$t === "nullable") d = $parse(d.$inner);
+        f.d = d;
+        if (f.missing) mismatch(d, $undefined);
+        if (f.raw === null && (acceptsNull || d.$name === "null" || d.$name === "unknown")) {
+          f.output = null;
+        } else if (d.$t === "class") {
+          if (!$isPlainObject(f.raw)) mismatch(d, f.raw);
+          f.plan = layouts(d.$name);
+          const names = new Set(f.plan.map(field => field.name));
+          for (const key of Object.keys(f.raw)) if (!names.has(key))
+            $rt.fail("E8007", "extra field '" + key + "' in class '" + d.$name + "'", file, line, column);
+          f.children = [];
+          for (const field of f.plan) {
+            const present = Object.prototype.hasOwnProperty.call(f.raw, field.name);
+            if (present || !field.optional) f.children.push({key: field.name, raw: f.raw[field.name], descriptor: field.descriptor, missing: !present});
+          }
+          f.output = {};
+        } else if ($Array.isArray(f.raw) && (d.$t === "array" || d.$name === "unknown")) {
+          f.children = f.raw.map((raw, key) => ({raw, key, descriptor: d.$t === "array" ? d.$element : "unknown"}));
+          f.output = [];
+          $arrayDescriptors.set(f.output, d.$t === "array" ? d.$element : "unknown");
+        } else if ($isPlainObject(f.raw) && (d.$name === "record" || d.$name === "unknown")) {
+          f.children = Object.keys(f.raw).map(key => ({raw: f.raw[key], key, descriptor: "unknown"}));
+          f.output = $rt.makeTable({});
+        } else if (d.$name === "unknown" || (d.$name === typeof f.raw && f.raw !== null)) f.output = f.raw;
+        else mismatch(d, f.raw);
+        f.index = 0;
+      }
+      if (f.children && f.index < f.children.length) {
+        const child = f.children[f.index++];
+        stack.push({...child, opened: false});
+        continue;
+      }
+      completed = f.output;
+      if (f.plan) {
+        $rt.setProp(completed, "$kind", "class");
+        $rt.setProp(completed, "$classname", f.d.$name);
+        $classFieldOrder.set(completed, f.plan.map(field => field.name));
+        $instanceClassPlans.set(completed, f.plan);
+      }
+      stack.pop();
+      if (stack.length) {
+        const parent = stack[stack.length - 1];
+        if (parent.output instanceof $Map) parent.output.set(f.key, completed);
+        else $rt.setProp(parent.output, f.key, completed);
+      }
+    }
+    return completed;
+  },
+
   registerClassPlan: function(identity, fields) { $hostClassPlans.set(identity, fields); },
   registerInstancePlan: function(value, fields) { $instanceClassPlans.set(value, fields); },
   registerClassFields: function(value, fields) { $classFieldOrder.set(value, fields); return value; },
@@ -3090,51 +2759,6 @@ const $rt = {
   has: function $has(obj, field) {
     if (obj instanceof $Map) return obj.has(field);
     return Object.prototype.hasOwnProperty.call(obj, field) && obj[field] !== $MISSING;
-  },
-
-  // ===== @jsonable runtime walkers (js-v12-jsonable-completion D2-D5) =====
-
-  // Decode only object documents. Malformed text, extra keys, required
-  // omissions and invalid supplied/nested values return null without mutation
-  // or partial publication. Legacy hooks are never read.
-  jsonFromJson: function $jsonFromJson(identity, fields, s, file, line, column) {
-    try {
-      $rt.checkString(s, file, line, column);
-    } catch ($e) {
-      return null;
-    }
-    let $doc;
-    try {
-      $doc = $parseJsonText(s, file, line, column);
-    } catch ($e) {
-      return null;
-    }
-    try {
-      return $jsonFromDocument(identity, $doc, fields, file, line, column);
-    } catch ($e) {
-      return null;
-    }
-  },
-
-  // jsonToJson: serialize a tagged class instance into a JSON string
-  // over the pinned field-descriptor shape — declared fields in
-  // declaration order, MISSING-valued absent optionals omitted,
-  // present nulls as JSON null, nested classes/arrays recursive, table
-  // fields through the D9 conversion with the finite-acyclic-JSON-
-  // shaped validation. The defensive identity check compares the
-  // $kind/$classname tag pair against the identity argument (the
-  // generated C$toJson wrapper pre-validates the parameter; this is
-  // the backstop — D2). Every failure raises E8001 through the fail
-  // spine with the forwarded location (D5); no input is ever mutated.
-  jsonToJson: function $jsonToJson(identity, v, fields, file, line, column) {
-    if (v === $undefined || v === null || typeof v !== "object" || v.$kind !== "class") {
-      $rt.fail("E8001", "expected class instance", file, line, column, "class", $kindOf(v));
-    }
-    if (v.$classname !== identity) {
-      $rt.fail("E8001", "expected instance of " + identity + ", got " + v.$classname, file, line, column, identity, v.$classname);
-    }
-    const $path = [v];
-    return $jsonToDocument(identity, v, fields, $path, "", file, line, column);
   },
 
   // ===== Wrapper factory and conversion intrinsics

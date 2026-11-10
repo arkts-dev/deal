@@ -379,10 +379,10 @@ public final class LlvmDataClassEmissionTest {
     }
 
     /**
-     * The executed {@code @jsonable} fixture (R6): decode and encode in
+     * The executed contextual JSON fixture: decode and encode in
      * declaration order, nested class plans, arrays, records, optional absence
-     * preserved, missing/extra/duplicate/type failures returning the language
-     * null, binary64 number text, the required-undefined asymmetry, the
+     * preserved, missing/extra/duplicate/type failures throwing without
+     * changing destinations, binary64 text, required-undefined asymmetry, the
      * decoded {@code T[]} fields as values of their declared type (every
      * element storage kind read back after the decode), one deep nested
      * document without a nesting cap, and the path-local cycle arm.
@@ -427,46 +427,72 @@ public final class LlvmDataClassEmissionTest {
               rows: Record<string, unknown>[];
             }
 
+            function rejectsOuter(text: string, code: string): boolean {
+              let original: Outer = {title: "keep", inner: {value: 9}, items: [7],
+                maybe: undefined, optionalNull: null, dynamic: {keep: true}};
+              let destination: Outer = original;
+              try { destination = JSON.parse(text); }
+              catch (e) {
+                if (e instanceof Error) {
+                  return e.code === code && destination === original
+                    && destination.inner === original.inner && destination.items[0] === 7;
+                }
+                throw e as Error;
+              }
+              return false;
+            }
+
+            function rejectsUndefined(text: string): boolean {
+              let original: Undefined = {name: "keep", maybe: undefined};
+              let destination: Undefined = original;
+              try { destination = JSON.parse(text); }
+              catch (e) {
+                if (e instanceof Error) { return e.code === "E8001" && destination === original; }
+                throw e as Error;
+              }
+              return false;
+            }
+
             function report(code: string, text: string): void {
               throw { code: code, message: `${text}` };
             }
 
             export function main(): null {
               let source = "{\\"title\\":\\"t\\",\\"inner\\":{\\"value\\":2},\\"items\\":[1,2],\\"maybe\\":\\"m\\",\\"optionalNull\\":null,\\"dynamic\\":{\\"k\\":true}}";
-              let decoded = Outer$fromJson(source);
-              if (decoded === null) { report("J1", "decode"); }
-              let encoded = Outer$toJson(decoded as Outer);
+              let decoded: Outer = JSON.parse(source);
+              if (!(decoded instanceof Outer)) { report("J1", "decode identity"); }
+              let encoded = JSON.stringify(decoded) as string;
               if (encoded !== "{\\"title\\":\\"t\\",\\"inner\\":{\\"value\\":2},\\"items\\":[1,2],\\"maybe\\":\\"m\\",\\"optionalNull\\":null,\\"dynamic\\":{\\"k\\":true}}") {
                 report("J2", encoded);
               }
 
-              let missingInner = Outer$fromJson("{\\"title\\":\\"t\\",\\"items\\":[],\\"maybe\\":\\"m\\",\\"optionalNull\\":null,\\"dynamic\\":{}}");
-              if (missingInner !== null) { report("J3", "missing required field"); }
-              let extraKey = Outer$fromJson("{\\"title\\":\\"t\\",\\"inner\\":{\\"value\\":1},\\"items\\":[],\\"maybe\\":\\"m\\",\\"optionalNull\\":null,\\"dynamic\\":{},\\"zz\\":1}");
-              if (extraKey !== null) { report("J4", "extra key"); }
-              let duplicate = Outer$fromJson("{\\"title\\":\\"t\\",\\"inner\\":{\\"value\\":1,\\"value\\":2},\\"items\\":[],\\"maybe\\":\\"m\\",\\"optionalNull\\":null,\\"dynamic\\":{}}");
-              if (duplicate !== null) { report("J5", "nested duplicate"); }
-              let wrongInner = Outer$fromJson("{\\"title\\":\\"t\\",\\"inner\\":{\\"value\\":\\"x\\"},\\"items\\":[],\\"maybe\\":\\"m\\",\\"optionalNull\\":null,\\"dynamic\\":{}}");
-              if (wrongInner !== null) { report("J6", "wrong field type"); }
-              let wrongItem = Outer$fromJson("{\\"title\\":\\"t\\",\\"inner\\":{\\"value\\":1},\\"items\\":[1,\\"x\\"],\\"maybe\\":\\"m\\",\\"optionalNull\\":null,\\"dynamic\\":{}}");
-              if (wrongItem !== null) { report("J7", "wrong array element"); }
-              let malformed = Outer$fromJson("{");
-              if (malformed !== null) { report("J8", "malformed document"); }
+              let missingInner = rejectsOuter("{\\"title\\":\\"t\\",\\"items\\":[],\\"maybe\\":\\"m\\",\\"optionalNull\\":null,\\"dynamic\\":{}}", "E8001");
+              if (!missingInner) { report("J3", "missing required field"); }
+              let extraKey = rejectsOuter("{\\"title\\":\\"t\\",\\"inner\\":{\\"value\\":1},\\"items\\":[],\\"maybe\\":\\"m\\",\\"optionalNull\\":null,\\"dynamic\\":{},\\"zz\\":1}", "E8007");
+              if (!extraKey) { report("J4", "extra key"); }
+              let duplicate = rejectsOuter("{\\"title\\":\\"t\\",\\"inner\\":{\\"value\\":1,\\"value\\":2},\\"items\\":[],\\"maybe\\":\\"m\\",\\"optionalNull\\":null,\\"dynamic\\":{}}", "E8001");
+              if (!duplicate) { report("J5", "nested duplicate"); }
+              let wrongInner = rejectsOuter("{\\"title\\":\\"t\\",\\"inner\\":{\\"value\\":\\"x\\"},\\"items\\":[],\\"maybe\\":\\"m\\",\\"optionalNull\\":null,\\"dynamic\\":{}}", "E8001");
+              if (!wrongInner) { report("J6", "wrong field type"); }
+              let wrongItem = rejectsOuter("{\\"title\\":\\"t\\",\\"inner\\":{\\"value\\":1},\\"items\\":[1,\\"x\\"],\\"maybe\\":\\"m\\",\\"optionalNull\\":null,\\"dynamic\\":{}}", "E8001");
+              if (!wrongItem) { report("J7", "wrong array element"); }
+              let malformed = rejectsOuter("{", "E8001");
+              if (!malformed) { report("J8", "malformed document"); }
 
-              let requiredUndefined = Undefined$fromJson("{\\"name\\":\\"a\\"}");
-              if (requiredUndefined !== null) { report("J9", "required undefined accepted"); }
-              let present = Undefined$fromJson("{\\"name\\":\\"a\\",\\"maybe\\":\\"m\\"}");
-              if (present === null) { report("J10", "decode"); }
-              let presentText = Undefined$toJson(present as Undefined);
+              let requiredUndefined = rejectsUndefined("{\\"name\\":\\"a\\"}");
+              if (!requiredUndefined) { report("J9", "required undefined accepted"); }
+              let present: Undefined = JSON.parse("{\\"name\\":\\"a\\",\\"maybe\\":\\"m\\"}");
+              if (!(present instanceof Undefined)) { report("J10", "decode identity"); }
+              let presentText = JSON.stringify(present) as string;
               if (presentText !== "{\\"name\\":\\"a\\",\\"maybe\\":\\"m\\"}") {
                 report("J11", presentText);
               }
 
               let deepSource = "{\\"title\\":\\"t\\",\\"inner\\":{\\"value\\":1},\\"items\\":[],\\"maybe\\":\\"m\\",\\"optionalNull\\":null,\\"dynamic\\":{\\"k\\":DEEP_DOCUMENT}}";
               let deepExpected = "{\\"title\\":\\"t\\",\\"inner\\":{\\"value\\":1},\\"items\\":[],\\"maybe\\":\\"m\\",\\"optionalNull\\":null,\\"dynamic\\":{\\"k\\":DEEP_ENCODED}}";
-              let deepDecoded = Outer$fromJson(deepSource);
-              if (deepDecoded === null) { report("J12", "deep decode"); }
-              let deepText = Outer$toJson(deepDecoded as Outer);
+              let deepDecoded: Outer = JSON.parse(deepSource);
+              if (!(deepDecoded instanceof Outer)) { report("J12", "deep decode identity"); }
+              let deepText = JSON.stringify(deepDecoded) as string;
               if (deepText !== deepExpected) { report("J13", deepText); }
 
               let loop: Record<string, unknown> = { name: "a" };
@@ -481,7 +507,7 @@ public final class LlvmDataClassEmissionTest {
               };
               let cycleArm: boolean = false;
               try {
-                let cyclicText = Outer$toJson(cyclic);
+                let cyclicText = JSON.stringify(cyclic) as string;
                 if (cyclicText !== "cycles encode") { report("J14", cyclicText); }
               } catch (e) {
                 if (e instanceof Error) {
@@ -495,9 +521,9 @@ public final class LlvmDataClassEmissionTest {
               if (!cycleArm) { report("J17", "cycle arm"); }
 
               let pairSource = "{\\"numbers\\":[1,2],\\"flags\\":[true,false],\\"texts\\":[\\"a\\",\\"b\\"],\\"nested\\":[[\\"a\\"],[\\"b\\",\\"c\\"]],\\"mixed\\":[1,null,3],\\"options\\":[true,null],\\"inner\\":[{\\"value\\":4}],\\"rows\\":[{\\"a\\":1}]}";
-              let pairDecoded = Arrays$fromJson(pairSource);
-              if (pairDecoded === null) { report("J18", "array decode"); }
-              let pair = pairDecoded as Arrays;
+              let pairDecoded: Arrays = JSON.parse(pairSource);
+              if (!(pairDecoded instanceof Arrays)) { report("J18", "array decode identity"); }
+              let pair = pairDecoded;
               if (pair.numbers.length !== 2) { report("J19", "numbers length"); }
               if (pair.numbers[0] !== 1) { report("J20", "numbers first"); }
               if (pair.numbers[1] !== 2) { report("J21", "numbers second"); }
@@ -526,7 +552,7 @@ public final class LlvmDataClassEmissionTest {
               let elementSum: number = 0;
               for (let value of pair.numbers) { elementSum = elementSum + value; }
               if (elementSum !== 3) { report("J32", "decoded for-of"); }
-              let pairText = Arrays$toJson(pair);
+              let pairText = JSON.stringify(pair) as string;
               if (pairText !== "{\\"numbers\\":[1,2],\\"flags\\":[true,false],\\"texts\\":[\\"a\\",\\"b\\"],\\"nested\\":[[\\"a\\"],[\\"b\\",\\"c\\"]],\\"mixed\\":[1,null,3],\\"options\\":[true,null],\\"inner\\":[{\\"value\\":4}],\\"rows\\":[{\\"a\\":1}]}") {
                 report("J33", pairText);
               }
@@ -623,8 +649,8 @@ public final class LlvmDataClassEmissionTest {
      * present-undefined optional metadata, {@code null[]}, {@code null[][]} and
      * {@code (null|undefined)[]} literals with reads, writes, appends and a
      * {@code FOR_EACH}, the canonical {@code null|undefined} variable and the
-     * parameter/return positions, and the generated walks over a decoded and a
-     * constructed {@code @jsonable} instance carrying those fields.
+     * parameter/return positions, and contextual reconstruction and builtin
+     * encoding over decoded and constructed instances carrying those fields.
      */
     private static String nullishFixture() {
         return """
@@ -650,6 +676,31 @@ public final class LlvmDataClassEmissionTest {
             export class UndefinedDoc {
               name: string;
               omitted: undefined;
+            }
+
+            function rejectsNullable(text: string): boolean {
+              let original: NullableDoc = {values: [null], nulls: [], rows: [], optional: null};
+              let destination: NullableDoc = original;
+              try { destination = JSON.parse(text); }
+              catch (e) {
+                if (e instanceof Error) {
+                  return e.code === "E8001" && destination === original
+                    && destination.values === original.values && destination.values.length === 1;
+                }
+                throw e as Error;
+              }
+              return false;
+            }
+
+            function rejectsUndefinedDoc(text: string): boolean {
+              let original: UndefinedDoc = {name: "keep", omitted: undefined};
+              let destination: UndefinedDoc = original;
+              try { destination = JSON.parse(text); }
+              catch (e) {
+                if (e instanceof Error) { return e.code === "E8001" && destination === original; }
+                throw e as Error;
+              }
+              return false;
             }
 
             function pick(flag: boolean): null | undefined {
@@ -732,16 +783,16 @@ public final class LlvmDataClassEmissionTest {
               if (!(echoedNull === null)) { report("D31", "parameter null"); }
 
               let docSource = "{\\"values\\":[null],\\"nulls\\":[null,null],\\"rows\\":[[null]],\\"optional\\":null}";
-              let decoded = NullableDoc$fromJson(docSource);
-              if (decoded === null) { report("D32", "nullable decode"); }
-              let doc = decoded as NullableDoc;
+              let decoded: NullableDoc = JSON.parse(docSource);
+              if (!(decoded instanceof NullableDoc)) { report("D32", "nullable decode identity"); }
+              let doc = decoded;
               if (doc.values.length !== 1) { report("D33", "doc values"); }
               if (!(doc.values[0] === null)) { report("D34", "doc value null"); }
               if (doc.nulls.length !== 2) { report("D35", "doc nulls"); }
               if (!(doc.nulls[1] === null)) { report("D36", "doc null element"); }
               if (doc.rows[0].length !== 1) { report("D37", "doc rows"); }
               if (!(doc.optional === null)) { report("D38", "doc optional"); }
-              let docText = NullableDoc$toJson(doc);
+              let docText = JSON.stringify(doc) as string;
               if (docText !== docSource) { report("D39", docText); }
               let built: NullableDoc = {
                 values: [null, undefined],
@@ -749,22 +800,22 @@ public final class LlvmDataClassEmissionTest {
                 rows: [[null, null]],
                 optional: null,
               };
-              let builtText = NullableDoc$toJson(built);
+              let builtText = JSON.stringify(built) as string;
               if (builtText !== "{\\"values\\":[null,null],\\"nulls\\":[null],\\"rows\\":[[null,null]],\\"optional\\":null}") {
                 report("D40", builtText);
               }
-              let wrongElement = NullableDoc$fromJson("{\\"values\\":[null,1],\\"nulls\\":[],\\"rows\\":[],\\"optional\\":null}");
-              if (wrongElement !== null) { report("D41", "wrong element"); }
-              let missingRequired = NullableDoc$fromJson("{\\"values\\":[],\\"nulls\\":[],\\"rows\\":[]}");
-              if (missingRequired !== null) { report("D42", "missing required"); }
+              let wrongElement = rejectsNullable("{\\"values\\":[null,1],\\"nulls\\":[],\\"rows\\":[],\\"optional\\":null}");
+              if (!wrongElement) { report("D41", "wrong element"); }
+              let missingRequired = rejectsNullable("{\\"values\\":[],\\"nulls\\":[],\\"rows\\":[]}");
+              if (!missingRequired) { report("D42", "missing required"); }
 
               let undefinedDoc: UndefinedDoc = { name: "u", omitted: undefined };
-              let undefinedText = UndefinedDoc$toJson(undefinedDoc);
+              let undefinedText = JSON.stringify(undefinedDoc) as string;
               if (undefinedText !== "{\\"name\\":\\"u\\"}") { report("D43", undefinedText); }
-              let requiredUndefined = UndefinedDoc$fromJson("{\\"name\\":\\"u\\"}");
-              if (requiredUndefined !== null) { report("D44", "required undefined"); }
-              let nullUndefined = UndefinedDoc$fromJson("{\\"name\\":\\"u\\",\\"omitted\\":null}");
-              if (nullUndefined !== null) { report("D45", "null for undefined"); }
+              let requiredUndefined = rejectsUndefinedDoc("{\\"name\\":\\"u\\"}");
+              if (!requiredUndefined) { report("D44", "required undefined"); }
+              let nullUndefined = rejectsUndefinedDoc("{\\"name\\":\\"u\\",\\"omitted\\":null}");
+              if (!nullUndefined) { report("D45", "null for undefined"); }
 
               throw { code: "DONE", message: `${docText}|${builtText}|${undefinedText}` };
             }
@@ -1731,10 +1782,13 @@ public final class LlvmDataClassEmissionTest {
             jsonFixture());
         String jsonModule = Files.readString(jsonPublished.resolve("main.ll"),
             StandardCharsets.UTF_8);
-        check(jsonModule.contains("@deal_json_from_class("),
-            "the generated fromJson walk calls the runtime JSON group");
-        check(jsonModule.contains("@deal_json_to_class("),
-            "the generated toJson walk calls the runtime JSON group");
+        check(jsonModule.contains("call void @deal_json_decode("),
+            "contextual parse calls the runtime reconstruction entry");
+        check(jsonModule.contains("call void @deal_std_call("),
+            "builtin stringify calls the closed runtime dispatch");
+        check(!jsonModule.contains("@deal_json_from_class(")
+                && !jsonModule.contains("@deal_json_to_class("),
+            "class JSON helper entries are neither called nor declared");
         check(jsonModule.contains("@deal_class_plan_lookup")
                 && jsonModule.contains("bitcast (%struct.deal_json_class_plan*"
                     + " (i8*, i8*)*"),

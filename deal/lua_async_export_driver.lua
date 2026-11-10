@@ -42,11 +42,11 @@
 --     the async-export wrapper: array carriers keep their JSON array
 --     shape at every depth (an empty array included), table carriers
 --     keep their insertion order, the language null renders null, and
---     the walker's closed rejections (function carriers, class
---     instances, cycles, non-finite numbers) are the representation
---     failures. The committed std/json remains the envelope emitter, so
---     the artifact's value algorithm never diverges from its own JSON
---     surface.
+--     declared class fields and Error code/message encode as public data,
+--     functions omit/substitute and nonfinite numbers become null. Cycles
+--     and unsupported values fail representation. The internal deal/json.lua
+--     encoder emits envelopes; completion values use the artifact's own
+--     builtin JSON algorithm.
 --   * exactly one stdout line DEAL_ASYNC_EXPORT_RESULT:<json> is emitted
 --     as the last write of the process (D6); exit 0 for value /
 --     deal-error / host-failure, exit 1 for representation-failure /
@@ -71,7 +71,7 @@
 --       operation errors)                           -> representation-
 --       failure envelope, exit 1.
 --
--- When the JSON emitter itself is unavailable (broken/missing std/json)
+-- When the JSON emitter itself is unavailable (broken/missing deal/json.lua)
 -- or envelope emission fails, a literal fallback envelope line (still
 -- prefixed DEAL_ASYNC_EXPORT_RESULT:) is emitted and the process exits 1
 -- — a hard failure at the Java side either way.
@@ -87,7 +87,7 @@ local LITERAL_FALLBACK =
     'DEAL_ASYNC_EXPORT_RESULT:{"status":"infrastructure-failure",'
     .. '"reason":"JSON envelope emitter unavailable"}'
 
--- The JSON emitter, loaded from the deployment root's std/json.lua
+-- The internal JSON encoder, loaded from the deployment root's deal/json.lua
 -- through a pcall; nil when the module is missing or broken.
 local json = nil
 
@@ -99,7 +99,7 @@ local function emit(fields, exitCode)
   local line = nil
   if json ~= nil then
     local ok, text = pcall(function()
-      return json.stringify.f(fields)
+      return json.encode(fields)
     end)
     if ok and type(text) == "string" then
       line = "DEAL_ASYNC_EXPORT_RESULT:" .. text
@@ -129,8 +129,8 @@ if type(arg) == "table" and #arg >= 2 and type(arg[2]) == "string" then
   local artifactRoot = arg[2]
   package.path = artifactRoot .. "/?.lua;"
       .. artifactRoot .. "/std/?.lua;" .. package.path
-  local ok, mod = pcall(require, "std.json")
-  if ok and type(mod) == "table" and mod.stringify ~= nil then
+  local ok, mod = pcall(require, "deal.json")
+  if ok and type(mod) == "table" and type(mod.encode) == "function" then
     json = mod
   end
 end
@@ -226,7 +226,7 @@ end
 
 -- Error classification (D8), in the pinned order.
 if phase == "encode" then
-  -- Both encoder failure shapes: the deployed std/json member carries
+  -- Both encoder failure shapes: the deployed internal JSON encoder carries
   -- `message` (__rt._err), while the artifact's closed failure arms
   -- carry the rendered message in `m` (__failExpr). The reason is the
   -- rendered text either way.

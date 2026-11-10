@@ -166,6 +166,9 @@ static int (*const accessor_frame)(deal_error *, int32_t, const char **) =
     deal_error_frame;
 static int (*const accessor_cause)(deal_error *, const char **) =
     deal_error_cause_code;
+static const char *(*const accessor_code_span)(deal_error *, size_t *) = deal_error_code_bytes;
+static const char *(*const accessor_message_span)(deal_error *, size_t *) = deal_error_message_bytes;
+static const char *(*const accessor_cause_span)(deal_error *, size_t *) = deal_error_cause_code_bytes;
 
 static int (*const arm_install)(const deal_arm_table *) = deal_arm_table_install;
 static const deal_arm_table *(*const arm_installed)(void) =
@@ -223,7 +226,9 @@ void deal_abi_signature_references(void) {
             || accessor_file == NULL || accessor_line == NULL
             || accessor_column == NULL || accessor_expected == NULL
             || accessor_actual == NULL || accessor_frame_count == NULL
-            || accessor_frame == NULL || accessor_cause == NULL) {
+            || accessor_frame == NULL || accessor_cause == NULL
+            || accessor_code_span == NULL || accessor_message_span == NULL
+            || accessor_cause_span == NULL) {
         referenced += 1;
     }
     if (arm_install == NULL || arm_installed == NULL) {

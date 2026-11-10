@@ -4,7 +4,7 @@
 // @features: functions, closures, modules, host-abi, mutation
 
 import * as outputx from "std/console";
-import * as json from "std/json";
+
 import * as host from "host/function_binding";
 
 export function test_host_function_binding(): number {
@@ -21,6 +21,6 @@ export function test_host_function_binding(): number {
 export function main(): null {
   let observed: number = test_host_function_binding();
   let trace: string = host.trace();
-  outputx.log(json.stringify({ host: observed, trace: trace }) as string);
+  outputx.log(JSON.stringify({ host: observed, trace: trace }) as string);
   return null;
 }

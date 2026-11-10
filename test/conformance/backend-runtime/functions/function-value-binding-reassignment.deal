@@ -4,7 +4,7 @@
 // @features: functions, closures, mutation, loops, recursion, arity
 
 import * as outputx from "std/console";
-import * as json from "std/json";
+
 
 function one(): number { return 1; }
 function two(): number { return 2; }
@@ -132,7 +132,7 @@ export function main(): null {
   let afterBranch: number = test_branch_function_binding();
   let staticControls: number = test_static_function_controls();
   let widened: number = test_arity_extension_control();
-  outputx.log(json.stringify({
+  outputx.log(JSON.stringify({
     captured: captured === 2,
     visits: visits === 1,
     nested: nested === 2,

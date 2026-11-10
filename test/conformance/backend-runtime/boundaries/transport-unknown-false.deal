@@ -2,7 +2,7 @@
 // @description: transport-unknown-False
 // @expected: runtime-ok
 // @features: boundary-validation
-import * as console from "std/console";
+import * as printer from "std/console";
 import * as host from "host/probe";
 
-export function main():null{try{let u=host.f();console.log("OK");}catch(e){if(e instanceof Error){console.log(e.code);}else{console.log("NOT_ERROR");}}return null;}
+export function main():null{try{let u=host.f();printer.log("OK");}catch(e){if(e instanceof Error){printer.log(e.code);}else{printer.log("NOT_ERROR");}}return null;}

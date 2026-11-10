@@ -139,7 +139,7 @@ public class ClassConstructionValidatorTest {
     private static CheckedSlice checkSlice(String source) {
         Lexer lexer = new Lexer(source, SOURCE_ID);
         deal.lexer.LexResult lex = lexer.tokenize();
-        Parser parser = new Parser(lex.tokens(), SOURCE_ID, lex.directiveEvents());
+        Parser parser = new Parser(lex.tokens(), SOURCE_ID);
         deal.parser.ParseResult parse = parser.parse();
         check(parse.diagnostics().isEmpty(), "the slice parses cleanly: " + parse.diagnostics());
         if (!parse.diagnostics().isEmpty()) {
@@ -368,7 +368,7 @@ public class ClassConstructionValidatorTest {
 
         // The representative slice: an exported defaulted class, a
         // non-exported class, construction, field ops, has(), and the
-        // generated @jsonable bodies with a same-module nested class.
+        // Explicit schemas with a same-module nested class; comments are inert.
         String source = """
             // @jsonable
             export class Point {
@@ -1053,8 +1053,7 @@ public class ClassConstructionValidatorTest {
     // =========================================================================
 
     private static void testJsonNegatives() {
-        System.out.println("-- JSON negatives: dropped default child, orphan entry, "
-            + "unresolvable nested layout, bytes field --");
+        System.out.println("-- contextual JSON negatives: missing nested schema and function field --");
 
         String source = """
             // @jsonable
@@ -1063,9 +1062,10 @@ public class ClassConstructionValidatorTest {
               tag: string;
             }
             // @jsonable
-            export class Inner { n: number; }
+            class Inner { n: number; }
             // @jsonable
             export class Holder { home: Point; opt?: Inner; }
+            let parsed: Holder = JSON.parse("{}");
             """;
         LoweredSlice lowered = lowerModule(source);
         SemanticLowerer.ClassDeclarationCoreResult result =
@@ -1077,18 +1077,26 @@ public class ClassConstructionValidatorTest {
             return;
         }
         LoweredModuleUnit unit = result.lowering().unit();
-        SemanticOp fromJson = firstOfKind(unit, SemanticOpKind.JSON_FROM_CLASS);
-        KindPayload.JsonFromClassPayload fromPayload =
-            (KindPayload.JsonFromClassPayload) fromJson.payload();
+        SemanticOp parse = firstOfKind(unit, SemanticOpKind.JSON_PARSE);
+        check(parse != null, "negative baseline consumes an explicit parse schema");
+        if (parse == null) return;
 
         check(ClassConstructionValidator.validate(unit, result.lowering().table(),
             result.registry(), lowered.ownInterface(), Map.of()).isEmpty(),
             "the structural JSON baseline admits without an initializer companion");
 
-        // (c) An unresolvable nested class layout: the Holder layout is
-        // rebuilt (unit layout and JSON payload layouts alike) with a
-        // class-typed field naming a class that resolves nowhere — the
-        // nested-jsonable resolution fails.
+        // Remove the existing consumed optional descendant, not the parse,
+        // exports, factories, body or publication facts. Optional still traverses.
+        Map<ClassId, ClassLayout> missing = new LinkedHashMap<>(unit.classLayouts());
+        check(missing.remove(new ClassId(MODULE.path(), "Inner")) != null,
+            "mutation removes an existing consumed schema");
+        var missingFailure = ClassConstructionValidator.validate(unitWithLayouts(unit, missing),
+            result.lowering().table(), result.registry(), lowered.ownInterface(), Map.of());
+        expectE6005(missingFailure, ClassConstructionValidator.JSON_LAYOUT_COHERENCE);
+        check(missingFailure.isPresent() && missingFailure.get().range().equals(parse.origin().span().range()),
+            "missing private optional descendant anchors the consuming parse");
+
+        // An unresolved nested descriptor is independently rejected at that parse.
         ClassId unresolvedHolderId = new ClassId(MODULE.path(), "Holder");
         ClassLayout unresolvedHolderLayout =
             unit.classLayouts().get(unresolvedHolderId);
@@ -1102,29 +1110,13 @@ public class ClassConstructionValidatorTest {
                 new ClassLayout(unresolvedHolderId, holderFields);
             Map<ClassId, ClassLayout> layouts = new LinkedHashMap<>(unit.classLayouts());
             layouts.put(unresolvedHolderId, tamperedHolder);
-            List<SemanticOp> ops = new ArrayList<>(unit.ops());
-            for (int i = 0; i < ops.size(); i++) {
-                SemanticOp op = ops.get(i);
-                if (op.kind() == SemanticOpKind.JSON_FROM_CLASS
-                        && op.payload() instanceof KindPayload.JsonFromClassPayload json
-                        && json.layout().classId().equals(unresolvedHolderId)) {
-                    ops.set(i, rebuild(op, new KindPayload.JsonFromClassPayload(
-                        tamperedHolder, json.jsonString())));
-                } else if (op.kind() == SemanticOpKind.JSON_TO_CLASS
-                        && op.payload() instanceof KindPayload.JsonToClassPayload json
-                        && json.layout().classId().equals(unresolvedHolderId)) {
-                    ops.set(i, rebuild(op, new KindPayload.JsonToClassPayload(
-                        json.classValue(), tamperedHolder)));
-                }
-            }
             expectE6005(ClassConstructionValidator.validate(
-                unitWithLayouts(unitWithOps(unit, ops), layouts),
+                unitWithLayouts(unit, layouts),
                 result.lowering().table(), result.registry(), lowered.ownInterface(), Map.of()),
                 ClassConstructionValidator.JSON_LAYOUT_COHERENCE);
         }
 
-        // (d) A function-typed jsonable field (hand-rebuilt layout): both
-        // the payload layout and the unit layout carry the unsupported field.
+        // A reachable function field is legal storage but not a decoding schema.
         ClassId holderId = new ClassId(MODULE.path(), "Holder");
         ClassLayout holderLayout = unit.classLayouts().get(holderId);
         if (holderLayout != null) {
@@ -1135,27 +1127,8 @@ public class ClassConstructionValidatorTest {
             ClassLayout tamperedLayout = new ClassLayout(holderId, fields);
             Map<ClassId, ClassLayout> layouts = new LinkedHashMap<>(unit.classLayouts());
             layouts.put(holderId, tamperedLayout);
-            List<SemanticOp> ops = new ArrayList<>(unit.ops());
-            for (int i = 0; i < ops.size(); i++) {
-                SemanticOp op = ops.get(i);
-                if (op.kind() == SemanticOpKind.JSON_FROM_CLASS
-                        || op.kind() == SemanticOpKind.JSON_TO_CLASS) {
-                    KindPayload payloadOfOp = op.payload();
-                    if (payloadOfOp instanceof KindPayload.JsonFromClassPayload jsonPayload
-                            && jsonPayload.layout().classId().equals(holderId)) {
-                        ops.set(i, rebuild(op,
-                            new KindPayload.JsonFromClassPayload(tamperedLayout,
-                                jsonPayload.jsonString())));
-                    } else if (payloadOfOp instanceof KindPayload.JsonToClassPayload
-                            jsonPayload && jsonPayload.layout().classId().equals(holderId)) {
-                        ops.set(i, rebuild(op,
-                            new KindPayload.JsonToClassPayload(jsonPayload.classValue(),
-                                tamperedLayout)));
-                    }
-                }
-            }
             expectE6005(ClassConstructionValidator.validate(
-                unitWithLayouts(unitWithOps(unit, ops), layouts),
+                unitWithLayouts(unit, layouts),
                 result.lowering().table(), result.registry(), lowered.ownInterface(), Map.of()),
                 ClassConstructionValidator.JSON_LAYOUT_COHERENCE);
         }
@@ -1213,7 +1186,7 @@ public class ClassConstructionValidatorTest {
         for (SemanticOp op : unit.ops()) {
             switch (op.kind()) {
                 case CLASS_NEW, CLASS_FACTORY, FIELD_READ, FIELD_WRITE,
-                     FIELD_DELETE, JSON_FROM_CLASS, JSON_TO_CLASS, HAS_FIELD -> {
+                     FIELD_DELETE, JSON_PARSE, HAS_FIELD -> {
                     String recomputed = ContractSnapshotCanonicalizer.digest(
                         op.contract());
                     check(op.contract().canonicalDigest().equals(recomputed),

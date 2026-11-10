@@ -1,72 +1,31 @@
-// @spec: Classes — @jsonable fromJson
-// @description: @jsonable fromJson returns null for a decoded-key duplicate document and keeps the exact decimal classification at an int field (v1.4)
+// @spec: Standard library builtins — JSON decoding
+// @description: Duplicate decoded keys throw; binary64 class fields preserve decimal, long-exponent, signed-boundary and rounded values.
 // @expected: runtime-ok
-// @features: jsonable, fromJson, duplicate-key, v1.4
+// @features: json, classes, duplicate-key, binary64
 
-// @jsonable
 export class Depth {
   value: number;
 }
 
 export function test_fromjson_duplicate_key(): null {
-  let duplicate: Depth | null = Depth$fromJson("{\"value\":1,\"value\":2}");
-  if (duplicate !== null) {
-    throw { code: "TEST_FAIL", message: "a duplicate key must decode to null" };
+  for (let text of ["{\"value\":1,\"value\":2}", "{\"value\":1,\"\\u0076alue\":2}"]) {
+    let rejected = false;
+    try { let duplicate: Depth = JSON.parse(text); }
+    catch (e) { let error = e as Error; rejected = error.code === "E8001" && error.message.includes("duplicate key"); }
+    if (!rejected) { throw {code: "TEST_FAIL", message: "a duplicate decoded key must throw"}; }
   }
-  let escaped: Depth | null = Depth$fromJson("{\"value\":1,\"\\u0076alue\":2}");
-  if (escaped !== null) {
-    throw { code: "TEST_FAIL", message: "an escaped equivalent must decode to null" };
-  }
-  let exact: Depth | null = Depth$fromJson("{\"value\":1.0}");
-  if (exact !== null) {
-    if (exact.value !== 1) {
-      throw { code: "TEST_FAIL", message: "1.0 must decode to the int 1" };
-    }
-  } else {
-    throw { code: "TEST_FAIL", message: "1.0 must denote the int value" };
-  }
-  // The exponent magnitude accumulates digits with bounded saturation:
-  // leading zeroes contribute nothing, so an exponent text longer than 18
-  // characters whose mathematical value is small stays exactly
-  // classified. 1e0000000000000000001 is the integral 10 and must fill
-  // the int field.
-  let padded: Depth | null = Depth$fromJson("{\"value\":1e0000000000000000001}");
-  if (padded !== null) {
-    if (padded.value !== 10) {
-      throw { code: "TEST_FAIL", message: "a zero-padded long exponent must decode to the int 10" };
-    }
-  } else {
-    throw { code: "TEST_FAIL", message: "a zero-padded long exponent must decode at an int field" };
-  }
-  // The signed32 check compares the magnitude before the sign is applied:
-  // a negative token whose magnitude exceeds 2147483648 is the number
-  // variant, which an int field rejects — never the out-of-range int.
-  let below: Depth | null = Depth$fromJson("{\"value\":-2147483649}");
-  if (below === null) {
-    throw { code: "TEST_FAIL", message: "binary64 field was rejected" };
-  } else {
-    if (below.value !== -2147483649) { throw { code: "TEST_FAIL", message: "binary64 field value mismatch" }; }
-  }
-  let far: Depth | null = Depth$fromJson("{\"value\":-9999999999}");
-  if (far === null) {
-    throw { code: "TEST_FAIL", message: "binary64 field was rejected" };
-  } else {
-    if (far.value !== -9999999999) { throw { code: "TEST_FAIL", message: "binary64 field value mismatch" }; }
-  }
-  let lower: Depth | null = Depth$fromJson("{\"value\":-2147483648}");
-  if (lower !== null) {
-    if (lower.value !== -2147483648) {
-      throw { code: "TEST_FAIL", message: "-2147483648 must decode to the int" };
-    }
-  } else {
-    throw { code: "TEST_FAIL", message: "-2147483648 must decode at an int field" };
-  }
-  let rounded: Depth | null = Depth$fromJson("{\"value\":2147483647.00000001}");
-  if (rounded === null) {
-    throw { code: "TEST_FAIL", message: "binary64 field was rejected" };
-  } else {
-    if (rounded.value !== 2147483647) { throw { code: "TEST_FAIL", message: "binary64 field value mismatch" }; }
-  }
+  let exact: Depth = JSON.parse("{\"value\":1.0}");
+  if (exact.value !== 1) { throw {code: "TEST_FAIL", message: "decimal value mismatch"}; }
+  let padded: Depth = JSON.parse("{\"value\":1e0000000000000000001}");
+  if (padded.value !== 10) { throw {code: "TEST_FAIL", message: "zero-padded exponent value mismatch"}; }
+  let below: Depth = JSON.parse("{\"value\":-2147483649}");
+  if (below.value !== -2147483649) { throw {code: "TEST_FAIL", message: "below signed32 value mismatch"}; }
+  let far: Depth = JSON.parse("{\"value\":-9999999999}");
+  if (far.value !== -9999999999) { throw {code: "TEST_FAIL", message: "large binary64 value mismatch"}; }
+  let lower: Depth = JSON.parse("{\"value\":-2147483648}");
+  if (lower.value !== -2147483648) { throw {code: "TEST_FAIL", message: "signed32 boundary value mismatch"}; }
+  let rounded: Depth = JSON.parse("{\"value\":2147483647.00000001}");
+  if (rounded.value !== 2147483647) { throw {code: "TEST_FAIL", message: "rounded binary64 value mismatch"}; }
   return null;
 }
 

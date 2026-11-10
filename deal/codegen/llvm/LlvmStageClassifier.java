@@ -107,8 +107,8 @@ public final class LlvmStageClassifier {
                  STRING_CONCAT, ARRAY_NEW, TABLE_NEW, ARRAY_LENGTH, ARRAY_POP, ARRAY_SPLICE, OBJECT_KEYS, MEMBER_READ,
                  MEMBER_WRITE, MEMBER_DELETE, INDEX_NORMALIZE, INDEX_READ,
                  INDEX_WRITE, INDEX_DELETE, HAS_FIELD, FOR_EACH, CLASS_NEW,
-                 FIELD_READ, FIELD_WRITE, FIELD_DELETE, JSON_FROM_CLASS,
-                 JSON_TO_CLASS, RECURSIVE_GROUP_INIT, STDLIB_CALL, ASYNC_START,
+                 FIELD_READ, FIELD_WRITE, FIELD_DELETE, JSON_PARSE,
+                 RECURSIVE_GROUP_INIT, STDLIB_CALL, ASYNC_START,
                  AWAIT, OPTIONAL_READ -> STAGED;
             // CALLBACK_INVOKE emits the host-driven re-entry of one DEAL
             // function: the recorded `HOST_TO_DEAL` parameter boundaries and
@@ -195,8 +195,7 @@ public final class LlvmStageClassifier {
         map.put(KindPayload.FieldReadPayload.class, STAGED);
         map.put(KindPayload.FieldWritePayload.class, STAGED);
         map.put(KindPayload.FieldDeletePayload.class, STATIC_ONLY);
-        map.put(KindPayload.JsonFromClassPayload.class, STAGED);
-        map.put(KindPayload.JsonToClassPayload.class, STAGED);
+        map.put(KindPayload.JsonParsePayload.class, STAGED);
         return Map.copyOf(map);
     }
 
@@ -246,7 +245,7 @@ public final class LlvmStageClassifier {
                  CLASS_FIELD_ASSIGNMENT, ARRAY_ELEMENT_ASSIGNMENT,
                  ARRAY_ELEMENT_READ, ARRAY_ELEMENT_DELETE,
                  ARRAY_LITERAL_ELEMENT, CONDITIONAL_BRANCH, CLASS_LITERAL_FIELD,
-                 UNTYPED_CLASS_INPUT, JSON_FROM_FIELD, JSON_TO_FIELD,
+                 UNTYPED_CLASS_INPUT,
                  STDLIB_PARAMETER, STDLIB_RETURN, ASYNC_COMPLETION -> STATIC_ONLY;
             // The host cell pair: `DEAL_TO_HOST` is the parameter position
             // checked at `HOST_PARAMETER` and `HOST_TO_DEAL` the return
@@ -459,8 +458,7 @@ public final class LlvmStageClassifier {
             case KindPayload.FieldReadPayload read -> Optional.empty();
             case KindPayload.FieldWritePayload write -> Optional.empty();
             case KindPayload.FieldDeletePayload remove -> Optional.empty();
-            case KindPayload.JsonFromClassPayload ignored -> Optional.empty();
-            case KindPayload.JsonToClassPayload ignored -> Optional.empty();
+            case KindPayload.JsonParsePayload ignored -> Optional.empty();
             case KindPayload.RecursiveGroupInitPayload group ->
                 group.bindings().size() == group.functions().size()
                     ? Optional.empty()

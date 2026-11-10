@@ -1,12 +1,12 @@
-// @spec: Standard library declarations — std/json.d.deal
-// @description: json.parse rejects a top-level scalar at the declared (string)->record return with E8001 expected table (the decoded scalar, actual string) — one uniform outcome on the shared oracle and all three production lanes (v1.4)
+// @spec: Standard library builtins — JSON decoding
+// @description: Contextual Record decoding rejects a string root with E8001 expected table, actual string
 // @expected: runtime-error E8001
 // @features: stdlib, json, v1.4
 
-import * as json from "std/json";
+
 
 export function test_json_parse_top_level_scalar(): null {
-  let t: Record<string, unknown> = json.parse("\"scalar\"");
+  let t: Record<string, unknown> = JSON.parse("\"scalar\"");
   return null;
 }
 

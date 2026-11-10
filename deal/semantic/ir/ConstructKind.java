@@ -28,7 +28,7 @@ public enum ConstructKind {
      * {@code ASYNC_START}+{@code AWAIT}. */
     CALL("CALL (DIRECT/INDIRECT with execution-binding resolution), CALLBACK_INVOKE, "
         + "STDLIB_CALL, ARRAY_POP, ARRAY_SPLICE, OBJECT_KEYS, or ASYNC_START+AWAIT",
-        List.of(SemanticOpKind.OBJECT_KEYS, SemanticOpKind.ARRAY_SPLICE, SemanticOpKind.ARRAY_POP, SemanticOpKind.CALL, SemanticOpKind.CALLBACK_INVOKE,             SemanticOpKind.STDLIB_CALL, SemanticOpKind.ASYNC_START, SemanticOpKind.AWAIT)),
+        List.of(SemanticOpKind.JSON_PARSE, SemanticOpKind.OBJECT_KEYS, SemanticOpKind.ARRAY_SPLICE, SemanticOpKind.ARRAY_POP, SemanticOpKind.CALL, SemanticOpKind.CALLBACK_INVOKE,             SemanticOpKind.STDLIB_CALL, SemanticOpKind.ASYNC_START, SemanticOpKind.AWAIT)),
 
     /** Required common form: {@code CALL(EXTERNAL)}/{@code ASYNC_START(EXTERNAL)} with
      * {@code EXTERNAL_ENTRY} on the shared-body callee side, or the retained ABI path. */
@@ -38,7 +38,7 @@ public enum ConstructKind {
 
     /** Checked member reads or direct builtin algorithms. */
     MEMBER_ACCESS("ARRAY_LENGTH, ARRAY_POP, ARRAY_SPLICE, OBJECT_KEYS, FIELD_READ, MEMBER_READ, EXPORT_READ, or builtin STDLIB_CALL from checked type/symbol",
-        List.of(SemanticOpKind.OBJECT_KEYS, SemanticOpKind.ARRAY_SPLICE, SemanticOpKind.ARRAY_POP, SemanticOpKind.ARRAY_LENGTH, SemanticOpKind.FIELD_READ, SemanticOpKind.MEMBER_READ,
+        List.of(SemanticOpKind.JSON_PARSE, SemanticOpKind.OBJECT_KEYS, SemanticOpKind.ARRAY_SPLICE, SemanticOpKind.ARRAY_POP, SemanticOpKind.ARRAY_LENGTH, SemanticOpKind.FIELD_READ, SemanticOpKind.MEMBER_READ,
             SemanticOpKind.EXPORT_READ, SemanticOpKind.STDLIB_CALL)),
 
     /** Required common form: {@code INDEX_NORMALIZE}, {@code INDEX_READ}

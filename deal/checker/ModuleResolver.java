@@ -99,19 +99,6 @@ public interface ModuleResolver {
     }
 
     /**
-     * Checks whether a function is exported from the module with the
-     * given canonical module identity.  The default returns
-     * {@code false} (unsupported); identity-aware resolvers route by
-     * the module-identity classification.
-     *
-     */
-    default boolean isFunctionExportedFromModule(
-            CanonicalModuleIdentity declaringModule, String functionName,
-            String importingModule) throws ModuleNotFoundException {
-        return false; // unsupported by default
-    }
-
-    /**
      * Resolves a field {@link TypeNode} against the scope of the module
      * identified by {@code modulePath} (the owning module of a class
      * declaration).

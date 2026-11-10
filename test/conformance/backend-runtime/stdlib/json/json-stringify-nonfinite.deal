@@ -1,16 +1,16 @@
-// @spec: Standard library declarations — std/json.d.deal
+// @spec: Standard library builtins — JSON encoding nonfinite number substitution
 // @description: stringify substitutes null for NaN and both infinities without changing the original number cells
 // @expected: runtime-ok
 // @features: stdlib, json, nonfinite
 
-import * as json from "std/json";
+
 
 export function test_json_stringify_nonfinite(): null {
   let t: Record<string, unknown> = { x: 1.0 };
   t.x = 1 / 0;
   t.negative = -1 / 0;
   t.nan = 0 / 0;
-  if ((json.stringify(t) as string) !== "{\"x\":null,\"negative\":null,\"nan\":null}") {
+  if ((JSON.stringify(t) as string) !== "{\"x\":null,\"negative\":null,\"nan\":null}") {
     throw {code: "TEST_FAIL", message: "nonfinite object serialization"};
   }
   if ((t.x as number) !== 1 / 0 || (t.negative as number) !== -1 / 0) {
@@ -18,10 +18,10 @@ export function test_json_stringify_nonfinite(): null {
   }
   let nan: number = t.nan as number;
   if (nan === nan) { throw {code: "TEST_FAIL", message: "stringify mutated NaN"}; }
-  if ((json.stringify([1 / 0, -1 / 0, nan]) as string) !== "[null,null,null]") {
+  if ((JSON.stringify([1 / 0, -1 / 0, nan]) as string) !== "[null,null,null]") {
     throw {code: "TEST_FAIL", message: "nonfinite array serialization"};
   }
-  if ((json.stringify(nan) as string) !== "null") {
+  if ((JSON.stringify(nan) as string) !== "null") {
     throw {code: "TEST_FAIL", message: "nonfinite top-level serialization"};
   }
   return null;

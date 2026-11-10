@@ -242,8 +242,7 @@ public final class NativeCollectorTest {
             NativeCompiler.SanitizedRun normal = NativeCompiler.runSanitized(
                 product, scratch, NativeCompiler.sanitizerEnvironment());
             String where = normal.relaunched()
-                ? " (relaunched with address-space randomization disabled for "
-                    + "the child only)" : "";
+                ? " (same instrumented product relaunched after an explicit shadow-mapping startup failure)" : "";
             checkEq(0, normal.result().exitCode(), "the ASan/UBSan collector "
                 + "driver exits zero at -O" + level + where + ": "
                 + normal.result().describe());
@@ -445,11 +444,10 @@ public final class NativeCollectorTest {
      * no data-race report and the accepted output.
      *
      * <p>The probe translation unit refuses to compile without the sanitizer, so
-     * an uninstrumented build cannot pass as this evidence. A host whose
-     * address-space-randomization entropy puts the sanitizer's shadow mapping
-     * out of reach cannot start any instrumented process, so the same
-     * instrumented product is relaunched with randomization disabled for that
-     * child only; every acceptance assertion is still applied to the run.</p>
+     * an uninstrumented build cannot pass as this evidence. Launches establish
+     * child-only disabled randomization when available. Only explicit
+     * shadow-mapping startup failures permit bounded relaunches of the same
+     * instrumented product; every assertion still applies to the run.</p>
      */
     private static void testPosterRaceProbe() throws IOException {
         System.out.println("-- the instrumented poster/collector probe --");
@@ -469,13 +467,11 @@ public final class NativeCollectorTest {
         NativeCompiler.Result run = sanitized.result();
         boolean relaunched = sanitized.relaunched();
         if (relaunched) {
-            System.out.println("   (the sanitizer's shadow mapping needs "
-                + "address-space randomization disabled on this host; the same "
-                + "instrumented product was relaunched)");
+            System.out.println("   (explicit sanitizer shadow-mapping startup "
+                + "failure; the same instrumented product was relaunched)");
         }
         String where = relaunched
-            ? " (relaunched with address-space randomization disabled for the "
-                + "child only)" : "";
+            ? " (same instrumented product relaunched after an explicit shadow-mapping startup failure)" : "";
         checkEq(0, run.exitCode(), "the instrumented poster/collector workload "
             + "exits zero" + where + ": " + run.describe());
         checkEq("gc posters ok\n", run.stdout(), "the instrumented "

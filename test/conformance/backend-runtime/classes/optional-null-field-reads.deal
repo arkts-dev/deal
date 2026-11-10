@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: classes, optional, null, undefined, field-read, hasOwn, cross-module, jsonable
 
-import * as console from "std/console";
+import * as printer from "std/console";
 import * as Lib from "./optional_null_field_lib";
 
 class Box {
@@ -97,14 +97,14 @@ export function main(): null {
   require("imported reader read is undefined", importedReturned === undefined);
 
   let decodedNull: Lib.LibNote | null =
-    Lib.LibNote$fromJson("{\"label\":\"a\",\"n\":null}");
+    JSON.parse("{\"label\":\"a\",\"n\":null}");
   require("decoded explicit null is not null", decodedNull !== null);
   if (decodedNull !== null) {
     require("decoded explicit null hasOwn is true", Object.hasOwn(decodedNull, "n"));
     let decodedN: null | undefined = decodedNull.n;
     require("decoded explicit null read is null", decodedN === null);
-    let encoded: string = Lib.LibNote$toJson(decodedNull);
-    let redecoded: Lib.LibNote | null = Lib.LibNote$fromJson(encoded);
+    let encoded: string = JSON.stringify(decodedNull) as string;
+    let redecoded: Lib.LibNote | null = JSON.parse(encoded);
     require("roundtrip of explicit null is not null", redecoded !== null);
     if (redecoded !== null) {
       require("roundtrip explicit null hasOwn is true", Object.hasOwn(redecoded, "n"));
@@ -113,14 +113,14 @@ export function main(): null {
     }
   }
 
-  let decodedMissing: Lib.LibNote | null = Lib.LibNote$fromJson("{\"label\":\"b\"}");
+  let decodedMissing: Lib.LibNote | null = JSON.parse("{\"label\":\"b\"}");
   require("decoded missing is not null", decodedMissing !== null);
   if (decodedMissing !== null) {
     require("decoded missing hasOwn is false", !Object.hasOwn(decodedMissing, "n"));
     let decodedMissingN: null | undefined = decodedMissing.n;
     require("decoded missing read is undefined", decodedMissingN === undefined);
-    let encodedMissing: string = Lib.LibNote$toJson(decodedMissing);
-    let redecodeMissing: Lib.LibNote | null = Lib.LibNote$fromJson(encodedMissing);
+    let encodedMissing: string = JSON.stringify(decodedMissing) as string;
+    let redecodeMissing: Lib.LibNote | null = JSON.parse(encodedMissing);
     require("roundtrip of missing is not null", redecodeMissing !== null);
     if (redecodeMissing !== null) {
       require("roundtrip missing hasOwn is false", !Object.hasOwn(redecodeMissing, "n"));
@@ -128,6 +128,6 @@ export function main(): null {
     }
   }
 
-  console.log("OK");
+  printer.log("OK");
   return null;
 }

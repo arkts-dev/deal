@@ -2,7 +2,7 @@
 // @description: presence-False-required-unknown-undefined
 // @expected: runtime-ok
 // @features: boundary-validation
-import * as console from "std/console";
+import * as printer from "std/console";
 import * as host from "host/probe";
 class C{x:unknown;}
-export function main():null{let n:C={x:1};host.mutate(n);try{let d=n as C;console.log("OK");}catch(e){console.log("REJECT");}return null;}
+export function main():null{let n:C={x:1};host.mutate(n);try{let d=n as C;printer.log("OK");}catch(e){printer.log("REJECT");}return null;}

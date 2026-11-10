@@ -1,0 +1,3 @@
+class Inner { value:number; next?:Inner; }
+export class Leaf { value:number; child?:Inner; }
+export function read(leaf:Leaf):number;

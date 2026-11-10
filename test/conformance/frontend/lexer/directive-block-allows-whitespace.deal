@@ -1,6 +1,6 @@
 // @spec: Lexical elements — Comment semantics
-// @description: Whitespace and blank lines do not terminate a declaration directive block
-// @expected: compile-error E4007
+// @description: Comments and intervening blank lines never prohibit function fields
+// @expected: compile-ok
 // @features: lexer, directives, attachment, jsonable, functions, diagnostics, v1.2
 
 // @jsonable

@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: closures, catch, binding, mutation, loops, error-handling
 
-import * as console from "std/console";
+import * as printer from "std/console";
 
 function errorOf(value: unknown): Error { return value as Error; }
 function replacement(code: string, message: string): Error { return {code: code, message: message}; }
@@ -280,6 +280,6 @@ export function main(): null {
   testAliasControl();
   testOrdinaryReadControl();
   testForOfCatchShadowing();
-  console.log("OK");
+  printer.log("OK");
   return null;
 }

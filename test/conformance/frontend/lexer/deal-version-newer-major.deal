@@ -1,7 +1,7 @@
 // @spec: Lexical elements — Comment semantics
-// @description: Removed file-version directives are unknown in every position and argument form
-// @expected: compile-error E1044
+// @description: A newer version spelling in a comment does not select a language version
+// @expected: compile-ok
 // @features: lexer, directives, deal-version, v1.4
 
 // @deal-version 2.0
-class A { x: number = 0; }
+class A { x: number; }

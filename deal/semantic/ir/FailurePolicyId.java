@@ -39,10 +39,10 @@ public enum FailurePolicyId {
     HOST_LOAD,
     CLASS_CONSTRUCTION,
     JSON_PARSE_SYNTAX,
-    JSON_FROM_NULL,
     JSON_TO_ERROR,
     THROW_TRANSFER,
-    INFRASTRUCTURE_ONLY;
+    INFRASTRUCTURE_ONLY,
+    JSON_RECONSTRUCTION;
 
     /**
      * The reserved policy names, invalid as {@code FailurePolicyId} values

@@ -1,14 +1,9 @@
--- Host fixture implementation for the three-lane @jsonable plain-table
--- content conformance test (ISSUE-0868). Every declared table-typed return
--- is a plain Lua table carrying the JSON-shaped data the class helper's
--- toJson walk accepts: an object, an object with a nested object and an
--- array member, the deployed std/json decode graph (makeParsed, ISSUE-0900:
--- the decoder's own table with only its per-slot numeric-variant marks
--- besides the content keys), and a self-referential table for the closed
--- cycle arm. Non-finite leaves substitute null; lone UTF-16 units in
+-- Host Record-content JSON conformance fixture: ordinary objects, nested
+-- objects/arrays, a real contextual decode graph and a self-reference for
+-- the closed cycle arm. Non-finite leaves substitute null; lone UTF-16 units in
 -- object values and keys remain lossless JSON data.
 
-local json = require("std.json")
+local json = require("deal.json")
 local K = require("deal.runtime").__keys
 
 local M = {}
@@ -22,11 +17,9 @@ function M.makeNested()
 end
 
 function M.makeParsed()
-  -- The deployment's own std/json decode: the returned table carries only
-  -- its content keys beside the decoder's private per-slot [__K.nK]
-  -- numeric-variant marks, so a class table field/element holding it walks
-  -- by the content keys and spells the marked slots by their variant.
-  return json.parse.f("{\"v\":0.1,\"w\":1e17}")
+  -- Actual contextual Record reconstruction retains binary64 leaves and
+  -- private presence/order metadata through the host return.
+  return json.decode("{\"v\":0.1,\"w\":1e17}", "record")
 end
 
 function M.makeCycle()

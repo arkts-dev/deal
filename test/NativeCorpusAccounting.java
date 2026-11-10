@@ -39,11 +39,17 @@ final class NativeCorpusAccounting {
         for (var module : project.modules().values()) for (var op : module.ops()) {
             operations.add(op.kind());
             if (op.payload() instanceof KindPayload.BoundaryPayload boundary) boundaries.add(boundary.kind());
-            if (op.payload() instanceof KindPayload.StdlibCallPayload call) stdlib.add(call.function());
+            recordJsonOrStdlib(op.payload());
             if (op.payload() instanceof KindPayload.BinaryPayload expression) binary.add(expression.selector());
             if (op.payload() instanceof KindPayload.UnaryPayload expression) unary.add(expression.selector());
         }
         recordFailure(pin);
+    }
+
+    /** Contextual parsing has its own op, but retains its JSON semantic requirement. */
+    private void recordJsonOrStdlib(KindPayload payload) {
+        if (payload instanceof KindPayload.StdlibCallPayload call) stdlib.add(call.function());
+        else if (payload instanceof KindPayload.JsonParsePayload) stdlib.add(StdlibFunctionId.JSON_PARSE);
     }
 
     private void recordFailure(SidecarExpectations.ErrorExpectation pin) {
@@ -113,6 +119,13 @@ final class NativeCorpusAccounting {
         if (matches(FailureContractRegistry.arm(FailureArmId.HOST_SYNC_RETURN_CELL), valid))
             throw new AssertionError("accounting accepted another arm's template");
         var accounting = new NativeCorpusAccounting();
+        if (!accounting.stdlib.isEmpty())
+            throw new AssertionError("unexecuted JSON requirements earned credit");
+        accounting.recordJsonOrStdlib(new KindPayload.JsonParsePayload(
+            new ValueId(0), RuntimeDescriptor.Unknown.INSTANCE));
+        if (!accounting.stdlib.equals(EnumSet.of(StdlibFunctionId.JSON_PARSE)))
+            throw new AssertionError("contextual parse did not retain its JSON semantic requirement");
+        accounting.stdlib.clear();
         BoundaryFailure returned = FailureContractRegistry.render(FailureArmId.HOST_SYNC_RETURN_CELL,
             Map.of("inner", inner), "number", "string", null);
         accounting.recordFailure(new SidecarExpectations.ErrorExpectation(returned.code().name(), returned.message(),

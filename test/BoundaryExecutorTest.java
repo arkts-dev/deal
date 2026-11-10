@@ -679,7 +679,7 @@ public class BoundaryExecutorTest {
             "HOST_PARAMETER without parameterIndex");
         expectDefect(() -> checkCell(FailurePolicyId.HOST_PARAMETER, INT,
                 BoundaryValueView.ofNumber(1),
-                new BoundaryContext(0, null, null, null, null)),
+                new BoundaryContext(0, null, null, null)),
             "HOST_PARAMETER with a zero parameterIndex");
     }
 
@@ -861,7 +861,7 @@ public class BoundaryExecutorTest {
             "ARRAY_ELEMENT_DESCRIPTOR without elementIndex");
         expectDefect(() -> checkCell(FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, INT,
                 BoundaryValueView.ofNumber(2),
-                new BoundaryContext(null, null, null, 0, null)),
+                new BoundaryContext(null, null, null, 0)),
             "ARRAY_ELEMENT_DESCRIPTOR with a zero elementIndex");
     }
 
@@ -930,11 +930,11 @@ public class BoundaryExecutorTest {
             "ARRAY_READ_INDEX_THEN_DESCRIPTOR without index/length");
         expectDefect(() -> checkCell(FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR, INT,
                 BoundaryValueView.ofNumber(3),
-                new BoundaryContext(null, 0d, null, null, null)),
+                new BoundaryContext(null, 0d, null, null)),
             "ARRAY_READ_INDEX_THEN_DESCRIPTOR without length");
         expectDefect(() -> checkCell(FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR, INT,
                 BoundaryValueView.ofNumber(3),
-                new BoundaryContext(null, 0d, -1, null, null)),
+                new BoundaryContext(null, 0d, -1, null)),
             "ARRAY_READ_INDEX_THEN_DESCRIPTOR with a negative length");
     }
 
@@ -971,11 +971,11 @@ public class BoundaryExecutorTest {
             "ARRAY_WRITE_BOUNDS_THEN_ELEMENT without index/length");
         expectDefect(() -> checkCell(FailurePolicyId.ARRAY_WRITE_BOUNDS_THEN_ELEMENT, INT,
                 BoundaryValueView.ofNumber(3),
-                new BoundaryContext(null, 0d, null, null, null)),
+                new BoundaryContext(null, 0d, null, null)),
             "ARRAY_WRITE_BOUNDS_THEN_ELEMENT without length");
         expectDefect(() -> checkCell(FailurePolicyId.ARRAY_WRITE_BOUNDS_THEN_ELEMENT, INT,
                 BoundaryValueView.ofNumber(3),
-                new BoundaryContext(null, 0d, -1, null, null)),
+                new BoundaryContext(null, 0d, -1, null)),
             "ARRAY_WRITE_BOUNDS_THEN_ELEMENT with a negative length");
     }
 
@@ -1006,121 +1006,77 @@ public class BoundaryExecutorTest {
             "ARRAY_DELETE_BOUNDS without index/length");
         expectDefect(() -> checkCell(FailurePolicyId.ARRAY_DELETE_BOUNDS, INT,
                 BoundaryValueView.ofNumber(3),
-                new BoundaryContext(null, 0d, null, null, null)),
+                new BoundaryContext(null, 0d, null, null)),
             "ARRAY_DELETE_BOUNDS without length");
     }
 
     // =========================================================================
-    // 11. JSON_FROM_NULL swallow and JSON_TO_ERROR {fieldPath}
+    // 11. Contextual decoding throws; serialization uses live typed boundaries
     // =========================================================================
 
-    static void testJsonFromNull() {
-        System.out.println("-- JSON_FROM_NULL: every failure swallows into language null --");
+    static void testJsonBoundaries() {
+        System.out.println("-- JSON uses ordinary typed checks, never null-swallowing cells --");
+        expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, STRING,
+                BoundaryValueView.ofNumber(1)),
+            FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
+            "expected string", "string", "number", Map.of(), null,
+            "wrong decoded string is a failure, not a successful null");
+        expectFail(checkCell(FailurePolicyId.FUNCTION_SIGNATURE, SYNC_INT_TO_STRING,
+                BoundaryValueView.ofFunction(SYNC_INT_TO_INT)),
+            FailurePolicyId.FUNCTION_SIGNATURE, DiagnosticCode.E8010,
+            "function signature mismatch: expected (number)->string, got (number)->number",
+            "(number)->string", "(number)->number", Map.of(), null,
+            "function mismatch is not swallowed");
+        BoundaryValueView string = BoundaryValueView.of(ActualKind.STRING);
+        check(expectPass(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, STRING, string),
+                "valid decoded string").value() == string,
+            "valid typed string keeps identity");
 
-        BoundaryOutcome bad = checkCell(FailurePolicyId.JSON_FROM_NULL, STRING,
-            BoundaryValueView.ofNumber(1));
-        BoundaryOutcome.Pass badPass = expectPass(bad, "JSON_FROM_NULL vs number (swallowed)");
-        check(badPass.value().kind() == ActualKind.NULL,
-            "a swallowed JSON_FROM_NULL failure publishes language null");
-
-        // A function-typed field failure swallows too (never a DEAL failure).
-        BoundaryOutcome funcBad = checkCell(FailurePolicyId.JSON_FROM_NULL, SYNC_INT_TO_STRING,
-            BoundaryValueView.ofFunction(SYNC_INT_TO_INT));
-        expectPass(funcBad, "JSON_FROM_NULL signature failure swallowed");
-        check(((BoundaryOutcome.Pass) funcBad).value().kind() == ActualKind.NULL,
-            "swallowed signature failure publishes language null");
-
-        // A valid value passes through unchanged.
-        BoundaryValueView ok = BoundaryValueView.of(ActualKind.STRING);
-        BoundaryOutcome okOutcome = checkCell(FailurePolicyId.JSON_FROM_NULL, STRING, ok);
-        expectPass(okOutcome, "JSON_FROM_NULL vs string");
-        check(((BoundaryOutcome.Pass) okOutcome).value() == ok,
-            "a valid JSON_FROM_NULL value passes unchanged");
-    }
-
-    static void testJsonToError() {
-        System.out.println("-- JSON_TO_ERROR: first failure projects {fieldPath} --");
-
-        expectFail(checkCell(FailurePolicyId.JSON_TO_ERROR, NUMBER,
-                BoundaryValueView.ofNumber(Double.NaN), BoundaryContext.jsonField("data.value")),
-            FailurePolicyId.JSON_TO_ERROR, DiagnosticCode.E8001,
-            "value at data.value is not JSON serializable: number",
-            null, "number", Map.of("fieldPath", "data.value"), null,
-            "nonfinite number at data.value");
-
-        expectFail(checkCell(FailurePolicyId.JSON_TO_ERROR, NUMBER,
-                BoundaryValueView.ofFunction(SYNC_INT_TO_STRING),
-                BoundaryContext.jsonField("f")),
-            FailurePolicyId.JSON_TO_ERROR, DiagnosticCode.E8001,
-            "value at f is not JSON serializable: function",
-            null, "function", Map.of("fieldPath", "f"), null,
-            "function value at f");
-
-        // A missing required value projects undefined; the arm's actual
-        // field and message parameter carry the same closed token.
-        expectFail(checkCell(FailurePolicyId.JSON_TO_ERROR, NUMBER,
-                BoundaryValueView.of(ActualKind.MISSING), BoundaryContext.jsonField("f")),
-            FailurePolicyId.JSON_TO_ERROR, DiagnosticCode.E8001,
-            "value at f is not JSON serializable: undefined",
-            null, "undefined", Map.of("fieldPath", "f"), null,
-            "missing required value at f");
-
-        // A wrong class identity projects the carried canonical class atom
-        // (never the class:<ClassId> IR spelling).
-        expectFail(checkCell(FailurePolicyId.JSON_TO_ERROR, USER,
-                BoundaryValueView.ofClass("@src/app/Admin"), BoundaryContext.jsonField("u")),
-            FailurePolicyId.JSON_TO_ERROR, DiagnosticCode.E8001,
-            "value at u is not JSON serializable: @src/app/Admin",
-            null, "@src/app/Admin", Map.of("fieldPath", "u"), null,
-            "wrong class identity at u");
-
-        // Arrays fail at the first declaration-order element.
-        expectFail(checkCell(FailurePolicyId.JSON_TO_ERROR, NUMBER_ARRAY,
+        expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, NUMBER,
+                BoundaryValueView.ofFunction(SYNC_INT_TO_STRING)),
+            FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
+            "expected number", "number", "function", Map.of(), null,
+            "declared numeric serialization position rejects function");
+        expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, NUMBER,
+                BoundaryValueView.of(ActualKind.MISSING)),
+            FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
+            "expected number", "number", "undefined", Map.of(), null,
+            "required numeric position rejects absence");
+        expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, USER,
+                BoundaryValueView.ofClass("@src/app/Admin")),
+            FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
+            "expected instance of @src/app/User, got @src/app/Admin",
+            "@src/app/User", "@src/app/Admin", Map.of(), null,
+            "declared nominal position preserves both exact identities");
+        BoundaryFailure leaf = expectedKindMismatch("number", "string");
+        expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, NUMBER_ARRAY,
                 BoundaryValueView.ofArray(BoundaryValueView.ofNumber(1),
-                    BoundaryValueView.of(ActualKind.STRING)),
-                BoundaryContext.jsonField("rows")),
-            FailurePolicyId.JSON_TO_ERROR, DiagnosticCode.E8001,
-            "value at rows is not JSON serializable: string",
-            null, "string", Map.of("fieldPath", "rows"), null,
-            "array element 2 at rows");
-
-        // Nonfinite elements fail inside arrays too.
-        expectFail(checkCell(FailurePolicyId.JSON_TO_ERROR, NUMBER_ARRAY,
-                BoundaryValueView.ofArray(BoundaryValueView.ofNumber(Double.POSITIVE_INFINITY)),
-                BoundaryContext.jsonField("rows")),
-            FailurePolicyId.JSON_TO_ERROR, DiagnosticCode.E8001,
-            "value at rows is not JSON serializable: number",
-            null, "number", Map.of("fieldPath", "rows"), null,
-            "nonfinite array element at rows");
-
-        // An int field rejects non-integral and out-of-range carriers as numbers.
-        expectFail(checkCell(FailurePolicyId.JSON_TO_ERROR, INT,
-                BoundaryValueView.of(ActualKind.STRING), BoundaryContext.jsonField("i")),
-            FailurePolicyId.JSON_TO_ERROR, DiagnosticCode.E8001,
-            "value at i is not JSON serializable: string",
-            null, "string", Map.of("fieldPath", "i"), null,
-            "number field vs 3.5");
-
-        // Valid values pass unchanged.
-        BoundaryValueView okNumber = BoundaryValueView.ofNumber(1.5);
-        BoundaryOutcome okNumberOutcome = checkCell(FailurePolicyId.JSON_TO_ERROR, NUMBER,
-            okNumber, BoundaryContext.jsonField("n"));
-        expectPass(okNumberOutcome, "JSON_TO_ERROR vs finite number");
-        check(((BoundaryOutcome.Pass) okNumberOutcome).value() == okNumber,
-            "valid JSON_TO_ERROR value unchanged");
-
-        BoundaryOutcome okUserOutcome = checkCell(FailurePolicyId.JSON_TO_ERROR, USER,
-            BoundaryValueView.ofClass("@src/app/User"), BoundaryContext.jsonField("u"));
-        expectPass(okUserOutcome, "JSON_TO_ERROR vs matching class atom");
-
-        expectPass(checkCell(FailurePolicyId.JSON_TO_ERROR,
-                DescriptorService.describe(new Type.Nullable(Type.Number.INSTANCE)),
-                BoundaryValueView.nullView(), BoundaryContext.jsonField("n")),
-            "JSON_TO_ERROR nullable vs null");
-
+                    BoundaryValueView.of(ActualKind.STRING))),
+            FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, DiagnosticCode.E8003,
+            "array element 2 type mismatch", "number", "string",
+            Map.of("oneBasedIndex", "2"), leaf,
+            "declared array position retains the original leaf cause");
+        expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, NUMBER,
+                BoundaryValueView.of(ActualKind.STRING)),
+            FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
+            "expected number", "number", "string", Map.of(), null,
+            "declared number position rejects string");
+        for (double number : new double[]{1.5, Double.NaN, Double.POSITIVE_INFINITY}) {
+            BoundaryValueView value = BoundaryValueView.ofNumber(number);
+            check(expectPass(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, NUMBER, value),
+                    "binary64 position " + number).value() == value,
+                "numeric admission retains binary64 identity " + number);
+        }
+        expectPass(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, NUMBER_ARRAY,
+                BoundaryValueView.ofArray(BoundaryValueView.ofNumber(Double.POSITIVE_INFINITY))),
+            "nonfinite array elements are valid numbers before JSON null substitution");
+        expectPass(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, USER,
+                BoundaryValueView.ofClass("@src/app/User")), "matching class atom");
+        expectPass(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, NULLABLE_INT,
+                BoundaryValueView.nullView()), "nullable number admits null");
         expectDefect(() -> checkCell(FailurePolicyId.JSON_TO_ERROR, NUMBER,
-                BoundaryValueView.ofNumber(1), BoundaryContext.none()),
-            "JSON_TO_ERROR without fieldPath");
+                BoundaryValueView.ofNumber(1)),
+            "builtin stringify policy cannot execute as a field boundary");
     }
 
     // =========================================================================
@@ -1227,8 +1183,8 @@ public class BoundaryExecutorTest {
                 BoundaryValueView.ofNumber(1), "array write"),
             new PassCase(FailurePolicyId.ARRAY_DELETE_BOUNDS, INT,
                 BoundaryValueView.ofNumber(1), "array delete"),
-            new PassCase(FailurePolicyId.JSON_TO_ERROR, NUMBER,
-                BoundaryValueView.ofNumber(1), "json to error"));
+            new PassCase(FailurePolicyId.TYPE_DESCRIPTOR, NUMBER,
+                BoundaryValueView.ofNumber(1), "serialization numeric position"));
 
         for (PassCase c : cases) {
             BoundaryContext context = c.policy() == FailurePolicyId.HOST_PARAMETER
@@ -1238,9 +1194,7 @@ public class BoundaryExecutorTest {
                     : c.policy() == FailurePolicyId.ARRAY_WRITE_BOUNDS_THEN_ELEMENT
                             || c.policy() == FailurePolicyId.ARRAY_DELETE_BOUNDS
                         ? BoundaryContext.writeBounds(0, 1)
-                        : c.policy() == FailurePolicyId.JSON_TO_ERROR
-                            ? BoundaryContext.jsonField("v")
-                            : BoundaryContext.none();
+                        : BoundaryContext.none();
             BoundaryOutcome outcome = checkCell(c.policy(), c.descriptor(), c.view(), context);
             BoundaryOutcome.Pass passOutcome = expectPass(outcome, c.what());
             if (passOutcome != null) {
@@ -1310,7 +1264,7 @@ public class BoundaryExecutorTest {
     }
 
     static void testOutsideClosed11() {
-        System.out.println("-- every policy outside the closed 11 fails closed --");
+        System.out.println("-- every policy outside the boundary subset fails closed --");
 
         List<FailurePolicyId> outside = List.of(
             FailurePolicyId.NO_DEAL_FAILURE,
@@ -1337,10 +1291,8 @@ public class BoundaryExecutorTest {
             FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR,
             FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR,
             FailurePolicyId.ARRAY_WRITE_BOUNDS_THEN_ELEMENT,
-            FailurePolicyId.ARRAY_DELETE_BOUNDS,
-            FailurePolicyId.JSON_FROM_NULL,
-            FailurePolicyId.JSON_TO_ERROR);
-        check(inside.size() == 11, "the closed subset has exactly 11 policies");
+            FailurePolicyId.ARRAY_DELETE_BOUNDS);
+        check(inside.size() == 9, "the closed subset has exactly 9 policies");
     }
 
     // =========================================================================
@@ -1422,8 +1374,8 @@ public class BoundaryExecutorTest {
                 BoundaryValueView.ofFunction(SYNC_INT_TO_INT), BoundaryContext.none()),
             new Case(FailurePolicyId.HOST_PARAMETER, INT,
                 BoundaryValueView.ofNumber(3.5), BoundaryContext.parameter(2)),
-            new Case(FailurePolicyId.JSON_TO_ERROR, NUMBER,
-                BoundaryValueView.ofNumber(Double.NaN), BoundaryContext.jsonField("a.b")));
+            new Case(FailurePolicyId.TYPE_DESCRIPTOR, NUMBER,
+                BoundaryValueView.ofNumber(Double.NaN), BoundaryContext.none()));
 
         for (Case c : cases) {
             BoundaryOutcome first = checkCell(c.policy(), c.descriptor(), c.view(),
@@ -1481,8 +1433,7 @@ public class BoundaryExecutorTest {
         testArrayReadCell();
         testArrayWriteCell();
         testArrayDeleteCell();
-        testJsonFromNull();
-        testJsonToError();
+        testJsonBoundaries();
         testMissingRules();
         testPassSameValue();
         testProvedCells();

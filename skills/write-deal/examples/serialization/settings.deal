@@ -1,4 +1,3 @@
-// @jsonable
 export class Settings {
   enabled: boolean;
   title: string;

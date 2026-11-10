@@ -208,8 +208,6 @@ public final class JvmRuntime {
     }
 
     public record ClassField(String name, String descriptor, boolean required) {}
-    private static final ThreadLocal<IdentityHashMap<Object, java.util.Set<String>>> CLASS_CHECKS =
-        ThreadLocal.withInitial(IdentityHashMap::new);
 
     /**
      * HAS_FIELD presence over one checked receiver key (the
@@ -308,6 +306,12 @@ public final class JvmRuntime {
 
         @Override
         public List<String> fieldNames() { return List.of("code", "message"); }
+
+        @Override
+        public List<ClassField> boundaryFields() {
+            return List.of(new ClassField("code", "string", true),
+                new ClassField("message", "string", true));
+        }
 
         @Override
         public boolean isPresent(String field) {
@@ -939,22 +943,6 @@ public final class JvmRuntime {
     }
 
     /**
-     * The origins of the active DEAL-body calls, innermost last (the
-     * {@code JSON_TO_ERROR} projection renders the invoking call
-     * expression: the generated {@code C$toJson} walk reads the origin of
-     * the call that invoked it, never the generated body's synthetic
-     * anchor).
-     */
-    public static final java.util.ArrayDeque<String> callOrigins =
-        new java.util.ArrayDeque<>();
-
-    /** The innermost active call's origin, or the fallback. */
-    public static String callOrigin(String fallback) {
-        String origin = callOrigins.peek();
-        return origin != null ? origin : fallback;
-    }
-
-    /**
      * One closed failure arm rendered on the JVM target (canonical
      * failure-projection authority P4 item 3): the arm's own template with
      * its named parameters and the arm's declared expected/actual fields —
@@ -1145,7 +1133,7 @@ public final class JvmRuntime {
     /**
      * The array-element arm's reference-kind projection (the decoded-array
      * mark, B3): the reported element's reference kind — an element
-     * carrying the std/json decode mark renders {@code table} (the
+     * carrying the JSON decoding provenance mark renders {@code table} (the
      * reference value model's kind for a decoded array), every other
      * element keeps the landed refined token ({@code array} for a real
      * array carrier). The mark is read here and nowhere else in the
@@ -1431,7 +1419,87 @@ public final class JvmRuntime {
         return root;
     }
 
+    private record ArrayCheck(int index, String descriptor, String staticKind,
+                              Object value, ArrayCheck parent) {}
+    private record ValueCheck(String descriptor, String staticKind, Object value,
+                              boolean completion, String canonical, ArrayCheck arrays,
+                              ClassInstance owner, ClassField field) {}
+
     private static Object bcheck(String desc, String staticKind, Object v,
+            boolean completion, String canon, boolean hostCompletionCrossing) {
+        var pending = new java.util.ArrayDeque<ValueCheck>();
+        var seen = new IdentityHashMap<Object, java.util.Set<String>>();
+        ValueCheck root = new ValueCheck(desc, staticKind, v, completion, canon, null, null, null);
+        Object admitted = v == MISSING ? UNDEFINED : v;
+        pending.push(root);
+        while (!pending.isEmpty()) {
+            ValueCheck task = pending.pop();
+            Object value = task.value();
+            String current = task.descriptor(), canonical = task.canonical();
+            try {
+                if (task.field() != null) {
+                    if (!task.owner().isPresent(task.field().name())) {
+                        if (task.field().required()) throw kindFailure(task.owner().classIdText(),
+                            task.completion() ? completionActualOf("ref", task.owner()) : actualOf("ref", task.owner()), task.completion());
+                        continue;
+                    }
+                    value = task.owner().read(task.field().name());
+                }
+                if (value == MISSING) value = UNDEFINED;
+                boolean nullish = false;
+                while (current.startsWith("nullable(") || current.startsWith("undefinedable(")
+                        || current.startsWith("nullableundefinedable(")) {
+                    boolean allowsNull = current.startsWith("nullable");
+                    boolean allowsUndefined = current.startsWith("undefinedable") || current.startsWith("nullableundefinedable");
+                    if (allowsNull && value == null || allowsUndefined && value == UNDEFINED) { nullish = true; break; }
+                    canonical = innerCanon(canonical, (allowsNull ? "?" : "") + (allowsUndefined ? "!" : ""), "");
+                    current = current.substring(current.indexOf('(') + 1, current.length() - 1);
+                }
+                if (nullish) continue;
+                String actual = value == UNDEFINED ? "undefined" : task.completion()
+                    ? completionActualOf(task.staticKind(), value) : actualOf(task.staticKind(), value);
+                if (current.startsWith("@")) {
+                    if (!(value instanceof ClassInstance instance) || !current.equals(instance.classIdText()))
+                        throw classFailure(current, value, actual, task.completion());
+                    if (!seen.computeIfAbsent(value, ignored -> new java.util.HashSet<>()).add(current)) continue;
+                    var fields = instance.boundaryFields();
+                    for (int i = fields.size() - 1; i >= 0; --i) {
+                        ClassField field = fields.get(i);
+                        pending.push(new ValueCheck(field.descriptor(), "ref", null, task.completion(), null, task.arrays(), instance, field));
+                    }
+                } else if (current.startsWith("array(")) {
+                    if (!(value instanceof Array array)) throw kindFailure("array", actual, task.completion());
+                    String inner = current.substring(6, current.length() - 1);
+                    if (array.elementDescriptor != null && !array.elementDescriptor.equals(inner))
+                        throw fail("E8001", "array element descriptor mismatch", "-", current, "array");
+                    if (!seen.computeIfAbsent(value, ignored -> new java.util.HashSet<>()).add(current)) continue;
+                    String innerCanonical = innerCanon(canonical, "[", "]");
+                    if (innerCanonical == null) innerCanonical = canonicalDesc(inner);
+                    for (int i = array.length() - 1; i >= 0; --i) {
+                        Object element = i < array.elements.size() ? array.elements.get(i) : MISSING;
+                        String elementKind = element == MISSING ? "missing" : inner;
+                        pending.push(new ValueCheck(inner, elementKind, element, false, innerCanonical,
+                            new ArrayCheck(i + 1, innerCanonical != null ? innerCanonical : inner, elementKind, element, task.arrays()), null, null));
+                    }
+                } else {
+                    Object checked = bcheckLeaf(current, task.staticKind(), value, task.completion(), canonical, hostCompletionCrossing);
+                    if (task == root) admitted = checked;
+                }
+            } catch (DealError error) {
+                for (ArrayCheck array = task.arrays(); array != null; array = array.parent()) {
+                    DealError outer = arm(deal.semantic.ir.FailureArmId.ARRAY_ELEMENT_KIND,
+                        java.util.Map.of("oneBasedIndex", Integer.toString(array.index())), "-",
+                        array.descriptor(), elementActualOf(array.staticKind(), array.value()));
+                    DealError cause = error.code.equals("E8003") && error.cause != null ? error.cause : error;
+                    error = new DealError(outer.code, outer.msg, outer.origin, outer.expected, outer.actual, outer.frames, cause);
+                }
+                throw error;
+            }
+        }
+        return admitted;
+    }
+
+    private static Object bcheckLeaf(String desc, String staticKind, Object v,
             boolean completion, String canon, boolean hostCompletionCrossing) {
         if (v == MISSING) v = UNDEFINED;
         String actual = v == UNDEFINED ? "undefined" : completion ? completionActualOf(staticKind, v)
@@ -1488,77 +1556,6 @@ public final class JvmRuntime {
                 return v;
             }
             throw classFailure(desc, v, actual, completion);
-        }
-        if (desc.startsWith("@")) {
-            // A nominal class descriptor (E5): the canonical
-            // @modulePath/ClassName identity text — the instance must
-            // carry the identical tag.
-            if (v instanceof ClassInstance instance
-                    && desc.equals(instance.classIdText())) {
-                var active = CLASS_CHECKS.get();
-                var descriptors = active.computeIfAbsent(v, ignored -> new java.util.HashSet<>());
-                if (!descriptors.add(desc)) return v;
-                try {
-                    for (ClassField field : instance.boundaryFields()) {
-                        if (!instance.isPresent(field.name())) {
-                            if (field.required()) throw kindFailure(desc, actual, completion);
-                        } else bcheck(field.descriptor(), "ref", instance.read(field.name()), completion, null, hostCompletionCrossing);
-                    }
-                } finally {
-                    descriptors.remove(desc);
-                    if (descriptors.isEmpty()) active.remove(v);
-                    if (active.isEmpty()) CLASS_CHECKS.remove();
-                }
-                return v;
-            }
-            throw classFailure(desc, v, actual, completion);
-        }
-        if (desc.startsWith("array(")) {
-            if (v instanceof Array array) {
-                String inner = desc.substring(6, desc.length() - 1);
-                if (array.elementDescriptor != null && !array.elementDescriptor.equals(inner))
-                    throw fail("E8001", "array element descriptor mismatch", "-", desc, "array");
-                String innerCanonical = innerCanon(canon, "[", "]");
-                if (innerCanonical == null) {
-                    innerCanonical = canonicalDesc(inner);
-                }
-                for (int i = 0; i < array.length(); i++) {
-                    // A present null element stays the language-null carrier
-                    // (the explicit null the JSON reader stores unchanged),
-                    // distinct from the absent/deleted slot's MISSING marker:
-                    // the element descriptor decides the null (array(null)
-                    // and nullable elements admit it) and only the absent
-                    // slot projects the typed-boundary nil token.
-                    Object elem = i < array.elements.size() ? array.elements.get(i)
-                        : MISSING;
-                    try {
-                        bcheck(inner, elem == MISSING ? "missing" : inner, elem,
-                            false, innerCanonical, hostCompletionCrossing);
-                    } catch (DealError leaf) {
-                        // The canonical element text (the semantic oracle's
-                        // closed canonical spelling), never the runtime's
-                        // internal array(...) dialect.
-                        DealError outer = arm(deal.semantic.ir.FailureArmId.ARRAY_ELEMENT_KIND,
-                            java.util.Map.of("oneBasedIndex", Integer.toString(i + 1)),
-                            "-", innerCanonical != null ? innerCanonical : inner,
-                            elementActualOf(elem == MISSING ? "missing" : inner, elem));
-                        DealError cause = leaf.code.equals("E8003") && leaf.cause != null ? leaf.cause : leaf;
-                        throw new DealError(outer.code, outer.msg, outer.origin, outer.expected,
-                            outer.actual, outer.frames, cause);
-                    }
-                }
-                return v;
-            }
-            throw kindFailure("array", actual, completion);
-        }
-        if (desc.startsWith("nullable(") || desc.startsWith("undefinedable(")
-                || desc.startsWith("nullableundefinedable(")) {
-            boolean nullAllowed = desc.startsWith("nullable");
-            boolean undefinedAllowed = desc.startsWith("undefinedable") || desc.startsWith("nullableundefinedable");
-            if (nullAllowed && v == null || undefinedAllowed && v == UNDEFINED) return v;
-            String prefix = (nullAllowed ? "?" : "") + (undefinedAllowed ? "!" : "");
-            String inner = desc.substring(desc.indexOf('(') + 1, desc.length() - 1);
-            return bcheck(inner, staticKind, v, completion, innerCanon(canon, prefix, ""), hostCompletionCrossing);
         }
         if (desc.startsWith("function(")) {
             if (v instanceof FunctionValue function) {
@@ -1646,36 +1643,20 @@ public final class JvmRuntime {
             leading = inner;
         }
         FunctionValue function = (FunctionValue) source;
-        // The invoking call's origin: a failure inside the adapted source
-        // whose arm renders the call origin (the @jsonable toJson walk)
-        // reads the innermost active call — the adapter call expression,
-        // never an enclosing static call. The host-facing bridge passes
-        // "-" (no call expression), so only a real call origin is
-        // published. The finally pops on every path.
-        boolean pushedOrigin = origin != null && !"-".equals(origin);
-        if (pushedOrigin) {
-            callOrigins.push(origin);
+        // A cataloged stdlib callable carries the packed row-invoker
+        // calling convention (kind/opKey/digest/parent/origin plus the
+        // declared arguments), never a plain function-value invoker:
+        // the D15 invocation dispatches it through the same catalog
+        // entry the direct STDLIB_CALL and dynamic HOST arms use, with
+        // the adapter's leading-M projection. The call has no DEAL call
+        // op of its own (a host-facing bridge or an exported callable),
+        // so the invocation context is the generic CALL label and the
+        // absent project coordinates.
+        if (function instanceof StdlibFunctionValue callable) {
+            return invokeStdlibCallable(callable, "CALL", "-", "-", "-", origin,
+                leading);
         }
-        try {
-            // A cataloged stdlib callable carries the packed row-invoker
-            // calling convention (kind/opKey/digest/parent/origin plus the
-            // declared arguments), never a plain function-value invoker:
-            // the D15 invocation dispatches it through the same catalog
-            // entry the direct STDLIB_CALL and dynamic HOST arms use, with
-            // the adapter's leading-M projection. The call has no DEAL call
-            // op of its own (a host-facing bridge or an exported callable),
-            // so the invocation context is the generic CALL label and the
-            // absent project coordinates.
-            if (function instanceof StdlibFunctionValue callable) {
-                return invokeStdlibCallable(callable, "CALL", "-", "-", "-", origin,
-                    leading);
-            }
-            return function.fn.invoke(leading);
-        } finally {
-            if (pushedOrigin) {
-                callOrigins.pop();
-            }
-        }
+        return function.fn.invoke(leading);
     }
 
     /**
@@ -2543,7 +2524,14 @@ case "NUMBER_ADD" -> {
                     StringBuilder out = new StringBuilder();
                     java.util.Set<Object> path =
                         java.util.Collections.newSetFromMap(new IdentityHashMap<>());
-                    stringifyValue(out, root, path);
+                    try {
+                        stringifyValue(out, root, path);
+                    } catch (DealError failure) {
+                        DealError located = jsonBoundaryOrigin(failure, origin);
+                        ev(currentModule(), opKey, "FAILURE", kind, digest, parent, List.of(), null,
+                            errtext(located));
+                        throw located;
+                    }
                     return out.toString();
                 }
                 case "MATH_FLOOR" -> {
@@ -2746,8 +2734,8 @@ case "NUMBER_ADD" -> {
 
             static Frame array() {
                 Array array = new Array(0);
-                // The decoded-array mark (B3): the std/json parse
-                // realization is the only producer of the mark; a nested
+                // The decoded-array provenance mark is produced by JSON
+                // parsing; a nested
                 // decoded array carries it too.
                 array.decodedArray = true;
                 array.elementDescriptor = "unknown";
@@ -2986,7 +2974,7 @@ case "NUMBER_ADD" -> {
 
     /**
      * The carrier-kind classification of one stringify-walk value (the
-     * std/json member of the closed carrier-kind projection): the absent
+     * stringify member of the closed carrier-kind projection): the absent
      * marker is {@code nil}, the DEAL function-shaped carriers are
      * {@code function}, and every
      * other table-carried value — tables, arrays, class instances (the
@@ -3038,6 +3026,9 @@ case "NUMBER_ADD" -> {
         final Array array;
         final ClassInstance instance;
         final List<String> keys;
+        List<ClassField> fields;
+        String elementDescriptor;
+        ArrayCheck arrays;
         int index;
         int emitted;
 
@@ -3060,7 +3051,65 @@ case "NUMBER_ADD" -> {
             this.array = null;
             this.instance = instance;
             this.keys = instance.fieldNames();
+            this.fields = instance.boundaryFields();
+            if (keys.size() != fields.size())
+                throw new IllegalStateException("JSON class field plan/order mismatch");
         }
+    }
+
+    private static DealError jsonBoundaryOrigin(DealError failure, String origin) {
+        var chain = new java.util.ArrayList<DealError>();
+        for (DealError current = failure; current != null; current = current.cause) chain.add(current);
+        DealError result = null;
+        for (int i = chain.size() - 1; i >= 0; i--) {
+            DealError current = chain.get(i);
+            result = new DealError(current.code, current.msg, origin, current.expected,
+                current.actual, current.frames, result);
+        }
+        return result;
+    }
+
+    /** Check one reached position only; descendants are consumed by the encoder stack. */
+    private static String jsonPosition(String descriptor, Object value, ArrayCheck arrays) {
+        if (descriptor == null) return null;
+        try {
+            while (descriptor.startsWith("nullable(") || descriptor.startsWith("undefinedable(")
+                    || descriptor.startsWith("nullableundefinedable(")) {
+                boolean nullable = descriptor.startsWith("nullable");
+                boolean undefinedable = descriptor.startsWith("undefinedable")
+                    || descriptor.startsWith("nullableundefinedable");
+                if (nullable && value == null || undefinedable && (value == UNDEFINED || value == MISSING)) return null;
+                descriptor = descriptor.substring(descriptor.indexOf('(') + 1, descriptor.length() - 1);
+            }
+            if (descriptor.startsWith("@") || descriptor.equals("Error")) {
+                if (!(value instanceof ClassInstance instance) || !descriptor.equals(instance.classIdText()))
+                    throw classFailure(descriptor, value, actualOf("ref", value), false);
+            } else if (descriptor.startsWith("array(")) {
+                if (!(value instanceof Array array)) throw kindFailure("array", actualOf("ref", value), false);
+                String inner = descriptor.substring(6, descriptor.length() - 1);
+                if (array.elementDescriptor != null && !array.elementDescriptor.equals(inner))
+                    throw kindFailure("array", "array", false);
+                return inner;
+            } else if (descriptor.equals("record")) {
+                if (!(value instanceof Table)) throw kindFailure("table", actualOf("ref", value), false);
+            } else if (!descriptor.equals("unknown")) {
+                bcheckLeaf(descriptor, "ref", value, false, null, false);
+            }
+            return null;
+        } catch (DealError error) {
+            throw jsonArrayFailure(error, arrays);
+        }
+    }
+
+    private static DealError jsonArrayFailure(DealError error, ArrayCheck arrays) {
+        for (ArrayCheck array = arrays; array != null; array = array.parent()) {
+            DealError outer = arm(deal.semantic.ir.FailureArmId.ARRAY_ELEMENT_KIND,
+                java.util.Map.of("oneBasedIndex", Integer.toString(array.index())), "-",
+                array.descriptor(), elementActualOf(array.staticKind(), array.value()));
+            error = new DealError(outer.code, outer.msg, outer.origin, outer.expected, outer.actual, outer.frames,
+                error.code.equals("E8003") && error.cause != null ? error.cause : error);
+        }
+        return error;
     }
 
     /**
@@ -3073,7 +3122,7 @@ case "NUMBER_ADD" -> {
     static void stringifyValue(StringBuilder out, Object value,
                                        java.util.Set<Object> path) {
         Deque<StringifyFrame> stack = new ArrayDeque<>();
-        appendJsonValue(out, value, path, stack);
+        appendJsonValue(out, value, path, stack, null, null);
         while (!stack.isEmpty()) {
             StringifyFrame frame = stack.peek();
             if (frame.array != null) {
@@ -3082,7 +3131,10 @@ case "NUMBER_ADD" -> {
                     if (i > 0) {
                         out.append(',');
                     }
-                    appendJsonValue(out, frame.array.elements.get(i), path, stack);
+                    Object member = frame.array.elements.get(i);
+                    ArrayCheck arrays = frame.elementDescriptor == null ? frame.arrays
+                        : new ArrayCheck(i + 1, canonicalDesc(frame.elementDescriptor), "ref", member, frame.arrays);
+                    appendJsonValue(out, member, path, stack, frame.elementDescriptor, arrays);
                 } else {
                     out.append(']');
                     path.remove(frame.array);
@@ -3093,13 +3145,24 @@ case "NUMBER_ADD" -> {
             if (frame.index < frame.keys.size()) {
                 int i = frame.index++;
                 String key = frame.keys.get(i);
-                if (frame.instance != null && !frame.instance.isPresent(key)) continue;
+                String descriptor = null;
+                if (frame.instance != null) {
+                    ClassField field = frame.fields.get(i);
+                    if (!field.name().equals(key)) throw new IllegalStateException("JSON class field plan/order mismatch");
+                    if (!frame.instance.isPresent(key) || frame.instance.read(key) == MISSING) {
+                        if (field.required()) throw jsonArrayFailure(kindFailure(frame.instance.classIdText(),
+                            actualOf("ref", frame.instance), false), frame.arrays);
+                        continue;
+                    }
+                    descriptor = field.descriptor();
+                }
                 Object member = frame.instance != null ? frame.instance.read(key) : frame.table.entries.get(key);
+                jsonPosition(descriptor, member, frame.arrays);
                 if (member == UNDEFINED || member == MISSING || member instanceof FunctionValue) continue;
                 if (frame.emitted++ > 0) out.append(',');
                 appendJsonString(out, key);
                 out.append(':');
-                appendJsonValue(out, member, path, stack);
+                appendJsonValue(out, member, path, stack, descriptor, frame.arrays);
             } else {
                 out.append('}');
                 path.remove(frame.instance != null ? frame.instance : frame.table);
@@ -3116,7 +3179,9 @@ case "NUMBER_ADD" -> {
      */
     private static void appendJsonValue(StringBuilder out, Object value,
                                         java.util.Set<Object> path,
-                                        Deque<StringifyFrame> stack) {
+                                        Deque<StringifyFrame> stack, String descriptor, ArrayCheck arrays) {
+        String elementDescriptor = jsonPosition(descriptor, value, arrays);
+        int depth = stack.size();
         if (value == null || value == UNDEFINED || value == MISSING || value instanceof FunctionValue) {
             out.append("null");
         } else if (value instanceof Boolean bool) {
@@ -3149,6 +3214,10 @@ case "NUMBER_ADD" -> {
             stack.push(new StringifyFrame(instance));
         } else {
             throw jsonEncodingFailure(value);
+        }
+        if (stack.size() > depth) {
+            stack.peek().elementDescriptor = elementDescriptor;
+            stack.peek().arrays = arrays;
         }
     }
 

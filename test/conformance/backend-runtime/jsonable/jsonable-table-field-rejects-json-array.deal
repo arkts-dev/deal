@@ -1,42 +1,22 @@
-// @spec: Classes — JSON serialization (@jsonable)
-// @description: A @jsonable table field accepts only a JSON object: the empty array is a validation failure that makes fromJson return null, while the empty object and a keyed object decode and roundtrip (v1.4)
+// @spec: Standard library builtins — JSON decoding
+// @description: A Record field rejects an empty JSON array; empty and keyed JSON objects reconstruct and encode as Records.
 // @expected: runtime-ok
-// @features: jsonable, table, fromJson, v1.4
+// @features: json, classes, records
 
-// @jsonable
 export class Wrapper {
   data: Record<string, unknown>;
 }
 
 export function test_table_field_rejects_json_array(): null {
-  // A Record field's descriptor-directed fromJson accepts only a JSON
-  // object, so [] is a validation failure and the helper returns null.
-  let rejected: Wrapper | null = Wrapper$fromJson("{\"data\":[]}");
-  if (rejected !== null) {
-    throw { code: "TEST_FAIL", message: "an empty array table field value must return null" };
-  }
-  // The empty-object positive control: {} is an empty table and stays
-  // one through the encode.
-  let empty: Wrapper | null = Wrapper$fromJson("{\"data\":{}}");
-  if (empty !== null) {
-    let emptyText: string = Wrapper$toJson(empty);
-    if (emptyText !== "{\"data\":{}}") {
-      throw { code: "TEST_FAIL", message: "an empty JSON object must decode as an empty table" };
-    }
-  } else {
-    throw { code: "TEST_FAIL", message: "an empty JSON object must decode" };
-  }
-  // The keyed-object positive control: a genuine JSON object still maps
-  // to the DEAL table carrier.
-  let keyed: Wrapper | null = Wrapper$fromJson("{\"data\":{\"count\":3}}");
-  if (keyed !== null) {
-    let count: number = keyed.data.count as number;
-    if (count !== 3) {
-      throw { code: "TEST_FAIL", message: "a keyed table field value must decode" };
-    }
-  } else {
-    throw { code: "TEST_FAIL", message: "a keyed JSON object must decode" };
-  }
+  let rejected = false;
+  try { let invalid: Wrapper = JSON.parse("{\"data\":[]}"); }
+  catch (e) { let error = e as Error; rejected = error.code === "E8001" && error.message === "expected table"; }
+  if (!rejected) { throw {code: "TEST_FAIL", message: "empty array accepted as Record field"}; }
+  let empty: Wrapper = JSON.parse("{\"data\":{}}");
+  let emptyText: string = JSON.stringify(empty) as string;
+  if (emptyText !== "{\"data\":{}}") { throw {code: "TEST_FAIL", message: "empty Record encoding changed"}; }
+  let keyed: Wrapper = JSON.parse("{\"data\":{\"count\":3}}");
+  if ((keyed.data.count as number) !== 3) { throw {code: "TEST_FAIL", message: "keyed Record value changed"}; }
   return null;
 }
 

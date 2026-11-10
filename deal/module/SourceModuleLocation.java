@@ -32,7 +32,7 @@ import java.util.Objects;
  *       {@code null} for a source with no project identity.</li>
  *   <li>{@code moduleClassification} — the module-level classification
  *       per D6's precedence recorded from the same single classifier
- *       invocation ({@code BuiltinModule} for the six pinned stdlib
+ *       invocation ({@code BuiltinModule} for the five pinned stdlib
  *       files, {@code ExternalModule(rawImportSpecifier)} for an
  *       externals entry's declaration file, {@code ProjectModule} for a
  *       rooted {@code .deal} source, {@code null} otherwise).

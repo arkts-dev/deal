@@ -333,8 +333,10 @@ public final class ErrorIdentityProductionTest {
             + "terminal under real luajit --");
         Project project = writeProject(root, fixtureSource());
         productionCompile(project, Backend.LUAJIT);
-        check(Files.isRegularFile(project.out().resolve("deal/runtime.lua")),
-            "luajit: the production compile deploys the runtime");
+        for (String resource : List.of("deal/runtime.lua", "deal/json.lua")) {
+            check(Files.isRegularFile(project.out().resolve(resource)),
+                "luajit: the production compile deploys " + resource);
+        }
         assertExecution("luajit",
             runProcess(List.of("luajit", ENTRY_MODULE + ".lua"), project.out()),
             expected);

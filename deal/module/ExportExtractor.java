@@ -160,33 +160,6 @@ public final class ExportExtractor {
         // needed by exported function signatures must be explicitly exported
         // or their types must appear via structural interface types.
 
-        // D6: Add synthetic C$fromJson and C$toJson exports for @jsonable classes.
-        // These ensure cross-module NameResolver.isFunctionExportedFromModule()
-        // queries succeed during Phase 3: an importing module's @jsonable
-        // field validation and dependency-edge membership are keyed by the
-        // declaring module's canonical class identity. The metadata is never
-        // set for a declaration-file class, so an ignored declaration-only
-        // @jsonable marker generates no helper and contributes no export.
-        for (StatementNode stmt : program.statements()) {
-            if (stmt instanceof ExportDeclaration exp
-                    && exp.declaration() instanceof ClassDeclaration cd
-                    && cd.isJsonable()) {
-                Type clsType = classTypeFor(cd.name(), modulePath);
-
-                // C$fromJson: (string) -> C | null
-                Type.Func fromJsonType = new Type.Func(
-                    List.of(Type.String.INSTANCE),
-                    Types.nullable(clsType));
-                exports.put(cd.name() + "$fromJson", fromJsonType);
-
-                // C$toJson: (C) -> string
-                Type.Func toJsonType = new Type.Func(
-                    List.of(clsType),
-                    Type.String.INSTANCE);
-                exports.put(cd.name() + "$toJson", toJsonType);
-            }
-        }
-
         return Collections.unmodifiableMap(exports);
     }
 

@@ -351,7 +351,7 @@ public class AsyncExportInvokerProductionTest {
 
     /**
      * The parsed-JSON numeric leaves (the latest ISSUE-0749 review, finding
-     * 1): a {@code std/json} decode carries each numeric leaf's variant in
+     * 1): a contextual {@code JSON.parse} carries each numeric leaf's variant in
      * the carrier itself ({@code __jn.k}), never in a container slot mark,
      * so the projection must record the destination slot's variant when it
      * unwraps the carrier. The precision-boundary leaf, the integral leaf,
@@ -360,10 +360,8 @@ public class AsyncExportInvokerProductionTest {
      * default {@code tostring}'s lossy {@code %.14g}.
      */
     private static final String PARSED_JSON_NUMBERS_SOURCE = """
-        import * as json from "std/json";
-
         export async function run(): Promise<Record<string, unknown> | null> {
-          return json.parse("{\\"x\\":0.30000000000000004,\\"xs\\":[5],\\"n\\":7.0}");
+          return JSON.parse("{\\"x\\":0.30000000000000004,\\"xs\\":[5],\\"n\\":7.0}");
         }
 
         export function main(): null {
@@ -377,10 +375,8 @@ public class AsyncExportInvokerProductionTest {
      * field as the JSON null slot, and both encode without a carrier key.
      */
     private static final String PARSED_JSON_CONTAINER_SOURCE = """
-        import * as json from "std/json";
-
         export async function run(): Promise<Record<string, unknown> | null> {
-          return json.parse("{\\"xs\\":[],\\"o\\":{\\"n\\":null}}");
+          return JSON.parse("{\\"xs\\":[],\\"o\\":{\\"n\\":null}}");
         }
 
         export function main(): null {
@@ -395,10 +391,8 @@ public class AsyncExportInvokerProductionTest {
      * included.
      */
     private static final String PARSED_JSON_EXPONENT_SOURCE = """
-        import * as json from "std/json";
-
         export async function run(): Promise<Record<string, unknown> | null> {
-          return json.parse("{\\"xs\\":[1e17,1e-320,0]}");
+          return JSON.parse("{\\"xs\\":[1e17,1e-320,0]}");
         }
 
         export function main(): null {
@@ -521,10 +515,10 @@ public class AsyncExportInvokerProductionTest {
 
     /** A stdlib callable completion under its declared function descriptor. */
     private static final String STDLIB_FUNCTION_COMPLETION_SOURCE = """
-        import * as json from "std/json";
+        import * as strings from "std/string";
 
-        export async function run(): Promise<(t: unknown) => string | undefined> {
-          return json.stringify;
+        export async function run(): Promise<(text: string) => number> {
+          return strings.length;
         }
 
         export function main(): null {
@@ -841,6 +835,7 @@ public class AsyncExportInvokerProductionTest {
             testEmptyArrayCompletionsBothTargets();
             testGraphCompletionsBothTargets();
             testParsedJsonCompletionsBothTargets();
+            testContextualJsonParseBothTargets();
             testAbsentAndNullSlotsBothTargets();
             testNonEncodableCarrierCompletionsBothTargets();
             testRepresentationFailureBothTargets();
@@ -866,6 +861,34 @@ public class AsyncExportInvokerProductionTest {
             System.exit(1);
         }
         System.out.println("=== Async-Export Invoker Production Tests Passed ===");
+    }
+
+    private static void testContextualJsonParseBothTargets() throws Exception {
+        String source = """
+            class Node { value:number; next?:Node; }
+            async function decode(text:string):Promise<Node> { return JSON.parse(text); }
+            export function main():null { return null; }
+            export async function run():Promise<number> {
+              let text=`{"value":7,"next":{"value":9}}`;
+              let value:Node=await decode(text);
+              let original=value;
+              let rejected=0;
+              try { value=JSON.parse(`{"value":"bad","extra":true}`); }
+              catch(e) { if((e as Error).code==="E8007"){rejected=rejected+1;} }
+              try { let xs:number[]=JSON.parse(`[1,"bad"]`); }
+              catch(e) { if((e as Error).code==="E8001"){rejected=rejected+1;} }
+              try { let asserted=JSON.parse(text) as Node; }
+              catch(e) { if((e as Error).code==="E8001"){rejected=rejected+1;} }
+              if(rejected!==3 || value!==original || !Object.hasOwn(value,"next")) {
+                throw {code:"TEST",message:"async parse rollback or context"};
+              }
+              let fresh:Node=JSON.parse(JSON.stringify(value) as string);
+              if(fresh===value || fresh.value!==7){throw {code:"TEST",message:"async fresh reconstruction"};}
+              return fresh.value+(fresh.next as Node).value;
+            }
+            """;
+        for (String backend : List.of("luajit", "jvm"))
+            checkNumberCompletion(backend, "contextual-json-parse", source, "number", "16");
     }
 
     private static void testRecursiveInitializerBothTargets() throws Exception {
@@ -901,7 +924,7 @@ public class AsyncExportInvokerProductionTest {
             }
             """;
         for (String backend : List.of("luajit", "jvm")) {
-            checkNumberCompletion(backend, "recursive-initializer", source, "number", "21.0");
+            checkNumberCompletion(backend, "recursive-initializer", source, "number", "21");
         }
     }
 
@@ -924,13 +947,13 @@ public class AsyncExportInvokerProductionTest {
                   base = 3;
                   return (await block()) + (await recursive(2));
                 }
-                """, "number", "11.0");
+                """, "number", "11");
             Project project = compile("value7-" + backend, backend,
                 String.format(PLAIN_MANIFEST, backend), VALUE_SEVEN_SOURCE, null,
                 null);
             try {
                 Object result = invoke(project, "run", "number");
-                checkEq(valueResult(backend, "number", "7.0"), result,
+                checkEq(valueResult(backend, "number", "7"), result,
                     backend + ": the async export completes the pinned 7: " + result);
                 if ("jvm".equals(backend)) {
                     check(Files.isRegularFile(project.classes()
@@ -985,20 +1008,20 @@ public class AsyncExportInvokerProductionTest {
                 null);
             try {
                 Object result = invoke(intRead, "run", "number");
-                checkEq(valueResult(backend, "number", "7.0"), result,
+                checkEq(valueResult(backend, "number", "7"), result,
                     backend + ": an number read completes its integral number: "
                         + result);
             } finally {
                 deleteRecursively(intRead.root());
             }
             checkNumberCompletion(backend, "number-arithmetic",
-                NUMBER_ARITHMETIC_SOURCE, "number", "5.0");
+                NUMBER_ARITHMETIC_SOURCE, "number", "5");
             checkNumberCompletion(backend, "number-precision",
                 NUMBER_PRECISION_SOURCE, "number", "0.30000000000000004");
             checkNumberCompletion(backend, "number-magnitude",
-                NUMBER_MAGNITUDE_SOURCE, "number", "1.0E17");
+                NUMBER_MAGNITUDE_SOURCE, "number", "100000000000000000");
             checkNumberCompletion(backend, "number-number-variant",
-                NUMBER_INT_VARIANT_SOURCE, "number", "7.0");
+                NUMBER_INT_VARIANT_SOURCE, "number", "7");
         }
     }
 
@@ -1050,7 +1073,7 @@ public class AsyncExportInvokerProductionTest {
                 null, null);
             try {
                 Object result = invoke(nested, "run", "[[number]]");
-                checkEq(valueResult(backend, "[[number]]", "[[],[7.0]]"), result,
+                checkEq(valueResult(backend, "[[number]]", "[[],[7]]"), result,
                     backend + ": a nested empty array keeps its shape at every"
                         + " depth: " + result);
             } finally {
@@ -1090,7 +1113,7 @@ public class AsyncExportInvokerProductionTest {
             try {
                 Object result = invoke(shared, "run", "record");
                 checkEq(valueResult(backend, "record",
-                        "{\"a\":{\"v\":7.0},\"b\":{\"v\":7.0}}"), result,
+                        "{\"a\":{\"v\":7},\"b\":{\"v\":7}}"), result,
                     backend + ": a shared reference encodes at every position: "
                         + result);
                 assertNoInternalKeys(backend, valueJson(result));
@@ -1121,7 +1144,7 @@ public class AsyncExportInvokerProductionTest {
 
     /**
      * The parsed-JSON completion surface (the latest ISSUE-0749 review,
-     * finding 1): a {@code std/json} decode carries each numeric leaf's
+     * finding 1): a contextual {@code JSON.parse} carries each numeric leaf's
      * variant in the carrier itself, so unwrapping a leaf must record the
      * destination slot's own variant — the precision-boundary and nested
      * fractional leaves spell through the shared walker's canonical text,
@@ -1139,7 +1162,7 @@ public class AsyncExportInvokerProductionTest {
             try {
                 Object result = invoke(numbers, "run", "?record");
                 checkEq(valueResult(backend, "?record",
-                        "{\"x\":0.30000000000000004,\"xs\":[5.0],\"n\":7.0}"),
+                        "{\"x\":0.30000000000000004,\"xs\":[5],\"n\":7}"),
                     result,
                     backend + ": every parsed numeric leaf keeps its variant"
                         + " text: " + result);
@@ -1166,7 +1189,7 @@ public class AsyncExportInvokerProductionTest {
             try {
                 Object result = invoke(exponents, "run", "?record");
                 checkEq(valueResult(backend, "?record",
-                        "{\"xs\":[1.0E17,1.0E-320,0]}"), result,
+                        "{\"xs\":[100000000000000000,1e-320,0]}"), result,
                     backend + ": parsed exponent and signed-zero leaves keep"
                         + " their binary64 JSON values: " + result);
                 assertNoInternalKeys(backend, valueJson(result));
@@ -1184,13 +1207,13 @@ public class AsyncExportInvokerProductionTest {
         System.out.println("-- deleted and explicit-null array slots encode JSON null");
         for (String backend : List.of("luajit", "jvm")) {
             assertEncodedCompletion(backend, "deleted-slot",
-                DELETED_SLOT_SOURCE, "record", "{\"xs\":[null,8.0]}");
+                DELETED_SLOT_SOURCE, "record", "{\"xs\":[null,8]}");
             Project project = compile("explicit-null-slot-" + backend, backend,
                 String.format(PLAIN_MANIFEST, backend),
                 EXPLICIT_NULL_SLOT_SOURCE, null, null);
             try {
                 Object result = invoke(project, "run", "record");
-                checkEq(valueResult(backend, "record", "{\"xs\":[null,8.0]}"),
+                checkEq(valueResult(backend, "record", "{\"xs\":[null,8]}"),
                     result,
                     backend + ": a present null slot keeps its JSON null: "
                         + result);
@@ -1216,13 +1239,33 @@ public class AsyncExportInvokerProductionTest {
                 CLASS_ARRAY_COMPLETION_SOURCE, "[@src/main.deal/C]", "[{\"x\":7.0}]");
             assertEncodedCompletion(backend, "nullable-class-completion",
                 NULLABLE_CLASS_COMPLETION_SOURCE, "?@src/main.deal/C", "{\"x\":7.0}");
+            assertEncodedCompletion(backend, "structural-class-plan-completion", """
+                class Child { value: number; }
+                class Model {
+                  child: Child;
+                  rows: (Child | null)[];
+                  missing?: string;
+                  data: Record<string, unknown>;
+                  fn: () => number;
+                }
+                export async function run(): Promise<Model> {
+                  let child: Child = { value: 7 };
+                  let result: Model = {
+                    child: child, rows: [child, null], data: { ok: true },
+                    fn: (): number => { throw {code: "TEST", message: "JSON invoked function"}; }
+                  };
+                  return result;
+                }
+                export function main(): null { return null; }
+                """, "@src/main.deal/Model",
+                "{\"child\":{\"value\":7},\"rows\":[{\"value\":7},null],\"data\":{\"ok\":true}}");
             assertRepresentationFailure(backend, "function-completion",
                 FUNCTION_COMPLETION_SOURCE, "()->number",
                 "completion has no JSON representation");
             assertEncodedCompletion(backend, "function-array-completion",
                 FUNCTION_ARRAY_COMPLETION_SOURCE, "[()->number]", "[null]");
             assertRepresentationFailure(backend, "stdlib-function-completion",
-                STDLIB_FUNCTION_COMPLETION_SOURCE, "(unknown)->!string",
+                STDLIB_FUNCTION_COMPLETION_SOURCE, "(string)->number",
                 "completion has no JSON representation");
             assertEncodedCompletion(backend, "error-field-completion",
                 ERROR_FIELD_COMPLETION_SOURCE, "record",
@@ -1305,7 +1348,7 @@ public class AsyncExportInvokerProductionTest {
                 null, null);
             try {
                 Object result = invoke(array, "run", "[number]");
-                checkEq(valueResult(backend, "[number]", "[7.0,8.0]"), result,
+                checkEq(valueResult(backend, "[number]", "[7,8]"), result,
                     backend + ": an number[] completion encodes as the checked JSON"
                         + " array: " + result);
                 assertNoInternalKeys(backend, valueJson(result));
@@ -1318,7 +1361,7 @@ public class AsyncExportInvokerProductionTest {
                 null, null);
             try {
                 Object result = invoke(table, "run", "record");
-                checkEq(valueResult(backend, "record", "{\"a\":7.0}"), result,
+                checkEq(valueResult(backend, "record", "{\"a\":7}"), result,
                     backend + ": a plain-object completion encodes as the checked"
                         + " JSON object: " + result);
                 assertNoInternalKeys(backend, valueJson(result));
@@ -1336,7 +1379,7 @@ public class AsyncExportInvokerProductionTest {
                 check(result instanceof LuaJitAsyncExportInvoker.Result.Value
                         || result instanceof JvmAsyncExportInvoker.Result.Value,
                     backend + ": the nested completion is a value: " + result);
-                check(json != null && json.contains("\"xs\":[7.0,8.0]"),
+                check(json != null && json.contains("\"xs\":[7,8]"),
                     backend + ": a nested array field keeps its JSON array shape: "
                         + json);
                 check(json != null && json.contains("\"n\":null"),
@@ -1500,7 +1543,7 @@ public class AsyncExportInvokerProductionTest {
                 "luajit".equals(backend) ? DELAYED_LUA_HOST : DELAYED_JVM_HOST);
             try {
                 Object result = invoke(project, "run", "number");
-                checkEq(valueResult(backend, "number", "7.0"), result,
+                checkEq(valueResult(backend, "number", "7"), result,
                     backend + ": the delayed host completion reaches the"
                         + " completion as 7: " + result);
             } finally {
@@ -1913,10 +1956,10 @@ public class AsyncExportInvokerProductionTest {
             try {
                 Object first = invoke(project, "run", "number");
                 Object second = invoke(project, "run", "number");
-                checkEq(valueResult(backend, "number", "110.0"), first,
+                checkEq(valueResult(backend, "number", "110"), first,
                     backend + ": one host-module load and one main touch before"
                         + " the export: " + first);
-                checkEq(valueResult(backend, "number", "110.0"), second,
+                checkEq(valueResult(backend, "number", "110"), second,
                     backend + ": the second invocation starts a fresh runtime"
                         + " instance (no shared host state): " + second);
             } finally {
@@ -2310,7 +2353,7 @@ public class AsyncExportInvokerProductionTest {
                 AWAIT_ARRAY_WRITE_SUBJECT, null, null);
             try {
                 Object result = invoke(project, "run", "number");
-                checkEq(valueResult(backend, "number", "1.0"), result,
+                checkEq(valueResult(backend, "number", "1"), result,
                     name + ": the public completion is 1 (the RIV/bounds/"
                         + "no-write/append oracle passed)");
 
@@ -2319,7 +2362,7 @@ public class AsyncExportInvokerProductionTest {
                     checkEq(AsyncExportEnvelope.STATUS_VALUE, envelope.status,
                         name + ": the wire status is value");
                     checkEq("number", envelope.descriptor, name + ": the wire descriptor is number");
-                    checkEq("1.0", envelope.value, name + ": the wire value is 1");
+                    checkEq("1", envelope.value, name + ": the wire value is 1");
                 }
             } finally {
                 deleteRecursively(project.root());

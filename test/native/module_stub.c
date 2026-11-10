@@ -20,6 +20,7 @@
  *   9  a missing arm
  *  10  a declared parameter-shape mismatch
  *  11  a declared expected/actual field-shape mismatch
+ *  12  a terminal Error with embedded NUL in both language-text fields
  *
  * The table of every installing case carries the complete closed arm
  * repertoire — one record per DEAL-visible arm, in canonical arm order, with
@@ -34,6 +35,8 @@
 #include "deal/native/entry.h"
 #include "deal/native/error.h"
 #include "deal/native/platform.h"
+#include "deal/native/text.h"
+#include "deal/native/memory.h"
 
 #ifndef DEAL_STUB_CASE
 #define DEAL_STUB_CASE 0
@@ -115,8 +118,7 @@ static const char *const arm_parameters_21[] =
 static const char *const arm_parameters_22[] = {"field", "classId"};
 static const char *const arm_parameters_23[] =
     {"oneBasedByteOffset", "reason"};
-static const char *const arm_parameters_24[] = {"fieldPath", "actual"};
-static const char *const arm_parameters_25[] = {"actual"};
+static const char *const arm_parameters_24[] = {"actual"};
 
 #define DEAL_STUB_ARM_RECORDS(ARM0_ID, ARM0_PARAMETERS, ARM0_EXPECTED, \
                               ARM0_ACTUAL) \
@@ -168,11 +170,9 @@ static const char *const arm_parameters_25[] = {"actual"};
      DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U}, \
     {23U, "E8001", "JSON parse error at position {oneBasedByteOffset}: {reason}", arm_parameters_23, 2U, \
      DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U}, \
-    {24U, "E8001", "value at {fieldPath} is not JSON serializable: {actual}", arm_parameters_24, 2U, \
-     DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 1U}, \
-    {25U, "E8001", "unsupported type for JSON encoding: {actual}", arm_parameters_25, 1U, \
+    {24U, "E8001", "unsupported type for JSON encoding: {actual}", arm_parameters_24, 1U, \
      DEAL_ARM_SCOPE_TOP_LEVEL, 1U, 1U}, \
-    {26U, "E8001", "cyclic value cannot be encoded as JSON", NULL, 0U, \
+    {25U, "E8001", "cyclic value cannot be encoded as JSON", NULL, 0U, \
      DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U}, \
 
 
@@ -219,7 +219,7 @@ const deal_arm_table deal_project_arm_table = {DEAL_ARM_TABLE_VERSION,
     "bad \"quoted\" text\\ with\ttab \001unit and \303\251 scalar"
 #endif
 
-#if DEAL_STUB_CASE == 6 || DEAL_STUB_CASE == 7
+#if DEAL_STUB_CASE == 6 || DEAL_STUB_CASE == 7 || DEAL_STUB_CASE == 12
 static const deal_origin fixture_origin = {
     "native/terminal-fixture.deal", 7, 3
 };
@@ -247,6 +247,22 @@ static deal_error *deal_stub_raise(void) {
     deal_root_scope_pop();
     return error;
 }
+#elif DEAL_STUB_CASE == 12
+static deal_error *deal_stub_raise(void) {
+    deal_root_scope_push();
+    deal_string *code = deal_text_new("A\0B", 3u);
+    (void)deal_root_scope_hold(code);
+    deal_string *message = deal_text_new("C\0D\xed\xa0\x80", 6u);
+    (void)deal_root_scope_hold(message);
+    deal_error *error = deal_error_create_strings(code, message, &fixture_origin);
+    (void)deal_root_scope_hold(error);
+    deal_string *cause_code = deal_text_new("E\0\xed\xbf\xbf", 5u);
+    (void)deal_root_scope_hold(cause_code);
+    deal_error *cause = deal_error_create_strings(cause_code, message, NULL);
+    deal_error_set_cause(error, cause);
+    deal_root_scope_pop();
+    return error;
+}
 #endif
 
 /* =========================================================================
@@ -268,7 +284,7 @@ deal_outcome deal_project_start(void) {
 deal_outcome deal_project_run_main(void) {
     deal_outcome outcome;
     outcome.error = NULL;
-#if DEAL_STUB_CASE == 7
+#if DEAL_STUB_CASE == 7 || DEAL_STUB_CASE == 12
     deal_call_frame_push("native/main.deal#entry@F0");
     deal_call_frame_push("native/main.deal#run@F1");
     deal_call_frame_push("native/main.deal#deep@F2");

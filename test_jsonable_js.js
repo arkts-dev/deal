@@ -1,704 +1,360 @@
 "use strict";
 
-// Test suite for the DEAL JavaScript @jsonable runtime walkers
-// ($rt.jsonFromJson/$rt.jsonToJson over the pinned field-descriptor
-// shape, js-v12-jsonable-completion D2-D5). Run from the repo root:
-//
-//   node test_jsonable_js.js
-//
-// Dependency-free and self-asserting: no assertion library; a failed
-// assertion throws with the failing case named, and the final throw makes
-// the process exit non-zero, so run_tests.sh's node-guarded block fails
-// the gate via set -e. The script writes no files.
-//
-// The suite drives deal/runtime.js directly under the real node binary —
-// the walkers' contract, phase order, and failure needles, independent of
-// the emitter (the emitter lane lands separately). Hostile JSON inputs
-// (lone surrogates) are built at runtime with escapes — no raw hostile
-// byte is committed literally to this file (the test_stdlib.lua
-// convention).
-
+// Direct contextual JSON reconstruction and encoding regressions. Run from the
+// repository root with node test_jsonable_js.js. No compiler-generated helper
+// wrappers or source-callable JSON function values participate in this drive.
 const rt = require("./deal/runtime");
-
-// ===== Harness (mirrors test_stdlib.lua / test_stdlib_js.js) =====
-
-let passed = 0;
-let failed = 0;
-
+const LOC = ["probe.js", 1, 1];
+let passed = 0, failed = 0;
 function test(name, fn) {
-  try {
-    fn();
-    passed++;
-    console.log("PASS: " + name);
-  } catch (e) {
-    failed++;
-    console.log("FAIL: " + name + " -- " + (e && e.message ? e.message : String(e)));
-  }
+  try { fn(); passed++; console.log("PASS: " + name); }
+  catch (e) { failed++; console.log("FAIL: " + name + " -- " + e.stack); }
 }
-
-function assert(cond, msg) {
-  if (!cond) {
-    throw new Error(msg);
-  }
+function assert(value, message) { if (!value) throw new Error(message); }
+function equal(actual, expected, message) {
+  assert(Object.is(actual, expected), message + ": expected " + String(expected) + ", got " + String(actual));
 }
-
-function assertEqual(actual, expected, msg) {
-  if (actual !== expected) {
-    throw new Error(msg + " (expected " + JSON.stringify(expected) + ", got " + JSON.stringify(actual) + ")");
-  }
-}
-
-function assertNull(actual, msg) {
-  assert(actual === null, msg + " (expected null, got " + String(actual) + ")");
-}
-
-// One DEAL error raised through the runtime spine.
-function assertError(fn, code, needle, msg) {
-  let caught = null;
-  try {
-    fn();
-  } catch (e) {
-    caught = e;
-  }
-  assert(caught !== null, msg + " (no error raised)");
-  assertEqual(caught.$dealCode, code, msg + " (code)");
-  if (needle !== undefined) {
-    assert(String(caught.message).indexOf(needle) !== -1,
-      msg + " (message '" + String(caught.message) + "' lacks needle '" + needle + "')");
-  }
+function field(name, descriptor, optional = false) { return {name, descriptor, optional}; }
+function schema(identity, fields) { rt.registerClassPlan(identity, fields); return identity; }
+function decode(text, target) { return rt.jsonDecode(text, target, ...LOC); }
+function encode(value) { return rt.jsonStringifyText(value, [], ...LOC); }
+function error(fn, code, needle) {
+  let caught;
+  try { fn(); } catch (e) { caught = e; }
+  assert(caught !== undefined, "expected rejection");
+  equal(caught.$dealCode, code, "error code");
+  if (needle !== undefined) assert(caught.message.includes(needle), "error message: " + caught.message);
+  equal(caught.file, LOC[0], "error file");
+  equal(caught.line, LOC[1], "error line");
+  equal(caught.column, LOC[2], "error column");
   return caught;
 }
-
-// ===== Descriptor builders (the pinned entry shape, declaration order) =====
-
-// { name, jtype, element?, className?, fields?, optional, nullable, hasDefault }
-function f(name, jtype, optional, nullable, extra) {
-  const e = { name: name, jtype: jtype, optional: !!optional, nullable: !!nullable, hasDefault: true };
-  if (extra !== undefined) {
-    if (extra.element !== undefined) e.element = extra.element;
-    if (extra.className !== undefined) e.className = extra.className;
-    if (extra.fields !== undefined) e.fields = extra.fields;
-  }
-  return e;
+function rejects(text, target, code = "E8001", needle) {
+  const prior = decode('{"n":7}', schema("@rollback/Prior", [field("n", "number")]));
+  let destination = prior;
+  const caught = error(() => { destination = decode(text, target); }, code, needle);
+  equal(destination, prior, "failed assignment preserves destination");
+  equal(prior.n, 7, "failed assignment preserves fields");
+  return caught;
 }
+const user = () => schema("@m/User", [field("name", "string"), field("age", "number")]);
 
-function elem(jtype, nullable, extra) {
-  const e = { jtype: jtype, optional: false, nullable: !!nullable };
-  if (extra !== undefined) {
-    if (extra.element !== undefined) e.element = extra.element;
-    if (extra.className !== undefined) e.className = extra.className;
-    if (extra.fields !== undefined) e.fields = extra.fields;
+test("contextual parsing tags a fresh exact nominal instance", () => {
+  assert(!Object.hasOwn(rt, "jsonFromJson") && !Object.hasOwn(rt, "jsonToJson")
+      && !Object.hasOwn(rt, "jsonParseValue"),
+    "retired helper runtime APIs are absent");
+  const id = user(), a = decode('{"name":"Alice","age":30.0}', id);
+  const b = decode('{"name":"Alice","age":30.0}', id);
+  equal(a.$kind, "class", "class tag"); equal(a.$classname, id, "nominal identity");
+  equal(a.name, "Alice", "name"); equal(a.age, 30, "age"); assert(a !== b, "fresh instances");
+});
+test("encoding follows declaration order rather than document order", () => {
+  equal(encode(decode('{"age":30,"name":"Alice"}', user())), '{"name":"Alice","age":30}', "field order");
+});
+test("duplicate decoded keys reject while rounded decimal tokens remain binary64", () => {
+  const id = schema("@m/Number", [field("age", "number")]);
+  rejects('{"age":1,"age":2}', id, "E8001", "duplicate key");
+  rejects('{"age":null,"\\u0061ge":2}', id, "E8001", "duplicate key");
+  for (const text of ["1.0", "1e0", "2147483647.00000001"])
+    equal(decode('{"age":' + text + '}', id).age, Number(text), "rounded value");
+});
+test("omitted required fields reject without defaults", () => {
+  const e = rejects('{"name":"Bob"}', user(), "E8001", "expected number");
+  equal(e.actual, "undefined", "missing actual");
+  equal(encode(decode('{"name":"Bob","age":7}', user())), '{"name":"Bob","age":7}', "complete control");
+});
+test("extra keys reject before declared mismatches in either input order", () => {
+  const id = schema("@m/Extra", [field("name", "string")]);
+  for (const text of ['{"name":42,"extra":1}', '{"extra":1,"name":42}'])
+    rejects(text, id, "E8007", "extra field 'extra'");
+});
+test("class root rejects scalars null and arrays while unknown admits them", () => {
+  const id = schema("@m/Root", [field("name", "string")]);
+  for (const text of ["42", '"x"', "true", "null", "[1,2]", "[]", " [ ] "]) {
+    rejects(text, id);
+    equal(encode(decode(text, "unknown")), JSON.stringify(JSON.parse(text)), "unknown root");
   }
-  return e;
-}
-
-const LOC = ["probe.js", 1, 1];
-
-// =========================================================================
-// jsonFromJson / jsonToJson basics
-// =========================================================================
-
-test("jsonFromJson parses a document and tags the instance", function() {
-  const fields = [f("name", "string", false, false), f("age", "number", false, false)];
-  const thunk = () => ({ name: "", age: 0 });
-  const u = rt.jsonFromJson("@m/User", fields, '{"name":"Alice","age":30.0}', ...LOC);
-  assert(u !== null, "fromJson returned null for valid JSON");
-  assertEqual(u.$kind, "class", "instance kind tag");
-  assertEqual(u.$classname, "@m/User", "instance identity tag");
-  assertEqual(u.name, "Alice", "string field decoded");
-  assertEqual(u.age, 30, "number field decoded");
 });
-
-test("jsonToJson serializes declared fields in declaration order", function() {
-  const fields = [f("name", "string", false, false), f("age", "number", false, false)];
-  const thunk = () => ({ name: "", age: 0 });
-  const u = rt.jsonFromJson("@m/User", fields, '{"age":30.0,"name":"Alice"}', ...LOC);
-  assertEqual(rt.jsonToJson("@m/User", u, fields, ...LOC), '{"name":"Alice","age":30.0}',
-    "document key order never leaks into the output (source order)");
+test("required omission and array shape reject independently", () => {
+  const id = user(); rejects("{}", id); rejects("[]", id);
+  equal(encode(decode('{"name":"","age":0}', id)), '{"name":"","age":0}', "object control");
 });
-
-test("jsonFromJson rejects decoded-key duplicates and rounded fractional number tokens", function() {
-  const fields = [f("age", "number", false, false)];
-  const thunk = () => ({ age: 0 });
-  // A decoded-key duplicate is a parse failure: fromJson collapses it to
-  // the DEAL null (never a partial instance or a parser exception).
-  assertNull(rt.jsonFromJson("@m/U", fields, '{"age":1.0,"age":2.0}', ...LOC),
-    "duplicate key");
-  assertNull(rt.jsonFromJson("@m/U", fields, '{"age":null,"\u0061ge":2.0}', ...LOC),
-    "escaped-equivalent unknown key stays an extra key");
-  // The exact classification admits 1.0/1e0 as number and keeps a
-  // fractional token that rounds to an integral double a number.
-  const ok = rt.jsonFromJson("@m/U", fields, '{"age":1.0}', ...LOC);
-  assert(ok !== null && ok.age === 1, "1.0 denotes the number value");
-  const okExponent = rt.jsonFromJson("@m/U", fields, '{"age":1e0}', ...LOC);
-  assert(okExponent !== null && okExponent.age === 1, "1e0 denotes the number value");
-  assert(rt.jsonFromJson("@m/U", fields, '{"age":2147483647.00000001}', ...LOC).age === 2147483647,
-    "a rounded fractional token satisfies the binary64 field");
+test("nested class and class-array values require JSON objects", () => {
+  schema("@m/Child", [field("n", "number")]);
+  const id = schema("@m/Parent", [field("child", "@m/Child"), field("items", "[@m/Child]")]);
+  rejects('{"child":[],"items":[]}', id);
+  rejects('{"child":{"n":7},"items":[[]]}', id);
+  equal(decode('{"child":{"n":7},"items":[]}', id).child.n, 7, "object control");
 });
-
-test("jsonFromJson rejects omitted required fields", function() {
-  const fields = [f("name", "string", false, false), f("age", "number", false, false)];
-  const thunk = () => ({ name: "", age: 7 });
-  const u = rt.jsonFromJson("@m/User", fields, '{"name":"Bob"}', ...LOC);
-  assertNull(u, "omitted required field rejects");
-  const complete = rt.jsonFromJson("@m/User", fields, '{"name":"Bob","age":7}', ...LOC);
-  assertEqual(rt.jsonToJson("@m/User", complete, fields, ...LOC), '{"name":"Bob","age":7.0}', "complete roundtrip");
+test("malformed JSON throws rather than returning null", () => {
+  for (const text of ["{bad json", "not valid json", "", "  "])
+    rejects(text, user(), "E8001", "JSON parse error");
 });
-
-test("jsonFromJson rejects extra keys in document order (null, never throws)", function() {
-  const fields = [f("name", "string", false, false)];
-  const thunk = () => ({ name: "" });
-  assertNull(rt.jsonFromJson("@m/User", fields, '{"name":"Ada","extra":1.0}', ...LOC),
-    "trailing extra key");
-  assertNull(rt.jsonFromJson("@m/User", fields, '{"extra":1.0,"name":"Ada"}', ...LOC),
-    "leading extra key");
-});
-
-// =========================================================================
-// Top-level object gate (D3)
-// =========================================================================
-
-test("top-level gate: scalar/null/array documents return null", function() {
-  const fields = [f("name", "string", false, false)];
-  const thunk = () => ({ name: "" });
-  assertNull(rt.jsonFromJson("@m/User", fields, "42", ...LOC), "number document");
-  assertNull(rt.jsonFromJson("@m/User", fields, '"x"', ...LOC), "string document");
-  assertNull(rt.jsonFromJson("@m/User", fields, "true", ...LOC), "boolean document");
-  assertNull(rt.jsonFromJson("@m/User", fields, "null", ...LOC), "null document");
-  assertNull(rt.jsonFromJson("@m/User", fields, "[1,2]", ...LOC), "non-empty array document");
-  assertNull(rt.jsonFromJson("@m/User", fields, "[]", ...LOC), "empty array document");
-  assertNull(rt.jsonFromJson("@m/User", fields, " [ ] ", ...LOC), "spaced empty array document");
-});
-
-test("required omission and array documents reject independently", function() {
-  const fields = [f("name", "string", false, false), f("age", "number", false, false)];
-  const thunk = () => ({ name: "", age: 0 });
-  assertNull(rt.jsonFromJson("@m/User", fields, "{}", ...LOC), "required omission");
-  const fromObj = rt.jsonFromJson("@m/User", fields, '{"name":"","age":0}', ...LOC);
-  assert(fromObj !== null, "{} decode");
-  assertEqual(rt.jsonToJson("@m/User", fromObj, fields, ...LOC),
-    '{"name":"","age":0}', "object text");
-  assertNull(rt.jsonFromJson("@m/User", fields, "[]", ...LOC),
-    "the empty array document is not an object");
-});
-
-test("a nested class value accepts only a JSON object: [] returns null", function() {
-  const child = [{ name: "n", jtype: "number", optional: false, nullable: false, hasDefault: true }];
-  const fields = [
-    f("child", "class", false, false, { className: "@m/Child", fields: child }),
-    f("items", "array", false, false, { element: { jtype: "class", optional: false, nullable: false, className: "@m/Child", fields: child } }),
-  ];
-  const thunk = () => ({ child: { n: 7 }, items: [] });
-  assertNull(rt.jsonFromJson("@m/Parent", fields, '{"child":[]}', ...LOC),
-    "a nested empty-array class value is a validation failure");
-  assertNull(rt.jsonFromJson("@m/Parent", fields, '{"items":[[]]}', ...LOC),
-    "a nested empty-array class element is a validation failure");
-  assert(rt.jsonFromJson("@m/Parent", fields, '{"child":{"n":7.0},"items":[]}', ...LOC) !== null,
-    "the object forms still decode");
-});
-
-test("malformed JSON returns null and never throws", function() {
-  const fields = [f("name", "string", false, false)];
-  const thunk = () => ({ name: "" });
-  assertNull(rt.jsonFromJson("@m/User", fields, "{bad json", ...LOC), "truncated object");
-  assertNull(rt.jsonFromJson("@m/User", fields, "not valid json", ...LOC), "garbage text");
-  assertNull(rt.jsonFromJson("@m/User", fields, "", ...LOC), "empty input");
-  assertNull(rt.jsonFromJson("@m/User", fields, "  ", ...LOC), "whitespace input");
-});
-
-test("JSON class fields preserve lone UTF-16 units", function() {
-  const fields = [f("name", "string", false, false)];
-  for (const [source, expected] of [
-    ['{"name":"\\ud800"}', "\ud800"],
-    ['{"name":"\\udc00"}', "\udc00"],
-    ['{"name":"\ud800"}', "\ud800"]
-  ]) {
-    const value = rt.jsonFromJson("@m/User", fields, source, ...LOC);
-    assert(value !== null, "lone unit decoded");
-    assertEqual(value.name, expected, "exact unit preserved");
-    assertEqual(JSON.parse(rt.jsonToJson("@m/User", value, fields, ...LOC)).name,
-      expected, "lone unit JSON roundtrip");
+test("class fields preserve lone UTF-16 units and supplementary pairs", () => {
+  const id = schema("@m/Text", [field("name", "string")]);
+  for (const value of ["\ud800", "\udc00", "\ud83d\ude00"]) {
+    const a = decode(JSON.stringify({name:value}), id);
+    equal(a.name, value, "decoded units"); equal(JSON.parse(encode(a)).name, value, "encoded units");
   }
-  // A valid supplementary pair round-trips.
-  const u = rt.jsonFromJson("@m/User", fields, '{"name":"\\ud83d\\ude00"}', ...LOC);
-  assert(u !== null, "valid pair decoded");
-  assertEqual(u.name, "\uD83D\uDE00", "supplementary pair preserved");
-  assertEqual(rt.jsonToJson("@m/User", u, fields, ...LOC), '{"name":"\uD83D\uDE00"}', "pair roundtrip");
+  equal(decode('{"name":"\ud800"}', id).name, "\ud800", "literal lone unit");
 });
-
-// =========================================================================
-// Explicit null, optional three-state, MISSING omission (D2/D5)
-// =========================================================================
-
-test("explicit null: nullable passes as present-null, non-nullable fails end-to-end", function() {
-  const fields = [f("name", "string", false, false), f("bio", "string", false, true)];
-  const thunk = () => ({ name: "", bio: null });
-  const u = rt.jsonFromJson("@m/User", fields, '{"name":"A","bio":null}', ...LOC);
-  assert(u !== null && u.bio === null, "nullable present-null");
-  assertEqual(rt.jsonToJson("@m/User", u, fields, ...LOC), '{"name":"A","bio":null}', "present-null text");
-
-  const nonNullable = [f("name", "string", false, false), f("nick", "string", true, false)];
-  const thunk2 = () => ({ name: "", nick: rt.MISSING });
-  assertNull(rt.jsonFromJson("@m/User", nonNullable, '{"nick":null}', ...LOC),
-    "explicit null on a non-nullable optional");
+test("explicit null needs a nullable descriptor even for optional fields", () => {
+  const id = schema("@m/Null", [field("name", "string"), field("bio", "?string")]);
+  equal(encode(decode('{"name":"A","bio":null}', id)), '{"name":"A","bio":null}', "present null");
+  rejects('{"name":"A","nick":null}', schema("@m/NonNull", [field("name", "string"), field("nick", "string", true)]));
 });
-
-test("optional three-state roundtrip: missing omitted, null present, value present", function() {
-  const fields = [f("name", "string", false, false), f("nick", "string", true, true)];
-  const thunk = () => ({ name: "", nick: rt.MISSING });
-
-  const missing = rt.jsonFromJson("@m/User", fields, '{"name":"A"}', ...LOC);
-  assert(missing !== null && missing.nick === rt.MISSING, "missing state decodes to MISSING");
-  assertEqual(rt.jsonToJson("@m/User", missing, fields, ...LOC), '{"name":"A"}', "missing state omitted by toJson");
-
-  const nullState = rt.jsonFromJson("@m/User", fields, '{"name":"B","nick":null}', ...LOC);
-  assert(nullState !== null && nullState.nick === null, "present-null state");
-  assertEqual(rt.jsonToJson("@m/User", nullState, fields, ...LOC), '{"name":"B","nick":null}', "null state text");
-
-  const valueState = rt.jsonFromJson("@m/User", fields, '{"name":"C","nick":"cee"}', ...LOC);
-  assertEqual(rt.jsonToJson("@m/User", valueState, fields, ...LOC), '{"name":"C","nick":"cee"}', "value state text");
-});
-
-test("provided-value validation never reads legacy field hooks", function() {
-  const fields = [f("a", "number", false, false), f("b", "number", false, false)];
-  let runs = 0;
-  for (const field of fields) Object.defineProperty(field, "evaluator", {
-    get() { runs++; throw new Error("retired evaluator read"); }
-  });
-  const bad = rt.jsonFromJson("@m/C", fields, '{"b":"not-an-number"}', ...LOC);
-  assertNull(bad, "number kind failure");
-  assertEqual(runs, 0, "defaults thunk never ran");
-
-  // Successful decode must not read the poisoned metadata either.
-  const good = rt.jsonFromJson("@m/C", fields, '{"a":1,"b":20.0}', ...LOC);
-  assert(good !== null && good.a === 1 && good.b === 20, "successful decode");
-  assertEqual(runs, 0, "no legacy hook runs even for a complete document");
-});
-
-test("required omission preserves a previously decoded instance", function() {
-  const fields = [f("a", "number", false, false)];
-  const prior = rt.jsonFromJson("@m/C", fields, '{"a":7}', ...LOC);
-  assertNull(rt.jsonFromJson("@m/C", fields, "{}", ...LOC), "missing required field");
-  assert(prior !== null && prior.a === 7, "earlier publication is unchanged");
-});
-
-// =========================================================================
-// Int range, final validation through the canonical matcher rows (D2 step 7)
-// =========================================================================
-
-test("number decode admits finite binary64 values", function() {
-  const fields = [f("age", "number", false, false)];
-  const thunk = () => ({ age: 0 });
-  for (const value of [9007199254740992, 1e300, 3.5]) {
-    assert(rt.jsonFromJson("@m/User", fields, JSON.stringify({age: value}), ...LOC).age === value,
-      "finite binary64 admission");
+test("optional missing null and value remain three distinct states", () => {
+  const id = schema("@m/Optional", [field("name", "string"), field("nick", "?string", true)]);
+  for (const text of ['{"name":"A"}', '{"name":"B","nick":null}', '{"name":"C","nick":"cee"}']) {
+    const a = decode(text, id); equal(encode(a), text, "optional roundtrip");
+    equal(Object.hasOwn(a, "nick"), Object.hasOwn(JSON.parse(text), "nick"), "presence");
   }
-  const u = rt.jsonFromJson("@m/User", fields, '{"age":-0}', ...LOC);
-  assert(u !== null && u.age === 0, "-0 normalizes to 0");
 });
-
-test("final validation routes through checkType (class identity byte-compare)", function() {
-  const childFields = [f("value", "number", false, false)];
-  const fields = [f("name", "string", false, false),
-    f("home", "class", false, false, { className: "@m/Address", fields: childFields })];
-  const childPlan = [{name:"value", descriptor:"number", optional:false}];
-  const plan = [{name:"name", descriptor:"string", optional:false},
-    {name:"home", descriptor:"@m/Address", optional:false}];
-  const wrong = rt.classPlan("@m/Other", childPlan, {value:0}, ...LOC);
-  assertError(() => rt.classPlan("@m/User", plan, {name:"D",home:wrong}, ...LOC),
-    "E8001", "expected instance of @m/Address", "foreign supplied identity rejects");
-  const right = rt.classPlan("@m/Address", childPlan, {value:0}, ...LOC);
-  assertEqual(rt.classPlan("@m/User", plan, {name:"D",home:right}, ...LOC).home,
-    right, "supplied child preserves identity");
-  const u = rt.jsonFromJson("@m/User", fields, '{"name":"D","home":{"value":0}}', ...LOC);
-  assert(u !== null && u.home.$classname === "@m/Address", "decoded child has declared identity");
-  assertNull(rt.jsonFromJson("@m/User", [f("name", "string", false, false)], '{"name":42}', ...LOC),
-    "provided primitive type failure");
+test("schema evaluators are never read on success or rejection", () => {
+  let runs = 0; const fields = [field("a", "number"), field("b", "number")];
+  for (const f of fields) Object.defineProperty(f, "evaluator", {get() { runs++; throw new Error("hook read"); }});
+  const id = schema("@m/Hooks", fields);
+  rejects('{"b":"bad"}', id); equal(decode('{"a":1,"b":20}', id).b, 20, "valid control");
+  equal(runs, 0, "hook reads");
 });
-
-// =========================================================================
-// Nested classes and arrays (D2 step 5)
-// =========================================================================
-
-test("nested class fields decode with the full phase order", function() {
-  const childFields = [f("value", "number", false, false)];
-  const fields = [f("name", "string", false, false),
-    f("home", "class", false, false, { className: "@m/Address", fields: childFields })];
-  const thunk = () => ({ name: "",
-    home: rt.classPlan("@m/Address", [{name:"value", descriptor:"number", optional:false}], {value:0}, ...LOC) });
-  const u = rt.jsonFromJson("@m/User", fields, '{"name":"Dave","home":{"value":7.0}}', ...LOC);
-  assert(u !== null && u.home.$kind === "class" && u.home.$classname === "@m/Address"
-    && u.home.value === 7, "nested instance decoded and tagged");
-  assertEqual(rt.jsonToJson("@m/User", u, fields, ...LOC), '{"name":"Dave","home":{"value":7.0}}',
-    "nested roundtrip");
+test("required omission leaves previously decoded instances untouched", () => {
+  const id = schema("@m/Prior", [field("a", "number")]), prior = decode('{"a":7}', id);
+  let destination = prior; error(() => { destination = decode("{}", id); }, "E8001");
+  equal(destination, prior, "destination identity"); equal(prior.a, 7, "prior field");
 });
-
-test("nested class extra keys and malformed elements are rejected", function() {
-  const childFields = [f("value", "number", false, false)];
-  const fields = [f("children", "array", false, false,
-    { element: elem("class", false, { className: "@m/Child", fields: childFields }) })];
-  const thunk = () => ({ children: [] });
-  assertNull(rt.jsonFromJson("@m/P", fields, '{"children":[{"value":1.0,"extra":2.0}]}', ...LOC),
-    "nested extra key");
-  assertNull(rt.jsonFromJson("@m/P", fields, '{"children":[1.0]}', ...LOC),
-    "malformed nested element");
-  assertNull(rt.jsonFromJson("@m/P", fields, '{"children":{}}', ...LOC),
-    "object where an array is declared");
-  const ok = rt.jsonFromJson("@m/P", fields, '{"children":[{"value":3.0},{"value":4.0}]}', ...LOC);
-  assert(ok !== null && ok.children.length === 2
-    && ok.children[0].$classname === "@m/Child" && ok.children[1].value === 4,
-    "array of nested classes decodes");
-  assertEqual(rt.jsonToJson("@m/P", ok, fields, ...LOC),
-    '{"children":[{"value":3.0},{"value":4.0}]}', "array of nested classes roundtrip");
+test("number reconstruction admits wide binary64 and preserves negative zero", () => {
+  const id = schema("@m/Wide", [field("age", "number")]);
+  for (const value of [9007199254740992, 1e300, 3.5]) equal(decode(JSON.stringify({age:value}), id).age, value, "wide number");
+  equal(decode('{"age":-0}', id).age, -0, "negative zero");
 });
-
-test("nested class decode without defaults: absent optionals become MISSING", function() {
-  const childFields = [f("value", "number", false, false), f("nick", "string", true, false)];
-  const fields = [f("home", "class", false, false, { className: "@m/Address", fields: childFields })];
-  const thunk = () => ({ home: {} });
-  const u = rt.jsonFromJson("@m/User", fields, '{"home":{"value":5.0}}', ...LOC);
-  assert(u !== null && u.home.value === 5 && u.home.nick === rt.MISSING,
-    "nested absent optional materializes as MISSING (no nested defaults surface)");
-  assertEqual(rt.jsonToJson("@m/User", u, fields, ...LOC), '{"home":{"value":5.0}}',
-    "nested MISSING omitted");
+test("ordinary identity checks reject siblings but parsing creates the exact child", () => {
+  const child = [field("value", "number")]; schema("@m/Address", child);
+  const fields = [field("name", "string"), field("home", "@m/Address")];
+  const id = schema("@m/Identity", fields), wrong = rt.classPlan("@m/Other", child, {value:0}, ...LOC);
+  error(() => rt.classPlan(id, fields, {name:"D",home:wrong}, ...LOC), "E8001", "expected instance of @m/Address");
+  const right = rt.classPlan("@m/Address", child, {value:0}, ...LOC);
+  equal(rt.classPlan(id, fields, {name:"D",home:right}, ...LOC).home, right, "ordinary supplied identity");
+  equal(decode('{"name":"D","home":{"value":0}}', id).home.$classname, "@m/Address", "decoded identity");
+  rejects('{"name":42}', schema("@m/Primitive", [field("name", "string")]));
 });
-
-test("nullable nested class accepts null and values", function() {
-  const childFields = [f("value", "number", false, false)];
-  const fields = [f("child", "class", true, true, { className: "@m/Child", fields: childFields })];
-  const thunk = () => ({ child: rt.MISSING });
-  const explicitNull = rt.jsonFromJson("@m/Maybe", fields, '{"child":null}', ...LOC);
-  assert(explicitNull !== null && explicitNull.child === null, "explicit null nested");
-  const value = rt.jsonFromJson("@m/Maybe", fields, '{"child":{"value":8.0}}', ...LOC);
-  assert(value !== null && value.child.value === 8, "nested value");
+test("nested class reconstruction tags fields and encodes in declaration order", () => {
+  schema("@m/Address", [field("value", "number")]);
+  const id = schema("@m/Nested", [field("name", "string"), field("home", "@m/Address")]);
+  const a = decode('{"home":{"value":7},"name":"Dave"}', id);
+  equal(a.home.$classname, "@m/Address", "child identity");
+  equal(encode(a), '{"name":"Dave","home":{"value":7}}', "nested encoding");
 });
-
-// =========================================================================
-// Table fields: D9 Map shape, JSON-shaped end to end (D4)
-// =========================================================================
-
-test("a failed nested decode fails the enclosing decode, never a present null", function() {
-  const childFields = [f("value", "number", false, false)];
-  const fields = [f("child", "class", true, true,
-    { className: "@m/Child", fields: childFields })];
-  const thunk = () => ({ child: rt.MISSING });
-  // Every nested gate/validation failure collapses to the language null of
-  // the whole call: a nullable class field never absorbs a failed nested
-  // decode as a present null, and no partial instance publishes (only a
-  // JSON null token reaches the nullable null arm).
-  assertNull(rt.jsonFromJson("@m/Maybe", fields,
-    '{"child":{"value":1.0,"extra":2.0}}', ...LOC),
-    "nested extra key through a nullable class field");
-  assertNull(rt.jsonFromJson("@m/Maybe", fields,
-    '{"child":{"value":"no"}}', ...LOC),
-    "nested provided-kind failure through a nullable class field");
-  const arrayFields = [f("children", "array", false, false,
-    { element: elem("class", true, { className: "@m/Child", fields: childFields }) })];
-  const arrayThunk = () => ({ children: [] });
-  assertNull(rt.jsonFromJson("@m/Maybe", arrayFields,
-    '{"children":[{"value":1.0,"extra":2.0}]}', ...LOC),
-    "nested failure through a nullable class-array element");
-  // A genuine JSON null token in the same positions still decodes as a
-  // present null: the three presence states stay distinct.
-  const nil = rt.jsonFromJson("@m/Maybe", fields, '{"child":null}', ...LOC);
-  assert(nil !== null && nil.child === null, "explicit null nested still decodes");
-  const nilElement = rt.jsonFromJson("@m/Maybe", arrayFields,
-    '{"children":[null]}', ...LOC);
-  assert(nilElement !== null && nilElement.children[0] === null,
-    "explicit null element still decodes");
-  // Completed effects remain and nothing retries: the omitted-required
-  // evaluators that already ran keep their effects when a later final
-  // validation fails, and the call still returns the language null with no
-  // partial instance published.
-  let runs = 0;
-  const effectFields = [f("a", "number", false, false),
-    f("b", "string", false, false)];
-  effectFields[0].evaluator = function () { runs++; return 1; };
-  effectFields[1].evaluator = function () { runs++; return 42; };
-  assertNull(rt.jsonFromJson("@m/Maybe", effectFields, "{}", ...LOC),
-    "a final-validation failure after the defaults decodes to null");
-  assertEqual(runs, 0, "nested decode never invokes initializer hooks");
+test("nested class arrays reject extra keys malformed elements and object shape", () => {
+  schema("@m/Child", [field("value", "number")]);
+  const id = schema("@m/Children", [field("children", "[@m/Child]")]);
+  rejects('{"children":[{"value":1,"extra":2}]}', id, "E8007");
+  rejects('{"children":[1]}', id); rejects('{"children":{}}', id);
+  const a = decode('{"children":[{"value":3},{"value":4}]}', id);
+  equal(a.children.length, 2, "array length"); equal(a.children[0].$classname, "@m/Child", "element identity");
+  equal(encode(a), '{"children":[{"value":3},{"value":4}]}', "array encoding");
 });
-
-test("table fields decode to the D9 Map shape and roundtrip nested arrays", function() {
-  const fields = [f("data", "table", false, false)];
-  const thunk = () => ({ data: rt.makeTable({}) });
-  const text = '{"data":{"count":3.0,"values":[[1.0,2.0],[3.0,4.0]]}}';
-  const u = rt.jsonFromJson("@m/W", fields, text, ...LOC);
-  assert(u !== null, "table field decoded");
-  const data = u.data;
-  assert(data instanceof Map, "top-level table field is a Map");
-  assertEqual(data.get("count"), 3, "scalar table entry");
-  const values = data.get("values");
-  assert(values instanceof Map && rt.isJsonArrayTable(values), "nested array is an array-marked Map");
-  assert(values.get("1") instanceof Map && rt.isJsonArrayTable(values.get("1"))
-    && values.get("1").get("2") === 2, "nested arrays convert as the array-marked Maps");
-  assertEqual(rt.jsonToJson("@m/W", u, fields, ...LOC), text,
-    "table field nested arrays roundtrip without E8001");
+test("absent nested optionals stay absent without defaults", () => {
+  schema("@m/Address", [field("value", "number"), field("nick", "string", true)]);
+  const a = decode('{"home":{"value":5}}', schema("@m/Absent", [field("home", "@m/Address")]));
+  assert(!Object.hasOwn(a.home, "nick"), "optional absent");
+  equal(encode(a), '{"home":{"value":5}}', "absence encoding");
 });
-
-test("table fields accept only a JSON object", function() {
-  const fields = [f("data", "table", false, false)];
-  const thunk = () => ({ data: rt.makeTable({}) });
-  assertNull(rt.jsonFromJson("@m/W", fields, '{"data":[1.0,2.0]}', ...LOC), "array for a table field");
-  assertNull(rt.jsonFromJson("@m/W", fields, '{"data":[]}', ...LOC), "empty array for a table field");
-  assertNull(rt.jsonFromJson("@m/W", fields, '{"data":5.0}', ...LOC), "scalar for a table field");
-  assert(rt.jsonFromJson("@m/W", fields, '{"data":{}}', ...LOC) !== null,
-    "empty object for a table field");
+test("nullable nested classes admit both null and reconstructed values", () => {
+  schema("@m/Child", [field("value", "number")]);
+  const id = schema("@m/Maybe", [field("child", "?@m/Child", true)]);
+  equal(decode('{"child":null}', id).child, null, "explicit null");
+  equal(decode('{"child":{"value":8}}', id).child.value, 8, "child value");
 });
-
-test("class instances inside Record fields encode public fields", function() {
-  const fields = [f("data", "table", false, false)];
-  const thunk = () => ({ data: rt.makeTable({}) });
-  const inner = rt.classPlan("@m/User", [{name:"name",descriptor:"string",optional:false}, {name:"nick",descriptor:"?string",optional:true}],
-    { name: "Ada" }, ...LOC);
-  const u = rt.jsonFromJson("@m/W", fields, '{"data":{"u":{}}}', ...LOC);
-  assert(u !== null, "decode with a table field");
-  u.data.set("u", inner);
-  assertEqual(rt.jsonToJson("@m/W", u, fields, ...LOC), '{"data":{"u":{"name":"Ada"}}}', "nested public class fields");
-  assertEqual(u.data.get("u"), inner, "nested class identity unchanged");
+test("nullable descendants never absorb failed reconstruction or run hooks", () => {
+  schema("@m/Child", [field("value", "number")]);
+  const id = schema("@m/Maybe", [field("child", "?@m/Child", true)]);
+  rejects('{"child":{"value":1,"extra":2}}', id, "E8007"); rejects('{"child":{"value":"no"}}', id);
+  const arrayId = schema("@m/MaybeArray", [field("children", "[?@m/Child]")]);
+  rejects('{"children":[{"value":1,"extra":2}]}', arrayId, "E8007");
+  equal(decode('{"child":null}', id).child, null, "real null child");
+  equal(decode('{"children":[null]}', arrayId).children[0], null, "real null element");
+  let runs = 0; const fields = [field("a", "number"), field("b", "string")];
+  for (const f of fields) f.evaluator = () => { runs++; return 42; };
+  rejects("{}", schema("@m/NoEffects", fields)); equal(runs, 0, "no hook effects");
 });
-
-// =========================================================================
-// toJson failures (D5): identity, nulls, cycles, NaN/Infinity, functions
-// =========================================================================
-
-test("jsonToJson identity check rejects wrong-identity and non-instances", function() {
-  const fields = [f("name", "string", false, false)];
-  const u = rt.classPlan("@m/User", [{name:"name",descriptor:"string",optional:false}], {name:""}, ...LOC);
-  assertError(() => rt.jsonToJson("@m/Other", u, fields, ...LOC), "E8001",
-    "expected instance of @m/Other, got @m/User", "wrong identity");
-  assertError(() => rt.jsonToJson("@m/User", { name: "x" }, fields, ...LOC), "E8001",
-    "expected class instance", "untagged plain object");
-  assertError(() => rt.jsonToJson("@m/User", 42, fields, ...LOC), "E8001",
-    "expected class instance", "primitive");
+test("Record fields reconstruct Maps with native nested arrays", () => {
+  const id = schema("@m/Record", [field("data", "record")]);
+  const a = decode('{"data":{"count":3,"values":[[1,2],[3,4]]}}', id), data = a.data;
+  assert(data instanceof Map, "Record Map"); equal(data.get("count"), 3, "scalar entry");
+  const values = data.get("values"); assert(Array.isArray(values) && Array.isArray(values[0]), "native nested arrays");
+  equal(values[0][1], 2, "nested element");
+  equal(encode(a), '{"data":{"count":3,"values":[[1,2],[3,4]]}}', "Record encoding");
 });
-
-test("jsonToJson: explicit null on a non-nullable field raises E8001", function() {
-  const fields = [f("name", "string", false, false)];
-  const u = rt.classPlan("@m/User", [{name:"name",descriptor:"string",optional:false}], {name:""}, ...LOC);
-  rt.setProp(u, "name", null);
-  assertError(() => rt.jsonToJson("@m/User", u, fields, ...LOC), "E8001",
-    "value at name is not JSON serializable: null", "non-nullable null");
+test("Record fields reject arrays and scalars but admit empty objects", () => {
+  const id = schema("@m/Record", [field("data", "record")]);
+  for (const text of ['{"data":[1,2]}', '{"data":[]}', '{"data":5}']) rejects(text, id);
+  equal(encode(decode('{"data":{}}', id)), '{"data":{}}', "empty Record");
 });
-
-test("jsonToJson: a missing required field raises E8001", function() {
-  const fields = [f("name", "string", false, false)];
-  const u = rt.setProp(rt.setProp({}, "$kind", "class"), "$classname", "@m/User");
-  assertError(() => rt.jsonToJson("@m/User", u, fields, ...LOC), "E8001",
-    "value at name is not JSON serializable: nil", "missing required field");
+test("class instances nested in Records encode public fields without identity changes", () => {
+  const id = schema("@m/Record", [field("data", "record")]);
+  const inner = rt.classPlan("@m/Public", [field("name", "string"), field("nick", "?string", true)], {name:"Ada"}, ...LOC);
+  const a = decode('{"data":{"u":{}}}', id); a.data.set("u", inner);
+  equal(encode(a), '{"data":{"u":{"name":"Ada"}}}', "public fields"); equal(a.data.get("u"), inner, "nested identity");
 });
-
-test("jsonToJson raises E8001 for cyclic class graphs", function() {
-  const childFields = [f("parent", "class", false, true, { className: "@m/Node", fields: null })];
-  const selfFields = [f("next", "class", false, true, { className: "@m/Node", fields: childFields })];
-  const n = rt.classPlan("@m/Node", [{name:"next",descriptor:"?@m/Node",optional:false}], {next:null}, ...LOC);
-  rt.setProp(n, "next", n);
-  assertError(() => rt.jsonToJson("@m/Node", n, selfFields, ...LOC), "E8001",
-    "cyclic value cannot be encoded as JSON", "class self-cycle");
+test("ordinary nominal admission remains separate from generic encoding", () => {
+  const a = rt.classPlan("@m/User", [field("name", "string")], {name:"x"}, ...LOC);
+  error(() => rt.checkType("@m/Other", a, ...LOC), "E8001", "expected instance of @m/Other");
+  error(() => rt.checkType("@m/User", {name:"x"}, ...LOC), "E8001");
+  error(() => rt.checkType("@m/User", 42, ...LOC), "E8001");
+  equal(encode(a), '{"name":"x"}', "generic nominal encoding");
 });
-
-test("jsonToJson raises E8001 for cyclic Record fields", function() {
-  const fields = [f("data", "table", false, false)];
-  const u = rt.classPlan("@m/W", [{name:"data",descriptor:"record",optional:false}], {data:rt.makeTable({})}, ...LOC);
-  const data = u.data;
-  data.set("self", data);
-  assertError(() => rt.jsonToJson("@m/W", u, fields, ...LOC), "E8001",
-    "cyclic value cannot be encoded as JSON", "table self-cycle");
+test("checked class writes reject nonnullable null before mutation", () => {
+  const a = rt.classPlan("@m/Checked", [field("name", "string")], {name:"kept"}, ...LOC);
+  const alias = a;
+  const store = value => {
+    const admitted = rt.checkType("string", value, ...LOC);
+    rt.setProp(a, "name", admitted);
+  };
+  error(() => store(null), "E8001", "expected string");
+  equal(alias.name, "kept", "rejected checked write preserves the aliased field");
+  store("repaired");
+  equal(alias.name, "repaired", "valid retry reaches the same field storage");
+  rejects('{"name":null}', schema("@m/Checked", [field("name", "string")]));
 });
-
-test("jsonToJson substitutes null for nonfinite number fields without mutation", function() {
-  const fields = [f("x", "number", false, false)];
-  const u = rt.classPlan("@m/N", [{name:"x",descriptor:"number",optional:false}], {x:0}, ...LOC);
-  rt.setProp(u, "x", NaN);
-  assertEqual(rt.jsonToJson("@m/N", u, fields, ...LOC), '{"x":null}', "NaN field substitutes null");
-  assert(Number.isNaN(u.x), "NaN storage unchanged");
-  rt.setProp(u, "x", Infinity);
-  assertEqual(rt.jsonToJson("@m/N", u, fields, ...LOC), '{"x":null}', "Infinity field substitutes null");
-  assertEqual(u.x, Infinity, "Infinity storage unchanged");
-  rt.setProp(u, "x", -Infinity);
-  assertEqual(rt.jsonToJson("@m/N", u, fields, ...LOC), '{"x":null}', "negative Infinity field substitutes null");
-  assertEqual(u.x, -Infinity, "negative Infinity storage unchanged");
+test("required missing fields reject in both construction and reconstruction", () => {
+  const fields = [field("name", "string")], id = schema("@m/Required", fields);
+  error(() => rt.classPlan(id, fields, {}, ...LOC), "E8001", "missing required field 'name'");
+  rejects("{}", id, "E8001", "expected string");
 });
-
-test("jsonToJson omits function values inside Record fields without mutation", function() {
-  const fields = [f("data", "table", false, false)];
-  const u = rt.classPlan("@m/W", [{name:"data",descriptor:"record",optional:false}], {data:rt.makeTable({})}, ...LOC);
-  const fn = rt.function("()->null", function() { return null; });
-  u.data.set("f", fn);
-  assertEqual(rt.jsonToJson("@m/W", u, fields, ...LOC), '{"data":{}}', "function omitted");
-  assertEqual(u.data.get("f"), fn, "function identity unchanged");
+test("stringify revalidates mutated declared fields on the same graph", () => {
+  const leafFields = [field("value", "number")];
+  const leaf = rt.classPlan("@serialization/Leaf", leafFields, {value:7}, ...LOC);
+  const fields = [field("name", "string"), field("child", "@serialization/Leaf"),
+    field("items", "[number]"), field("note", "!string", true), field("required", "!string")];
+  const value = rt.classPlan("@serialization/Owner", fields,
+    {name:"kept", child:leaf, items:[1,2], required:undefined}, ...LOC);
+  const items = value.items;
+  const expected = '{"name":"kept","child":{"value":7},"items":[1,2]}';
+  equal(encode(value), expected, "valid serialization");
+  rt.setProp(value, "name", 42);
+  error(() => encode(value), "E8001");
+  equal(value.child, leaf, "failed serialization preserves descendant identity");
+  rt.setProp(value, "name", "kept");
+  rt.setProp(value, "note", false);
+  error(() => encode(value), "E8001");
+  rt.setProp(value, "note", undefined);
+  equal(encode(value), expected, "present admitted undefined omits");
+  rt.setProp(value, "required", rt.MISSING);
+  error(() => encode(value), "E8001");
+  rt.setProp(value, "required", undefined);
+  rt.setProp(leaf, "value", "bad");
+  error(() => encode(value), "E8001");
+  rt.setProp(leaf, "value", 7);
+  const sibling = rt.classPlan("@serialization/Sibling", leafFields, {value:7}, ...LOC);
+  rt.setProp(value, "child", sibling);
+  error(() => encode(value), "E8001");
+  rt.setProp(value, "child", leaf);
+  items[1] = "bad";
+  error(() => encode(value), "E8003");
+  items[1] = 2;
+  equal(value.items, items, "array identity survives rejection and repair");
+  equal(encode(value), expected, "same-graph retry succeeds");
 });
-
-test("jsonToJson omits missing Record members without mutating storage", function() {
-  const fields = [f("data", "table", false, false)];
-  const u = rt.classPlan("@m/W", [{name:"data",descriptor:"record",optional:false}], {data:rt.makeTable({})}, ...LOC);
-  u.data.set("bad", rt.MISSING);
-  assertEqual(rt.jsonToJson("@m/W", u, fields, ...LOC), '{"data":{}}', "missing member omitted");
-  assertEqual(u.data.get("bad"), rt.MISSING, "missing carrier unchanged");
+test("stringify preserves reached-field failure order and nested element causes", () => {
+  const fields = [field("first", "unknown"), field("later", "string"), field("grid", "[[number]]")];
+  const value = rt.classPlan("@serialization/Order", fields, {first:null,later:"valid",grid:[[1]]}, ...LOC);
+  value.first = value;
+  value.later = 42;
+  error(() => encode(value), "E8001", "cyclic value cannot be encoded as JSON");
+  value.first = null;
+  error(() => encode(value), "E8001", "expected string");
+  value.later = "valid";
+  value.grid[0][0] = false;
+  const failure = error(() => encode(value), "E8003");
+  equal(failure.expected, "[number]", "outer element descriptor");
+  equal(failure.cause.code, "E8001", "unwrapped leaf cause");
+  equal(failure.cause.message, "expected number", "leaf descriptor failure");
+  value.grid[0][0] = 1;
+  const child = rt.makeTable({x:1}); value.first = rt.makeTable({a:child,b:child});
+  equal(encode(value), '{"first":{"a":{"x":1},"b":{"x":1}},"later":"valid","grid":[[1]]}', "shared children serialize independently");
 });
-
-test("jsonToJson number fields enforce the boundary (E8004 range)", function() {
-  const fields = [f("age", "number", false, false)];
-  const u = rt.classPlan("@m/User", [{name:"age",descriptor:"number",optional:false}], {age:0}, ...LOC);
-  rt.setProp(u, "age", 9007199254740992);
-  assert(rt.jsonToJson("@m/User", u, fields, ...LOC).includes("9.007199254740992E15"),
-    "large finite number encodes");
+test("encoding rejects cyclic class graphs", () => {
+  const a = rt.classPlan("@m/Node", [field("next", "?@m/Node")], {next:null}, ...LOC);
+  rt.setProp(a, "next", a); error(() => encode(a), "E8001", "cyclic value cannot be encoded as JSON");
 });
-
-// =========================================================================
-// Shared D9 conversion members (js-backend-runtime D9 reuse)
-// =========================================================================
-
-test("jsonParseText/jsonParseValue/jsonStringifyText roundtrip the marked Map shapes", function() {
-  const arr = rt.jsonParseValue([1, 2], ...LOC);
-  assert(arr instanceof Map && rt.isJsonArrayTable(arr), "array-marked Map");
-  assertEqual(arr.get("2"), 2, "array element by string key");
-  const nil = rt.jsonParseValue(null, ...LOC);
-  assert(nil instanceof Map && rt.isJsonNullTable(nil), "null-marked Map");
-  assertEqual(rt.jsonStringifyText(arr, [], ...LOC), "[1,2]", "encode back to a JSON array");
-  assertEqual(rt.jsonStringifyText(nil, [], ...LOC), "null", "null-marked Map encodes as null");
-  const obj = rt.jsonParseValue({ a: [1], n: null }, ...LOC);
-  assert(obj instanceof Map && !rt.isJsonArrayTable(obj) && !rt.isJsonNullTable(obj),
-    "object Map");
-  const encoded = rt.jsonStringifyText(obj, [], ...LOC);
-  assertEqual(encoded, '{"a":[1],"n":null}', "object form with nested marks");
-  // The conforming scanner (jsonParseText) classifies exactly and
-  // records the per-slot variant marks consulted by the encode walk.
-  const parsed = rt.jsonParseText('{"i":1.0,"n":1.5}', ...LOC);
-  assertEqual(parsed.i, 1, "1.0 denotes the number value");
-  assertEqual(parsed.n, 1.5, "1.5 stays a number");
-  const parsedMap = rt.jsonParseValue(parsed, ...LOC);
-  assertEqual(rt.jsonStringifyText(parsedMap, [], ...LOC), '{"i":1.0,"n":1.5}',
-    "the number-variant marks survive the conversion");
+test("encoding rejects cyclic Record fields", () => {
+  const a = rt.classPlan("@m/Record", [field("data", "record")], {data:rt.makeTable({})}, ...LOC);
+  a.data.set("self", a.data); error(() => encode(a), "E8001", "cyclic value cannot be encoded as JSON");
 });
-
-// =========================================================================
-// $rt.classPlan: the plan-driven four-phase construction entry (ISSUE-0545)
-// =========================================================================
-
-// The pinned plan-entry shape { name, descriptor, optional, evaluator? }
-// in class source order; the evaluator closures are created at load and
-// never invoked there — classPlan invokes exactly the omitted required
-// entries once per attempt.
-function planEntry(name, descriptor, optional, evaluator) {
-  const e = { name: name, descriptor: descriptor, optional: !!optional };
-  if (evaluator !== undefined) {
-    e.evaluator = evaluator;
+test("nonfinite class fields substitute null without changing storage", () => {
+  const a = rt.classPlan("@m/N", [field("x", "number")], {x:0}, ...LOC);
+  for (const value of [NaN, Infinity, -Infinity]) {
+    rt.setProp(a, "x", value); equal(encode(a), '{"x":null}', "nonfinite substitution"); equal(a.x, value, "unchanged number");
   }
-  return e;
-}
-
-test("classPlan tags and publishes with provided values and absent optionals", function() {
-  const plan = [planEntry("name", "string", false, () => "Ada"),
-    planEntry("nick", "string", true)];
-  const u = rt.classPlan("@m/U", plan, { name: "Bob" }, ...LOC);
-  assertEqual(u.$kind, "class", "kind tag");
-  assertEqual(u.$classname, "@m/U", "identity tag");
-  assertEqual(u.name, "Bob", "provided value");
-  assertEqual(u.nick, rt.MISSING, "absent optional materializes as MISSING");
 });
-
-test("classPlan rejects required omissions and never runs legacy hooks", function() {
-  const order = [];
-  const plan = [planEntry("a", "number", false, () => { order.push("a"); return 1; }),
-    planEntry("b", "number", false, () => { order.push("b"); return 2; })];
-  assertError(() => rt.classPlan("C", plan, null, ...LOC), "E8001", "missing required field 'a'", "required omission");
-  const u = rt.classPlan("C", plan, {a:1,b:2}, ...LOC);
-  const v = rt.classPlan("C", plan, {a:1,b:2}, ...LOC);
-  assertEqual(order.join(","), "", "retired hooks never execute");
-  assertEqual(u.a + u.b + v.a + v.b, 6, "per-attempt results");
+test("function-valued Record members omit without changing identity", () => {
+  const a = rt.classPlan("@m/Record", [field("data", "record")], {data:rt.makeTable({})}, ...LOC);
+  const fn = rt.function("()->null", () => null); a.data.set("f", fn);
+  equal(encode(a), '{"data":{}}', "function omission"); equal(a.data.get("f"), fn, "function identity");
 });
-
-test("classPlan provided fields suppress their evaluators", function() {
-  let runs = 0;
-  const plan = [planEntry("a", "number", false, () => { runs++; return 1; }),
-    planEntry("b", "number", false, () => { runs++; return 2; })];
-  const u = rt.classPlan("C", plan, { a: 5, b: 6 }, ...LOC);
-  assertEqual(runs, 0, "no default ran for a provided field");
-  assertEqual(u.a + u.b, 11, "provided values stored");
+test("missing Record members omit without modifying presence", () => {
+  const a = rt.classPlan("@m/Record", [field("data", "record")], {data:rt.makeTable({})}, ...LOC);
+  a.data.set("bad", rt.MISSING); equal(encode(a), '{"data":{}}', "missing omission");
+  equal(a.data.get("bad"), rt.MISSING, "missing storage"); assert(a.data.has("bad"), "presence unchanged");
 });
-
-test("classPlan extra provided field raises E8007 with zero default evaluation", function() {
-  let runs = 0;
-  const plan = [planEntry("a", "number", false, () => { runs++; return 1; })];
-  assertError(() => rt.classPlan("C", plan, { extra: 1 }, ...LOC), "E8007",
-    "extra field 'extra' in class 'C'", "extra-key rejection");
-  assertEqual(runs, 0, "no default evaluated before the E8007");
+test("large number class fields encode as binary64", () => {
+  const a = rt.classPlan("@m/Wide", [field("age", "number")], {age:0}, ...LOC);
+  rt.setProp(a, "age", 9007199254740992); equal(encode(a), '{"age":9007199254740992}', "wide encoding");
 });
-
-test("classPlan validates supplied values and preserves explicit nullable presence", function() {
-  const plan = [planEntry("a", "number", false, () => 1),
-    planEntry("nick", "?string", true)];
-  assertError(() => rt.classPlan("C", plan, { a: "not-an-number" }, ...LOC), "E8001",
-    "expected number", "provided-value validation");
-  assertError(() => rt.classPlan("C", plan, { a: 1, nick: 42 }, ...LOC), "E8001",
-    "expected string", "nullable optional validation");
-  const u = rt.classPlan("C", plan, { a: 1, nick: null }, ...LOC);
-  assertEqual(u.nick, null, "explicit null on a nullable optional stays present-null");
+test("scanner conversion and contextual reconstruction preserve graph shapes", () => {
+  const a = decode("[1,2]", "unknown"); assert(Array.isArray(a), "native array"); equal(a[1], 2, "element");
+  equal(decode("null", "unknown"), null, "language null"); equal(encode(a), "[1,2]", "array encoding");
+  equal(encode(decode('{"a":[1],"n":null}', "record")), '{"a":[1],"n":null}', "nested shapes");
+  const scanned = rt.jsonParseText('{"i":1.0,"n":1.5}', ...LOC);
+  equal(scanned.i, 1, "scanner integral value"); equal(scanned.n, 1.5, "scanner fractional value");
+  equal(encode(decode('{"i":1.0,"n":1.5}', "record")), '{"i":1,"n":1.5}', "canonical text");
 });
-
-test("classPlan required omission precedes any retired evaluator", function() {
-  const plan = [planEntry("a", "number", false, () => rt.fail("E8002", "evaluator boom", ...LOC))];
-  const err = assertError(() => rt.classPlan("C", plan, null, ...LOC), "E8001",
-    "missing required field 'a'", "omission rejects without invoking a legacy hook");
-  assertEqual(err.$dealCode, "E8001", "presence failure preserved");
+test("classPlan tags provided values and preserves optional absence", () => {
+  const a = rt.classPlan("@m/U", [field("name", "string"), field("nick", "string", true)], {name:"Bob"}, ...LOC);
+  equal(a.$kind, "class", "tag"); equal(a.$classname, "@m/U", "identity"); equal(a.name, "Bob", "provided");
+  equal(a.nick, rt.MISSING, "missing optional");
 });
-
-test("classPlan malformed plan shapes fail closed with E8001", function() {
-  assertError(() => rt.classPlan("C", { length: 1 }, null, ...LOC), "E8001",
-    "class default plan must be a table", "non-array plan");
-  assertError(() => rt.classPlan("C", ["x"], null, ...LOC), "E8001",
-    "malformed class default plan entry", "non-object entry");
-  assertError(() => rt.classPlan("C", [{ name: 1, descriptor: "number", optional: false }], null, ...LOC),
-    "E8001", "malformed class default plan entry", "non-string name");
-  assertError(() => rt.classPlan("C", [{ name: "x", descriptor: 2, optional: false }], null, ...LOC),
-    "E8001", "malformed class default plan entry", "non-string descriptor");
-  assertError(() => rt.classPlan("C", [{ name: "x", descriptor: "number", optional: "yes" }], null, ...LOC),
-    "E8001", "malformed class default plan entry", "non-boolean optional");
-  assertEqual(rt.classPlan("C", [{ name: "x", descriptor: "number", optional: false, evaluator: 3 }],
-    {x:7}, ...LOC).x, 7, "retired evaluator metadata is not authority");
-  assertError(() => rt.classPlan("C", [planEntry("x", "number", false, () => 1),
-    planEntry("x", "number", false, () => 2)], null, ...LOC), "E8001",
-    "duplicate field in class default plan: 'x'", "duplicate names");
-  assertError(() => rt.classPlan("C", [planEntry("a", "number", false, () => 1)], 42, ...LOC),
-    "E8001", "class field values must be a table", "non-table provided");
+test("classPlan rejects omissions and never invokes per-entry hooks", () => {
+  let runs = 0; const fields = [field("a", "number"), field("b", "number")];
+  for (const f of fields) f.evaluator = () => { runs++; return 1; };
+  error(() => rt.classPlan("C", fields, null, ...LOC), "E8001", "missing required field 'a'");
+  const a = rt.classPlan("C", fields, {a:1,b:2}, ...LOC), b = rt.classPlan("C", fields, {a:1,b:2}, ...LOC);
+  equal(a.a + a.b + b.a + b.b, 6, "per-attempt fields"); equal(runs, 0, "hook count");
 });
-
-test("jsonFromDocument ignores legacy per-entry evaluators for every outcome", function() {
-  let runs = 0;
-  const fields = [f("a", "number", false, false), f("b", "number", false, false)];
-  fields[0].evaluator = () => { runs++; return 1; };
-  fields[1].evaluator = () => { runs++; return 2; };
-  // Extra keys and provided-value failures still precede every default.
-  assertNull(rt.jsonFromJson("@m/C", fields, '{"extra":1.0}', ...LOC), "extra-key gate");
-  assertEqual(runs, 0, "no default ran after the extra-key rejection");
-  assertNull(rt.jsonFromJson("@m/C", fields, '{"b":"x"}', ...LOC), "decode gate");
-  assertEqual(runs, 0, "no default ran after the provided-value failure");
-  // Omitted required defaults evaluate exactly once per attempt.
-  assertNull(rt.jsonFromJson("@m/C", fields, '{"b":20.0}', ...LOC), "required omission");
-  const u = rt.jsonFromJson("@m/C", fields, '{"a":1,"b":20.0}', ...LOC);
-  assert(u !== null, "valid decode");
-  assertEqual(runs, 0, "legacy field hooks never execute");
-  assertEqual(u.a, 1, "evaluated default");
-  assertEqual(u.b, 20, "provided value");
-  // Fully provided documents run no defaults at all.
-  const v = rt.jsonFromJson("@m/C", fields, '{"a":5.0,"b":6.0}', ...LOC);
-  assert(v !== null && v.a === 5 && v.b === 6, "fully provided decode");
-  assertEqual(runs, 0, "no default ran for provided fields");
+test("provided fields suppress arbitrary evaluator metadata", () => {
+  let runs = 0; const fields = [field("a", "number"), field("b", "number")];
+  for (const f of fields) f.evaluator = () => { runs++; return 1; };
+  const a = rt.classPlan("C", fields, {a:5,b:6}, ...LOC); equal(a.a + a.b, 11, "provided values"); equal(runs, 0, "no hooks");
 });
-
-// =========================================================================
-
-if (failed > 0) {
-  console.log("");
-  console.log("========================================");
-  console.log("Jsonable JS Results: " + passed + " passed, " + failed + " failed");
-  console.log("========================================");
-  throw new Error(failed + " jsonable JS test(s) failed");
-}
-
-console.log("");
-console.log("========================================");
-console.log("Jsonable JS Results: " + passed + " passed, 0 failed");
-console.log("========================================");
+test("construction extra fields reject before evaluator metadata", () => {
+  let runs = 0; const fields = [field("a", "number")]; fields[0].evaluator = () => { runs++; return 1; };
+  error(() => rt.classPlan("C", fields, {extra:1}, ...LOC), "E8007", "extra field 'extra'"); equal(runs, 0, "no hooks");
+});
+test("construction validates supplied fields and preserves nullable presence", () => {
+  const fields = [field("a", "number"), field("nick", "?string", true)];
+  error(() => rt.classPlan("C", fields, {a:"bad"}, ...LOC), "E8001", "expected number");
+  error(() => rt.classPlan("C", fields, {a:1,nick:42}, ...LOC), "E8001", "expected string");
+  equal(rt.classPlan("C", fields, {a:1,nick:null}, ...LOC).nick, null, "present null");
+});
+test("construction omissions precede throwing evaluator metadata", () => {
+  const fields = [field("a", "number")]; fields[0].evaluator = () => { throw new Error("hook invoked"); };
+  error(() => rt.classPlan("C", fields, null, ...LOC), "E8001", "missing required field 'a'");
+});
+test("malformed construction plans reject without invoking metadata", () => {
+  for (const plan of [{length:1}, ["x"], [{name:1,descriptor:"number",optional:false}],
+      [{name:"x",descriptor:2,optional:false}], [{name:"x",descriptor:"number",optional:"yes"}],
+      [field("x", "number"),field("x", "number")]])
+    error(() => rt.classPlan("C", plan, null, ...LOC), "E8001");
+  equal(rt.classPlan("C", [{...field("x", "number"),evaluator:3}], {x:7}, ...LOC).x, 7, "non-authoritative metadata");
+  error(() => rt.classPlan("C", [field("a", "number")], 42, ...LOC), "E8001", "class field values must be a table");
+});
+test("reconstruction ignores evaluator metadata through every outcome", () => {
+  let runs = 0; const fields = [field("a", "number"), field("b", "number")];
+  for (const f of fields) f.evaluator = () => { runs++; return 1; };
+  const id = schema("@m/Every", fields);
+  rejects('{"extra":1}', id, "E8007"); rejects('{"b":"x"}', id); rejects('{"b":20}', id);
+  equal(decode('{"a":1,"b":20}', id).b, 20, "complete control");
+  equal(decode('{"a":5,"b":6}', id).a, 5, "second complete control"); equal(runs, 0, "hook count");
+});
+console.log("Contextual JSON JS Results: " + passed + " passed, " + failed + " failed");
+if (failed) throw new Error(failed + " contextual JSON JS test(s) failed");

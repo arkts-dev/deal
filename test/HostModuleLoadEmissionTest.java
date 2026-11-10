@@ -510,12 +510,15 @@ public class HostModuleLoadEmissionTest {
         import * as cfg from "host/carrier";
         import * as native from "native/sample";
         import * as util from "./util";
-        import * as json from "std/json";
+        import * as strings from "std/string";
 
         export class Widget {
           name: string;
           run: (x: number) => number;
         }
+
+        export function decode(text: string): Record<string, unknown> { return JSON.parse(text); }
+        export function encode(value: unknown): string | undefined { return JSON.stringify(value); }
 
         export function main(): null {
           let step: (x: number) => number = function(x: number): number { return x + 1; };
@@ -1979,7 +1982,7 @@ public class HostModuleLoadEmissionTest {
      * re-encodes through the shared walker.
      */
     private static final String NUMERIC_APP_SOURCE = """
-        import * as json from "std/json";
+
         import * as host from "host/num_probe";
 
         export function main(): null {
@@ -1987,29 +1990,29 @@ public class HostModuleLoadEmissionTest {
         }
 
         export function run(): string {
-          let numsDoc: Record<string, unknown> = json.parse("{\\"ms\\":[1e17,1.5]}");
+          let numsDoc: Record<string, unknown> = JSON.parse("{\\"ms\\":[1e17,1.5]}");
           let decodedMs: unknown[] = numsDoc.ms as unknown[];
           let ms: number[] = [decodedMs[0] as number, decodedMs[1] as number];
           let echo: number[] = host.echoNumbers(ms);
           let box: Record<string, unknown> = { xs: echo };
 
-          let intsDoc: Record<string, unknown> = json.parse("{\\"ns\\":[1,null,3]}");
+          let intsDoc: Record<string, unknown> = JSON.parse("{\\"ns\\":[1,null,3]}");
           let decodedNs: unknown[] = intsDoc.ns as unknown[];
           let ns: (number | null)[] = [decodedNs[0] as number | null, decodedNs[1] as number | null, decodedNs[2] as number | null];
 
-          let cfgDoc: Record<string, unknown> = json.parse("{\\"count\\":7,\\"ratio\\":2.5}");
+          let cfgDoc: Record<string, unknown> = JSON.parse("{\\"count\\":7,\\"ratio\\":2.5}");
           let count: number = cfgDoc.count as number;
           let ratio: number = cfgDoc.ratio as number;
           let cfg: host.Cfg = { count: count, ratio: ratio };
 
-          return (json.stringify(box) as string) + "\\n"
+          return (JSON.stringify(box) as string) + "\\n"
             + host.observeNumbers(ms) + "\\n"
             + host.observeInts(ns) + "\\n"
             + host.describeCfg(cfg);
         }
 
         export async function runAsync(): Promise<string> {
-          let doc: Record<string, unknown> = json.parse("{\\\"asms\\\":[1e17,1.5]}");
+          let doc: Record<string, unknown> = JSON.parse("{\\\"asms\\\":[1e17,1.5]}");
           let decoded: unknown[] = doc.asms as unknown[];
           let xs: number[] = [decoded[0] as number, decoded[1] as number];
           return await host.absorbAsync(xs);
@@ -2088,7 +2091,7 @@ public class HostModuleLoadEmissionTest {
 
     private static final String NUMERIC_TRANSCRIPT = String.join("\n",
         "TRANSCRIPT-BEGIN",
-        "{\"xs\":[1.0E17,1.5]}",
+        "{\"xs\":[100000000000000000,1.5]}",
         "nums=n:2:k1=number:k2=number",
         "ints=n:3:k1=number:v1=1:k2=null:k3=number:v3=3",
         "cfg=count:number:7:ratio:number:2.5",
@@ -2120,7 +2123,7 @@ public class HostModuleLoadEmissionTest {
      * carrier must all agree with the compiled walk.
      */
     private static final String TABLE_PROBE_APP_SOURCE = """
-        import * as json from "std/json";
+
         import * as host from "host/tab_probe";
 
         export function main(): null {
@@ -2129,21 +2132,22 @@ public class HostModuleLoadEmissionTest {
 
         export function run(): string {
           let plain: Record<string, unknown> = host.returnPlain();
-          let decoded: Record<string, unknown> = json.parse("{\\"n\\":null,\\"v\\":0.1,\\"xs\\":[1,0.1,-2147483649]}");
+          let decoded: Record<string, unknown> = JSON.parse("{\\"n\\":null,\\"v\\":0.1,\\"xs\\":[1,0.1,-2147483649]}");
           let echoed: Record<string, unknown> = host.echo(decoded);
-          let member: string = host.observeMember(json.parse("{\\"o\\":{\\"v\\":41}}").o as Record<string, unknown>);
-          return (json.stringify(plain) as string) + "\\n"
-            + (json.stringify(decoded) as string) + "\\n"
+          let memberDoc: Record<string, unknown> = JSON.parse("{\\"o\\":{\\"v\\":41}}");
+          let member: string = host.observeMember(memberDoc.o as Record<string, unknown>);
+          return (JSON.stringify(plain) as string) + "\\n"
+            + (JSON.stringify(decoded) as string) + "\\n"
             + host.stringifyCarrier(decoded) + "\\n"
-            + (json.stringify(echoed) as string) + "\\n"
+            + (JSON.stringify(echoed) as string) + "\\n"
             + member + "\\n"
-            + (json.stringify(host.returnParsed()) as string) + "\\n"
-            + (json.stringify(host.returnParsedVariant()) as string);
+            + (JSON.stringify(host.returnParsed()) as string) + "\\n"
+            + (JSON.stringify(host.returnParsedVariant()) as string);
         }
 
         export async function runAsync(): Promise<string> {
           let t: Record<string, unknown> = await host.returnAsyncPlain();
-          return json.stringify(t) as string;
+          return JSON.stringify(t) as string;
         }
         """;
 
@@ -2155,7 +2159,7 @@ public class HostModuleLoadEmissionTest {
      */
     private static final String TABLE_PROBE_HOST_LUA = """
         local rt = require("deal.runtime")
-        local json = require("std.json")
+        local json = require("deal.json")
 
         return {
           returnPlain = function()
@@ -2163,11 +2167,11 @@ public class HostModuleLoadEmissionTest {
           end,
 
           returnParsed = function()
-            return json.parse.f("{\\"n\\":null}")
+            return json.decode("{\\"n\\":null}", "record")
           end,
 
           returnParsedVariant = function()
-            return json.parse.f("{\\"v\\":0.1}")
+            return json.decode("{\\"v\\":0.1}", "record")
           end,
 
           returnAsyncPlain = function()
@@ -2181,7 +2185,7 @@ public class HostModuleLoadEmissionTest {
           end,
 
           stringifyCarrier = function(t)
-            return json.stringify.f(t)
+            return json.encode(t)
           end,
 
           echo = function(t)
@@ -2194,9 +2198,9 @@ public class HostModuleLoadEmissionTest {
     private static final String TABLE_PROBE_TRANSCRIPT = String.join("\n",
         "TRANSCRIPT-BEGIN",
         "{\"xs\":[1,2]}",
-        "{\"n\":null,\"v\":0.1,\"xs\":[1.0,0.1,-2.147483649E9]}",
-        "{\"n\":null,\"v\":0.1,\"xs\":[1.0,0.1,-2.147483649E9]}",
-        "{\"n\":null,\"v\":0.1,\"xs\":[1.0,0.1,-2.147483649E9]}",
+        "{\"n\":null,\"v\":0.1,\"xs\":[1,0.1,-2147483649]}",
+        "{\"n\":null,\"v\":0.1,\"xs\":[1,0.1,-2147483649]}",
+        "{\"n\":null,\"v\":0.1,\"xs\":[1,0.1,-2147483649]}",
         "v=42",
         "{\"n\":null}",
         "{\"v\":0.1}",
@@ -2347,7 +2351,7 @@ public class HostModuleLoadEmissionTest {
     private static final String HOST_TABLE_APP_SOURCE = """
         import * as host from "host/table_probe";
         import * as tables from "std/table";
-        import * as json from "std/json";
+
 
         function joined(keys: string[]): string {
           let out: string = "";
@@ -2363,13 +2367,13 @@ public class HostModuleLoadEmissionTest {
         }
 
         function accept(t: Record<string, unknown>): string {
-          return "cb:" + joined(tables.keys(t)) + ":" + (json.stringify(t) as string);
+          return "cb:" + joined(tables.keys(t)) + ":" + (JSON.stringify(t) as string);
         }
 
         function closedOutcome(t: Record<string, unknown>): string {
           let outcome: string = "no-failure";
           try {
-            outcome = "OK:" + (json.stringify(t) as string);
+            outcome = "OK:" + (JSON.stringify(t) as string);
           } catch (e) {
             outcome = (e as Error).code + "|" + (e as Error).message;
           }
@@ -2379,23 +2383,23 @@ public class HostModuleLoadEmissionTest {
         export function run(): string {
           let t: Record<string, unknown> = host.makeTable();
           let first: string = "keys=" + joined(tables.keys(t))
-            + " json=" + (json.stringify(t) as string)
+            + " json=" + (JSON.stringify(t) as string)
             + " host=" + host.describe(t);
 
           let nested: Record<string, unknown> = host.makeNested();
-          let second: string = "nested=" + (json.stringify(host.makeNested()) as string)
+          let second: string = "nested=" + (JSON.stringify(host.makeNested()) as string)
             + " keys=" + joined(tables.keys(nested));
 
           t.extra = 9;
           let third: string = "written=" + joined(tables.keys(t))
-            + ":" + (json.stringify(t) as string)
+            + ":" + (JSON.stringify(t) as string)
             + " host=" + host.describe(t);
 
           let fourth: string = "callback=" + host.withTable(accept);
 
           let cycleOk: boolean = false;
           try {
-            let encoded: string = json.stringify(host.makeCycle()) as string;
+            let encoded: string = JSON.stringify(host.makeCycle()) as string;
             cycleOk = encoded === "";
           } catch (e) {
             cycleOk = (e as Error).code === "E8001"
@@ -2450,7 +2454,7 @@ public class HostModuleLoadEmissionTest {
         "TRANSCRIPT-BEGIN",
         "keys=a json={\"a\":1} host=a=1 extra=nil",
         "nested={\"inner\":\"x\"} keys=inner",
-        "written=extra,a:{\"extra\":9.0,\"a\":1} host=a=1 extra=9",
+        "written=extra,a:{\"extra\":9,\"a\":1} host=a=1 extra=9",
         "callback=cb:cb:{\"cb\":2}",
         "array=E8010",
         "mixed=E8010",
@@ -4143,7 +4147,7 @@ public class HostModuleLoadEmissionTest {
      */
     private static final String COMPLETION_APP_SOURCE = """
         import * as host from "host/complete_probe";
-        import * as json from "std/json";
+
 
         function joined(xs: string[]): string {
           let out: string = "";
@@ -4180,7 +4184,7 @@ public class HostModuleLoadEmissionTest {
           if (note === null) {
             noteText = "null";
           }
-          let header: string = json.stringify({ port: s.port }) as string;
+          let header: string = JSON.stringify({ port: s.port }) as string;
           return header + ":" + s.endpoint.path + ":" + tagText + ":"
             + noteText + ":host=" + host.checkClean();
         }
@@ -4193,7 +4197,7 @@ public class HostModuleLoadEmissionTest {
           if (xs[0] !== xs[1]) {
             throw { code: "TEST_FAIL", message: "class array alias" };
           }
-          return json.stringify({ length: xs.length, path: xs[0].path }) as string;
+          return JSON.stringify({ length: xs.length, path: xs[0].path }) as string;
         }
 
         export async function runBundle(): Promise<string> {
@@ -4205,7 +4209,7 @@ public class HostModuleLoadEmissionTest {
           }
           let bump: (x: number) => number = t.bump as (x: number) => number;
           let value: number = bump(41);
-          return endpoint.path + ":" + (json.stringify({ value: value }) as string)
+          return endpoint.path + ":" + (JSON.stringify({ value: value }) as string)
             + ":host=" + host.inspectBundle();
         }
 
@@ -4217,13 +4221,13 @@ public class HostModuleLoadEmissionTest {
 
         export async function runNumber(): Promise<string> {
           let n: number = await host.makeNumber();
-          return json.stringify({ ms: n }) as string;
+          return JSON.stringify({ ms: n }) as string;
         }
 
         export async function runCallback(): Promise<string> {
           let g: (x: number) => number = await host.makeCallback();
           let value: number = g(41);
-          return (json.stringify({ value: value }) as string)
+          return (JSON.stringify({ value: value }) as string)
             + ":host=" + host.checkCallback();
         }
 
@@ -4345,12 +4349,12 @@ public class HostModuleLoadEmissionTest {
     /** The exact results the host async completion crossing must publish. */
     private static final String COMPLETION_TRANSCRIPT = String.join("\n",
         "TRANSCRIPT-BEGIN",
-        "class={\"port\":7.0}:/e:a,b:null:host=false/7/true/true",
-        "array={\"length\":2.0,\"path\":\"/x\"}",
-        "table=/e:{\"value\":42.0}:host=true/nil/true",
+        "class={\"port\":7}:/e:a,b:null:host=false/7/true/true",
+        "array={\"length\":2,\"path\":\"/x\"}",
+        "table=/e:{\"value\":42}:host=true/nil/true",
         "plain=1/9",
-        "number={\"ms\":1.0E17}",
-        "callback={\"value\":42.0}:host=true",
+        "number={\"ms\":100000000000000000}",
+        "callback={\"value\":42}:host=true",
         "raw.chunk-tag=true",
         "raw.chunk-id=true",
         "raw.kind-tag=true",
@@ -5058,7 +5062,7 @@ public class HostModuleLoadEmissionTest {
     private static final String UNTYPED_APP_SOURCE = """
         import * as host from "host/untyped_probe";
         import * as util from "./util";
-        import * as json from "std/json";
+
 
         class Point {
           x: number;
@@ -5219,11 +5223,11 @@ public class HostModuleLoadEmissionTest {
         }
 
         export function runNumeric(): string {
-          let decoded: Record<string, unknown> = json.parse("{\\"a\\":1,\\"b\\":0.1,\\"n\\":null}");
+          let decoded: Record<string, unknown> = JSON.parse("{\\"a\\":1,\\"b\\":0.1,\\"n\\":null}");
           let t: Record<string, unknown> = { doc: decoded };
           let echoed: Record<string, unknown> = host.echoTable(t);
           let doc: Record<string, unknown> = echoed.doc as Record<string, unknown>;
-          return "numeric=" + (json.stringify(doc) as string);
+          return "numeric=" + (JSON.stringify(doc) as string);
         }
 
         export function runWrongRawFunction(): string {
@@ -5519,7 +5523,7 @@ public class HostModuleLoadEmissionTest {
         runCopy=classy=marker:3,hostmarker:3,copy:false,memo=yes
         runDense=dense=n:3,array:true,v1:1
         runNull=null=yes,null=note:true,missing:true,ratio:number:2.5
-        runNumeric=numeric={"a":1.0,"b":0.1,"n":null}
+        runNumeric=numeric={"a":1,"b":0.1,"n":null}
         runWrongRawFunction=rawFunction=E8010|return value 1 type mismatch: expected unknown
         runWrongClassValue=wrongClass=E8001|expected class instance
         runWrongElement=wrongElement=E8003|array element 1 type mismatch
@@ -6634,6 +6638,7 @@ public class HostModuleLoadEmissionTest {
         Path runtimeTarget = workspace.resolve("deal").resolve("runtime.lua");
         Files.createDirectories(runtimeTarget.getParent());
         Files.copy(runtime, runtimeTarget);
+        Files.copy(Path.of("deal", "json.lua"), runtimeTarget.resolveSibling("json.lua"));
         Path stdTarget = workspace.resolve("std");
         Files.createDirectories(stdTarget);
         try (var listing = Files.list(Path.of("std"))) {
@@ -6644,8 +6649,9 @@ public class HostModuleLoadEmissionTest {
             }
         }
         check(Files.isRegularFile(runtimeTarget)
+                && Files.isRegularFile(runtimeTarget.resolveSibling("json.lua"))
                 && Files.isRegularFile(stdTarget.resolve("console.lua")),
-            "the workspace carries the runtime and stdlib deployment copies");
+            "the workspace carries the runtime, internal JSON and stdlib deployment copies");
     }
 
     record ProcessOutcome(int exitCode, String stdout, String stderr) {

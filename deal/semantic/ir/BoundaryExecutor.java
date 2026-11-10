@@ -13,7 +13,7 @@ public final class BoundaryExecutor {
     }
 
     /**
-     * An executor producer defect: a policy outside the closed 11-policy
+     * An executor producer defect: a policy outside the closed boundary
      * subset, a cell executed without its required context, a broken
      * descriptor/policy pairing, or an uninstantiable projection template.
      * Internal control flow — fail closed, never a DEAL projection and
@@ -28,7 +28,7 @@ public final class BoundaryExecutor {
         }
     }
 
-    /** The closed 13-policy subset a {@code BOUNDARY} op can carry (D3, exact). */
+    /** The closed descriptor/array/host policies a {@code BOUNDARY} op can carry. */
     private static final Set<FailurePolicyId> EXECUTABLE_POLICIES = Set.of(
         FailurePolicyId.TYPE_DESCRIPTOR,
         FailurePolicyId.FUNCTION_SIGNATURE,
@@ -38,9 +38,7 @@ public final class BoundaryExecutor {
         FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR,
         FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR,
         FailurePolicyId.ARRAY_WRITE_BOUNDS_THEN_ELEMENT,
-        FailurePolicyId.ARRAY_DELETE_BOUNDS,
-        FailurePolicyId.JSON_FROM_NULL,
-        FailurePolicyId.JSON_TO_ERROR
+        FailurePolicyId.ARRAY_DELETE_BOUNDS
     );
 
     // =========================================================================
@@ -76,8 +74,6 @@ public final class BoundaryExecutor {
             case ARRAY_WRITE_BOUNDS_THEN_ELEMENT ->
                 checkArrayWrite(descriptor, view, context);
             case ARRAY_DELETE_BOUNDS -> checkArrayDelete(view, context);
-            case JSON_FROM_NULL -> checkJsonFromNull(descriptor, view);
-            case JSON_TO_ERROR -> checkJsonToError(descriptor, view, context);
             default -> throw new Defect(
                 "policy " + policy.name() + " has no executor projection");
         };
@@ -378,38 +374,6 @@ public final class BoundaryExecutor {
         return new BoundaryOutcome.Pass(view);
     }
 
-    /** JSON_FROM_NULL: any failure swallows into language null; never a DEAL failure. */
-    private static BoundaryOutcome checkJsonFromNull(RuntimeDescriptor descriptor,
-                                                     BoundaryValueView view) {
-        CoreResult result = core(descriptor, view);
-        return switch (result) {
-            case CorePass pass -> new BoundaryOutcome.Pass(pass.value());
-            case CoreFail ignored -> new BoundaryOutcome.Pass(BoundaryValueView.nullView());
-        };
-    }
-
-    /**
-     * JSON_TO_ERROR: the first declaration-order unsupported value projects
-     * E8001 through the bound {@code JSON_TO_WALK} arm
-     * (jsonable-tojson-walk-arm-binding W1): the arm's own template with
-     * {@code {fieldPath}} and {@code {actual}}, the closed typed-boundary
-     * projection as the {@code actual} field, and no composed token or
-     * suffix of this cell's own.
-     */
-    private static BoundaryOutcome checkJsonToError(RuntimeDescriptor descriptor,
-                                                    BoundaryValueView view,
-                                                    BoundaryContext context) {
-        String fieldPath = requireContextField(context.fieldPath(), "fieldPath",
-            "JSON_TO_ERROR");
-        String failing = jsonFailure(descriptor, view);
-        if (failing == null) {
-            return new BoundaryOutcome.Pass(view);
-        }
-        return new BoundaryOutcome.Fail(FailureContractRegistry.render(
-            FailureArmId.JSON_TO_WALK, parametersOf("fieldPath", fieldPath,
-                "actual", failing), null, failing, null));
-    }
-
     /** The named-parameter values of one two-parameter arm render. */
     private static Map<String, String> parametersOf(String key1, String value1,
                                                     String key2, String value2) {
@@ -598,7 +562,7 @@ public final class BoundaryExecutor {
     /**
      * The array-element arm's reference-kind projection (the decoded-array
      * mark, B3): the reported element's reference kind — an element carrying
-     * the std/json decode mark renders {@code table} (the reference value
+     * the JSON decoding provenance mark renders {@code table} (the reference value
      * model's kind for a decoded array), every other element keeps the
      * landed refined typed-boundary token ({@code array} for a real array
      * carrier). The mark is read here and nowhere else in the executor.
@@ -810,90 +774,6 @@ public final class BoundaryExecutor {
             case STRING, INVALID_UNICODE -> FailureProjections.CarrierKind.STRING;
             case NUMBER -> FailureProjections.CarrierKind.NUMBER;
             default -> FailureProjections.CarrierKind.TABLE;
-        };
-    }
-
-    // =========================================================================
-    // JSON serializability (JSON_TO_ERROR): first declaration-order failure
-    // =========================================================================
-
-    /**
-     * Returns the canonical actual-kind token of the first
-     * unsupported/wrong-identity/missing/nonfinite value against the
-     * declared descriptor, or {@code null} when the value is JSON
-     * serializable. Unsupported values are functions, async-operation
-     * handles, and invalid Unicode scalar sequences; nonfinite numbers
-     * fail regardless of the declared numeric descriptor; class values
-     * must carry the declared atom identity; arrays check elements in
-     * increasing index order (the first failure wins); nullables pass
-     * language null. A cycle cannot be expressed in the closed tree view
-     * (no identity edges), so cycle detection is the machine's fact.
-     */
-    private static String jsonFailure(RuntimeDescriptor descriptor, BoundaryValueView view) {
-        return switch (view.kind()) {
-            case MISSING, FUNCTION, ASYNC_OPERATION, INVALID_UNICODE ->
-                FailureProjections.typedBoundaryToken(view.kind(), view.classId());
-            case NUMBER -> {
-                double value = view.numberValue();
-                yield Double.isNaN(value) || Double.isInfinite(value)
-                    ? FailureProjections.typedBoundaryToken(ActualKind.NUMBER, null)
-                    : jsonShape(descriptor, view);
-            }
-            default -> jsonShape(descriptor, view);
-        };
-    }
-
-    /**
-     * The typed-boundary token of one value whose shape does not match the
-     * declared descriptor (the bound {@code JSON_TO_WALK} arm's actual):
-     * the closed projection's own token, never the {@code class:} IR
-     * spelling and never a composed spelling of this cell's.
-     */
-    private static String jsonToken(BoundaryValueView view) {
-        return FailureProjections.typedBoundaryToken(view.kind(), view.classId());
-    }
-
-    private static String jsonShape(RuntimeDescriptor descriptor, BoundaryValueView view) {
-        return switch (descriptor) {
-            case RuntimeDescriptor.Undefined ignored -> view.kind() == ActualKind.UNDEFINED ? null : jsonToken(view);
-            case RuntimeDescriptor.Unknown ignored -> null;
-            case RuntimeDescriptor.Void ignored -> jsonToken(view);
-            case RuntimeDescriptor.Class cls ->
-                view.kind() == ActualKind.CLASS
-                        && cls.classId().text().equals(view.classId())
-                    ? null : jsonToken(view);
-            case RuntimeDescriptor.Nullable nullable ->
-                view.kind() == ActualKind.NULL ? null : jsonFailure(nullable.inner(), view);
-            case RuntimeDescriptor.Array array -> {
-                if (view.kind() != ActualKind.ARRAY) {
-                    yield jsonToken(view);
-                }
-                String first = null;
-                for (BoundaryValueView element : view.elements()) {
-                    first = jsonFailure(array.element(), element);
-                    if (first != null) {
-                        break;
-                    }
-                }
-                yield first;
-            }
-
-            case RuntimeDescriptor.Number ignored ->
-                view.kind() == ActualKind.NUMBER
-                    ? null : jsonToken(view);
-            case RuntimeDescriptor.Null ignored ->
-                view.kind() == ActualKind.NULL
-                    ? null : jsonToken(view);
-            case RuntimeDescriptor.Boolean ignored ->
-                view.kind() == ActualKind.BOOLEAN
-                    ? null : jsonToken(view);
-            case RuntimeDescriptor.String ignored ->
-                view.kind() == ActualKind.STRING
-                    ? null : jsonToken(view);
-            case RuntimeDescriptor.Table ignored ->
-                view.kind() == ActualKind.TABLE
-                    ? null : jsonToken(view);
-            case RuntimeDescriptor.Func ignored -> jsonToken(view);
         };
     }
 

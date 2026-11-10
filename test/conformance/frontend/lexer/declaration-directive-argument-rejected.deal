@@ -1,11 +1,11 @@
 // @spec: Lexical elements — Comment semantics
-// @description: Declaration directives accept no argument
-// @expected: compile-error E1045
+// @description: Arbitrary arguments in comments are whitespace
+// @expected: compile-ok
 // @features: lexer, directives, jsonable, diagnostics, v1.4
 
 // @jsonable unexpected
 export class Item {
-  value: number = 0;
+  value: number;
 }
 
 export function main(): null {

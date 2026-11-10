@@ -472,8 +472,8 @@ public class FailClosedGuardRetargetingTest {
             export class Person { name: string; score: number; }
             export function main(): null {
               let p: Person = { name: "Carol", score: 7 };
-              let s: string = Person$toJson(p);
-              let q: Person | null = Person$fromJson(s);
+              let s: string = JSON.stringify(p) as string;
+              let q: Person | null = JSON.parse(s);
               if (q !== null) {
                 if (q.name === "Carol" && q.score === 7) {
                   output.log("PROBE|JSONABLE|ok");
@@ -492,8 +492,8 @@ public class FailClosedGuardRetargetingTest {
                 import * as Lib from "./lib";
                 export function main(): null {
                   let w: Lib.Widget = { label: "a", count: 1 };
-                  let s: string = Lib.Widget$toJson(w);
-                  let q: Lib.Widget | null = Lib.Widget$fromJson(s);
+                  let s: string = JSON.stringify(w) as string;
+                  let q: Lib.Widget | null = JSON.parse(s);
                   if (q !== null) {
                     if (q.label === "a" && q.count === 1) {
                       output.log("PROBE|JSONABLE-XMOD|ok");

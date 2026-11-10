@@ -1,14 +1,14 @@
-// @spec: Runtime execution model — Source locations for jsonable helper errors
-// @description: A std/json cycle failure preserves its runtime code and exact call origin.
+// @spec: Runtime execution model — Source locations
+// @description: A JSON.stringify cycle failure preserves its runtime code and exact call origin.
 // @expected: runtime-error E8001
 // @features: source-location, jsonable, runtime-errors
 
-import * as json from "std/json";
+
 
 export function test_source_location_json_error(): string {
   let t: Record<string, unknown> = {};
   t.self = t;
-  return json.stringify(t) as string;
+  return JSON.stringify(t) as string;
 }
 
 export function main(): null {

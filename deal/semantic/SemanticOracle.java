@@ -1065,13 +1065,6 @@ record NumValue(double value) implements Value {
         final List<SemanticRuntimeModel.TraceEvent> trace = new ArrayList<>();
         final List<SemanticRuntimeModel.EffectEvent> effects = new ArrayList<>();
         final List<FunctionId> frames = new ArrayList<>();
-        /**
-         * The origins of the active calls, innermost last (the
-         * {@code JSON_TO_ERROR} projection renders the invoking call
-         * expression, so the generated body's walk reads the innermost
-         * active call's origin).
-         */
-        final ArrayDeque<SourceOrigin> activeCallOrigins = new ArrayDeque<>();
         long sequence = 0;
         String entryResultAtom = null;
         /**
@@ -1081,17 +1074,6 @@ record NumValue(double value) implements Value {
          */
         final Map<ModuleId, ModuleInitLifecycle> moduleInitLifecycles =
             new LinkedHashMap<>();
-        /**
-         * The generated JSON plan entries of the closure keyed by the
-         * canonical class identity: the emitted plan table carries the
-         * unique plan-bearing declaration's layout when one exists (the
-         * emission order's last declaration otherwise), so the JSON walks
-         * resolve the same declaration the emitted plan table carries —
-         * never a first-declaration or order-dependent sibling.
-         */
-        final Map<ClassId, ClassLayout> jsonPlanLayouts = new LinkedHashMap<>();
-        /** The declaring unit of each {@link #jsonPlanLayouts} entry. */
-        private final Map<ClassId, ModuleId> jsonPlanOwners = new LinkedHashMap<>();
 
         Execution(LoweredModuleUnit unit, StructuredBodyTable table, HostResponder responder) {
             this(unit, table, responder, Map.of());
@@ -1128,76 +1110,6 @@ record NumValue(double value) implements Value {
             classLayouts.putAll(this.declarationLayouts);
 
             classLayouts.put(ClassId.ERROR, ClassLayout.BUILTIN_ERROR);
-            resolveJsonPlanLayouts();
-        }
-
-        /**
-         * Resolves the closure's generated JSON plan entries with the same
-         * selection the shared emitters apply: a canonical identity the
-         * closure declares more than once carries the unique plan-bearing
-         * declaration's layout under the key (the emission order's last
-         * declaration otherwise).
-         */
-        private void resolveJsonPlanLayouts() {
-            for (UnitState state : units.values()) {
-                for (Map.Entry<ClassId, ClassLayout> entry
-                        : state.unit.classLayouts().entrySet()) {
-                    ClassId classId = entry.getKey();
-                    ModuleId previous = jsonPlanOwners.get(classId);
-                    UnitState previousState =
-                        previous == null ? null : units.get(previous);
-                    if (previous == null
-                            || jsonPlanBearing(state.unit, classId)
-                            || !jsonPlanBearing(previousState == null
-                                ? null : previousState.unit, classId)) {
-                        jsonPlanLayouts.put(classId, entry.getValue());
-                        jsonPlanOwners.put(classId, state.unit.moduleId());
-                    }
-                }
-            }
-            ClassLayout error = classLayouts.get(ClassId.ERROR);
-            if (error != null) {
-                jsonPlanLayouts.put(ClassId.ERROR, error);
-            }
-        }
-
-        /**
-         * Whether one unit's own declaration of a canonical class identity
-         * is plan-bearing (the unit generates the generated JSON helper
-         * ops of the identity).
-         */
-        private static boolean jsonPlanBearing(LoweredModuleUnit unit,
-                                               ClassId classId) {
-            if (unit == null) {
-                return false;
-            }
-            for (SemanticOp op : unit.ops()) {
-                KindPayload payload = op.payload();
-                if (payload instanceof KindPayload.JsonFromClassPayload from
-                        && from.layout().classId().equals(classId)) {
-                    return true;
-                }
-                if (payload instanceof KindPayload.JsonToClassPayload to
-                        && to.layout().classId().equals(classId)) {
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        /**
-         * The JSON walk's layout-resolution view of one JSON op: the
-         * closure's plan-owner layouts with the executing unit's own
-         * declaration of the op's class overlaid (the walk validates the
-         * payload layout against the map's entry of its own class).
-         */
-        private Map<ClassId, ClassLayout> jsonLayoutView(SemanticOp op,
-                                                         ClassId classId) {
-            ClassLayout exact = stateOf(op.opId()).unit.classLayouts().get(classId);
-            if (exact == null || exact.equals(jsonPlanLayouts.get(classId))) {
-                return jsonPlanLayouts;
-            }
-            return new ExactLayoutMap(jsonPlanLayouts, classId, exact);
         }
 
         Execution(ExecutableLoweredProject project, Map<ModuleId, StructuredBodyTable> tables,
@@ -1268,7 +1180,6 @@ record NumValue(double value) implements Value {
             classLayouts.putAll(this.declarationLayouts);
 
             classLayouts.put(ClassId.ERROR, ClassLayout.BUILTIN_ERROR);
-            resolveJsonPlanLayouts();
         }
 
         /** One module's validated execution state (ops, children, ownership). */
@@ -1980,8 +1891,7 @@ record NumValue(double value) implements Value {
                 case MODULE_IMPORT -> executeModuleImport(op);
                 case EXPORT_READ -> executeExportRead(op);
                 case MODULE_INIT -> executeModuleInit(op);
-                case JSON_FROM_CLASS -> executeJsonFromClass(op);
-                case JSON_TO_CLASS -> executeJsonToClass(op);
+                case JSON_PARSE -> executeJsonParse(op);
 
                 case CLASS_NEW -> executeClassNew(op);
                 case CLASS_FACTORY -> throw new IllegalStateException(
@@ -2472,39 +2382,16 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
          */
 
 
-        private String executeJsonFromClass(SemanticOp op) {
-            KindPayload.JsonFromClassPayload payload =
-                (KindPayload.JsonFromClassPayload) op.payload();
-            Map<ValueId, ClassOpsExecutor.Value> priorValues = new LinkedHashMap<>();
-            priorValues.put(payload.jsonString(),
-                executorValueOf(valueOf(payload.jsonString())));
-            Value produced = oracleValueOf(ClassOpsExecutor.executeJsonFromClass(op,
-                priorValues, jsonLayoutView(op, payload.layout().classId()),
-                JsonClassAlgorithmAdapter.parser()));
-            return publish(op, produced);
-        }
-
-        private String executeJsonToClass(SemanticOp op) {
-            KindPayload.JsonToClassPayload payload =
-                (KindPayload.JsonToClassPayload) op.payload();
-            Map<ValueId, ClassOpsExecutor.Value> priorValues = new LinkedHashMap<>();
-            priorValues.put(payload.classValue(),
-                executorValueOf(valueOf(payload.classValue())));
-            ClassOpsExecutor.Outcome<ClassOpsExecutor.Value> outcome =
-                ClassOpsExecutor.executeJsonToClass(op, priorValues,
-                    jsonLayoutView(op, payload.layout().classId()),
-                    JsonClassAlgorithmAdapter.stringifier(classLayouts), activeCallOriginOf(op));
+        private String executeJsonParse(SemanticOp op) {
+            var payload = (KindPayload.JsonParsePayload) op.payload();
+            var text = (Value.StrValue) valueOf(payload.jsonString());
+            var outcome = JsonDecodingSemantics.parse((UnicodeScalars.Valid) UnicodeScalars.validate(text.value()),
+                payload.target(), classLayouts, op.origin());
             return switch (outcome) {
-                case ClassOpsExecutor.Outcome.Success<ClassOpsExecutor.Value> success -> {
-                    Value published = oracleValueOf(success.value());
-                    recordInstanceLayout(published,
-                        jsonLayoutView(op, payload.layout().classId())
-                            .get(payload.layout().classId()));
-                    yield publish(op, published);
-                }
+                case ClassOpsExecutor.Outcome.Success<ClassOpsExecutor.Value> success ->
+                    publish(op, oracleValueOf(success.value()));
                 case ClassOpsExecutor.Outcome.Failure<ClassOpsExecutor.Value> failure ->
-                    throw DealFailure.of(failure.failure().failure(),
-                        failure.failure().origin(), List.copyOf(frames));
+                    throw DealFailure.of(failure.failure().failure(), failure.failure().origin(), List.copyOf(frames));
             };
         }
 
@@ -3992,7 +3879,6 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
             // value.
             Value calleeValue = calleeValueOf(op);
             Value returned;
-            activeCallOrigins.addLast(op.origin());
             try {
                 returned = payload.callee() instanceof KindPayload.CallCallee.Dynamic
                     ? executeDynamicCall(op, payload, binding, checkedArgs, calleeValue)
@@ -4014,21 +3900,8 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                         throw dynamicFunctionValueDefect(dynamic);
                 };
             } finally {
-                activeCallOrigins.removeLast();
             }
             return publish(op, returned);
-        }
-
-        /**
-         * The origin of the innermost active call, or the op's own origin
-         * when the op executes outside a call (the generated
-         * {@code C$toJson} walk's {@code JSON_TO_ERROR} projection renders
-         * the invoking call expression; the generated body's synthetic
-         * anchor is never the projection origin).
-         */
-        private SourceOrigin activeCallOriginOf(SemanticOp op) {
-            SourceOrigin active = activeCallOrigins.peekLast();
-            return active != null ? active : op.origin();
         }
 
 
@@ -5859,15 +5732,15 @@ private static IllegalStateException dynamicFunctionValueDefect(
                     if (mapped != null) {
                         yield mapped;
                     }
-                    SemanticTable<SharedStdlibSemantics.Value> carrier =
-                        new SemanticTable<>();
+                    SemanticTable<SharedStdlibSemantics.Value> carrier = SemanticTable.live(
+                        () -> List.copyOf(table.entries().keySet()), key -> {
+                            Value member = table.entries().get(key);
+                            return member == null ? new SemanticTable.Lookup.Missing<>()
+                                : new SemanticTable.Lookup.Present<>(stdlibCarrierOf(member, memo));
+                        });
                     SharedStdlibSemantics.Value.Table registered =
                         new SharedStdlibSemantics.Value.Table(carrier);
                     memo.put(table, registered);
-                    for (Map.Entry<String, Value> entry : table.entries().entrySet()) {
-                        carrier.put(entry.getKey(),
-                            stdlibCarrierOf(entry.getValue(), memo));
-                    }
                     yield registered;
                 }
                 case Value.ArrayValue array -> {
@@ -5875,31 +5748,28 @@ private static IllegalStateException dynamicFunctionValueDefect(
                     if (mapped != null) {
                         yield mapped;
                     }
-                    List<SharedStdlibSemantics.Value> elements = new ArrayList<>();
                     SharedStdlibSemantics.Value.Array registered =
                         new SharedStdlibSemantics.Value.Array(
-                            deal.semantic.ir.SemanticArray.live(
-                                elements::size, elements::get));
+                            deal.semantic.ir.SemanticArray.live(array.elements()::size,
+                                i -> stdlibCarrierOf(array.elements().get(i), memo)),
+                            array.elementDescriptor());
                     memo.put(array, registered);
-                    for (Value element : array.elements()) {
-                        elements.add(stdlibCarrierOf(element, memo));
-                    }
                     yield registered;
                 }
-                case Value.FuncValue ignored ->
-                    new SharedStdlibSemantics.Value.Other(ActualKind.FUNCTION, null);
-                case Value.AdapterValue ignored ->
-                    new SharedStdlibSemantics.Value.Other(ActualKind.FUNCTION, null);
+                case Value.FuncValue callable ->
+                    new SharedStdlibSemantics.Value.Other(ActualKind.FUNCTION, null, shallowViewOfValue(callable));
+                case Value.AdapterValue callable ->
+                    new SharedStdlibSemantics.Value.Other(ActualKind.FUNCTION, null, shallowViewOfValue(callable));
 
-                case Value.StdlibCallableValue ignored ->
-                    new SharedStdlibSemantics.Value.Other(ActualKind.FUNCTION, null);
-                case Value.HostEntryValue ignored ->
-                    new SharedStdlibSemantics.Value.Other(ActualKind.FUNCTION, null);
+                case Value.StdlibCallableValue callable ->
+                    new SharedStdlibSemantics.Value.Other(ActualKind.FUNCTION, null, shallowViewOfValue(callable));
+                case Value.HostEntryValue callable ->
+                    new SharedStdlibSemantics.Value.Other(ActualKind.FUNCTION, null, shallowViewOfValue(callable));
                 case Value.ErrorValue error -> {
                     SemanticTable<SharedStdlibSemantics.Value> fields = new SemanticTable<>();
                     fields.put("code", SharedStdlibSemantics.Value.string(error.code()));
                     fields.put("message", SharedStdlibSemantics.Value.string(error.message()));
-                    yield new SharedStdlibSemantics.Value.Table(fields);
+                    yield new SharedStdlibSemantics.Value.Table(fields, ClassLayout.BUILTIN_ERROR);
                 }
                 case Value.ClassValue classValue -> {
                     SharedStdlibSemantics.Value mapped = memo.get(classValue);
@@ -5908,13 +5778,21 @@ private static IllegalStateException dynamicFunctionValueDefect(
                     if (layout == null) layout = classLayouts.get(classValue.classId());
                     if (layout == null || layout.fields().size() != classValue.fields().size())
                         throw new IllegalStateException("JSON class value has no exact layout");
-                    SemanticTable<SharedStdlibSemantics.Value> fields = new SemanticTable<>();
-                    SharedStdlibSemantics.Value.Table registered = new SharedStdlibSemantics.Value.Table(fields);
+                    ClassLayout exact = layout;
+                    Map<String, Integer> indices = new HashMap<>();
+                    for (int i = 0; i < exact.fields().size(); i++)
+                        indices.put(exact.fields().get(i).name(), i);
+                    SemanticTable<SharedStdlibSemantics.Value> fields = SemanticTable.live(
+                        () -> exact.fields().stream().map(ClassLayout.FieldLayout::name).toList(), key -> {
+                            Integer index = indices.get(key);
+                            if (index != null && classValue.fields().get(index)
+                                    instanceof Value.ClassFieldState.Present present)
+                                return new SemanticTable.Lookup.Present<>(stdlibCarrierOf(present.value(), memo));
+                            return new SemanticTable.Lookup.Missing<>();
+                        });
+                    SharedStdlibSemantics.Value.Table registered =
+                        new SharedStdlibSemantics.Value.Table(fields, exact);
                     memo.put(classValue, registered);
-                    for (int i = 0; i < layout.fields().size(); i++) {
-                        if (classValue.fields().get(i) instanceof Value.ClassFieldState.Present present)
-                            fields.put(layout.fields().get(i).name(), stdlibCarrierOf(present.value(), memo));
-                    }
                     yield registered;
                 }
                 case Value.MissingValue ignored ->
@@ -6563,7 +6441,7 @@ private static IllegalStateException dynamicFunctionValueDefect(
                 }
             }
             if (payload.kind() == ModuleImportKind.STDLIB) {
-                for (StdlibFunctionCatalog.Entry row : StdlibFunctionCatalog.entries()) {
+                for (StdlibFunctionCatalog.Entry row : StdlibFunctionCatalog.callableEntries()) {
                     if (!row.modulePath().equals(payload.resolvedModule().path())) {
                         continue;
                     }

@@ -372,6 +372,12 @@ public final class JvmSemanticEmitter {
                     "the entry module is not in the executable closure");
             }
             this.sourceMapRecorder = sourceMapRecorder;
+            for (var registration : project.classSeeds().registrations().values()) {
+                if (registration.owner() == ConstructionProvider.HOST_DECLARATION) {
+                    ClassLayout layout = registration.layout();
+                    jsonPlanLayouts.put(layout.classId(), layout);
+                }
+            }
 
             String resolvedClassName = className != null ? className
                 : sharedClassName(project.modules().containsKey(project.entryModule())
@@ -689,6 +695,15 @@ public final class JvmSemanticEmitter {
             for (ClassLayout layout : jsonPlanLayouts.values()) {
                 emitJsonPlan(layout);
             }
+            out.append("  private static final java.util.Map<String, JvmJson.Plan> __decodePlans = java.util.Map.ofEntries(\n");
+            boolean firstDecodePlan = true;
+            for (ClassLayout layout : jsonPlanLayouts.values()) {
+                if (!firstDecodePlan) out.append(",\n");
+                firstDecodePlan = false;
+                out.append("    java.util.Map.entry(").append(javaString(layout.classId().text()))
+                    .append(", ").append(planName(layout.classId())).append(")");
+            }
+            out.append("\n  );\n");
             // The module-init walk, exposed as the deferred-main entry (the
             // scenario host drives it explicitly for an async-entry
             // invocation or a multi-module drive): setup plus the walk;
@@ -988,8 +1003,8 @@ public final class JvmSemanticEmitter {
 
         /**
          * Emits one class's JSON plan: the declaration-order fields with
-         * descriptor, optionality and static result kind of the
-         * JSON_FROM_CLASS walk; the plan instantiates the generated
+         * descriptor, optionality and static result kind of contextual
+         * reconstruction; the plan instantiates the generated
          * carrier.
          */
         private void emitJsonPlan(ClassLayout layout) {
@@ -1001,11 +1016,33 @@ public final class JvmSemanticEmitter {
                 out.append("      new JvmJson.Field(").append(javaString(field.name()))
                     .append(", ").append(javaString(jsonDescriptorText(field.descriptor())))
                     .append(", ").append(field.required() ? "false" : "true")
-                    .append(", ").append(javaString(staticKind(field.descriptor())));
+                    .append(", ").append(javaString(staticKind(field.descriptor())))
+                    .append(", ").append(javaString(field.descriptor().canonicalSpecText()));
                 out.append("),\n");
             }
-            out.append("    },\n    () -> new ").append(carrierName(layout.classId()))
-                .append("());\n");
+            JvmHostAbiEmission.HostClassFacts host = hostAbi == null ? null
+                : hostAbi.hostClassFacts(layout.classId());
+            out.append("    },\n    () -> new ");
+            if (host == null) {
+                out.append(carrierName(layout.classId())).append("()");
+            } else {
+                // A private declaration descendant uses the same typed host
+                // record as ordinary crossings. The unpublished shell is filled
+                // only by the decoder after shared reconstruction succeeds.
+                out.append("$DealRt.").append(host.recordSimpleName()).append('(');
+                java.util.List<String> arguments = new java.util.ArrayList<>();
+                for (JvmHostAbiEmission.HostFieldFacts field : host.fields()) {
+                    arguments.add(switch (field.storageType()) {
+                        case "double" -> "0.0";
+                        case "int" -> "0";
+                        case "boolean" -> "false";
+                        default -> "null";
+                    });
+                    if (field.optional()) arguments.add("false");
+                }
+                out.append(String.join(", ", arguments)).append(')');
+            }
+            out.append(");\n");
         }
 
         /** The JSON plan descriptor text (the walk's closed kind grammar). */
@@ -1037,48 +1074,26 @@ public final class JvmSemanticEmitter {
             };
         }
 
-        private void emitJsonFromClass(SemanticOp op, int indent) {
-            KindPayload.JsonFromClassPayload payload =
-                (KindPayload.JsonFromClassPayload) op.payload();
+        private void emitJsonParse(SemanticOp op, int indent) {
+            var payload = (KindPayload.JsonParsePayload) op.payload();
             emitStart(op, indent);
-            String target = slot((ValueId) op.result());
-            out.append(indent(indent)).append(target).append(" = JvmJson.fromClass(")
-                .append(planName(payload.layout().classId())).append(", (String) ")
-                .append(slot(payload.jsonString())).append(");\n");
-            emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType(), indent);
-        }
-
-        private void emitJsonToClass(SemanticOp op, int indent) {
-            KindPayload.JsonToClassPayload payload =
-                (KindPayload.JsonToClassPayload) op.payload();
-            emitStart(op, indent);
+            var origin = op.origin();
+            SourceSpan span = origin.span();
+            String source = "new deal.semantic.ir.SourceOrigin(" + javaString(origin.sourceId())
+                + ", new deal.semantic.ir.SourceSpan(" + javaString(span.file()) + ", "
+                + span.startLine() + ", " + span.startColumn() + ", " + span.endLine() + ", "
+                + span.endColumn() + ", " + span.startScalarOffset() + ", " + span.endScalarOffset()
+                + "), deal.semantic.ir.SourceOriginKind." + origin.kind().name() + ", new deal.semantic.ir.AnchorId("
+                + origin.anchorId().id() + "), " + (origin.parentOpId() == null ? "null"
+                    : "new deal.semantic.ir.OpId(new deal.semantic.ir.ModuleId("
+                        + javaString(origin.parentOpId().module().path()) + "), " + origin.parentOpId().id() + ")") + ")";
             String target = slot((ValueId) op.result());
             out.append(indent(indent)).append("try {\n");
-            out.append(indent(indent + 1)).append(target).append(" = JvmJson.toClass(")
-                .append(planName(payload.layout().classId())).append(", ")
-                .append(slot(payload.classValue())).append(");\n");
-            out.append(indent(indent)).append("} catch (JvmJson.Projection projection) {\n");
-            // The walk's closed arm selection renders through the authority
-            // (jsonable-tojson-walk-arm-binding W6): the walk arm with its
-            // {fieldPath}/{actual} parameters, or the cycle arm with none —
-            // the catch site composes no text, no token, and no span of its
-            // own, and the origin operand stays the executing op's own
-            // SourceOrigin.
-            out.append(indent(indent + 1)).append("JvmRuntime.DealError __jsonErr = "
-                + "projection.cycle\n");
-            out.append(indent(indent + 2)).append("? JvmRuntime.arm("
-                + "deal.semantic.ir.FailureArmId.JSON_TO_WALK_CYCLE, "
-                + "java.util.Map.of(), ")
-                .append("JvmRuntime.callOrigin(").append(javaString(originOf(op)))
-                .append(")").append(", null, null)\n");
-            out.append(indent(indent + 2)).append(": JvmRuntime.arm("
-                + "deal.semantic.ir.FailureArmId.JSON_TO_WALK, "
-                + "java.util.Map.of(\"fieldPath\", projection.fieldPath, "
-                + "\"actual\", projection.actual), ")
-                .append("JvmRuntime.callOrigin(").append(javaString(originOf(op)))
-                .append(")").append(", null, projection.actual);\n");
-            emitFailureEvent(op.opId(), op.kind().name(), op,
-                "JvmRuntime.errtext(__jsonErr)", indent + 1);
+            out.append(indent(indent + 1)).append(target).append(" = JvmJson.decode((String) ")
+                .append(slot(payload.jsonString())).append(", ").append(javaString(payload.target().canonicalSpecText()))
+                .append(", ").append(source).append(", ").append(javaString(originOf(op))).append(", __decodePlans);\n");
+            out.append(indent(indent)).append("} catch (JvmRuntime.DealError __jsonErr) {\n");
+            emitFailureEvent(op.opId(), op.kind().name(), op, "JvmRuntime.errtext(__jsonErr)", indent + 1);
             out.append(indent(indent + 1)).append("throw __jsonErr;\n");
             out.append(indent(indent)).append("}\n");
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType(), indent);
@@ -1529,8 +1544,7 @@ public final class JvmSemanticEmitter {
                 case EXTERNAL_ENTRY -> emitExternalEntryRecord(op, indent);
                 case ENTRY_INVOKE -> emitEntryInvoke(op, indent);
                 case MODULE_INIT -> emitModuleInit(op, indent);
-                case JSON_FROM_CLASS -> emitJsonFromClass(op, indent);
-                case JSON_TO_CLASS -> emitJsonToClass(op, indent);
+                case JSON_PARSE -> emitJsonParse(op, indent);
                 case CLASS_NEW -> emitClassNew(op, indent);
 
                 case CLASS_FACTORY -> throw rejectedOp(op, "a CLASS_FACTORY "
@@ -1941,6 +1955,19 @@ public final class JvmSemanticEmitter {
                     .append(", JvmRuntime.elementActualOf(")
                     .append(javaString(staticKind(payload.elementDescriptor())))
                     .append(", ").append(slot(input)).append("));\n");
+                out.append(indent(indent + 1)).append("JvmRuntime.DealError __leaf = ")
+                    .append(caught).append(".code.equals(\"E8003\") && ")
+                    .append(caught).append(".cause != null ? ").append(caught)
+                    .append(".cause : ").append(caught).append(";\n");
+                out.append(indent(indent + 1)).append(elementError)
+                    .append(" = new JvmRuntime.DealError(").append(elementError)
+                    .append(".code, ").append(elementError).append(".msg, ")
+                    .append(elementError).append(".origin, ").append(elementError)
+                    .append(".expected, ").append(elementError).append(".actual, ")
+                    .append(elementError).append(".frames, new JvmRuntime.DealError(")
+                    .append("__leaf.code, __leaf.msg, ")
+                    .append(javaString(originOf(boundary)))
+                    .append(", __leaf.expected, __leaf.actual, __leaf.frames, __leaf.cause));\n");
                 if (trace) {
                     emitFailureEvent(boundary.opId(), "BOUNDARY", boundary,
                         "JvmRuntime.errtext(" + elementError + ")", indent + 1);
@@ -3197,12 +3224,6 @@ public final class JvmSemanticEmitter {
                     out.append(indent(indent)).append("Object ").append(resultLocal)
                         .append(" = null;\n");
                     out.append(indent(indent)).append("try {\n");
-                    // The invoking call's origin: a failure inside the body
-                    // whose arm renders the call origin (the @jsonable toJson
-                    // walk) reads the innermost active call.
-                    out.append(indent(indent + 1))
-                        .append("JvmRuntime.callOrigins.push(")
-                        .append(javaString(originOf(op))).append(");\n");
                     out.append(indent(indent + 1)).append("try {\n");
                     out.append(indent(indent + 1)).append("  ")
                         .append(resultLocal)
@@ -3248,9 +3269,6 @@ public final class JvmSemanticEmitter {
                     emitFailureEvent(op.opId(), op.kind().name(), op,
                         "JvmRuntime.errtext(__e)", indent + 2);
                     out.append(indent(indent + 1)).append("  throw __e;\n");
-                    out.append(indent(indent + 1)).append("} finally {\n");
-                    out.append(indent(indent + 1))
-                        .append("  JvmRuntime.callOrigins.pop();\n");
                     out.append(indent(indent + 1)).append("}\n");
                     out.append(indent(indent)).append("} finally {\n");
                     emitInvocationStateRestore(callee, savedState, indent + 1);
@@ -3408,20 +3426,12 @@ public final class JvmSemanticEmitter {
                     .append(", List.of(), null, null);\n");
             }
             out.append(indent(indent + 2)).append("try {\n");
-            // The invoking call's origin: a failure inside the entry body
-            // whose arm renders the call origin (the @jsonable toJson walk)
-            // reads the innermost active call.
-            out.append(indent(indent + 3)).append("  JvmRuntime.callOrigins.push(")
-                .append(javaString(originOf(op))).append(");\n");
-            out.append(indent(indent + 3)).append("  try {\n");
+
             out.append(indent(indent + 4)).append("  ").append(resultLocal)
                 .append(" = ").append(fnFactory(entryPayload.function()))
                 .append("(").append(caps).append(").fn.invoke(new Object[]{")
                 .append(args).append("});\n");
-            out.append(indent(indent + 3)).append("  } finally {\n");
-            out.append(indent(indent + 3))
-                .append("    JvmRuntime.callOrigins.pop();\n");
-            out.append(indent(indent + 3)).append("  }\n");
+
             out.append(indent(indent + 3))
                 .append("} catch (JvmRuntime.DealError __ex) {\n");
             if (trace) {
@@ -3797,13 +3807,6 @@ public final class JvmSemanticEmitter {
                 .append(" = JvmRuntime.currentModule();\n");
             out.append(indent(indent)).append("MODULE = __fm").append(id).append(";\n");
             out.append(indent(indent)).append("JvmRuntime.setModule(MODULE);\n");
-            // The invoking dynamic call's origin: a failure inside the
-            // callee body whose arm renders the call origin (the
-            // @jsonable toJson walk) reads the innermost active call —
-            // the f(w) invocation, never an enclosing static call. The
-            // finally below pops it on every path.
-            out.append(indent(indent)).append("JvmRuntime.callOrigins.push(")
-                .append(javaString(originOf(op))).append(");\n");
             out.append(indent(indent)).append("JvmRuntime.DealError __fd").append(id)
                 .append(" = null;\n");
             out.append(indent(indent)).append("try {\n");
@@ -3815,7 +3818,6 @@ public final class JvmSemanticEmitter {
             out.append(indent(indent + 1)).append("__fd").append(id)
                 .append(" = __e").append(id).append(";\n");
             out.append(indent(indent)).append("} finally {\n");
-            out.append(indent(indent + 1)).append("JvmRuntime.callOrigins.pop();\n");
             out.append(indent(indent + 1)).append("MODULE = __pm").append(id)
                 .append(";\n");
             out.append(indent(indent + 1)).append("JvmRuntime.setModule(__pr")
@@ -5646,10 +5648,14 @@ public final class JvmSemanticEmitter {
                     .append(";\n");
                 out.append(indent(indent)).append("  } catch (JvmRuntime.DealError __be) {\n");
                 out.append(indent(indent))
+                    .append("    JvmRuntime.DealError __cause = __be.cause == null ? null : new JvmRuntime.DealError(__be.cause.code, __be.cause.msg, ")
+                    .append(javaString(originOf(boundary)))
+                    .append(", __be.cause.expected, __be.cause.actual, __be.cause.frames, __be.cause.cause);\n");
+                out.append(indent(indent))
                     .append("    JvmRuntime.DealError __bre = new JvmRuntime.DealError("
                         + "__be.code, __be.msg, ")
                     .append(javaString(originOf(boundary)))
-                    .append(", __be.expected, __be.actual, __be.frames, null);\n");
+                    .append(", __be.expected, __be.actual, __be.frames, __cause);\n");
                 if (trace) {
                     emitFailureEvent(boundary.opId(), "BOUNDARY", boundary,
                         "JvmRuntime.errtext(__bre)", indent + 1);
@@ -6736,7 +6742,7 @@ public final class JvmSemanticEmitter {
          */
         private static List<StdlibFunctionCatalog.Entry> stdlibRowsOf(String modulePath) {
             List<StdlibFunctionCatalog.Entry> rows = new java.util.ArrayList<>();
-            for (StdlibFunctionCatalog.Entry row : StdlibFunctionCatalog.entries()) {
+            for (StdlibFunctionCatalog.Entry row : StdlibFunctionCatalog.callableEntries()) {
                 if (row.modulePath().equals(modulePath)) {
                     rows.add(row);
                 }

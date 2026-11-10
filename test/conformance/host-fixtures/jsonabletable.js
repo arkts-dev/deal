@@ -1,17 +1,11 @@
 "use strict";
 
-// Host fixture implementation for the three-lane @jsonable plain-table
-// content conformance test (ISSUE-0868). Every declared table-typed return
-// is the runtime table Map carrying the JSON-shaped data the class helper's
-// toJson walk accepts: an object, an object with a nested object and an
-// array member, the deployment's own std/json decode (makeParsed,
-// ISSUE-0900: the marked-Map graph with its per-slot number-variant marks),
-// and a self-referential table for the closed cycle arm. The closed arms'
-// returns carry non-finite leaves (JSON null) and lone UTF-16 units in
-// object values and keys (losslessly escaped JSON data).
+// Host Record-content JSON conformance fixture: ordinary objects, nested
+// objects/arrays, a real contextual decode graph and a self-reference for
+// the closed cycle arm. Non-finite leaves substitute null; lone UTF-16 units in
+// object values and keys remain lossless JSON data.
 
 const $rt = require("../deal/runtime");
-const $json = require("../std/json");
 
 module.exports = {
   makeTable: function () {
@@ -26,11 +20,9 @@ module.exports = {
   },
 
   makeParsed: function () {
-    // The deployment's own std/json decode: the marked-Map graph whose
-    // numeric slots carry the decoder's per-slot number-variant marks, so
-    // the class table field/element holding it walks by the Map's content
-    // keys and spells each marked slot by its recorded variant.
-    return $json.parse.$f("{\"v\":0.1,\"w\":1e17}", "-", 0, 0);
+    // Actual contextual Record reconstruction retains binary64 leaves and
+    // presence/order metadata through the host return.
+    return $rt.jsonDecode("{\"v\":0.1,\"w\":1e17}", "record", "-", 0, 0);
   },
 
   makeCycle: function () {

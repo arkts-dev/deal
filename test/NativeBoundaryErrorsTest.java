@@ -314,6 +314,15 @@ public final class NativeBoundaryErrorsTest {
                 checkEq("", sanitized.result().stderr(), "the boundary driver "
                     + "reports no sanitizer finding at -O" + level + ": "
                     + sanitized.result().describe());
+                var stressEnvironment = new LinkedHashMap<>(NativeCompiler.sanitizerEnvironment());
+                stressEnvironment.put("DEAL_GC_STRESS", "1");
+                var sanitizedStress = NativeCompiler.runSanitized(sanitizedProduct, scratch, stressEnvironment);
+                checkEq(0, sanitizedStress.result().exitCode(), "the stressed instrumented boundary driver exits zero at -O"
+                    + level + ": " + sanitizedStress.result().describe());
+                checkEq(normal.stdout(), sanitizedStress.result().stdout(),
+                    "the stressed instrumented boundary observations are unchanged at -O" + level);
+                checkEq("", sanitizedStress.result().stderr(),
+                    "the stressed instrumented boundary driver reports no finding at -O" + level);
             }
         }
     }
@@ -599,7 +608,13 @@ public final class NativeBoundaryErrorsTest {
             new Fault("-DDEAL_BOUNDARY_CASE=17",
                 "array position: not a bounds arm"),
             new Fault("-DDEAL_BOUNDARY_CASE=18",
-                "failure admission: relayed Error beside host text"));
+                "failure admission: relayed Error beside host text"),
+            new Fault("-DDEAL_BOUNDARY_CASE=19", "arm render: malformed parameter data"),
+            new Fault("-DDEAL_BOUNDARY_CASE=20", "error record: invalid text access"),
+            new Fault("-DDEAL_BOUNDARY_CASE=21", "error record: invalid text access"),
+            new Fault("-DDEAL_BOUNDARY_CASE=22", "arm render: malformed parameter data"),
+            new Fault("-DDEAL_BOUNDARY_CASE=23", "error record: invalid text access"),
+            new Fault("-DDEAL_BOUNDARY_CASE=24", "error record: invalid text access"));
         for (Fault fault : faults) {
             for (int level : LEVELS) {
                 Path product = scratch.resolve("boundary-fault"

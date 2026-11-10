@@ -1,16 +1,21 @@
-// @spec: Classes
-// @description: An explicit empty JSON array replaces a non-empty declared field default.
+// @spec: Standard library builtins — JSON decoding
+// @description: An explicit empty JSON array reconstructs a fresh declared number array with its persistent descriptor.
 // @expected: runtime-ok
-// @features: jsonable, arrays, fromJson
+// @features: json, arrays, classes
 
-// @jsonable
 export class Values { xs: number[]; }
 
 export function main(): null {
-  let values: Values | null = Values$fromJson("{\"xs\":[]}");
-  if (values !== null) {
-    if (values.xs.length !== 0) { throw { code: "TEST_FAIL", message: "empty array not preserved" }; }
-    return null;
-  }
-  throw { code: "TEST_FAIL", message: "empty array rejected" };
+  let values: Values = JSON.parse("{\"xs\":[]}");
+  let other: Values = JSON.parse("{\"xs\":[]}");
+  if (values.xs.length !== 0 || values.xs === other.xs) { throw {code: "TEST_FAIL", message: "empty array freshness lost"}; }
+  values.xs[0] = 7;
+  if (other.xs.length !== 0) { throw {code: "TEST_FAIL", message: "decoded array alias"}; }
+  let opaque: unknown = values.xs;
+  if ((opaque as number[]) !== values.xs) { throw {code: "TEST_FAIL", message: "decoded array identity"}; }
+  let rejected = false;
+  try { let invalid = opaque as unknown[]; }
+  catch (e) { rejected = (e as Error).code === "E8001"; }
+  if (!rejected) { throw {code: "TEST_FAIL", message: "decoded array descriptor lost"}; }
+  return null;
 }

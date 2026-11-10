@@ -38,13 +38,15 @@ Use Record<string, unknown>. Every read infers unknown; explicitly check interme
 
 ## Arrays
 
-Arrays are zero-based with runtime-enforced invariant descriptors, unlike TypeScript arrays; emptiness cannot justify retagging. Annotate empty literals. Append at length; iterate with inferred for-of bindings or explicit while indexes. Deleted slots read undefined; out-of-bounds reads fail. Decoded JSON arrays carry unknown elements: check values individually or use generated typed decoding.
+Arrays are zero-based with runtime-enforced invariant descriptors, unlike TypeScript arrays; emptiness cannot justify retagging. Annotate empty literals. Append at length; iterate with inferred for-of bindings or explicit while indexes. Deleted slots read undefined; out-of-bounds reads fail. Without a decoding target, JSON arrays carry unknown elements. Annotate a JSON.parse destination to reconstruct fresh arrays with the requested element descriptor.
 
-## JSON serialization (`@jsonable`)
+## JSON
 
-Attach // @jsonable to an exported class. Generated C$fromJson(string): C | null and C$toJson(C): string implement its schema. Decoding requires nonoptional fields, rejects extra/duplicate keys and invalid nested values, and preserves optional presence. Use acyclic class dependencies.
+Use import-free JSON.parse(text). Any JSON root is valid; malformed syntax, duplicate decoded keys and target mismatches throw Error. An annotated initializer, assignment destination, field, element, parameter or return supplies the reconstruction target, including through parentheses and conditional branches. An assertion checks the parsed value but never supplies a decoding target.
 
-JSON parses binary64, preserving negative zero; either zero sign serializes as 0. Generic stringify omits object undefined/functions, substitutes null in arrays/nonfinite positions and rejects cycles without hooks. Shared acyclic children are valid. Generated dynamic Record-content walkers instead reject unsupported leaves; declared numeric fields encode nonfinite as null.
+Without a target, the result is unknown with ordinary Records and unknown-element arrays. Contextual arrays receive fresh typed storage; contextual classes receive fresh exact nominal instances. Required fields must be present, extras reject before declaration-ordered field decoding, and omitted optionals remain absent. Recursive class schemas are valid; a reachable function type rejects at compile time, even in an optional field. Unknown and Record stop schema traversal. No defaults or serialization hooks run.
+
+JSON parses binary64, preserving negative zero; either zero sign serializes as 0. JSON.stringify returns string | undefined, omits object undefined/functions, substitutes null in arrays/nonfinite positions and rejects cycles without hooks. Shared acyclic children are valid. Record keys follow Object.keys order; class fields follow declaration order.
 
 ## Modules
 
@@ -63,9 +65,6 @@ Math.floor(x), Math.ceil(x), Math.sqrt(x), and Math.abs(x) take numbers and foll
 ```deal
 // std/table
 export function keys(t: Record<string, unknown>): string[];
-// std/json
-export function parse(s: string): Record<string, unknown>;
-export function stringify(value: unknown): string | undefined;
 ```
 
 Use declared, implemented host APIs.

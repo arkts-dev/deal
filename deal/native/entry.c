@@ -14,15 +14,13 @@
 
 /* The two pinned terminal lines and the exit status of an uncaught Error. */
 static int deal_terminal_error(deal_error *error) {
-    const char *code = NULL;
-    if (!deal_error_code(error, &code) || code == NULL) {
-        code = "";
-    }
+    size_t code_length = 0;
+    const char *code = deal_error_code_bytes(error, &code_length);
     static const char code_prefix[] = "DEAL_ERROR_CODE: ";
     static const char snapshot_prefix[] = "DEAL_ERROR_SNAPSHOT: ";
     char *snapshot = deal_error_snapshot(error);
     deal_platform_write_stdout(code_prefix, sizeof code_prefix - 1);
-    deal_platform_write_stdout(code, strlen(code));
+    deal_platform_write_stdout(code, code_length);
     deal_platform_write_stdout("\n", 1);
     deal_platform_write_stdout(snapshot_prefix, sizeof snapshot_prefix - 1);
     deal_platform_write_stdout(snapshot, strlen(snapshot));

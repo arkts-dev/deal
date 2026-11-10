@@ -2,6 +2,6 @@
 // @description: math-absNumber--1
 // @expected: runtime-ok
 // @features: boundary-validation
-import * as console from "std/console";
+import * as printer from "std/console";
 import * as m from "std/math";
-export function main():null{try{let x=m.absNumber(-1);if(x===(1)){console.log("OK");}else{console.log("WRONG");}}catch(e){console.log("THREW");}return null;}
+export function main():null{try{let x=m.absNumber(-1);if(x===(1)){printer.log("OK");}else{printer.log("WRONG");}}catch(e){printer.log("THREW");}return null;}

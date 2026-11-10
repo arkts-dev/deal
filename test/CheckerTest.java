@@ -50,7 +50,7 @@ public class CheckerTest {
 
     private static CheckerOutput checkProgram(String source, String filename) {
         LexResult lex = new Lexer(source, filename).tokenize();
-        ParseResult parse = new Parser(lex.tokens(), filename, lex.directiveEvents()).parse();
+        ParseResult parse = new Parser(lex.tokens(), filename).parse();
 
         if (parse.hasErrors()) {
             StubModuleResolver resolver = new StubModuleResolver();
@@ -91,7 +91,7 @@ public class CheckerTest {
     private static CheckerOutput checkProgramWithModule(String source,
             String filename, ModuleResolver resolver) {
         LexResult lex = new Lexer(source, filename).tokenize();
-        ParseResult parse = new Parser(lex.tokens(), filename, lex.directiveEvents()).parse();
+        ParseResult parse = new Parser(lex.tokens(), filename).parse();
 
         if (parse.hasErrors()) {
             NameResolver nr = new NameResolver(filename, resolver);
@@ -3648,8 +3648,7 @@ public class CheckerTest {
                     : "import * as A from \"./a\";\nexport function fb(): number;\n";
                 String filename = first ? "a.deal" : "b.deal";
                 LexResult lex = new Lexer(source, filename).tokenize();
-                ParseResult parse = new Parser(lex.tokens(), filename,
-                    lex.directiveEvents()).parse();
+                ParseResult parse = new Parser(lex.tokens(), filename).parse();
                 NameResolver nested = new NameResolver(filename, this,
                     modulesInProgress);
                 nested.resolve(parse.program());
@@ -4155,8 +4154,8 @@ public class CheckerTest {
      * ISSUE-0884: a catch identifier declares a local Error variable, so it
      * is a user declaration under the $ prohibition. The canonical E2008
      * wording is kept, every $ position is rejected, and nested catch
-     * scopes are each checked. Normal catch bindings, generated @jsonable
-     * helper names, and dynamic table/string data keys stay accepted.
+     * scopes are each checked. Normal catch bindings and dynamic
+     * table/string data keys stay accepted; helper-shaped declarations reject.
      */
     static void testE2008_dollarInCatchVar() {
         System.out.println("-- ISSUE-0884: dollar in catch variable (E2008) --");
@@ -4210,7 +4209,7 @@ public class CheckerTest {
             + "}\n");
         assertNoErrors(normal, "normal catch identifiers stay accepted");
 
-        // Generated names remain compiler-owned and source-visible.
+        // Comments never introduce callable symbols.
         CheckerOutput helpers = checkProgram(
             "// @jsonable\n"
             + "export class Payload { name: string; }\n"
@@ -4219,8 +4218,10 @@ public class CheckerTest {
             + "  let decoded: Payload | null = Payload$fromJson(encoded);\n"
             + "  return null;\n"
             + "}\n");
-        assertNoErrors(helpers,
-            "generated C$fromJson/C$toJson helpers stay visible");
+        assertError(helpers, "E2001", "comment cannot introduce generated helper names");
+        check(helpers.result.symbolTable().resolve("Payload$fromJson") == null
+                && helpers.result.symbolTable().resolve("Payload$toJson") == null,
+            "resolver synthesizes neither JSON helper");
 
         // Assessment control: table literal property names and table member
         // reads are dynamic string keys (data), not user declarations, so $
@@ -4390,7 +4391,7 @@ public class CheckerTest {
         check(!hasE2003, "valid module import should NOT produce E2003");
     }
     // =========================================================================
-    // v1.1: @jsonable field validation (E4007) and cycle detection (E4008)
+    // Comment-shaped markers impose no class-field or recursion restrictions
     // =========================================================================
 
     static void testJsonablePrimitiveTypes() {
@@ -4449,18 +4450,21 @@ public class CheckerTest {
     }
 
     static void testJsonableNonJsonableType_function() {
-        System.out.println("-- @jsonable: function type → E4007 --");
+        System.out.println("-- comment marker: function declaration legal, parse target rejects --");
         CheckerOutput out = checkProgram(
             "// @jsonable\n" +
             "export class Foo {\n" +
             "  callback: (x: number) => null;\n" +
             "}"
         );
-        assertError(out, "E4007", "function type is not jsonable");
+        assertNoErrors(out, "function fields remain legal ordinary class declarations");
+        CheckerOutput parsed = checkProgram("class Foo{callback:(x:number)=>null;}"
+            + "function decode():Foo{return JSON.parse(\"{}\");}");
+        assertError(parsed, "E5001", "reachable function field rejects only a decoding target");
     }
 
     static void testJsonableNonJsonableType_nonJsonableClass() {
-        System.out.println("-- @jsonable: non-@jsonable class field → E4007 --");
+        System.out.println("-- comment marker: private class field remains legal --");
         CheckerOutput out = checkProgram(
             "class Plain { x: number; }\n" +
             "// @jsonable\n" +
@@ -4468,11 +4472,11 @@ public class CheckerTest {
             "  p: Plain;\n" +
             "}"
         );
-        assertError(out, "E4007", "non-@jsonable class field → E4007");
+        assertNoErrors(out, "unmarked private class fields remain legal");
     }
 
     static void testJsonableCycle() {
-        System.out.println("-- @jsonable: cycle A ↔ B → E4008 --");
+        System.out.println("-- comment marker: recursive classes remain legal --");
         CheckerOutput out = checkProgram(
             "// @jsonable\n" +
             "export class A {\n" +
@@ -4483,11 +4487,11 @@ public class CheckerTest {
             "  a: A;\n" +
             "}"
         );
-        assertError(out, "E4008", "circular dependency A ↔ B → E4008");
+        assertNoErrors(out, "recursive class declarations remain legal");
     }
 
     static void testJsonableCycleThroughArray() {
-        System.out.println("-- @jsonable: cycle through array wrapper → E4008 --");
+        System.out.println("-- comment marker: recursive array fields remain legal --");
         CheckerOutput out = checkProgram(
             "// @jsonable\n" +
             "export class A {\n" +
@@ -4498,11 +4502,11 @@ public class CheckerTest {
             "  a: A;\n" +
             "}"
         );
-        assertError(out, "E4008", "circular dependency through B[] → E4008");
+        assertNoErrors(out, "recursive array field schemas remain legal");
     }
 
     static void testJsonableCycleThroughNullable() {
-        System.out.println("-- @jsonable: cycle through nullable wrapper → E4008 --");
+        System.out.println("-- comment marker: recursive nullable fields remain legal --");
         CheckerOutput out = checkProgram(
             "// @jsonable\n" +
             "export class A {\n" +
@@ -4513,11 +4517,11 @@ public class CheckerTest {
             "  a: A;\n" +
             "}"
         );
-        assertError(out, "E4008", "circular dependency through B | null → E4008");
+        assertNoErrors(out, "recursive nullable field schemas remain legal");
     }
 
     static void testJsonableNonCycle_nonJsonableClass() {
-        System.out.println("-- @jsonable: non-circular: A has B (not @jsonable) → E4007 --");
+        System.out.println("-- comment marker: private descendants need no marker --");
         CheckerOutput out = checkProgram(
             "// @jsonable\n" +
             "export class A {\n" +
@@ -4525,16 +4529,13 @@ public class CheckerTest {
             "}\n" +
             "class B { x: number; }"
         );
-        // Should get E4007 on A's field (B is not @jsonable), not E4008
-        assertError(out, "E4007", "non-@jsonable class field → E4007, not E4008");
-        // Also verify no E4008
+        assertNoErrors(out, "comments impose no restrictions on private descendants");
         List<CompilerDiagnostic> diags = out.result.diagnostics();
-        boolean hasE4008 = diags.stream().anyMatch(d -> d.code().equals("E4008"));
-        check(!hasE4008, "should NOT produce E4008 when B is not @jsonable");
+        check(diags.isEmpty(), "private descendants introduce no marker-specific diagnostics");
     }
 
     static void testJsonableThreeClassCycle() {
-        System.out.println("-- @jsonable: three-class cycle A→B→C→A → E4008 --");
+        System.out.println("-- comment marker: three-class recursion remains legal --");
         CheckerOutput out = checkProgram(
             "// @jsonable\n" +
             "export class A {\n" +
@@ -4549,11 +4550,11 @@ public class CheckerTest {
             "  a: A;\n" +
             "}"
         );
-        assertError(out, "E4008", "three-class cycle A→B→C→A → E4008");
+        assertNoErrors(out, "mutually recursive three-class schemas remain legal");
     }
 
     static void testJsonableNonCircularChain() {
-        System.out.println("-- @jsonable: non-circular chain A→B→C (all @jsonable) → no E4008 --");
+        System.out.println("-- comment marker: three-class dependency chain remains legal --");
         CheckerOutput out = checkProgram(
             "// @jsonable\n" +
             "export class A {\n" +
@@ -4568,7 +4569,7 @@ public class CheckerTest {
             "  value: string;\n" +
             "}"
         );
-        assertNoErrors(out, "non-circular chain A→B→C → no E4008");
+        assertNoErrors(out, "three-class dependency chain remains legal");
     }
 
     static void testJsonableImportedClass_valid() {
@@ -4597,9 +4598,9 @@ public class CheckerTest {
     }
 
     static void testJsonableImportedClass_invalid() {
-        System.out.println("-- @jsonable: imported non-@jsonable class → E4007 --");
+        System.out.println("-- comment marker: imported class requires no helper exports --");
         StubModuleResolver resolver = new StubModuleResolver();
-        // Register exports WITHOUT $fromJson/$toJson (class is not @jsonable)
+        // Ordinary class exports suffice regardless of comment-shaped markers.
         Map<String, Type> exports = new HashMap<>();
         exports.put("Plain", IdentityTestFixtures.classType("Plain", "./foreign"));
         resolver.register("./foreign", exports);
@@ -4612,7 +4613,7 @@ public class CheckerTest {
             "}",
             resolver
         );
-        assertError(out, "E4007", "imported non-@jsonable class field → E4007");
+        assertNoErrors(out, "imported class field requires no generated helper exports");
     }
 
     /**
@@ -5026,16 +5027,15 @@ public class CheckerTest {
         assertNoErrors(out, "a local and an imported same-named jsonable class"
             + " are distinct identities");
         List<CompilerDiagnostic> diags = out.result.diagnostics();
-        check(diags.stream().noneMatch(d -> d.code().equals("E4008")),
-            "no false E4008 from the same-named imported class: " + diags);
-        check(diags.stream().noneMatch(d -> d.code().equals("E4007")),
-            "no false E4007 from the same-named imported class: " + diags);
+        check(diags.isEmpty(),
+            "same-named imported classes introduce no marker diagnostics: " + diags);
+        check(!foreignB.equals(IdentityTestFixtures.classType("B", "./main")),
+            "same-spelled classes retain distinct defining module identities");
     }
 
     /**
-     * Imported generated jsonable classes are valid field types through
-     * array and nullable wrappers (the identity-keyed helper visibility
-     * recursion of ISSUE-0784).
+     * Imported classes remain valid through array and nullable wrappers;
+     * inert marker comments add no helper visibility requirement.
      */
     static void testJsonableImportedThroughArrayAndNullable() {
         System.out.println("-- @jsonable: imported jsonable class through array/nullable --");
@@ -5063,9 +5063,8 @@ public class CheckerTest {
     }
 
     /**
-     * A local generated cycle still rejects with E4008 while an imported
-     * jsonable class of the same name exists: identity, not name,
-     * decides both the dependency edge and the cycle (ISSUE-0784).
+     * Local recursion remains legal beside a same-spelled imported class;
+     * inert marker comments do not introduce cycle rejection.
      */
     static void testJsonableLocalCycleWithSameNamedImported() {
         System.out.println("-- @jsonable: local cycle with same-named imported class --");
@@ -5092,8 +5091,7 @@ public class CheckerTest {
             "}\n",
             resolver
         );
-        assertError(out, "E4008",
-            "the local A <-> B cycle still rejects with E4008");
+        assertNoErrors(out, "local recursion and same-named imported class remain legal");
     }
 
     /**
@@ -5154,7 +5152,7 @@ public class CheckerTest {
         // type errors from the initializer expression.
         String source = "let f: (p: number) => Promise<string> = null;";
         LexResult lex = new Lexer(source, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
         check(!parse.hasErrors(), "Parser: no errors");
 
         StubModuleResolver resolver = new StubModuleResolver();
@@ -5594,8 +5592,7 @@ public class CheckerTest {
             "  return null;" +
             "}";
         LexResult lex = new Lexer(source, "test.deal").tokenize();
-        ParseResult parse = new Parser(lex.tokens(), "test.deal",
-            lex.directiveEvents()).parse();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
         NameResolver nr = new NameResolver("test.deal", new StubModuleResolver());
         SymbolTable symTable = nr.resolve(parse.program());
         FunctionDeclaration main = findStatement(parse.program().statements(), FunctionDeclaration.class);

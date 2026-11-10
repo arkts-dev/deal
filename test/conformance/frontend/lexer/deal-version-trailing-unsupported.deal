@@ -1,6 +1,6 @@
 // @spec: Lexical elements — Comment semantics
-// @description: Removed file-version directives are unknown in every position and argument form
-// @expected: compile-error E1044
+// @description: An unsupported version spelling in a trailing comment is whitespace
+// @expected: compile-ok
 // @features: lexer, directives, deal-version, v1.4, empty-module
 
 // @deal-version 1.2

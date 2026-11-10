@@ -1750,12 +1750,7 @@ final class DefaultIrRecorder {
         DiagnosticRange range;
         if (declaration != null) {
             range = declaration.span().range();
-        } else if (kind
-                == LexicalDeclarationIdentity.DeclarationKind.FUNCTION) {
-            ClassDeclaration synthetic =
-                AstDeclarations.jsonableClassForSynthetic(program, name);
-            range = synthetic != null ? synthetic.span().range()
-                : program.span().range();
+
         } else {
             range = program.span().range();
         }

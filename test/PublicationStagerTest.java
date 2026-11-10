@@ -38,6 +38,10 @@ public class PublicationStagerTest {
     }
 
     public static void main(String[] args) throws Exception {
+        if (args.length == 1 && args[0].equals("--missing-json-runtime")) {
+            missingJsonRuntimeChild();
+            return;
+        }
         System.out.println(
             "=== Publication Stager Tests (ISSUE-0458) ===\n");
 
@@ -50,6 +54,8 @@ public class PublicationStagerTest {
         testConcurrentCompilationsSerialize();
         testIrDumpsStagedAndTransactional();
         testOutOfCheckoutCopiesResolveDistributionHome();
+        testMissingJsonRuntimeIsTransactional();
+        testRetiredJsonModuleRejectedTransactionally();
         testPublishMoveFailureRestoresAndReports();
         testStagingFailureReportsPinnedDiagnostic();
         testDeleteRetiredFailureToleratedAndRecovered();
@@ -292,7 +298,7 @@ public class PublicationStagerTest {
 
     private static void testForcedFailureLeavesLiveRootUntouched()
             throws Exception {
-        System.out.println("-- Forced failure in a later module's codegen");
+        System.out.println("-- Forced failure in a later imported module");
 
         Path base = tempDir("pub-forced-failure-");
         Path src = base.resolve("src");
@@ -312,18 +318,17 @@ public class PublicationStagerTest {
             check(!before.isEmpty(),
                 "the clean compile published a live set: " + before.keySet());
 
-            // The later module (lib) now fails its codegen with the
-            // @extern-c E1044 rejection while the entry still codegens
-            // clean — the whole-set failure contract must leave the
-            // prior live set byte-identical.
+            // The later module (lib) now references an undeclared export.
+            // The comment has no host-import semantics; E2004 must leave
+            // the prior whole live set byte-identical.
             writeText(src.resolve("ffi.d.deal"),
                 "// @extern-c\nexport function cFn(x: number): number;\n");
             writeText(src.resolve("lib.deal"),
                 "import * as ffi from \"./ffi\";\n"
-                    + "export function one(): number { return ffi.cFn(1); }\n");
+                    + "export function one(): number { return ffi.missing(1); }\n");
             boolean second = compileProject(src, out, Backend.JS,
                 false, false, null);
-            check(!second, "the @extern-c rejection fails the recompile");
+            check(!second, "the missing imported export fails the recompile");
 
             Map<String, byte[]> after = treeBytes(out);
             checkTreeEquals(before, after,
@@ -359,9 +364,9 @@ public class PublicationStagerTest {
             check(first, "the fresh-root LuaJIT compile succeeds");
             Set<String> expected = new LinkedHashSet<>(List.of(
                 "main.lua", "main.deal.map.json", "lib.deal.map.json",
-                "deal/runtime.lua",
+                "deal/runtime.lua", "deal/json.lua",
                 "std/console.lua", "std/string.lua", "std/table.lua",
-                "std/json.lua", "std/math.lua", "std/time.lua"));
+                "std/math.lua", "std/time.lua"));
             check(treePaths(out).equals(expected),
                 "the fresh root contains exactly the one project artifact, "
                     + "its default per-source sidecars and the complete "
@@ -403,11 +408,13 @@ public class PublicationStagerTest {
                 "export function main(): null { return null; }\n");
 
             // Pre-populate the live root with a stale stdlib copy, a
-            // stale runtime copy, and an obsolete module artifact.
+            // stale runtime pair, and an obsolete module artifact.
             writeText(out.resolve("std/console.lua"),
                 "stale stdlib bytes\n");
             writeText(out.resolve("deal/runtime.lua"),
                 "stale runtime bytes\n");
+            writeText(out.resolve("deal/json.lua"),
+                "stale internal JSON bytes\n");
             writeText(out.resolve("obsolete.lua"),
                 "stale module artifact\n");
 
@@ -419,6 +426,7 @@ public class PublicationStagerTest {
                 "the stale obsolete module artifact is gone: "
                     + published.keySet());
             check(published.containsKey("deal/runtime.lua")
+                    && published.containsKey("deal/json.lua")
                     && published.containsKey("std/console.lua"),
                 "the runtime and stdlib copies were re-staged fresh: "
                     + published.keySet());
@@ -426,6 +434,9 @@ public class PublicationStagerTest {
                     Files.readAllBytes(Path.of("deal/runtime.lua"))),
                 "the runtime copy was re-staged fresh from the resolved "
                     + "surface (no stale bytes survive)");
+            check(Arrays.equals(published.get("deal/json.lua"),
+                    Files.readAllBytes(Path.of("deal/json.lua"))),
+                "the internal JSON copy was re-staged fresh without requiring a JSON call");
             check(Arrays.equals(published.get("std/console.lua"),
                     Files.readAllBytes(Path.of("std/console.lua"))),
                 "the stdlib copy was re-staged fresh from the resolved "
@@ -692,6 +703,8 @@ public class PublicationStagerTest {
             Path dist = base.resolve("distribution");
             writeText(dist.resolve("deal/runtime.lua"),
                 "-- distribution runtime marker\n");
+            writeText(dist.resolve("deal/json.lua"),
+                "-- distribution internal JSON marker\n");
             writeText(dist.resolve("std/console.lua"),
                 "-- distribution console marker\n");
 
@@ -718,6 +731,10 @@ public class PublicationStagerTest {
                     "the staged stdlib bytes equal the distribution's "
                         + "bytes (never the checkout's)");
 
+                check(Arrays.equals(published.get("deal/json.lua"),
+                        Files.readAllBytes(dist.resolve("deal/json.lua"))),
+                    "internal JSON algorithms resolve from the distribution runtime tier");
+
                 // Project-local surface precedence: a project-local
                 // std/ override stages its own bytes even with the
                 // distribution present.
@@ -726,6 +743,8 @@ public class PublicationStagerTest {
                     "export function main(): null { return null; }\n");
                 writeText(overrideSrc.resolve("std/console.lua"),
                     "-- project-local console marker\n");
+                writeText(overrideSrc.resolve("deal/json.lua"),
+                    "-- forbidden project-local JSON runtime shadow\n");
                 Path overrideOut = base.resolve("out-override");
                 boolean overrideOk = compileProject(overrideSrc,
                     overrideOut, Backend.LUAJIT, false, false, null);
@@ -744,12 +763,106 @@ public class PublicationStagerTest {
                             dist.resolve("deal/runtime.lua"))),
                     "the runtime still resolves from the distribution "
                         + "(no project-local runtime tier is pinned)");
+                check(Arrays.equals(overridePublished.get("deal/json.lua"),
+                        Files.readAllBytes(dist.resolve("deal/json.lua"))),
+                    "a project-local JSON runtime cannot shadow the distribution algorithms");
             } finally {
                 System.clearProperty(DistributionHome.DEAL_HOME_PROPERTY);
             }
         } finally {
             deleteTree(base);
         }
+    }
+
+    private static void testRetiredJsonModuleRejectedTransactionally() throws Exception {
+        Path base = tempDir("pub-retired-json-");
+        try {
+            Path src = base.resolve("src");
+            Path out = base.resolve("out");
+            writeText(src.resolve("std/json.d.deal"),
+                "export function parse(text:string):unknown;\n"
+                    + "export function stringify(value:unknown):string|undefined;\n");
+            writeText(src.resolve("std/json.lua"), "error('retired JSON wrapper executed')\n");
+            writeText(src.resolve("std/json.js"), "throw Error('retired JSON wrapper executed');\n");
+            for (Backend backend : List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM)) {
+                writeText(src.resolve("main.deal"),
+                    "export function main():null { let value:number=JSON.parse(\"1\");"
+                        + "JSON.stringify(value); return null; }\n");
+                check(compileProject(src, out, backend, false, false, null),
+                    backend + " builtin JSON remains compilable with stray retired resources");
+                Map<String, byte[]> prior = treeBytes(out);
+                check(prior.keySet().stream().noneMatch(path -> path.startsWith("std/json.")),
+                    backend + " never stages a retired JSON wrapper");
+                for (String member : List.of("parse", "stringify")) {
+                    writeText(src.resolve("main.deal"),
+                        "import * as json from \"std/json\";\n"
+                            + "export function main():null { json." + member
+                            + (member.equals("parse") ? "(\"1\");" : "(1);")
+                            + " return null; }\n");
+                    StringBuilder errors = new StringBuilder();
+                    check(!compileProject(src, out, backend, false, false, errors),
+                        backend + " rejects the retired " + member + " import");
+                    check(errors.toString().contains("E2003")
+                            && errors.toString().contains("Not a spec-listed stdlib module"),
+                        backend + " rejects retired JSON before local declaration lookup: " + errors);
+                    checkTreeEquals(prior, treeBytes(out),
+                        backend + " rejected JSON import preserves the complete previous publication");
+                    check(staleSiblings(out).isEmpty(),
+                        backend + " rejected JSON import leaves no transaction residue");
+                }
+            }
+        } finally {
+            deleteTree(base);
+        }
+    }
+
+    private static void testMissingJsonRuntimeIsTransactional() throws Exception {
+        Path base = tempDir("pub-missing-json-");
+        try {
+            Path dist = base.resolve("distribution");
+            writeText(dist.resolve("deal/runtime.lua"),
+                Files.readString(Path.of("deal/runtime.lua")));
+            for (String module : List.of("console", "string", "table", "math", "time")) {
+                for (String extension : List.of("lua", "d.deal")) {
+                    String name = "std/" + module + "." + extension;
+                    writeText(dist.resolve(name), Files.readString(Path.of(name)));
+                }
+            }
+            Path src = base.resolve("src");
+            writeText(src.resolve("main.deal"), "export function main(): null { return null; }\n");
+            writeText(base.resolve("out/keep.txt"), "prior publication\n");
+            List<String> classpath = new ArrayList<>();
+            for (String entry : System.getProperty("java.class.path").split(
+                    java.util.regex.Pattern.quote(java.io.File.pathSeparator))) {
+                classpath.add(Path.of(entry).toAbsolutePath().normalize().toString());
+            }
+            var result = BoundedProcess.runCaptured(List.of(
+                Path.of(System.getProperty("java.home"), "bin/java").toString(),
+                "-Ddeal.home=" + dist, "-cp", String.join(java.io.File.pathSeparator, classpath),
+                PublicationStagerTest.class.getName(), "--missing-json-runtime"), base);
+            check(result.exitCode() == 0 && result.stdout().equals("missing JSON runtime rejected transactionally\n"),
+                "missing internal JSON runtime rejects with E6000 and no publication: " + result);
+        } finally {
+            deleteTree(base);
+        }
+    }
+
+    private static void missingJsonRuntimeChild() throws Exception {
+        Map<String, byte[]> prior = treeBytes(Path.of("out"));
+        for (String target : List.of("out", "fresh-out")) {
+            StringBuilder diagnostics = new StringBuilder();
+            boolean ok = compileProject(Path.of("src"), Path.of(target), Backend.LUAJIT,
+                false, false, diagnostics);
+            if (ok || !diagnostics.toString().contains("E6000")
+                    || !diagnostics.toString().contains("Runtime library not found: deal/json.lua")) {
+                throw new AssertionError("missing JSON runtime diagnostic: " + diagnostics);
+            }
+        }
+        if (!treeContentEquals(prior, treeBytes(Path.of("out"))) || Files.exists(Path.of("fresh-out"))
+                || !staleSiblings(Path.of("out").toAbsolutePath()).isEmpty()) {
+            throw new AssertionError("missing JSON runtime published a partial tree");
+        }
+        System.out.println("missing JSON runtime rejected transactionally");
     }
 
     // =========================================================================

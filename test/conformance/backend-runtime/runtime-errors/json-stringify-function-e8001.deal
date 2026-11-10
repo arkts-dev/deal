@@ -1,14 +1,14 @@
-// @spec: Standard library declarations — json
+// @spec: Standard library builtins — JSON encoding
 // @description: stringify omits callable properties, substitutes null in arrays, and returns undefined for a top-level callable without changing identity
 // @expected: runtime-ok
 // @features: stdlib, json, functions
 
-import * as json from "std/json";
+
 
 export function test_json_stringify_function_error(): null {
   let f: () => number = function(): number { return 1; };
   let t: Record<string, unknown> = { f: f, present: null, missing: undefined };
-  if ((json.stringify(t) as string) !== "{\"present\":null}") {
+  if ((JSON.stringify(t) as string) !== "{\"present\":null}") {
     throw {code: "TEST_FAIL", message: "callable and undefined property omission"};
   }
   if (!Object.hasOwn(t, "f") || !Object.hasOwn(t, "missing")) {
@@ -18,11 +18,11 @@ export function test_json_stringify_function_error(): null {
   if (retained !== f || retained() !== 1) {
     throw {code: "TEST_FAIL", message: "serialization changed callable identity"};
   }
-  if (json.stringify(f) !== undefined) {
+  if (JSON.stringify(f) !== undefined) {
     throw {code: "TEST_FAIL", message: "top-level callable serialization"};
   }
   let entries: unknown[] = [f, undefined, null];
-  if ((json.stringify(entries) as string) !== "[null,null,null]") {
+  if ((JSON.stringify(entries) as string) !== "[null,null,null]") {
     throw {code: "TEST_FAIL", message: "callable array substitution"};
   }
   return null;

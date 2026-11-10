@@ -2,8 +2,6 @@ package deal.checker;
 
 import deal.ast.*;
 import deal.diagnostics.CompilerDiagnostic;
-import deal.identity.CanonicalClassIdentity;
-import deal.identity.CanonicalModuleIdentity;
 import deal.types.Type;
 import deal.types.Types;
 
@@ -18,7 +16,7 @@ import deal.diagnostics.DiagnosticCode;
  * null narrowing, contextual typing for table reads, and class construction
  * checking.
  *
- * <p>Errors produced: E3001–E3018, E4001–E4008, E5001–E5004.</p>
+ * <p>Errors produced: E3001–E3018, E4001–E4006, E5001–E5004.</p>
  */
 public final class TypeChecker {
 
@@ -186,14 +184,6 @@ public final class TypeChecker {
     private final Map<ClassDeclaration, SymbolTable> classDeclarationScopes =
         new LinkedHashMap<>();
 
-    // -- Jsonable dependency graph (D3): nodes and edges are canonical
-    //    class identities, so same-named classes in different modules
-    //    never conflate (identity, not name, establishes identity). --
-    private final Map<CanonicalClassIdentity, Set<CanonicalClassIdentity>>
-        jsonableClassDeps = new LinkedHashMap<>();
-    // Maps @jsonable class identity → its class declaration span (E4008 anchor)
-    private final Map<CanonicalClassIdentity, Span> jsonableClassSpans = new LinkedHashMap<>();
-
     private TypeChecker(String modulePath, SymbolTable rootTable,
                         NameResolver nameResolver,
                         Map<StatementNode, SymbolTable> scopeMap) {
@@ -220,7 +210,6 @@ public final class TypeChecker {
         // module-level let is visible only after its declaration.
         checker.pushPendingScope(program.statements(), symbolTable);
         checker.walkStatements(program.statements());
-        checker.detectJsonableCycles();
         return new CheckResult(
             Map.copyOf(checker.typeMap),
             checker.rootTable,
@@ -332,128 +321,16 @@ public final class TypeChecker {
     }
 
     // =======================================================================
-    // Class declaration — also handles @jsonable field validation (D3)
+    // Class declarations
     // =======================================================================
 
     private void checkClassDeclaration(ClassDeclaration cd) {
-
         classDeclarationScopes.put(cd, currentScope);
-
-        // Structural declarations still own their annotation diagnostics,
-        // even when no construction ever demands the field layout.
-        Map<ClassField, Type> fieldTypes = new IdentityHashMap<>();
+        // Resolve every annotation even when no construction or decoding
+        // ever demands the layout. JSON target validation belongs to parse.
         for (ClassField field : cd.fields()) {
-            fieldTypes.put(field, nameResolver.resolveTypeNode(field.type()));
+            nameResolver.resolveTypeNode(field.type());
         }
-
-        if (!cd.isJsonable()) {
-            return;
-        }
-
-        CanonicalClassIdentity identity = jsonableIdentityOf(cd);
-        if (identity == null) {
-            // Defensive: a @jsonable declaration whose class symbol and
-            // module identity are both unresolvable carries no canonical
-            // identity and can neither be a dependency node nor close a
-            // cycle; the unresolved-name diagnostics already fired.
-            return;
-        }
-
-        // Store the class declaration span for later use in E4008 emission
-        jsonableClassSpans.put(identity, cd.span());
-
-        // Validate each field type and collect the carried jsonable
-        // class dependencies (canonical identities; declaration-only
-        // classes generate no helpers and contribute no edge)
-        Set<CanonicalClassIdentity> deps = new LinkedHashSet<>();
-        for (ClassField cf : cd.fields()) {
-            Type fieldType = fieldTypes.get(cf);
-            if (fieldType == Type.Error.INSTANCE) continue;
-
-            if (!isJsonableType(fieldType)) {
-                error(DiagnosticCode.E4007,
-                    "Field type is not jsonable: " + typeName(fieldType),
-                    cf.span());
-            }
-
-            collectJsonableClassDeps(fieldType, deps);
-        }
-
-        if (!deps.isEmpty()) {
-            jsonableClassDeps.put(identity, deps);
-        }
-    }
-
-    // =======================================================================
-    // Jsonable type validation (D3)
-    // =======================================================================
-
-    /**
-     * Checks whether a type is valid for a @jsonable field (D3).
-     * Recursively unwraps Array and Nullable wrappers. A class type is
-     * jsonable by its carried canonical identity: the class's module
-     * must expose both generated-signature helpers (the declaration-file
-     * case declares them explicitly; the ignored declaration-only
-     * marker contributes nothing).
-     */
-    private boolean isJsonableType(Type t) {
-        return switch (t) {
-            case Type.Null ignored       -> true;
-            case Type.Undefined ignored  -> true;
-            case Type.Unknown ignored -> false;
-            case Type.Void ignored -> false;
-            case Type.Boolean ignored    -> true;
-
-            case Type.Number ignored     -> true;
-            case Type.String ignored     -> true;
-            case Type.Table ignored      -> true;
-            case Type.Array arr          -> isJsonableType(arr.element());
-            case Type.Nullable n         -> isJsonableType(n.inner());
-            case Type.Class cls          -> isJsonableClass(cls);
-            default -> false;
-        };
-    }
-
-    /**
-     * True when the class type carries both generated-signature helper
-     * exports ({@code C$fromJson} and {@code C$toJson}) — the class arm
-     * of {@link #isJsonableType} and the dependency-edge membership of
-     * {@link #collectJsonableClassDeps}. The query is keyed by the
-     * carried canonical identity (never the bare class name), so a
-     * same-named class in another module is never mistaken for this
-     * one.
-     */
-    private boolean isJsonableClass(Type.Class cls) {
-        return isFunctionExportedFromClassModule(cls, cls.name() + "$fromJson")
-            && isFunctionExportedFromClassModule(cls, cls.name() + "$toJson");
-    }
-
-    /**
-     * The canonical identity of one walked {@code @jsonable} class
-     * declaration: the resolved class symbol's identity (the module
-     * identity layer's single allocation), falling back to the
-     * resolver module's identity plus the declared name, or
-     * {@code null} when neither carries one.
-     */
-    private CanonicalClassIdentity jsonableIdentityOf(ClassDeclaration cd) {
-        Symbol sym = currentScope.resolve(cd.name());
-        if (sym instanceof Symbol.ClassSymbol classSymbol) {
-            return classSymbol.identity();
-        }
-        CanonicalModuleIdentity moduleIdentity = nameResolver.moduleIdentity();
-        return moduleIdentity == null ? null
-            : new CanonicalClassIdentity(moduleIdentity, cd.name());
-    }
-
-    /**
-     * The C$fromJson/C$toJson export check of {@link #isJsonableType}:
-     * same-module classes check the root symbol table, imported classes
-     * route through the resolver's identity-keyed export lookup.
-     */
-    private boolean isFunctionExportedFromClassModule(Type.Class cls,
-                                                      String functionName) {
-        return nameResolver.isFunctionExportedFromModule(
-            cls.identity().moduleIdentity(), functionName);
     }
 
     /**
@@ -717,130 +594,6 @@ public final class TypeChecker {
             case ArrayType at -> exactAnnotationClassSymbol(scope, at.elementType());
             default -> null;
         };
-    }
-
-    /**
-     * Recursively extracts the jsonable class identities a resolved
-     * field type references, unwrapping Array and Nullable wrappers
-     * (D3 cycle 7).
-     *
-     * <p>Membership is the identity-keyed helper visibility of
-     * {@link #isJsonableClass}: local and imported generated classes
-     * contribute their canonical identity, so two same-named classes
-     * stay distinct nodes. A declaration-only class generates no
-     * helpers (its source marker is ignored) and contributes no edge;
-     * its explicitly declared helper schema is still accepted by
-     * {@link #isJsonableType}.</p>
-     */
-    private void collectJsonableClassDeps(Type t,
-                                          Set<CanonicalClassIdentity> deps) {
-        switch (t) {
-            case Type.Class cls -> {
-                if (isJsonableClass(cls)) {
-                    deps.add(cls.identity());
-                }
-            }
-            case Type.Array arr ->
-                collectJsonableClassDeps(arr.element(), deps);
-            case Type.Nullable n ->
-                collectJsonableClassDeps(n.inner(), deps);
-            default -> { /* stop: no deeper class references possible */ }
-        }
-    }
-
-    // =======================================================================
-    // Jsonable cycle detection (D3)
-    // =======================================================================
-
-    /**
-     * DFS-based cycle detection on the @jsonable class dependency graph,
-     * keyed throughout by canonical class identity. Emits E4008 for
-     * each cycle found.
-     *
-     * <p>Called after all statements have been walked, so
-     * {@link #jsonableClassDeps} is fully populated. A dependency on an
-     * imported generated class is a graph node without outgoing edges
-     * in this module's walk: a cross-module class cycle is a module
-     * import cycle, rejected with E2005 before checking, so no
-     * cross-module generated cycle can reach this detector.</p>
-     */
-    private void detectJsonableCycles() {
-        if (jsonableClassDeps.isEmpty()) return;
-
-        // Colors: 0 = white (unvisited), 1 = gray (in current path), 2 = black (done)
-        Map<CanonicalClassIdentity, Integer> color = new HashMap<>();
-        Map<CanonicalClassIdentity, CanonicalClassIdentity> parent = new HashMap<>();
-        for (CanonicalClassIdentity identity : jsonableClassDeps.keySet()) {
-            color.put(identity, 0);
-        }
-
-        for (CanonicalClassIdentity start : jsonableClassDeps.keySet()) {
-            if (color.get(start) == 0) {
-                dfsDetectCycle(start, color, parent);
-            }
-        }
-    }
-
-    private void dfsDetectCycle(CanonicalClassIdentity node,
-                                Map<CanonicalClassIdentity, Integer> color,
-                                Map<CanonicalClassIdentity,
-                                    CanonicalClassIdentity> parent) {
-        color.put(node, 1); // gray — in current path
-
-        Set<CanonicalClassIdentity> deps = jsonableClassDeps.getOrDefault(
-            node, Set.of());
-        for (CanonicalClassIdentity neighbor : deps) {
-            Integer neighborColor = color.get(neighbor);
-            if (neighborColor == null) {
-                // Neighbor is not a generated jsonable class (should not
-                // happen, but safe)
-                continue;
-            }
-            if (neighborColor == 1) {
-                // Cycle detected: node → neighbor (back edge).
-                // Walk the parent chain from node back to neighbor to
-                // reconstruct the full cycle path.
-                List<String> cyclePath = new ArrayList<>();
-                cyclePath.add(neighbor.className());
-                CanonicalClassIdentity cur = node;
-                while (cur != null && !cur.equals(neighbor)) {
-                    cyclePath.add(cur.className());
-                    cur = parent.get(cur);
-                }
-                cyclePath.add(neighbor.className()); // close the cycle
-
-                // Build the cycle path string
-                StringBuilder pathStr = new StringBuilder();
-                for (int i = 0; i < cyclePath.size(); i++) {
-                    if (i > 0) pathStr.append(" → ");
-                    pathStr.append(cyclePath.get(i));
-                }
-
-                // Use the class declaration span for the node that closes
-                // the cycle. When no span is recorded (defensive), the D5
-                // explicit synthetic factory names the cycle-node class —
-                // never a Span.synthetic passthrough to the span factory.
-                Span span = jsonableClassSpans.get(node);
-                if (span != null) {
-                    error(DiagnosticCode.E4008,
-                        "Circular @jsonable class dependency: " + pathStr,
-                        span);
-                } else {
-                    diagnostics.add(CompilerDiagnostic.syntheticError(
-                        DiagnosticCode.E4008,
-                        "Circular @jsonable class dependency: " + pathStr,
-                        modulePath,
-                        "missing anchor: class declaration span for cycle node '"
-                            + node.className() + "'"));
-                }
-            } else if (neighborColor == 0) {
-                parent.put(neighbor, node);
-                dfsDetectCycle(neighbor, color, parent);
-            }
-            // black (2): already fully processed, no cycle through this neighbor
-        }
-
-        color.put(node, 2); // black — done
     }
 
     // =======================================================================
@@ -1547,6 +1300,14 @@ public final class TypeChecker {
         }
     }
 
+    /** Receiver and key subexpressions are reads even inside a storage target. */
+    private Type checkAddressOperand(ExpressionNode expr) {
+        boolean savedMode = assignmentTargetMode;
+        assignmentTargetMode = false;
+        try { return checkExpression(expr); }
+        finally { assignmentTargetMode = savedMode; }
+    }
+
     Type typeOf(ExpressionNode expr) {
         Type t = typeMap.get(expr);
         if (t == null) {
@@ -1871,6 +1632,10 @@ public final class TypeChecker {
     private Type checkCall(CallExpr call) {
         if (call.callee() instanceof MemberAccessExpr member
                 && member.object() instanceof IdentifierExpr namespace
+                && BuiltinCall.resolve(namespace.name(), member.field()) == BuiltinCall.JSON_PARSE)
+            return checkJsonParse(call, member);
+        if (call.callee() instanceof MemberAccessExpr member
+                && member.object() instanceof IdentifierExpr namespace
                 && BuiltinCall.resolve(namespace.name(), member.field()) == BuiltinCall.ARRAY_FROM) {
             return checkArrayFrom(call, member);
         }
@@ -1988,6 +1753,54 @@ public final class TypeChecker {
 
         error(DiagnosticCode.E3008, typeName(calleeType) + " is not callable", call.callee().span());
         return Type.Error.INSTANCE;
+    }
+
+    private Type checkJsonParse(CallExpr call, MemberAccessExpr member) {
+        Type target = expectedType == null ? Type.Unknown.INSTANCE : expectedType;
+        Symbol.ClassSymbol declaration = contextualClassDecl;
+        typeMap.put(member.object(), Type.Table.INSTANCE);
+        typeMap.put(member, BuiltinCall.JSON_PARSE.signature());
+        Type savedExpected = expectedType;
+        Symbol.ClassSymbol savedContext = contextualClassDecl;
+        List<Type> arguments = new ArrayList<>();
+        expectedType = Type.String.INSTANCE;
+        contextualClassDecl = null;
+        try {
+            for (ExpressionNode argument : call.args()) arguments.add(checkContextualReadPosition(argument));
+        } finally {
+            expectedType = savedExpected;
+            contextualClassDecl = savedContext;
+        }
+        if (checkFunctionCall(call, BuiltinCall.JSON_PARSE.signature(), arguments) == Type.Error.INSTANCE)
+            return Type.Error.INSTANCE;
+        java.util.Deque<Type> pending = new java.util.ArrayDeque<>();
+        // Host declarations may resolve to fresh symbol wrappers on every
+        // lookup. Guard the exact nominal/provider pair, not wrapper
+        // allocation identity (nor an identity-only/first-alias lookup).
+        java.util.Set<Type.Class> visited = new java.util.HashSet<>();
+        pending.push(target);
+        while (!pending.isEmpty()) {
+            Type type = pending.pop();
+            if (type instanceof Type.Func || type instanceof Type.Void) {
+                error(DiagnosticCode.E5001, "JSON.parse target must not contain function or void types", call.span());
+                return Type.Error.INSTANCE;
+            }
+            if (type instanceof Type.Nullable nullable) pending.push(nullable.inner());
+            else if (type instanceof Type.Array array) pending.push(array.element());
+            else if (type instanceof Type.Class cls) {
+                Symbol.ClassSymbol symbol = declaration != null && declaration.identity().equals(cls.identity())
+                    && providerAgrees(declaration, cls) ? declaration : resolveClassSymbol(cls);
+                if (symbol == null) {
+                    error(DiagnosticCode.E5001, "JSON.parse target has no exact class declaration", call.span());
+                    return Type.Error.INSTANCE;
+                }
+                if (visited.add(classTypeOf(symbol)))
+                    for (ClassField field : symbol.fields())
+                        pending.push(resolveFieldTypeInClassModule(symbol, field.type()));
+            }
+        }
+        recordExactClassDecl(call, target, declaration);
+        return target;
     }
 
     /** Inference is from the source and synchronous mapper, never the enclosing result. */
@@ -2167,7 +1980,7 @@ public final class TypeChecker {
                 + id.name() + "'. Available: " + String.join(", ", ms.exports().keySet()), mae.span());
             return Type.Error.INSTANCE;
         }
-        Type objType = checkExpression(mae.object());
+        Type objType = checkAddressOperand(mae.object());
         if (objType == Type.Error.INSTANCE) return Type.Error.INSTANCE;
 
         String field = mae.field();
@@ -2241,9 +2054,9 @@ public final class TypeChecker {
                     recordExactClassDecl(mae, fieldType,
                         exactFieldClassSymbol(sym, cf.type(), fieldType));
                     if (cf.optional() && !assignmentTargetMode) {
-                        // A read of an omitted optional field yields null;
-                        // a write target keeps the declared field type. The
-                        // read result is the canonical T | null wrap, so a
+                        // A read of an omitted optional field yields undefined;
+                        // only the outer write target keeps its declared type.
+                        // The read result is the canonical optional wrap, so a
                         // field declared null reads as null | undefined.
                         // Absence never becomes explicit null.
                         fieldType = Types.optionalRead(fieldType);
@@ -2284,8 +2097,8 @@ public final class TypeChecker {
     // =======================================================================
 
     private Type checkIndex(IndexExpr idx) {
-        Type arrayType = checkExpression(idx.array());
-        Type indexType = checkExpression(idx.index());
+        Type arrayType = checkAddressOperand(idx.array());
+        Type indexType = checkAddressOperand(idx.index());
         if (arrayType == Type.Error.INSTANCE || indexType == Type.Error.INSTANCE)
             return Type.Error.INSTANCE;
 
@@ -2736,7 +2549,13 @@ public final class TypeChecker {
     // =======================================================================
 
     private Type checkAssertion(AssertionExpr assertion) {
-        Type source = checkExpression(assertion.value());
+        Type savedExpected = expectedType;
+        Symbol.ClassSymbol savedContext = contextualClassDecl;
+        Type source;
+        expectedType = null;
+        contextualClassDecl = null;
+        try { source = checkExpression(assertion.value()); }
+        finally { expectedType = savedExpected; contextualClassDecl = savedContext; }
         Type target = nameResolver.resolveTypeNode(assertion.target());
         if (target instanceof Type.Void || source instanceof Type.Void
                 || (!(source instanceof Type.Unknown) && !isAssignable(target, source)

@@ -4,18 +4,18 @@
 
 ## Values and calls
 
-- Consume structural facts from `RuntimeDeclarationSurface`/`RuntimeDeclarationProjection`. Resolve layouts per declaring unit; same-named siblings retain distinct nominal atoms. JSON links resolve exact plan-bearing declarations, never first matches.
+- Consume structural facts from `RuntimeDeclarationSurface`/`RuntimeDeclarationProjection`. Resolve layouts per declaring unit; same-named siblings retain distinct nominal atoms. JSON schemas resolve exact defining declarations, including private recursive descendants; no marker, helper operation or emission order selects an owner. Publish no generated JSON helper or C$fields export.
 - Construct classes from supplied values in declaration order. Bind complete boundary plans per source instance/declaration, never replacing them with host plans. Revalidate presence/fields after untyped mutation using operation-local cycle guards. Required omissions reject; omitted optionals remain absent. Exported metadata is not source-callable. Never consult defaults hooks or initializer evaluators.
 - Static calls use recorded closure creation/group cells, not mutable aliases. Dynamic dispatch uses wrapper-recorded execution class and adapter source. Repeated adaptations retain separate sources.
 - Each HOST import occurrence owns a validating surface over one raw require per resolved file. Validate/read exports in shared ascending-name order; failure leaves sticky FAILED state without a partial surface. Keep relative specifiers independent of ambient Node resolution.
 - Preserve E8010 host-parameter composition and ordinary element/signature errors. ASSERTION alone projects all mismatches as E8001 at its own origin while preserving admitted identity. Unknown ingress rejects foreign carriers/raw functions and validates Unicode.
-- Preserve null/undefined permissions, sentinels, identities, descriptors, live aliases and class presence/order across hosts. Validate Record/unknown graphs without copying, preserving cycles/sharing; publish unknown-array descriptors only after whole-graph success, never during assertions. Recursively reverse sync/async host projections. Parsed-array reflection reports live length and writes through; unsupported changes reject. Undefined follows declared permissions, without another no-result carrier.
+- Preserve null/undefined permissions, sentinels, identities, descriptors, live aliases and class presence/order across hosts. Validate Record/unknown graphs without copying, preserving cycles/sharing; publish unknown-array descriptors only after whole-graph success, never during assertions. Recursively reverse sync/async host projections. Source and parsed array host views preserve backing identity, nested aliases and live length through direct reads and property descriptors; writes reverse projected aliases, and unsupported reflection rejects before mutation. Undefined follows declared permissions, without another no-result carrier.
 
 ## Control flow and storage
 
 For-of evaluates once. Arrays traverse live contiguous positions/appends; source array deletion rejects. Iterations own mutable captured let cells; string iteration combines surrogate pairs and retains lone units. Escape literal UTF-16 units losslessly in emitted source.
 
-Import-free builtin algorithm selectors materialize their deployed algorithm dependencies once per artifact, without source alias cells; explicitly imported surfaces keep their existing occurrence semantics.
+Import-free builtin algorithm selectors materialize their deployed algorithm dependencies once per artifact, without source alias cells; explicitly imported surfaces keep their existing occurrence semantics. JSON_STRINGIFY renders the runtime encoder directly with recorded parameter/return boundaries and origin, never a callable std/json wrapper or implicit std/json dependency.
 
 Array operations use carrier-neutral runtime accessors, including decoded arrays. Persistent descriptors cannot be retagged by empty/current contents. Stored undefined retains identity independently of nullability. Refined receiver/key/length/iterable/presence operations consume admitted boundary results; slot-threaded conditions preserve their preallocated identity. Assignment stores may adapt without changing the original RHS result.
 

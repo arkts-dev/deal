@@ -1212,11 +1212,16 @@ typedef struct {
     size_t element_index;
     deal_descriptor *element_descriptor;
     deal_check_input element_input;
+    int required_missing;
 } deal_live_item;
+typedef struct {
+    const void *object;
+    deal_descriptor *descriptor;
+} deal_live_identity;
 typedef struct {
     deal_live_item *items;
     size_t count, capacity;
-    const void **seen;
+    deal_live_identity *seen;
     size_t seen_count, seen_capacity;
 } deal_live_walk;
 
@@ -1246,40 +1251,46 @@ static void deal_live_push(deal_live_walk *walk, deal_check_input input,
     walk->items[walk->count++] = item;
 }
 
-static size_t deal_live_hash(const void *object, size_t capacity) {
-    uintptr_t value = (uintptr_t)object;
+static size_t deal_live_hash(const void *object, const deal_descriptor *descriptor,
+                             size_t capacity) {
+    uintptr_t value = (uintptr_t)object ^ ((uintptr_t)descriptor >> 3u);
     value ^= value >> 17u;
     value *= (uintptr_t)UINT64_C(0xed5ad4bb);
     value ^= value >> 11u;
     return (size_t)value & (capacity - 1u);
 }
 
-/* Insert an identity into this operation's guard; never cache admission. */
-static int deal_live_seen(deal_live_walk *walk, const void *object) {
+/* A weaker Unknown/Record visit cannot discharge a typed visit of the same
+ * object. Interned descriptors make the operation-local pair stable, while
+ * repeated pairs still terminate cyclic walks. Never cache admission. */
+static int deal_live_seen(deal_live_walk *walk, const void *object,
+                          deal_descriptor *descriptor) {
+    while (descriptor->kind == DEAL_DESCRIPTOR_NULLISH) descriptor = descriptor->inner;
     if (walk->seen_count >= walk->seen_capacity / 2u) {
         size_t capacity = walk->seen_capacity == 0u ? 32u
             : deal_platform_checked_multiply(walk->seen_capacity, 2u);
         size_t bytes = deal_platform_checked_multiply(capacity, sizeof(*walk->seen));
-        const void **seen = deal_platform_allocate(bytes);
+        deal_live_identity *seen = deal_platform_allocate(bytes);
         if (seen == NULL) deal_platform_fault("check: graph identity allocation failed");
         memset(seen, 0, bytes);
         for (size_t index = 0u; index < walk->seen_capacity; index++) {
-            const void *old = walk->seen[index];
-            if (old == NULL) continue;
-            size_t position = deal_live_hash(old, capacity);
-            while (seen[position] != NULL) position = (position + 1u) & (capacity - 1u);
+            deal_live_identity old = walk->seen[index];
+            if (old.object == NULL) continue;
+            size_t position = deal_live_hash(old.object, old.descriptor, capacity);
+            while (seen[position].object != NULL) position = (position + 1u) & (capacity - 1u);
             seen[position] = old;
         }
         deal_platform_release(walk->seen);
         walk->seen = seen;
         walk->seen_capacity = capacity;
     }
-    size_t position = deal_live_hash(object, walk->seen_capacity);
-    while (walk->seen[position] != NULL) {
-        if (walk->seen[position] == object) return 1;
+    size_t position = deal_live_hash(object, descriptor, walk->seen_capacity);
+    while (walk->seen[position].object != NULL) {
+        if (walk->seen[position].object == object
+                && walk->seen[position].descriptor == descriptor) return 1;
         position = (position + 1u) & (walk->seen_capacity - 1u);
     }
-    walk->seen[position] = object;
+    walk->seen[position] = (deal_live_identity){object, descriptor};
     walk->seen_count++;
     return 0;
 }
@@ -1365,6 +1376,14 @@ static deal_outcome deal_check_live_value_core(deal_descriptor *expected, deal_c
     while (walk.count != 0u) {
         item = walk.items[--walk.count];
         deal_descriptor *descriptor = item.descriptor;
+        if (item.required_missing) {
+            deal_classification missing = deal_check_classify(&item.input);
+            deal_check_failure failure = {DEAL_CHECK_KIND_MISMATCH,
+                descriptor, descriptor, "undefined"};
+            outcome.error = deal_check_render(DEAL_BOUNDARY_TYPE_DESCRIPTOR,
+                &failure, &missing, context);
+            break;
+        }
         /* Unknown graph leaves still own their concrete string encoding check. */
         if (descriptor->kind == DEAL_DESCRIPTOR_UNKNOWN
                 && item.input.presentation == DEAL_PRESENT_INVALID_UNICODE)
@@ -1395,7 +1414,7 @@ static deal_outcome deal_check_live_value_core(deal_descriptor *expected, deal_c
             }
             continue;
         }
-        if (deal_live_seen(&walk, datum.reference)) continue;
+        if (deal_live_seen(&walk, datum.reference, descriptor)) continue;
         if (datum.tag == DEAL_DATA_TABLE) {
             deal_table *table = datum.reference;
             /* Reverse push preserves insertion order during the depth-first walk. */
@@ -1428,11 +1447,12 @@ static deal_outcome deal_check_live_value_core(deal_descriptor *expected, deal_c
              * class record. Inspect without allocating an admitted string from
              * possibly hostile bytes. The Error itself remains unchanged. */
             for (size_t index = 0u; index < 2u; index++) {
-                const char *bytes = NULL;
-                int present = index == 0u
-                    ? deal_error_code(datum.reference, &bytes)
-                    : deal_error_message(datum.reference, &bytes);
-                if (present && deal_text_is_code_units(bytes, strlen(bytes))) continue;
+                size_t length = 0u;
+                const char *bytes = index == 0u
+                    ? deal_error_code_bytes(datum.reference, &length)
+                    : deal_error_message_bytes(datum.reference, &length);
+                int present = bytes != NULL;
+                if (present && deal_text_is_code_units(bytes, length)) continue;
                 deal_check_input field = {0};
                 field.presentation = present ? DEAL_PRESENT_INVALID_UNICODE : DEAL_PRESENT_MISSING;
                 field.unicode_defect = DEAL_UNICODE_MALFORMED;
@@ -1456,12 +1476,11 @@ static deal_outcome deal_check_live_value_core(deal_descriptor *expected, deal_c
                 if (present == 0u && (field->optional || !typed_class)) continue;
                 if (present == 0u) {
                     child.presentation = DEAL_PRESENT_MISSING;
-                    deal_classification missing = deal_check_classify(&child);
-                    deal_check_failure failure = {DEAL_CHECK_KIND_MISMATCH,
-                        field->descriptor, field->descriptor, "undefined"};
-                    outcome.error = deal_check_render(DEAL_BOUNDARY_TYPE_DESCRIPTOR,
-                        &failure, &missing, context);
-                    break;
+                    /* Schedule presence with the other declaration-ordered
+                     * positions instead of failing during the reverse push. */
+                    deal_live_push(&walk, child, field->descriptor, &item);
+                    walk.items[walk.count - 1u].required_missing = 1;
+                    continue;
                 }
                 if (child.presentation == DEAL_PRESENT_DATUM)
                     child = deal_live_datum(child.datum);

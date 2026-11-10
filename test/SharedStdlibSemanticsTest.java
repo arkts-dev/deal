@@ -27,6 +27,7 @@ import deal.semantic.ir.BoundaryOutcome;
 import deal.semantic.ir.BoundaryValueView;
 import deal.semantic.ir.CanonicalJson;
 import deal.semantic.ir.FailurePolicyId;
+import deal.semantic.ir.FailureProjections;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.ModuleId;
@@ -710,16 +711,15 @@ public class SharedStdlibSemanticsTest {
     /**
      * The {@code JSON_STRINGIFY_UNSUPPORTED} arm's render: the arm's own
      * pinned expected text and the carrier-kind projection of the failing
-     * value, with the walker's internal {@code {fieldPath}} metadata (the
-     * path is never part of the visible projection).
+     * value, without helper-specific path metadata.
      */
-    private static void expectStringifyFailure(SemanticTable<Value> table, String fieldPath,
+    private static void expectStringifyFailure(SemanticTable<Value> table,
                                                String carrierToken, String note) {
         expectFailure(SharedStdlibSemantics.jsonStringify(origin(), table),
             FailurePolicyId.JSON_TO_ERROR, DiagnosticCode.E8001,
             "unsupported type for JSON encoding: " + carrierToken,
             SharedStdlibSemantics.JSON_STRINGIFY_EXPECTED, carrierToken,
-            Map.of("fieldPath", fieldPath, "actual", carrierToken), origin(), note);
+            Map.of(), origin(), note);
     }
 
     /** The walk family's closed cycle arm: no parameters and no expected/actual. */
@@ -728,6 +728,67 @@ public class SharedStdlibSemanticsTest {
             FailurePolicyId.JSON_TO_ERROR, DiagnosticCode.E8001,
             "cyclic value cannot be encoded as JSON", null, null,
             Map.of(), origin(), note);
+    }
+
+    static void testJsonStringifyDeclaredFields() {
+        var id = new deal.semantic.ir.ClassId("serialization", "Owner");
+        var layout = new deal.semantic.ir.ClassLayout(id, List.of(
+            new deal.semantic.ir.ClassLayout.FieldLayout("first", RuntimeDescriptor.Unknown.INSTANCE,
+                true, deal.semantic.ir.ConstructionProvider.LOCAL),
+            new deal.semantic.ir.ClassLayout.FieldLayout("name", RuntimeDescriptor.String.INSTANCE,
+                true, deal.semantic.ir.ConstructionProvider.LOCAL),
+            new deal.semantic.ir.ClassLayout.FieldLayout("grid", RuntimeDescriptor.parseCanonicalText("[[number]]"),
+                true, deal.semantic.ir.ConstructionProvider.LOCAL),
+            new deal.semantic.ir.ClassLayout.FieldLayout("note", RuntimeDescriptor.parseCanonicalText("!string"),
+                false, deal.semantic.ir.ConstructionProvider.LOCAL),
+            new deal.semantic.ir.ClassLayout.FieldLayout("required", RuntimeDescriptor.parseCanonicalText("!string"),
+                true, deal.semantic.ir.ConstructionProvider.LOCAL)));
+        var row = new ArrayList<Value>(List.of(new Value.Number(1)));
+        Value.Array inner = new Value.Array(SemanticArray.live(row::size, row::get), RuntimeDescriptor.Number.INSTANCE);
+        Value.Array grid = new Value.Array(SemanticArray.of(List.of(inner)),
+            RuntimeDescriptor.parseCanonicalText("[number]"));
+        SemanticTable<Value> fields = tableOf("first", Value.Null.INSTANCE, "name", text("kept"),
+            "grid", grid, "required", Value.Undefined.INSTANCE);
+        Value.Table owner = new Value.Table(fields, layout);
+        String expected = "{\"first\":null,\"name\":\"kept\",\"grid\":[[1]]}";
+        expectSuccess(SharedStdlibSemantics.jsonStringify(origin(), owner), text(expected), "declared fields valid");
+        fields.put("first", owner); fields.put("name", new Value.Number(42));
+        var cycle = SharedStdlibSemantics.jsonStringify(origin(), owner);
+        check(cycle instanceof Outcome.Failure<Value> f
+            && f.failure().failure().message().equals("cyclic value cannot be encoded as JSON"),
+            "earlier cycle beats later declared mismatch");
+        fields.put("first", Value.Null.INSTANCE);
+        var mismatch = SharedStdlibSemantics.jsonStringify(origin(), owner);
+        check(mismatch instanceof Outcome.Failure<Value> f
+            && f.failure().failure().equals(FailureProjections.kindFailure("string", "number"))
+            && f.failure().origin().equals(origin()), "declared field current mismatch and origin");
+        fields.put("name", text("kept")); row.set(0, new Value.Bool(false));
+        var nested = SharedStdlibSemantics.jsonStringify(origin(), owner);
+        check(nested instanceof Outcome.Failure<Value> f
+            && f.failure().failure().code() == DiagnosticCode.E8003
+            && "[number]".equals(f.failure().failure().expected())
+            && "array".equals(f.failure().failure().actual())
+            && f.failure().failure().cause().equals(FailureProjections.kindFailure("number", "boolean")),
+            "nested array failure keeps outer position and unwrapped leaf cause");
+        row.set(0, new Value.Number(1)); fields.remove("required");
+        check(SharedStdlibSemantics.jsonStringify(origin(), owner) instanceof Outcome.Failure<Value> f
+            && f.failure().failure().equals(FailureProjections.kindFailure(id.text(), id.text())),
+            "required undefined-admitting field still requires presence");
+        fields.put("required", Value.Undefined.INSTANCE); fields.put("note", new Value.Bool(false));
+        check(SharedStdlibSemantics.jsonStringify(origin(), owner) instanceof Outcome.Failure<Value> f
+            && f.failure().failure().equals(FailureProjections.kindFailure("string", "boolean")),
+            "present optional validates before omission");
+        fields.remove("note");
+        expectSuccess(SharedStdlibSemantics.jsonStringify(origin(), owner), text(expected), "same graph repaired");
+        Value.Table shared = new Value.Table(tableOf("x", new Value.Number(1)));
+        fields.put("first", new Value.Table(tableOf("a", shared, "b", shared)));
+        expectSuccess(SharedStdlibSemantics.jsonStringify(origin(), owner),
+            text("{\"first\":{\"a\":{\"x\":1},\"b\":{\"x\":1}},\"name\":\"kept\",\"grid\":[[1]]}"),
+            "shared acyclic children are independent occurrences");
+        Value deep = Value.Null.INSTANCE;
+        for (int i = 0; i < 20000; i++) deep = Value.array(deep);
+        check(SharedStdlibSemantics.jsonStringify(origin(), deep) instanceof Outcome.Success<Value>,
+            "reached-position checks retain 20000-array depth safety");
     }
 
     static void testJsonStringifyValues() {
@@ -799,10 +860,10 @@ public class SharedStdlibSemanticsTest {
             "{}", "a missing member reads undefined and is omitted");
         expectStringifyFailure(tableOf("a",
                 new Value.Other(ActualKind.ASYNC_OPERATION, null)),
-            "a", "table", "an async-operation handle is a table-carried value");
+            "table", "an async-operation handle is a table-carried value");
         expectStringifyFailure(tableOf("c",
                 new Value.Other(ActualKind.CLASS, "@src/app/Admin")),
-            "c", "table", "a class value is a table-carried value (never its identity)");
+            "table", "a class value is a table-carried value (never its identity)");
         expectStringify(tableOf("n", new Value.Number(Double.NaN)),
             "{\"n\":null}", "NaN becomes null");
         expectStringify(tableOf("n", new Value.Number(Double.POSITIVE_INFINITY)),
@@ -811,7 +872,7 @@ public class SharedStdlibSemanticsTest {
             "{\"n\":null}", "-Infinity becomes null");
         expectStringifyFailure(tableOf("s",
                 Value.string(UnicodeScalars.Invalid.INSTANCE)),
-            "s", "string", "an invalid scalar sequence is still a string carrier");
+            "string", "an invalid scalar sequence is still a string carrier");
 
         // Omitted members do not fail or consume comma positions.
         expectStringify(tableOf("a", new Value.Other(ActualKind.FUNCTION, null),
@@ -820,7 +881,7 @@ public class SharedStdlibSemanticsTest {
         expectStringifyFailure(tableOf("ok", new Value.Number(1),
                 "a", new Value.Table(tableOf("b", new Value.Other(ActualKind.FUNCTION, null),
                     "c", new Value.Other(ActualKind.ASYNC_OPERATION, null)))),
-            "a.c", "table",
+            "table",
             "nested unsupported values fail after omitted function members");
         expectStringify(tableOf("arr", Value.array(new Value.Number(1),
                 new Value.Other(ActualKind.FUNCTION, null))),
@@ -866,8 +927,7 @@ public class SharedStdlibSemanticsTest {
      * finite nested value has no fixed depth bound and is never limited by
      * the JVM call stack, so every deep case runs on the suite's default
      * stack (no {@code -Xss} override). The walk still keeps path-local
-     * cycle detection, the first declaration-order failure, and its
-     * internal {@code fieldPath} at depth.
+     * cycle detection and the first declaration-order failure at depth.
      */
     static void testJsonDeepStackSafeTraversal() {
         System.out.println("-- JSON: deep finite containers traverse without the "
@@ -915,7 +975,7 @@ public class SharedStdlibSemanticsTest {
                 instanceof Outcome.Success<Value>,
             "a " + depth + "-deep array text parses on the default stack");
 
-        // The first declaration-order failure keeps its deep field path.
+        // The first declaration-order failure retains its carrier and origin at depth.
         SemanticTable<Value> failing = new SemanticTable<>();
         SemanticTable<Value> failingCursor = failing;
         for (int i = 0; i < depth; i++) {
@@ -924,12 +984,8 @@ public class SharedStdlibSemanticsTest {
             failingCursor = next;
         }
         failingCursor.put("bad", Value.string(UnicodeScalars.Invalid.INSTANCE));
-        StringBuilder badPath = new StringBuilder();
-        for (int i = 0; i < depth; i++) {
-            badPath.append("k.");
-        }
-        expectStringifyFailure(failing, badPath + "bad", "string",
-            "the first declaration-order failure keeps its deep fieldPath");
+        expectStringifyFailure(failing, "string",
+            "the first declaration-order failure retains its carrier and origin at depth");
 
         // A path-local re-entry at depth is still the closed cycle arm.
         SemanticTable<Value> cyclic = new SemanticTable<>();
@@ -1327,7 +1383,7 @@ public class SharedStdlibSemanticsTest {
         return new Seed(function, List.of(arg), expected);
     }
 
-    /** The 21-id seed table in the closed enum declaration order. */
+    /** Algorithm seeds, including the builtin-only JSON selectors. */
     private static List<Seed> seeds() {
         SemanticTable<Value> table = new SemanticTable<>();
         table.put("k", new Value.Number(1));
@@ -1370,7 +1426,7 @@ public class SharedStdlibSemanticsTest {
     }
 
     static LoweredModuleUnit testCombinedT2T1() throws Exception {
-        System.out.println("-- Combined T2/T1: the 21-id battery through SharedStdlibSemantics --");
+        System.out.println("-- Combined lowering and execution: stdlib calls and contextual JSON --");
 
         Path tmp = Files.createTempDirectory("deal-stdlib-semantics-battery");
         try {
@@ -1386,7 +1442,6 @@ public class SharedStdlibSemanticsTest {
                     import * as output from "std/console";
                     import * as str from "std/string";
                     import * as tbl from "std/table";
-                    import * as json from "std/json";
                     import * as math from "std/math";
                     import * as time from "std/time";
 
@@ -1403,8 +1458,8 @@ public class SharedStdlibSemanticsTest {
                       let s8: string = str.trim(" x ");
                       let t: Record<string, unknown> = {k: 1};
                       let ks9: string[] = tbl.keys(t);
-                      let jt10: Record<string, unknown> = json.parse("{\\"a\\": 1}");
-                      let js11: string | undefined = json.stringify(t);
+                      let jt10: Record<string, unknown> = JSON.parse("{\\"a\\": 1}");
+                      let js11: string | undefined = JSON.stringify(t);
                       let f12: number = math.floor(1.5);
                       let f13: number = math.ceil(1.5);
                       let f14: number = math.sqrt(4.0);
@@ -1423,7 +1478,7 @@ public class SharedStdlibSemanticsTest {
             }
             SemanticLowerer.LoweringResult lowering = lowerSubject(checked, "lib");
             check(lowering != null && !lowering.hasErrors() && lowering.unit() != null,
-                "the 21-id battery lowers through the validator/chain protocol/"
+                "the combined battery lowers through the validator/chain protocol/"
                     + "control-flow validator: " + (lowering == null ? "null"
                         : lowering.diagnostics()));
             if (lowering == null || lowering.hasErrors() || lowering.unit() == null) {
@@ -1437,23 +1492,48 @@ public class SharedStdlibSemanticsTest {
                     stdlibOps.add(op);
                 }
             }
-            check(stdlibOps.size() == 18,
-                "exactly one STDLIB_CALL per cataloged call: 18 ops; got "
+            check(stdlibOps.size() == 17,
+                "exactly one STDLIB_CALL per algorithm except contextual JSON_PARSE: 17 ops; got "
                     + stdlibOps.size());
             EnumSet<StdlibFunctionId> produced = EnumSet.noneOf(StdlibFunctionId.class);
             for (SemanticOp op : stdlibOps) {
                 produced.add(((KindPayload.StdlibCallPayload) op.payload()).function());
             }
-            check(produced.equals(EnumSet.allOf(StdlibFunctionId.class)),
-                "the produced function set equals the catalog's closed 21-id set (the step "
-                    + "fails if the catalog misses or adds an entry); got " + produced);
+            var expectedFunctions = EnumSet.allOf(StdlibFunctionId.class);
+            expectedFunctions.remove(StdlibFunctionId.JSON_PARSE);
+            check(produced.equals(expectedFunctions),
+                "the produced algorithm set excludes contextual JSON_PARSE; got " + produced);
+            var parseOps = unit.ops().stream().filter(op -> op.kind()==SemanticOpKind.JSON_PARSE).toList();
+            check(parseOps.size()==1, "contextual parse has exactly one dedicated operation");
+            if (parseOps.size()==1) {
+                var parseOp = parseOps.getFirst();
+                var payload = (KindPayload.JsonParsePayload) parseOp.payload();
+                check(payload.target().equals(RuntimeDescriptor.Table.INSTANCE)
+                        && parseOp.resultType().equals(payload.target())
+                        && parseOp.operands().equals(List.of(payload.jsonString()))
+                        && parseOp.failurePolicy()==FailurePolicyId.JSON_RECONSTRUCTION,
+                    "parse carries its explicit Record target, single operand and reconstruction policy");
+                var decoded = deal.semantic.JsonDecodingSemantics.parse(
+                    (UnicodeScalars.Valid) UnicodeScalars.validate("{\"a\": 1}"),
+                    payload.target(), Map.of(), parseOp.origin());
+                check(decoded instanceof deal.semantic.ir.ClassOpsExecutor.Outcome.Success<?>,
+                    "the produced contextual parse executes the strict scanner and reconstruction");
+                if (decoded instanceof deal.semantic.ir.ClassOpsExecutor.Outcome.Success<?> success) {
+                    var value = (deal.semantic.ir.ClassOpsExecutor.Value.Table) success.value();
+                    var found = value.table().get("a");
+                    check(value.table().keys().equals(List.of("a"))
+                            && found instanceof SemanticTable.Lookup.Present<?> present
+                            && present.value().equals(new deal.semantic.ir.ClassOpsExecutor.Value.Number(1)),
+                        "the reconstructed Record retains the independent parsed-value/order seed");
+                }
+            }
 
             Map<StdlibFunctionId, Seed> seedsByFunction = new LinkedHashMap<>();
             for (Seed seed : seeds()) {
                 seedsByFunction.put(seed.function(), seed);
             }
             check(seedsByFunction.keySet().equals(EnumSet.allOf(StdlibFunctionId.class)),
-                "the seed table covers the closed 21-id set exactly");
+                "the seed table covers every stdlib and builtin algorithm selector exactly");
 
             CaptureSink sink = new CaptureSink(SharedStdlibSemantics.Channel.STDOUT);
             List<byte[]> stderrWrites = new ArrayList<>();
@@ -1698,6 +1778,7 @@ public class SharedStdlibSemanticsTest {
         testTableKeys();
         testJsonParseValues();
         testJsonParseSyntaxFailures();
+        testJsonStringifyDeclaredFields();
         testJsonStringifyValues();
         testJsonStringifyFailures();
         testJsonDeepStackSafeTraversal();

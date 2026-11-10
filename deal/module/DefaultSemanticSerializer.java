@@ -1420,21 +1420,6 @@ public final class DefaultSemanticSerializer {
                 DefaultSerializerModuleInput input, DigestKey key) {
             FunctionDeclaration fd = AstDeclarations.findFunctionDeclaration(
                 input.program(), key.declaredName());
-            if (fd == null) {
-                ClassDeclaration synthetic =
-                    AstDeclarations.jsonableClassForSynthetic(
-                        input.program(), key.declaredName());
-                if (synthetic != null) {
-                    // A synthetic @jsonable export (C$fromJson/
-                    // C$toJson): no FunctionDeclaration exists — the
-                    // provider contract content derives from the
-                    // resolved export signature plus the declaration's
-                    // semantic resource identity (the declared-wrapper
-                    // rule of D5), never a failure or a placeholder.
-                    return syntheticJsonableExportContent(input, key,
-                        synthetic);
-                }
-            }
             if (fd == null || fd.body() == null) {
                 fail("the provider function '" + key.declaredName()
                     + "' of module '" + input.modulePath()
@@ -1554,70 +1539,6 @@ public final class DefaultSemanticSerializer {
                     CanonicalJson.str(SERIALIZER_VERSION)),
                 CanonicalJson.e("kind",
                     CanonicalJson.str("DECLARED_FUNCTION_SIGNATURE")),
-                CanonicalJson.e("name",
-                    CanonicalJson.str(key.declaredName())),
-                CanonicalJson.e("isAsync",
-                    CanonicalJson.bool(funcType.isAsync())),
-                CanonicalJson.e("parameters",
-                    CanonicalJson.arr(parameterValues)),
-                CanonicalJson.e("returnDescriptor",
-                    CanonicalJson.str(returnDescriptor)),
-                CanonicalJson.e("semanticResourceIdentityDigest",
-                    CanonicalJson.str(SemanticIdentityContent
-                        .resourceIdentityDigest(identity)))));
-        }
-
-        /**
-         * The canonical provider contract content of a synthetic
-         * {@code @jsonable} export ({@code C$fromJson}/
-         * {@code C$toJson}): the resolved export signature — the
-         * exact Func type {@code input.exports()} carries — plus the
-         * declaration's semantic resource identity digest, mirroring
-         * the declared-wrapper rule of D5 (the generated helper semantics share the provider domain). Identities participate through digests only, never
-         * raw URIs.
-         */
-        private String syntheticJsonableExportContent(
-                DefaultSerializerModuleInput input, DigestKey key,
-                ClassDeclaration syntheticClass) {
-            Type exportType = input.exports().get(key.declaredName());
-            if (!(exportType instanceof Type.Func funcType)) {
-                fail("the synthetic jsonable export '"
-                    + key.declaredName() + "' of module '"
-                    + input.modulePath() + "' has no resolved"
-                    + " exported signature",
-                    syntheticClass.span().range());
-                return null;
-            }
-            DiagnosticRange declarationRange =
-                syntheticClass.span().range();
-            SemanticResourceIdentity identity =
-                new SemanticResourceIdentity(
-                    input.location().semanticModuleIdentity(),
-                    LexicalDeclarationIdentity.DeclarationKind.FUNCTION,
-                    new LexicalDeclarationIdentity(
-                        LexicalDeclarationIdentity.DeclarationKind
-                            .FUNCTION,
-                        key.declaredName(), input.modulePath(),
-                        declarationRange));
-            List<CanonicalJson.Value> parameterValues = new ArrayList<>();
-            for (Type parameter : funcType.paramTypes()) {
-                parameterValues.add(CanonicalJson.str(
-                    descriptorOf(input, parameter, declarationRange)));
-                if (failed) {
-                    return null;
-                }
-            }
-            String returnDescriptor = descriptorOf(input,
-                funcType.returnType(), declarationRange);
-            if (failed) {
-                return null;
-            }
-            return CanonicalJson.serializeText(CanonicalJson.obj(
-                CanonicalJson.e("serializerVersion",
-                    CanonicalJson.str(SERIALIZER_VERSION)),
-                CanonicalJson.e("kind",
-                    CanonicalJson.str(
-                        "SYNTHETIC_JSONABLE_EXPORT_SIGNATURE")),
                 CanonicalJson.e("name",
                     CanonicalJson.str(key.declaredName())),
                 CanonicalJson.e("isAsync",

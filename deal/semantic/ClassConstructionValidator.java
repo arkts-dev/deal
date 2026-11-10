@@ -100,16 +100,7 @@ public final class ClassConstructionValidator {
             sharedFactories, declarationClasses, providerFactoryFacts, Set.of());
     }
 
-    /**
-     * The composed per-module production admission with the project-wide
-     * set of canonical class identities that carry more than one
-     * plan-bearing ({@code @jsonable}) declaration: the generated JSON
-     * plan key is the canonical class identity, so exactly one
-     * plan-bearing declaration resolves the nested link exactly while a
-     * same-identity declaration without a generated plan registers no
-     * plan and never makes the key ambiguous. Only the genuine two-plan
-     * collision fails the nested link closed.
-     */
+    /** Contextual schemas reject identities with multiple declaring providers. */
     public static Optional<CompilerDiagnostic> validate(
             LoweredModuleUnit unit,
             StructuredBodyTable table,
@@ -121,43 +112,92 @@ public final class ClassConstructionValidator {
             Set<ClassId> ambiguousJsonPlanClassIds) {
         return validate(unit, table, factories, ownInterface,
             sharedFactories, declarationClasses, providerFactoryFacts,
-            ambiguousJsonPlanClassIds, Map.of());
+            ambiguousJsonPlanClassIds, JsonSchemaContext.empty());
     }
 
-    /**
-     * The declaration one canonical class identity's generated JSON plan
-     * carries (the plan owner): its declaring module and, when that
-     * declaration is exported, its construction entry. A shared identity
-     * (the harness-synthesized pair) still carries one recorded owner, so
-     * a nested JSON link resolves through it — never through the
-     * unit-local sibling layout an identity-keyed lookup would mask it
-     * with.
-     */
-    public record ClassPlanOwner(ModuleId module, ClassFactoryId constructionEntry) {
-        public ClassPlanOwner {
-            Objects.requireNonNull(module, "module must not be null");
+    /** Exact declaration ownership and import visibility for contextual schemas. */
+    public record JsonSchemaContext(Map<ClassId, ClassLayout> layouts,
+            Map<ClassId, ModuleId> owners, Map<ModuleId, Set<ModuleId>> visibility) {
+        public JsonSchemaContext {
+            layouts = Map.copyOf(layouts);
+            owners = Map.copyOf(owners);
+            Map<ModuleId, Set<ModuleId>> copied = new LinkedHashMap<>();
+            visibility.forEach((id, modules) -> copied.put(id, Set.copyOf(modules)));
+            visibility = Map.copyOf(copied);
+        }
+
+        public static JsonSchemaContext empty() {
+            return new JsonSchemaContext(Map.of(), Map.of(), Map.of());
+        }
+
+        public static JsonSchemaContext forProject(ProjectInterfaceIndex index,
+                ClassRegistrationSeeds seeds) {
+            Map<ModuleId, Set<ModuleId>> visible = new LinkedHashMap<>();
+            Map<ClassId, ModuleId> declaredOwners = new LinkedHashMap<>();
+            // Declaration layouts live in registration seeds rather than
+            // implementation units. Their exact index entries still own the
+            // schema positions; a global seed lookup is not import authority.
+            for (ExternalModuleInterface module : index.modules().values()) {
+                if (module.kind() != ExternalModuleKind.IMPLEMENTATION)
+                    for (ClassInterface cls : module.classes())
+                        declaredOwners.putIfAbsent(cls.classId(), module.moduleId());
+            }
+            // Host descriptor aliases retain the source specifier. Join
+            // those aliases through resolved imports, not by converting a
+            // descriptor namespace into a guessed ModuleId.
+            for (ExternalModuleInterface module : index.modules().values()) {
+                for (var link : module.imports()) {
+                    ExternalModuleInterface target = index.modules().get(link.resolvedModuleId());
+                    if (target == null || target.kind() != ExternalModuleKind.HOST) continue;
+                    String descriptorNamespace = EXTERNAL_MODULE_PREFIX + link.modulePath();
+                    // The interface exports only public classes, whereas
+                    // seeds retain private declaration descendants too.
+                    // Bind the namespace through this actual resolved host
+                    // import, then include all registered declarations of
+                    // that namespace, without deriving a ModuleId from it.
+                    for (ClassId id : seeds.classIds())
+                        if (id.modulePath().equals(descriptorNamespace))
+                            declaredOwners.putIfAbsent(id, target.moduleId());
+                    for (ClassInterface cls : target.classes())
+                        declaredOwners.putIfAbsent(new ClassId(descriptorNamespace,
+                            cls.classId().name()), target.moduleId());
+                }
+            }
+            for (ModuleId module : index.modules().keySet()) {
+                Set<ModuleId> reached = new LinkedHashSet<>();
+                java.util.Deque<ModuleId> pending = new java.util.ArrayDeque<>();
+                pending.push(module);
+                while (!pending.isEmpty()) {
+                    ModuleId next = pending.pop();
+                    if (!reached.add(next)) continue;
+                    ExternalModuleInterface entry = index.modules().get(next);
+                    if (entry != null) for (var link : entry.imports()) pending.push(link.resolvedModuleId());
+                }
+                visible.put(module, reached);
+            }
+            return new JsonSchemaContext(Map.of(), declaredOwners, visible);
+        }
+
+        public JsonSchemaContext withUnit(LoweredModuleUnit unit) {
+            Map<ClassId, ClassLayout> nextLayouts = new LinkedHashMap<>(layouts);
+            Map<ClassId, ModuleId> nextOwners = new LinkedHashMap<>(owners);
+            unit.classLayouts().forEach((id, layout) -> {
+                nextLayouts.putIfAbsent(id, layout);
+                nextOwners.putIfAbsent(id, unit.moduleId());
+            });
+            return new JsonSchemaContext(nextLayouts, nextOwners, visibility);
         }
     }
 
-    /**
-     * The composed per-module production admission with the recorded plan
-     * owners of the project-wide multiple-declaration class identities:
-     * the generated JSON plan table is keyed by the canonical class
-     * identity and carries exactly the owner declaration's layout (the
-     * unique plan-bearing declaration when one exists, the emission
-     * order's last declaration otherwise), so every nested JSON link
-     * validates that layout instead of the unit-local sibling.
-     */
+    /** Reachable private schemas come from the owned dependency units, not exports. */
     public static Optional<CompilerDiagnostic> validate(
-            LoweredModuleUnit unit,
-            StructuredBodyTable table,
-            ClassFactoryRegistry factories,
-            ExternalModuleInterface ownInterface,
+            LoweredModuleUnit unit, StructuredBodyTable table,
+            ClassFactoryRegistry factories, ExternalModuleInterface ownInterface,
             Map<ClassId, SharedFactoryFacts> sharedFactories,
             Map<ClassId, ClassRegistrationSeeds.ClassRegistration> declarationClasses,
             Map<ClassFactoryId, SharedFactoryFacts> providerFactoryFacts,
             Set<ClassId> ambiguousJsonPlanClassIds,
-            Map<ClassId, ClassPlanOwner> jsonPlanOwners) {
+            JsonSchemaContext dependencySchemas) {
         Objects.requireNonNull(unit, "unit must not be null");
         Objects.requireNonNull(table, "table must not be null");
         Objects.requireNonNull(factories, "factories must not be null");
@@ -169,11 +209,10 @@ public final class ClassConstructionValidator {
             "providerFactoryFacts must not be null");
         Objects.requireNonNull(ambiguousJsonPlanClassIds,
             "ambiguousJsonPlanClassIds must not be null");
-        Objects.requireNonNull(jsonPlanOwners,
-            "jsonPlanOwners must not be null");
         Context context = new Context(unit, table, factories, ownInterface,
             sharedFactories, declarationClasses, providerFactoryFacts,
-            ambiguousJsonPlanClassIds, jsonPlanOwners);
+            ambiguousJsonPlanClassIds);
+        Objects.requireNonNull(dependencySchemas, "dependencySchemas must not be null");
         Optional<CompilerDiagnostic> failure = context.checkFactoryCoherence();
         if (failure.isPresent()) {
             return failure;
@@ -186,7 +225,7 @@ public final class ClassConstructionValidator {
         if (failure.isPresent()) {
             return failure;
         }
-        return context.checkJsonLayoutCoherence();
+        return context.checkJsonLayoutCoherence(dependencySchemas);
     }
 
     // =========================================================================
@@ -759,22 +798,8 @@ public final class ClassConstructionValidator {
          * canonical class identity alone.
          */
         private final Map<ClassFactoryId, SharedFactoryFacts> providerFactoryFacts;
-        /**
-         * The project-wide canonical class identities carrying more than
-         * one plan-bearing ({@code @jsonable}) declaration: only those make
-         * the generated JSON plan key (the canonical identity) unable to
-         * select one plan.
-         */
+        /** All canonical identities with more than one declaring provider. */
         private final Set<ClassId> ambiguousJsonPlanClassIds;
-        /**
-         * The recorded plan owners of the project-wide
-         * multiple-declaration class identities: the declaration the
-         * generated JSON plan table carries under the canonical key. A
-         * nested JSON link validates this owner's layout rather than the
-         * unit-local sibling the identity-keyed context would mask it
-         * with.
-         */
-        private final Map<ClassId, ClassPlanOwner> jsonPlanOwners;
         /**
          * The declaration classes' registered layouts and owner members of
          * the project's class registration seeds (K10): a host declaration
@@ -800,8 +825,7 @@ public final class ClassConstructionValidator {
                 Map<ClassId, SharedFactoryFacts> sharedFactories,
                 Map<ClassId, ClassRegistrationSeeds.ClassRegistration> declarationClasses,
                 Map<ClassFactoryId, SharedFactoryFacts> providerFactoryFacts,
-                Set<ClassId> ambiguousJsonPlanClassIds,
-                Map<ClassId, ClassPlanOwner> jsonPlanOwners) {
+                Set<ClassId> ambiguousJsonPlanClassIds) {
             this.unit = unit;
             this.table = table;
             this.factories = factories;
@@ -810,7 +834,6 @@ public final class ClassConstructionValidator {
             this.declarationClasses = Map.copyOf(declarationClasses);
             this.providerFactoryFacts = Map.copyOf(providerFactoryFacts);
             this.ambiguousJsonPlanClassIds = Set.copyOf(ambiguousJsonPlanClassIds);
-            this.jsonPlanOwners = Map.copyOf(jsonPlanOwners);
             for (SemanticOp op : unit.ops()) {
                 opsById.put(op.opId(), op);
             }
@@ -986,14 +1009,7 @@ public final class ClassConstructionValidator {
             return count > 1;
         }
 
-        /**
-         * Whether one canonical class identity carries more than one
-         * plan-bearing ({@code @jsonable}) declaration in the project: the
-         * generated JSON plan key is the canonical class identity, so
-         * exactly one plan-bearing declaration resolves the nested link
-         * exactly, while a same-identity declaration without a generated
-         * plan registers no plan and cannot collide with it.
-         */
+        /** Whether a canonical schema identity has multiple declaring units. */
         private boolean jsonPlanIdentityAmbiguous(ClassId classId) {
             return ambiguousJsonPlanClassIds.contains(classId);
         }
@@ -1782,20 +1798,12 @@ public final class ClassConstructionValidator {
         // 5. JSON_LAYOUT_COHERENCE
         // =====================================================================
 
-        Optional<CompilerDiagnostic> checkJsonLayoutCoherence() {
+        Optional<CompilerDiagnostic> checkJsonLayoutCoherence(JsonSchemaContext dependencySchemas) {
             for (SemanticOp op : unit.ops()) {
                 switch (op.kind()) {
-                    case JSON_FROM_CLASS -> {
-                        Optional<CompilerDiagnostic> failure = checkJsonFromClass(op);
-                        if (failure.isPresent()) {
-                            return failure;
-                        }
-                    }
-                    case JSON_TO_CLASS -> {
-                        Optional<CompilerDiagnostic> failure = checkJsonToClass(op);
-                        if (failure.isPresent()) {
-                            return failure;
-                        }
+                    case JSON_PARSE -> {
+                        Optional<CompilerDiagnostic> failure = checkJsonParse(op, dependencySchemas);
+                        if (failure.isPresent()) return failure;
                     }
                     default -> {
                         // Not a JSON op.
@@ -1805,227 +1813,56 @@ public final class ClassConstructionValidator {
             return Optional.empty();
         }
 
-        /** The shared JSON-op preamble: policy and the unit's own layout. */
-        private ClassLayout jsonOpLayout(SemanticOp op, FailurePolicyId pinnedPolicy,
-                                         ClassLayout payloadLayout) {
-            if (op.failurePolicy() != pinnedPolicy) {
-                return null;
-            }
-            ClassLayout ownLayout = unit.classLayouts().get(payloadLayout.classId());
-            if (ownLayout == null || !ownLayout.equals(payloadLayout)) {
-                return null;
-            }
-            return ownLayout;
-        }
-
-        private Optional<CompilerDiagnostic> checkJsonFromClass(SemanticOp op) {
-            KindPayload.JsonFromClassPayload payload =
-                (KindPayload.JsonFromClassPayload) op.payload();
-            ClassLayout layout = jsonOpLayout(op, FailurePolicyId.JSON_FROM_NULL,
-                payload.layout());
-            if (layout == null) {
-                return fail(JSON_LAYOUT_COHERENCE, "JSON_FROM_CLASS " + op.opId()
-                    + " violates the pinned shape: policy must be JSON_FROM_NULL and "
-                    + "the payload layout must be exactly the unit's own layout of "
-                    + payload.layout().classId(), op);
-            }
-
-            return checkNestedJsonable(layout, new LinkedHashSet<>());
-        }
-
-        private Optional<CompilerDiagnostic> checkJsonToClass(SemanticOp op) {
-            KindPayload.JsonToClassPayload payload =
-                (KindPayload.JsonToClassPayload) op.payload();
-            ClassLayout layout = jsonOpLayout(op, FailurePolicyId.JSON_TO_ERROR,
-                payload.layout());
-            if (layout == null) {
-                return fail(JSON_LAYOUT_COHERENCE, "JSON_TO_CLASS " + op.opId()
-                    + " violates the pinned shape: policy must be JSON_TO_ERROR and "
-                    + "the payload layout must be exactly the unit's own layout of "
-                    + payload.layout().classId(), op);
-            }
-            return checkNestedJsonable(layout, new LinkedHashSet<>());
-        }
-
-        private Optional<CompilerDiagnostic> checkNestedJsonable(ClassLayout layout,
-                                                                 Set<ClassId> visited) {
-            if (!visited.add(layout.classId())) {
-                // A visited layout is the checker-rejected same-module
-                // jsonable cycle (E4008); the recursion guard never
-                // silently admits a cycle, but re-entry with a pinned
-                // layout set is tolerated for robustness of the pure
-                // walk. (The checker's E4008 gate makes a produced cycle
-                // unreachable.)
-                return Optional.empty();
-            }
-            for (ClassLayout.FieldLayout field : layout.fields()) {
-                Optional<CompilerDiagnostic> failure = checkJsonableDescriptor(
-                    layout.classId(), field.name(), field.descriptor(), visited);
-                if (failure.isPresent()) {
-                    return failure;
+        private Optional<CompilerDiagnostic> checkJsonParse(SemanticOp op, JsonSchemaContext dependencySchemas) {
+            Map<ClassId, ClassLayout> schemas = new LinkedHashMap<>(layoutContext);
+            dependencySchemas.layouts().forEach(schemas::putIfAbsent);
+            var payload = (KindPayload.JsonParsePayload) op.payload();
+            record Position(RuntimeDescriptor descriptor, boolean permitsLocal, ModuleId scope) {}
+            java.util.Deque<Position> pending = new java.util.ArrayDeque<>();
+            java.util.Set<Position> visited = new java.util.HashSet<>();
+            pending.push(new Position(payload.target(), true, unit.moduleId()));
+            while (!pending.isEmpty()) {
+                Position position = pending.pop();
+                RuntimeDescriptor descriptor = position.descriptor();
+                if (descriptor instanceof RuntimeDescriptor.Nullable nullable)
+                    pending.push(new Position(nullable.inner(), position.permitsLocal(), position.scope()));
+                else if (descriptor instanceof RuntimeDescriptor.Array array)
+                    pending.push(new Position(array.element(), position.permitsLocal(), position.scope()));
+                else if (descriptor instanceof RuntimeDescriptor.Class cls && visited.add(position)) {
+                    // Count private declarations too: exported construction
+                    // entries alone do not describe schema ownership.
+                    if (identityAmbiguous(cls.classId()) || jsonPlanIdentityAmbiguous(cls.classId()))
+                        return fail(JSON_LAYOUT_COHERENCE, "JSON_PARSE target has ambiguous declaring providers: " + cls.classId(), op);
+                    boolean local = unit.classLayouts().containsKey(cls.classId());
+                    // Dependency schemas cannot refer back to consumer-local
+                    // declarations: implementation imports are acyclic. A
+                    // private descendant missing from the dependency must not
+                    // acquire authority from a relocated consumer layout.
+                    if (local && !position.permitsLocal()) return fail(JSON_LAYOUT_COHERENCE,
+                        "JSON_PARSE dependency schema refers to a consumer-local layout: " + cls.classId(), op);
+                    ClassLayout layout = schemas.get(cls.classId());
+                    if (layout == null) return fail(JSON_LAYOUT_COHERENCE,
+                        "JSON_PARSE target has no exact class layout: " + cls.classId(), op);
+                    ModuleId owner = local ? unit.moduleId() : dependencySchemas.owners().get(cls.classId());
+                    if (owner == null && !cls.classId().equals(ClassId.ERROR))
+                        return fail(JSON_LAYOUT_COHERENCE, "JSON_PARSE target has no exact declaring module: " + cls.classId(), op);
+                    if (owner != null && !owner.equals(position.scope())
+                            && !dependencySchemas.visibility().getOrDefault(position.scope(), Set.of()).contains(owner))
+                        return fail(JSON_LAYOUT_COHERENCE, "JSON_PARSE schema refers to a layout outside its defining provider's dependencies: "
+                            + cls.classId() + " from " + position.scope(), op);
+                    boolean permitsLocal = position.permitsLocal() && local;
+                    ModuleId scope = owner == null ? position.scope() : owner;
+                    for (int i = layout.fields().size() - 1; i >= 0; --i)
+                        pending.push(new Position(layout.fields().get(i).descriptor(), permitsLocal, scope));
                 }
+            }
+            try {
+                JsonDecodingSemantics.requireSchema(payload.target(), schemas);
+            } catch (IllegalArgumentException defect) {
+                return fail(JSON_LAYOUT_COHERENCE, "JSON_PARSE " + defect.getMessage(), op);
             }
             return Optional.empty();
         }
 
-        private Optional<CompilerDiagnostic> checkJsonableDescriptor(ClassId owner,
-                                                                     String field,
-                                                                     RuntimeDescriptor
-                                                                         descriptor,
-                                                                     Set<ClassId> visited) {
-            return switch (descriptor) {
-                case RuntimeDescriptor.Null ignored -> Optional.empty();
-                case RuntimeDescriptor.Undefined ignored -> Optional.empty();
-                case RuntimeDescriptor.Unknown ignored -> Optional.empty();
-                case RuntimeDescriptor.Void ignored -> Optional.empty();
-                case RuntimeDescriptor.Boolean ignored -> Optional.empty();
-
-                case RuntimeDescriptor.Number ignored -> Optional.empty();
-                case RuntimeDescriptor.String ignored -> Optional.empty();
-                case RuntimeDescriptor.Table ignored -> Optional.empty();
-                case RuntimeDescriptor.Array array -> checkJsonableDescriptor(owner,
-                    field, array.element(), visited);
-                case RuntimeDescriptor.Nullable nullable ->
-                    checkJsonableDescriptor(owner, field, nullable.inner(), visited);
-                case RuntimeDescriptor.Class classDescriptor -> {
-                    ClassId nested = classDescriptor.classId();
-                    if (jsonPlanIdentityAmbiguous(nested)) {
-                        // The generated JSON plan table is keyed by the
-                        // canonical class identity and more than one of the
-                        // identity's declarations generates a plan, so no
-                        // single nested plan is selectable: the link fails
-                        // closed rather than emitting a project whose nested
-                        // walk may consume a sibling declaration's plan. A
-                        // same-identity declaration without a generated plan
-                        // registers none and keeps the single-plan link
-                        // exact.
-                        yield fail(JSON_LAYOUT_COHERENCE, "jsonable class " + owner
-                            + " field '" + field + "' references nested class " + nested
-                            + " whose canonical identity carries more than one"
-                            + " plan-bearing (@jsonable) declaration (same-directory"
-                            + " sibling declarations): the generated JSON plan key"
-                            + " cannot select the exact declaration, so the link"
-                            + " fails closed with no partial project");
-                    }
-                    ClassPlanOwner planOwner = jsonPlanOwners.get(nested);
-                    if (planOwner != null) {
-                        // The recorded plan owner of a multiple-declaration
-                        // identity: the generated plan table carries exactly
-                        // this declaration's layout, so the nested link
-                        // validates the owner's own layout (this unit's
-                        // declaration) or the owner's exact
-                        // shared-factory facts — never the unit-local
-                        // sibling an identity-keyed lookup would select.
-                        if (planOwner.module().equals(unit.moduleId())) {
-                            ClassLayout ownLayout = unit.classLayouts().get(nested);
-                            if (ownLayout == null) {
-                                yield fail(JSON_LAYOUT_COHERENCE, "jsonable class "
-                                    + owner + " field '" + field + "' nested class "
-                                    + nested + " is the recorded plan owner of this"
-                                    + " unit but the unit declares no such layout (a"
-                                    + " fact defect)");
-                            }
-                            ClassInterface ownEntry = ownClassEntry(nested);
-                            if (ownEntry != null
-                                    && factories.factoryFor(
-                                        ownEntry.constructionEntry()) == null) {
-                                yield fail(JSON_LAYOUT_COHERENCE, "jsonable class "
-                                    + owner + " field '" + field + "' nested class "
-                                    + nested + " is exported but has no registered "
-                                    + "factory under its constructionEntry: the nested "
-                                    + "JSON decode triggers the nested CLASS_FACTORY");
-                            }
-                            yield checkNestedJsonable(ownLayout, visited);
-                        }
-                        SharedFactoryFacts ownerFacts = factsOf(nested,
-                            planOwner.constructionEntry());
-                        if (ownerFacts == null) {
-                            yield fail(JSON_LAYOUT_COHERENCE, "jsonable class "
-                                + owner + " field '" + field + "' references imported"
-                                + " nested class " + nested + " without shared-factory"
-                                + " facts: the SharedFactoryFacts context must cover"
-                                + " every imported class the unit's class constructs"
-                                + " reference");
-                        }
-                        if (planOwner.constructionEntry() != null
-                                && !planOwner.constructionEntry().equals(
-                                    ownerFacts.interfaceEntry().constructionEntry())) {
-                            yield fail(JSON_LAYOUT_COHERENCE, "jsonable class "
-                                + owner + " field '" + field + "' nested class "
-                                + nested + " resolves shared-factory facts of"
-                                + " construction entry "
-                                + ownerFacts.interfaceEntry().constructionEntry()
-                                + ", not the recorded plan owner's "
-                                + planOwner.constructionEntry() + " (same-directory"
-                                + " sibling declarations): the nested link fails"
-                                + " closed rather than selecting another"
-                                + " declaration's plan");
-                        }
-                        yield checkNestedJsonable(ownerFacts.layout(), visited);
-                    }
-                    ClassLayout nestedLayout = layoutContext.get(nested);
-                    if (nestedLayout == null) {
-                        yield fail(JSON_LAYOUT_COHERENCE, "jsonable class " + owner
-                            + " field '" + field + "' references nested class " + nested
-                            + " which does not resolve in the layout context (the "
-                            + "unit's classLayouts plus the imported classes' "
-                            + "layouts)");
-                    }
-                    if (unit.classLayouts().containsKey(nested)) {
-                        // An own nested class: its layout is the unit's.
-                        if (!unit.classLayouts().get(nested).equals(nestedLayout)) {
-                            yield fail(JSON_LAYOUT_COHERENCE, "jsonable class " + owner
-                                + " field '" + field + "' nested class " + nested
-                                + " resolves to a layout that differs from the unit's "
-                                + "own layout");
-                        }
-                        ClassInterface ownEntry = ownClassEntry(nested);
-                        if (ownEntry != null) {
-
-                            if (factories.factoryFor(ownEntry.constructionEntry())
-                                    == null) {
-                                yield fail(JSON_LAYOUT_COHERENCE, "jsonable class "
-                                    + owner + " field '" + field + "' nested class "
-                                    + nested + " is exported but has no registered "
-                                    + "factory under its constructionEntry: the nested "
-                                    + "JSON decode triggers the nested CLASS_FACTORY");
-                            }
-                        }
-                        yield checkNestedJsonable(nestedLayout, visited);
-                    }
-                    // An imported nested class: the SharedFactoryFacts
-                    // context must carry its interface entry and layout
-                    // (the nested decode resolves the owner factory
-                    // through the project's factory registries).
-                    // A declaration-file class is not admitted here even
-                    // when the checker's visible declared C$fromJson/C$toJson
-                    // make it a jsonable field type: a declaration module
-                    // carries no implementation lowering (no plan, factory or
-                    // default evaluator), and no production consumer realizes
-                    // a nested declaration-class walk. The nested link stays
-                    // fail closed on every backend instead of compiling on one
-                    // lane and failing at runtime on another.
-                    SharedFactoryFacts facts = factsOf(nested);
-                    if (facts == null) {
-                        yield fail(JSON_LAYOUT_COHERENCE, "jsonable class " + owner
-                            + " field '" + field + "' references imported nested class "
-                            + nested + " without shared-factory facts: the "
-                            + "SharedFactoryFacts context must cover every imported "
-                            + "class the unit's class constructs reference");
-                    }
-                    if (!facts.layout().equals(nestedLayout)) {
-                        yield fail(JSON_LAYOUT_COHERENCE, "jsonable class " + owner
-                            + " field '" + field + "' nested class " + nested
-                            + " resolves to a layout that differs from the imported "
-                            + "facts' layout");
-                    }
-                    yield checkNestedJsonable(nestedLayout, visited);
-                }
-                case RuntimeDescriptor.Func ignored -> fail(JSON_LAYOUT_COHERENCE,
-                    "jsonable class " + owner + " field '" + field + "' carries a "
-                        + "function descriptor: the checker's E4007 allowlist excludes "
-                        + "function-typed jsonable fields");
-            };
-        }
     }
 }

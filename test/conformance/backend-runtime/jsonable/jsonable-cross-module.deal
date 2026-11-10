@@ -1,37 +1,20 @@
-// @spec: Classes — @jsonable cross-module import
-// @description: @jsonable generated functions can be imported and used cross-module
+// @spec: Standard library builtins — JSON
+// @description: Imported classes reconstruct with exact nominal identity and fresh values across repeated roundtrips.
 // @expected: runtime-ok
-// @features: jsonable, cross-module, import
+// @features: json, cross-module, import
 
 import * as Lib from "./jsonable_lib";
 
 export function test_cross_module(): null {
-  let w: Lib.Widget | null = Lib.Widget$fromJson("{\"label\":\"test\",\"count\":5}");
-  if (w !== null) {
-    if (w.label !== "test") {
-      throw { code: "TEST_FAIL", message: "cross-module label mismatch" };
-    }
-    if (w.count !== 5) {
-      throw { code: "TEST_FAIL", message: "cross-module count mismatch" };
-    }
-
-    // Also test toJson via import
-    let json: string = Lib.Widget$toJson(w);
-    let w2: Lib.Widget | null = Lib.Widget$fromJson(json);
-    if (w2 !== null) {
-      // w2 should have same values
-      if (w2.label !== "test") {
-        throw { code: "TEST_FAIL", message: "cross-module roundtrip label mismatch" };
-      }
-    } else {
-      throw { code: "TEST_FAIL", message: "cross-module roundtrip failed" };
-    }
-  } else {
-    throw { code: "TEST_FAIL", message: "cross-module fromJson returned null" };
+  let w: Lib.Widget = JSON.parse("{\"label\":\"test\",\"count\":5}");
+  if (w.label !== "test" || w.count !== 5 || !(w instanceof Lib.Widget)) {
+    throw {code: "TEST_FAIL", message: "cross-module reconstruction mismatch"};
+  }
+  let w2: Lib.Widget = JSON.parse(JSON.stringify(w) as string);
+  if (w2.label !== "test" || w2.count !== 5 || w2 === w || !(w2 instanceof Lib.Widget)) {
+    throw {code: "TEST_FAIL", message: "cross-module fresh roundtrip mismatch"};
   }
   return null;
 }
 
-export function main(): null {
-  return null;
-}
+export function main(): null { return null; }

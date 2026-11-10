@@ -801,8 +801,7 @@ static void check_arm_matrix(void) {
         {"field", "extra"}, {"classId", class_user} };
     static const deal_arm_parameter parse_error[] = {
         {"oneBasedByteOffset", "12"}, {"reason", "unexpected token"} };
-    static const deal_arm_parameter walk[] = {
-        {"fieldPath", "value.name"}, {"actual", "function"} };
+    static const deal_arm_parameter invalid_string[] = { {"actual", "string"} };
     static const deal_arm_parameter stringify[] = { {"actual", "function"} };
 
     const deal_arm_case matrix[] = {
@@ -846,7 +845,8 @@ static void check_arm_matrix(void) {
           NULL },
         { DEAL_ARM_ID_CLASS_EXTRA_FIELD, extra_field, 2u, NULL, NULL, NULL },
         { DEAL_ARM_ID_JSON_PARSE_ERROR, parse_error, 2u, NULL, NULL, NULL },
-        { DEAL_ARM_ID_JSON_TO_WALK, walk, 2u, NULL, "function", NULL },
+        { DEAL_ARM_ID_JSON_STRINGIFY_UNSUPPORTED, invalid_string, 1u,
+          "string, number, boolean, or table", "string", NULL },
         { DEAL_ARM_ID_JSON_STRINGIFY_UNSUPPORTED, stringify, 1u,
           "string, number, boolean, or table", "function", NULL },
         { DEAL_ARM_ID_JSON_TO_WALK_CYCLE, NULL, 0u, NULL, NULL, NULL }
@@ -1324,6 +1324,79 @@ static void check_live_graphs(void) {
     deal_root_scope_pop();
 }
 
+static void check_error_text_spans(void) {
+    deal_root_scope_push();
+    const char code_bytes[] = {'A', '\0', (char)0xed, (char)0xa0, (char)0x80, 'B'};
+    deal_string *code = deal_text_new(code_bytes, sizeof(code_bytes));
+    deal_root_scope_hold(code);
+    deal_string *message = deal_text_new("C\0D", 3u);
+    deal_root_scope_hold(message);
+    deal_error *error = deal_error_create_strings(code, message, &test_origin);
+    deal_root_scope_hold(error);
+    deal_string *read = deal_error_code_value(error);
+    check(deal_text_compare(code, read) == 0, "Error code preserves NUL and a lone unit");
+    read = deal_error_message_value(error);
+    check(deal_text_compare(message, read) == 0, "Error message preserves NUL");
+    char *snapshot = deal_error_snapshot(error);
+    check(strstr(snapshot, "\"code\":\"A\\u0000\\uD800B\"") != NULL,
+          "Error snapshot escapes NUL and lone units losslessly");
+    check(strstr(snapshot, "\"message\":\"C\\u0000D\"") != NULL,
+          "Error snapshot retains text after NUL");
+    deal_error_snapshot_release(snapshot);
+    size_t length = 0u;
+    const char *bytes = deal_error_code_bytes(error, &length);
+    check(length == sizeof(code_bytes), "Error span retains its full length");
+    deal_data datum = {0};
+    datum.tag = DEAL_DATA_ERROR;
+    datum.reference = error;
+    check(live_check(datum, "Error").error == NULL, "full Error text admits legal lone units");
+    /* Damage only bytes beyond NUL; the next ordinary check must see them. */
+    ((char *)bytes)[2] = (char)0xff;
+    check(live_check(datum, "Error").error != NULL, "Error checks do not stop at embedded NUL");
+    ((char *)bytes)[2] = (char)0xed;
+    check(live_check(datum, "Error").error == NULL, "Error span repair retries on the same identity");
+    deal_error_set_code_value(error, message);
+    deal_error_set_message_value(error, code);
+    deal_gc_collect_full();
+    read = deal_error_message_value(error);
+    check(deal_text_compare(code, read) == 0, "Error mutation and collection preserve full text");
+    bytes = deal_error_message_bytes(error, &length);
+    check(length == sizeof(code_bytes) && memcmp(bytes, code_bytes, length) == 0,
+          "Error message span accessor preserves post-NUL bytes");
+    deal_error *outer = deal_error_create("OUTER", "outer", &test_origin);
+    deal_root_scope_hold(outer);
+    bytes = deal_error_cause_code_bytes(outer, &length);
+    check(bytes == NULL && length == 0u, "absent cause has no borrowed code span");
+    deal_error_set_cause(outer, error);
+    deal_error_set_code_value(error, code);
+    deal_gc_collect_full();
+    bytes = deal_error_cause_code_bytes(outer, &length);
+    check(length == sizeof(code_bytes) && memcmp(bytes, code_bytes, length) == 0,
+          "cause accessor preserves the mutated full code span across collection");
+    snapshot = deal_error_snapshot(outer);
+    check(strstr(snapshot, "\"cause\":\"A\\u0000\\uD800B\"") != NULL,
+          "Error cause snapshot retains its full code span");
+    deal_error_snapshot_release(snapshot);
+    const char field_bytes[] = {'x', '\0', (char)0xed, (char)0xa0, (char)0x80, 'y'};
+    const deal_arm_text_parameter parameters[] = {
+        {"field", field_bytes, sizeof(field_bytes)},
+        {"classId", "@src/model.deal/Item", sizeof("@src/model.deal/Item") - 1u}
+    };
+    deal_error *extra = deal_error_materialize_text(DEAL_ARM_ID_CLASS_EXTRA_FIELD,
+        parameters, 2u, NULL, NULL, &test_origin, error);
+    deal_root_scope_hold(extra);
+    const char expected[] = "extra field 'x\0\xed\xa0\x80y' in class '@src/model.deal/Item'";
+    bytes = deal_error_message_bytes(extra, &length);
+    check(length == sizeof(expected) - 1u && memcmp(bytes, expected, length) == 0,
+          "closed-arm span renderer retains every parameter byte and suffix");
+    deal_gc_collect_full();
+    snapshot = deal_error_snapshot(extra);
+    check(strstr(snapshot, "x\\u0000\\uD800y' in class '@src/model.deal/Item'") != NULL,
+          "rendered Error snapshot retains its parameter suffix after NUL");
+    deal_error_snapshot_release(snapshot);
+    deal_root_scope_pop();
+}
+
 int main(void) {
     if (deal_arm_table_installed() != NULL) {
         printf("FAIL: no arm table is installed before the start call\n");
@@ -1345,6 +1418,7 @@ int main(void) {
     check_number_text();
     check_failure_admission();
     check_live_graphs();
+    check_error_text_spans();
     printf(failures == 0 ? "boundary ok\n" : "boundary failed\n");
     return failures == 0 ? 0 : 1;
 }
@@ -1357,7 +1431,8 @@ int main(void) {
 
 #if DEAL_BOUNDARY_CASE != 1 && DEAL_BOUNDARY_CASE != 2 \
         && DEAL_BOUNDARY_CASE != 3 && DEAL_BOUNDARY_CASE != 4 \
-        && DEAL_BOUNDARY_CASE != 5 && DEAL_BOUNDARY_CASE != 6
+        && DEAL_BOUNDARY_CASE != 5 && DEAL_BOUNDARY_CASE != 6 \
+        && DEAL_BOUNDARY_CASE != 20 && DEAL_BOUNDARY_CASE != 23
 static const deal_origin test_origin = { "native/boundary.deal", 41, 7 };
 #endif
 
@@ -1464,6 +1539,38 @@ int main(void) {
         admission.expected = NULL;
         admission.actual = NULL;
         (void)deal_failure_admit(&admission);
+    }
+#elif DEAL_BOUNDARY_CASE == 19
+    {
+        const char invalid[] = {'x', '\0', (char)0xff};
+        const deal_arm_text_parameter parameters[] = {
+            {"field", invalid, sizeof(invalid)}, {"classId", "@src/model.deal/Item", sizeof("@src/model.deal/Item") - 1u}
+        };
+        (void)deal_error_materialize_text(DEAL_ARM_ID_CLASS_EXTRA_FIELD, parameters,
+            2u, NULL, NULL, &test_origin, NULL);
+    }
+#elif DEAL_BOUNDARY_CASE == 20
+    {
+        size_t length;
+        (void)deal_error_code_bytes(NULL, &length);
+    }
+#elif DEAL_BOUNDARY_CASE == 21
+    {
+        deal_error *error = deal_error_create("CODE", "message", &test_origin);
+        (void)deal_error_message_bytes(error, NULL);
+    }
+#elif DEAL_BOUNDARY_CASE == 22
+    (void)deal_error_materialize_text(DEAL_ARM_ID_CLASS_EXTRA_FIELD, NULL,
+        1u, NULL, NULL, &test_origin, NULL);
+#elif DEAL_BOUNDARY_CASE == 23
+    {
+        size_t length;
+        (void)deal_error_cause_code_bytes(NULL, &length);
+    }
+#elif DEAL_BOUNDARY_CASE == 24
+    {
+        deal_error *error = deal_error_create("CODE", "message", &test_origin);
+        (void)deal_error_cause_code_bytes(error, NULL);
     }
 #else
 #error "unknown DEAL_BOUNDARY_CASE"

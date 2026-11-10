@@ -65,12 +65,10 @@ import java.util.stream.Stream;
  * malformed/no-frontend seam assertions, independent determinism, and the
  * fail-closed unsupported-slice contract with the offending operation's own
  * origin), the ISSUE-0799 class drive (the per-attempt defaults,
- * imported-provider construction, field commits, the public helper ABI and
- * the JSON walkers), its ISSUE-0811 public-role acceptance (the exact
- * META/C$new/C$fromJson/C$toJson/C$fields keys and signatures, C$new's
- * origin absence and unmutated provided input, the untagged defaults-only
- * factory transfer with no default at registration, and the optional-null
- * three states through the public helpers), and the ISSUE-0800 call/boundary
+ * imported-provider construction, field commits and contextual JSON),
+ * its public-role acceptance (META/C$new plus explicitly declared ordinary
+ * encode/decode signatures, C$new's origin absence and unmutated provided
+ * input, private factory transfer, and the optional-null three states), and the ISSUE-0800 call/boundary
  * realization (native
  * {@code ASYNC_START}/{@code AWAIT} under real Promises, the async adapter
  * and cross-module async entry, the direct-run/require entry split with
@@ -413,11 +411,17 @@ public class JsSemanticEmitterTest {
         return out;
     }
 
-    /** The spec-listed stdlib modules one fixture's project imports. */
+    /** Deployment dependencies selected by imports and validated algorithm operations. */
     private static List<String> importedStdlibModules(Fixture fixture) {
         Set<String> modules = new java.util.LinkedHashSet<>();
         for (LoweredModuleUnit unit : fixture.project().modules().values()) {
             for (SemanticOp op : unit.ops()) {
+                if (op.payload() instanceof KindPayload.StdlibCallPayload algorithm
+                        && algorithm.function() != deal.semantic.ir.StdlibFunctionId.JSON_STRINGIFY) {
+                    deal.semantic.StdlibFunctionCatalog.entries().stream()
+                        .filter(row -> row.function() == algorithm.function())
+                        .forEach(row -> modules.add(row.modulePath().substring("std.".length())));
+                }
                 if (op.kind() != SemanticOpKind.MODULE_IMPORT
                         || !(op.payload()
                             instanceof KindPayload.ModuleImportPayload payload)
@@ -1874,23 +1878,19 @@ public class JsSemanticEmitterTest {
     // =========================================================================
 
     /**
-     * The composed class drive (ISSUE-0799, ISSUE-0811 acceptance): one legal
-     * module-class project exercised through real Node artifacts — fresh and
-     * re-executed defaults, provided/optional skips, retained references,
-     * imported provider construction, field read/write/delete/has, the public
-     * helper ABI (the exact META/C$new/C$fromJson/C$toJson/C$fields keys and
-     * signatures, C$new arity and origin absence, the untagged defaults-only
-     * factory transfer with no default run at registration, unmutated provided
-     * input and no instance on failure), the source-literal supplied-expression
-     * order before omitted defaults, the raw host extra-key scan before any
-     * default, the per-construction Error[] default, and the JSON roundtrip
-     * with its specified null failures and optional-null three states. Both
-     * the driver (require-only) and the entry artifact itself execute.
+     * The composed class drive executes real Node artifacts: supplied fields,
+     * optional absence, retained references, imported construction, field
+     * read/write/delete/has, META/C$new and ordinary encode/decode signatures.
+     * It retains construction arity/origin, private factory transfer,
+     * unmutated input, no partial publication, supplied-expression order,
+     * extras-before-field reads, Error[] construction and optional-null JSON
+     * states. Reconstruction throws; builtin encoding owns failures. Both the
+     * require-only driver and the entry artifact execute.
      */
     private static void testClassConstructionAndJson(Path tmpRoot)
             throws Exception {
-        System.out.println("-- classes under Node: per-attempt defaults, imported"
-            + " providers, field commits, the public helper ABI and JSON --");
+        System.out.println("-- classes under Node: imported providers, supplied"
+            + " fields, public construction and contextual JSON --");
         Path root = Files.createTempDirectory(tmpRoot, "classes");
         Fixture fixture = compileFixture(root, """
             import * as lib from "./lib";
@@ -1928,12 +1928,16 @@ public class JsSemanticEmitterTest {
               score: number;
               point: lib.Point;
               many: lib.Point[];
+              loop?: unknown;
             }
 
             export class Fault {
               err: Error;
               errs: Error[];
             }
+
+            export function decode(text: string): Form { return JSON.parse(text); }
+            export function encode(value: Form): string { return JSON.stringify(value) as string; }
 
             export function main(): null {
               let order: number[] = [];
@@ -1959,7 +1963,7 @@ public class JsSemanticEmitterTest {
               let p1: lib.Point = { x: 2, y: 0 };
               let p2: lib.Point = { x: 0, y: 0 };
               if (p1.y !== 0 || p2.x !== 0) { throw { code: "TEST_FAIL", message: "provider defaults" }; }
-              if (lib.Point$toJson(p1) !== "{\\"x\\":2,\\"y\\":0}") { throw { code: "TEST_FAIL", message: "provider toJson" }; }
+              if (lib.encode(p1) !== "{\\"x\\":2,\\"y\\":0}") { throw { code: "TEST_FAIL", message: "provider toJson" }; }
               // A source literal evaluates its supplied expressions
               // left-to-right, then applies the omitted required defaults.
               let ordered: lib.Point = { x: note(1), opt: note(2), y: 0 };
@@ -1983,11 +1987,11 @@ public class JsSemanticEmitterTest {
               if (!Object.hasOwn(pn, "opt")) { throw { code: "TEST_FAIL", message: "present null" }; }
               if (pn.opt !== null) { throw { code: "TEST_FAIL", message: "present null read" }; }
               if (!Object.hasOwn(pv, "opt")) { throw { code: "TEST_FAIL", message: "present value" }; }
-              if (lib.Point$toJson(pm) !== "{\\"x\\":1,\\"y\\":0}") { throw { code: "TEST_FAIL", message: "missing optional toJson" }; }
-              if (lib.Point$toJson(pn) !== "{\\"x\\":1,\\"y\\":0,\\"opt\\":null}") { throw { code: "TEST_FAIL", message: "present null toJson" }; }
-              if (lib.Point$toJson(pv) !== "{\\"x\\":1,\\"y\\":0,\\"opt\\":2}") { throw { code: "TEST_FAIL", message: "present value toJson" }; }
-              let dm: lib.Point | null = lib.Point$fromJson("{\\"x\\":1.0,\\"y\\":0}");
-              let dn: lib.Point | null = lib.Point$fromJson("{\\"x\\":1.0,\\"y\\":0,\\"opt\\":null}");
+              if (lib.encode(pm) !== "{\\"x\\":1,\\"y\\":0}") { throw { code: "TEST_FAIL", message: "missing optional toJson" }; }
+              if (lib.encode(pn) !== "{\\"x\\":1,\\"y\\":0,\\"opt\\":null}") { throw { code: "TEST_FAIL", message: "present null toJson" }; }
+              if (lib.encode(pv) !== "{\\"x\\":1,\\"y\\":0,\\"opt\\":2}") { throw { code: "TEST_FAIL", message: "present value toJson" }; }
+              let dm: lib.Point | null = lib.decode("{\\"x\\":1.0,\\"y\\":0}");
+              let dn: lib.Point | null = lib.decode("{\\"x\\":1.0,\\"y\\":0,\\"opt\\":null}");
               if (dm !== null) {
                 if (Object.hasOwn(dm, "opt")) { throw { code: "TEST_FAIL", message: "decoded missing optional" }; }
               }
@@ -1995,8 +1999,8 @@ public class JsSemanticEmitterTest {
                 if (!Object.hasOwn(dn, "opt")) { throw { code: "TEST_FAIL", message: "decoded present null" }; }
               }
               let f: Form = { name: "Ada", score: 0, point: { x: 3, y: 0 }, many: [{ x: 0, y: 4 }] };
-              let s: string = Form$toJson(f);
-              let g: Form | null = Form$fromJson(s);
+              let s: string = encode(f);
+              let g: Form | null = decode(s);
               if (g !== null) {
                 if (g.point.x !== 3) { throw { code: "TEST_FAIL", message: "nested identity" }; }
                 if (g.many.length !== 1) { throw { code: "TEST_FAIL", message: "nested array" }; }
@@ -2004,14 +2008,15 @@ public class JsSemanticEmitterTest {
               } else {
                 throw { code: "TEST_FAIL", message: "roundtrip" };
               }
-              let e1: Form | null = Form$fromJson("{\\"nope\\":1.0}");
-              if (e1 !== null) { throw { code: "TEST_FAIL", message: "extra key" }; }
-              let e2: Form | null = Form$fromJson("{");
-              if (e2 !== null) { throw { code: "TEST_FAIL", message: "malformed" }; }
-              let e3: Form | null = Form$fromJson("42");
-              if (e3 !== null) { throw { code: "TEST_FAIL", message: "scalar" }; }
-              let e4: Form | null = Form$fromJson("{\\"point\\":{\\"zz\\":1.0}}");
-              if (e4 !== null) { throw { code: "TEST_FAIL", message: "nested extra" }; }
+              let errors: string = "";
+              for (let bad of ["{\\"nope\\":1.0}", "{", "42",
+                  "{\\"name\\":\\"A\\",\\"score\\":0,\\"point\\":{\\"zz\\":1.0},\\"many\\":[]}"]) {
+                try { let rejected: Form = decode(bad); errors = errors + "NOFAIL"; }
+                catch (e) { errors = errors + (e as Error).code + ";"; }
+              }
+              if (errors !== "E8007;E8001;E8001;E8007;") {
+                throw { code: "TEST_FAIL", message: "throwing reconstruction: " + errors };
+              }
               return null;
             }
             """, Map.of("src/lib.deal", """
@@ -2021,6 +2026,8 @@ public class JsSemanticEmitterTest {
                   y: number;
                   opt?: number | null;
                 }
+                export function decode(text: string): Point { return JSON.parse(text); }
+                export function encode(value: Point): string { return JSON.stringify(value) as string; }
                 """));
 
         JsProjectEmission emission =
@@ -2067,30 +2074,27 @@ public class JsSemanticEmitterTest {
         check(libSource != null && libSource.contains(
                 "$rt.publishModule(\"lib\", \"Point$new\","),
             "the exported class publishes the full-construction C$new");
-        check(libSource != null && libSource.contains(
-                "$rt.publishModule(\"lib\", \"Point$fields\", $fPoint);"),
-            "the @jsonable class publishes the hidden C$fields descriptor"
-                + " export");
+        check(libSource != null && !libSource.contains("Point$fields")
+                && !libSource.contains("Point$fromJson") && !libSource.contains("Point$toJson"),
+            "comments publish no generated JSON descriptor or helper export");
         check(appSource != null && appSource.contains(
                 "$rt.registerFactory(\"app\",")
                 && !appSource.contains("$rt.registerFactory(\"lib\","),
             "a module registers only its own factories (the imported class's"
                 + " transfer stays in its declaring module)");
         check(appSource != null && appSource.indexOf(
-                "$rt.publishModule(\"app\", \"Form$fields\"")
+                "$rt.publishModule(\"app\", \"Form$new\"")
                 < appSource.indexOf("if ($require.main === $module)"),
             "the class surface publishes before the direct-run entry shim");
         check(appSource != null && appSource.contains(
                 "$rt.callFactory(\"lib\", 0, ["),
             "a SHARED_FACTORY construction transfers the owner's defaults"
                 + " through the private linkage");
-        check(appSource != null && appSource.contains(
-                "$rt.jsonFromJson(\"@src/app.deal/Form\", $fForm,")
-                && appSource.contains(
-                    "$rt.readModule(\"lib\", \"Point$fields\")"),
-            "the generated JSON helper drives the canonical walker over the"
-                + " class's own descriptor array and reads the imported"
-                + " provider's published descriptor array");
+        check(appSource != null && appSource.contains("$rt.jsonDecode(")
+                && appSource.contains("\"@src/app.deal/Form\"")
+                && !appSource.contains("$rt.jsonFromJson(")
+                && !appSource.contains("Point$fields"),
+            "contextual parse consumes registered exact schemas without helper exports");
         // ISSUE-0811: the public roles keep their exact keys and signatures.
         check(appSource != null && appSource.contains(
                 "$rt.publishModule(\"app\", \"Form$new\", (provided, $file,"
@@ -2099,10 +2103,10 @@ public class JsSemanticEmitterTest {
             "the public constructor is the raw four-parameter"
                 + " C$new(provided,file,line,column) over the class plan");
         check(appSource != null && appSource.contains(
-                "$rt.function(\"(string)->?@src/app.deal/Form\",")
+                "$rt.function(\"(string)->@src/app.deal/Form\",")
                 && appSource.contains(
                     "$rt.function(\"(@src/app.deal/Form)->string\","),
-            "the generated JSON helpers carry the pinned declared signatures");
+            "explicit encode/decode bodies carry their ordinary declared signatures");
         check(appSource != null && appSource.contains("\"Fault$new\",")
                 && !appSource.contains("\"Fault$fields\""),
             "a non-jsonable exported class publishes META and C$new and no"
@@ -2148,7 +2152,7 @@ public class JsSemanticEmitterTest {
             const lib = require("./lib.js");
             const out = {state: rt.moduleState("app"),
               exports: Object.keys(app).sort().join(","),
-              meta: app.Form, fields: app.Form$fields,
+              meta: app.Form,
               libExports: Object.keys(lib).sort().join(","),
               factoryCallsAtRequire: factoryCalls};
             // The public roles: exact keys, arity and signatures.
@@ -2156,16 +2160,13 @@ public class JsSemanticEmitterTest {
             out.newArity = app.Form$new.length;
             out.newIsRaw = typeof app.Form$new === "function"
               && app.Form$new.$kind === undefined;
-            out.sigs = {from: app.Form$fromJson.$sig,
-              to: app.Form$toJson.$sig,
-              libFrom: lib.Point$fromJson.$sig,
-              libTo: lib.Point$toJson.$sig,
-              fromKind: app.Form$fromJson.$kind,
-              toKind: app.Form$toJson.$kind,
+            out.sigs = {from: app.decode.$sig, to: app.encode.$sig,
+              libFrom: lib.decode.$sig, libTo: lib.encode.$sig,
+              fromKind: app.decode.$kind, toKind: app.encode.$kind,
               faultFields: app.Fault$fields === undefined};
-            out.fieldRoles = app.Form$fields.map(function (e) {
-              return Object.keys(e).join(",");
-            });
+            out.retiredAbsent = [app.Form$fields, app.Form$fromJson,
+              app.Form$toJson, lib.Point$fields, lib.Point$fromJson,
+              lib.Point$toJson].every(value => value === undefined);
             // Registration executes no default: the app factory transfers
             // the omitted defaults only when it is called, and the nested
             // provider default is its one linkage call.
@@ -2177,7 +2178,8 @@ public class JsSemanticEmitterTest {
               calls: factoryCalls - beforeTransfer};
             // The public C$new performs full construction (provided defaults).
             const made = app.Form$new({name: "Eve", score: 0,
-              point: lib.Point$new({x: 0, y: 0}), many: []}, "d.js", 1, 1);
+              point: lib.Point$new({x: 0, y: 0}),
+              many: rt.tagArray([], "@src/lib.deal/Point")}, "d.js", 1, 1);
             out.made = {name: made.name, score: made.score,
               pointX: made.point.x, manyLen: made.many.length,
               kind: made.$kind, cls: made.$classname};
@@ -2193,7 +2195,8 @@ public class JsSemanticEmitterTest {
             // The provided input is never mutated and a failed construction
             // publishes no instance; an omitted origin stays absent.
             const given = {name: "Ada", score: 0,
-              point: lib.Point$new({x: 0, y: 0}), many: []};
+              point: lib.Point$new({x: 0, y: 0}),
+              many: rt.tagArray([], "@src/lib.deal/Point")};
             const snapshot = JSON.stringify(given);
             const madeGiven = app.Form$new(given, "d.js", 40, 40);
             out.given = {unchanged: JSON.stringify(given) === snapshot,
@@ -2242,11 +2245,11 @@ public class JsSemanticEmitterTest {
               return [rt.has(p, "opt"), rt.optRead(p.opt)];
             });
             out.nilJson = nilStates.map(function (p, i) {
-              return lib.Point$toJson.$f(p, "d.js", 20 + i, 20 + i);
+              return lib.encode.$f(p, "d.js", 20 + i, 20 + i);
             });
-            const decodedMissing = lib.Point$fromJson.$f("{\\"x\\":1.0,\\"y\\":0}",
+            const decodedMissing = lib.decode.$f("{\\"x\\":1.0,\\"y\\":0}",
               "d.js", 30, 30);
-            const decodedNull = lib.Point$fromJson.$f(
+            const decodedNull = lib.decode.$f(
               "{\\"x\\":1.0,\\"y\\":0,\\"opt\\":null}", "d.js", 31, 31);
             out.decodedStates = [
               [rt.has(decodedMissing, "opt"),
@@ -2264,25 +2267,33 @@ public class JsSemanticEmitterTest {
               errsLen: fault.errs.length,
               fresh: secondFault.errs !== fault.errs,
               metaKeys: Object.keys(app.Fault)};
-            // The generated wrappers keep the public helper ABI.
-            const text = app.Form$toJson.$f(made, "d.js", 4, 4);
-            const back = app.Form$fromJson.$f(text, "d.js", 5, 5);
+            // Ordinary exported functions execute contextual parse and builtin stringify.
+            const text = app.encode.$f(made, "d.js", 4, 4);
+            const back = app.decode.$f(text, "d.js", 5, 5);
             out.json = text;
             out.back = {name: back.name, pointX: back.point.x,
               nickPresent: rt.has(back, "nick")};
-            out.nullFailures = [
-              app.Form$fromJson.$f("{\\"nope\\":1.0}", "d.js", 6, 6),
-              app.Form$fromJson.$f("{", "d.js", 7, 7),
-              app.Form$fromJson.$f("42", "d.js", 8, 8)];
-            // A non-JSON value raises the walk arm at the call-site origin.
-            made.point = made;
+            out.parseFailures = ["{\\"nope\\":1.0}", "{", "42"].map(text => {
+              try { app.decode.$f(text, "d.js", 6, 6); return "NOFAIL"; }
+              catch (e) { return e.$dealCode; }
+            });
+            // Reached nominal mismatch precedes traversal into a wrong class.
+            const originalPoint = made.point;
+            rt.setProp(made, "point", made);
+            try { app.encode.$f(made); out.nominal = "none"; }
+            catch (e) { out.nominal = e.code + ":" + e.message; }
+            rt.setProp(made, "point", originalPoint);
+            // Unknown admits this edge; stringify owns its cycle rejection.
+            rt.setProp(made, "loop", made);
             try {
-              app.Form$toJson.$f(made, "d.js", 77, 88);
+              app.encode.$f(made, "d.js", 77, 88);
               out.walk = "none";
             } catch (e) {
               out.walk = e.$dealCode + ":" + e.message + ":at="
                 + e.file + ":" + e.line + ":" + e.column;
             }
+            delete made.loop;
+            out.repaired = app.encode.$f(made) === text && made.point === originalPoint;
             console.log(JSON.stringify(out));
             """.replace("__APP_FACTORY_ID__", appFactoryId));
         NodeRun run = runNode(out, "driver.js");
@@ -2297,30 +2308,37 @@ public class JsSemanticEmitterTest {
         check(run.output().contains("\"state\":\"INITIALIZED\""),
             "the entry module's init completed: " + run.output());
         check(run.output().contains(
-                "\"exports\":\"Fault,Fault$new,Form,Form$fields,Form$fromJson,"
-                    + "Form$new,Form$toJson,main\""),
-            "the module surface carries the class metadata, the constructor,"
-                + " the hidden descriptor export and the generated wrappers"
-                + " alongside the declared exports: " + run.output());
+                "\"exports\":\"Fault,Fault$new,Form,Form$new,decode,encode,main\""),
+            "the module surface carries class metadata, constructors and only"
+                + " explicitly declared function exports: " + run.output());
         check(run.output().contains("\"formKeys\":[\"$kind\",\"$classname\"]")
                 && run.output().contains("\"newArity\":4")
                 && run.output().contains("\"newIsRaw\":true"),
             "the class META is the exact two-key pair and C$new is the raw"
                 + " four-parameter callable: " + run.output());
         check(run.output().contains("\"sigs\":{\"from\":"
-                + "\"(string)->?@src/app.deal/Form\",\"to\":\"(@src/app.deal/Form)->string\","
-                + "\"libFrom\":\"(string)->?@src/lib.deal/Point\",\"libTo\":"
+                + "\"(string)->@src/app.deal/Form\",\"to\":\"(@src/app.deal/Form)->string\","
+                + "\"libFrom\":\"(string)->@src/lib.deal/Point\",\"libTo\":"
                 + "\"(@src/lib.deal/Point)->string\",\"fromKind\":\"function\","
                 + "\"toKind\":\"function\",\"faultFields\":true}"),
-            "the generated JSON helpers are function wrappers carrying the"
-                + " exact declared signatures and only jsonable classes carry"
-                + " C$fields: " + run.output());
-        check(run.output().contains("\"fieldRoles\":[\"name,jtype,optional,nullable,undefinedable\","
-                + "\"name,jtype,optional,nullable,undefinedable\",\"name,jtype,optional,nullable,undefinedable\","
-                + "\"name,jtype,className,fields,optional,nullable,undefinedable\","
-                + "\"name,jtype,elementDescriptor,element,optional,nullable,undefinedable\"]"),
-            "the descriptor array keeps the pinned per-role keys in declaration"
-                + " order: " + run.output());
+            "ordinary encode/decode wrappers carry their exact declared signatures"
+                + " and no class carries a generated C$fields export: " + run.output());
+        check(run.output().contains("\"retiredAbsent\":true"),
+            "all retired helper and descriptor exports are absent: " + run.output());
+        var formLayout = fixture.project().modules().get(new ModuleId("app"))
+            .classLayouts().get(new deal.semantic.ir.ClassId("src/app.deal", "Form"));
+        check(formLayout != null, "explicit Form schema is retained in semantic IR");
+        if (formLayout != null) {
+            checkEq(List.of("name", "nick", "score", "point", "many", "loop"),
+                formLayout.fields().stream().map(deal.semantic.ir.ClassLayout.FieldLayout::name).toList(),
+                "schema fields retain declaration order independently of runtime exports");
+            checkEq(List.of("string", "string", "number", "@src/lib.deal/Point", "[@src/lib.deal/Point]", "unknown"),
+                formLayout.fields().stream().map(field -> field.descriptor().canonicalSpecText()).toList(),
+                "schema descriptors retain primitive, provider and array roles");
+            checkEq(List.of(true, false, true, true, true, false),
+                formLayout.fields().stream().map(deal.semantic.ir.ClassLayout.FieldLayout::required).toList(),
+                "schema presence flags remain separate from descriptors");
+        }
         check(run.output().contains("\"factoryCallsAtRequire\":0"),
             "registration executes no default (no factory call during init): "
                 + run.output());
@@ -2393,13 +2411,15 @@ public class JsSemanticEmitterTest {
             "fromJson decodes the nested provider class through the imported"
                 + " descriptor array and keeps the absent optional absent: "
                 + run.output());
-        check(run.output().contains("\"nullFailures\":[null,null,null]"),
-            "every specified fromJson failure returns the DEAL null: "
-                + run.output());
-        check(run.output().contains("\"walk\":\"E8001:value at"
-                + " point is not JSON serializable: @src/app.deal/Form:at=d.js:77:88\""),
-            "a non-JSON field raises the walk arm at the call-site origin: "
-                + run.output());
+        check(run.output().contains("\"parseFailures\":[\"E8007\",\"E8001\",\"E8001\"]"),
+            "reconstruction failures throw, never return null: " + run.output());
+        check(run.output().contains("\"nominal\":\"E8001:expected instance of @src/lib.deal/Point, got @src/app.deal/Form\""),
+            "reached nominal mismatch rejects before following the invalid edge: " + run.output());
+        check(run.output().contains("\"walk\":\"E8001:cyclic value cannot be encoded as JSON:at=")
+                && !run.output().contains("at=d.js:77:88"),
+            "cycle rejection belongs to builtin stringify, not its caller: " + run.output());
+        check(run.output().contains("\"repaired\":true"),
+            "same-identity repair restores the original nested graph: " + run.output());
     }
 
     // =========================================================================
@@ -2504,9 +2524,8 @@ public class JsSemanticEmitterTest {
     // =========================================================================
 
     /**
-     * ISSUE-0813: the field and generated-JSON family under the real Node
-     * binary, over the resolved layouts, declaration sites and default
-     * factories the admission pinned.
+     * Field operations and contextual JSON under Node over admitted layouts,
+     * declaration sites and exact providers.
      *
      * <p>The criteria measured here: required/optional reads, writes,
      * deletes and {@code has} preserve missing, present-null and present
@@ -2514,25 +2533,22 @@ public class JsSemanticEmitterTest {
      * exactly once and a failed array write commits nothing; an imported
      * class's optional field is deleted, re-written and read over the
      * declaring module's own layout; class-valued and class-array-valued
-     * field writes commit the resolved provider's defaults;
-     * {@code C$fromJson} decodes provided values before the omitted defaults
-     * (nested imported defaults run in their declaring module), returns the
-     * language null for every specified failure (duplicate key, extra nested
-     * key, wrong provided kind, scalar document) while the three optional
-     * states stay distinct, and {@code C$toJson} writes the declared order,
-     * omits absent optionals, encodes a deep finite table chain without a
-     * depth bound and reports the walk failure at the invoking call
-     * expression's own origin.</p>
+     * field writes retain exact provider identities. Contextual parsing
+     * reconstructs fresh graphs, throws for duplicate keys, nested extras,
+     * wrong kinds and scalar documents, and preserves all three optional
+     * states. Builtin stringify writes declaration order, omits absent
+     * optionals, handles deep finite Record chains and owns its failure
+     * origin.</p>
      *
      * <p>It also pins the creation-site identity of a static call: a
-     * generated JSON helper (or any declared body) invoked directly keeps
+     * ordinary encoder body invoked directly keeps
      * resolving its own creation site even when another function holds a
      * function-typed alias of it, and a local alias that is later reassigned
      * changes no direct call of the aliased declaration.</p>
      */
     private static void testFieldJsonExecutionAndCreationSites(Path tmpRoot)
             throws Exception {
-        System.out.println("-- fields and generated JSON over the resolved"
+        System.out.println("-- fields and contextual JSON over exact"
             + " declaration sites, under Node --");
         Path root = Files.createTempDirectory(tmpRoot, "fields-json");
         String appSource = """
@@ -2585,14 +2601,24 @@ public class JsSemanticEmitterTest {
               return 9;
             }
 
+            export function encodeItem(v: Item): string {
+              return JSON.stringify(v) as string;
+            }
+            export function decodeForm(text: string): Form { return JSON.parse(text); }
+            export function encodeForm(value: Form): string { return JSON.stringify(value) as string; }
+            function parses(text: string): boolean {
+              try { let value: Form = JSON.parse(text); return true; }
+              catch (e) { return false; }
+            }
+
             function aliasHelper(): string {
-              let a: (v: Item) => string = Item$toJson;
+              let a: (v: Item) => string = encodeItem;
               return a({ v: 7, data: {} });
             }
 
             export function directHelper(): string {
               let first: string = aliasHelper();
-              return Item$toJson({ v: 1, data: {} }) + "|" + first;
+              return encodeItem({ v: 1, data: {} }) + "|" + first;
             }
 
             export function aliasReassign(): number {
@@ -2687,30 +2713,30 @@ public class JsSemanticEmitterTest {
             }
 
             export function jsonStates(): string {
-              let missing: Form | null = Form$fromJson("{\\"name\\":\\"A\\",\\"point\\":{\\"x\\":0,\\"y\\":0},\\"many\\":[],\\"data\\":{}}");
-              let nil: Form | null = Form$fromJson(
+              let missing: Form | null = decodeForm("{\\"name\\":\\"A\\",\\"point\\":{\\"x\\":0,\\"y\\":0},\\"many\\":[],\\"data\\":{}}");
+              let nil: Form | null = decodeForm(
                 "{\\"name\\":\\"A\\",\\"point\\":{\\"x\\":0,\\"y\\":0},\\"many\\":[],\\"data\\":{},\\"node\\":null}");
-              let value: Form | null = Form$fromJson(
+              let value: Form | null = decodeForm(
                 "{\\"name\\":\\"A\\",\\"point\\":{\\"x\\":0,\\"y\\":0},\\"many\\":[],\\"data\\":{},\\"node\\":{\\"v\\":5.0,\\"data\\":{}}}");
               let out: string = "";
               if (missing !== null) {
-                out = out + b(Object.hasOwn(missing, "node")) + Form$toJson(missing);
+                out = out + b(Object.hasOwn(missing, "node")) + encodeForm(missing);
               }
               if (nil !== null) {
-                out = out + "|" + Form$toJson(nil);
+                out = out + "|" + encodeForm(nil);
               }
               if (value !== null) {
-                out = out + "|" + Form$toJson(value);
+                out = out + "|" + encodeForm(value);
               }
-              out = out + "|" + b(Form$fromJson(
-                "{\\"name\\":\\"A\\",\\"name\\":\\"B\\"}") !== null);
-              out = out + b(Form$fromJson("{\\"node\\":{\\"zz\\":1.0}}") !== null);
-              out = out + b(Form$fromJson(
-                "{\\"point\\":{\\"x\\":\\"no\\"}}") !== null);
-              out = out + b(Form$fromJson("42") !== null);
-              out = out + b(Form$fromJson("null") !== null);
-              out = out + b(Form$fromJson(
-                "{\\"name\\":\\"A\\",\\"point\\":{\\"x\\":0,\\"y\\":0},\\"data\\":{},\\"many\\":[{\\"x\\":1.0,\\"y\\":0},{\\"x\\":0,\\"y\\":2.0}]}") !== null);
+              out = out + "|" + b(parses(
+                "{\\"name\\":\\"A\\",\\"name\\":\\"B\\"}"));
+              out = out + b(parses("{\\"name\\":\\"A\\",\\"point\\":{\\"x\\":0,\\"y\\":0},\\"many\\":[],\\"data\\":{},\\"node\\":{\\"zz\\":1.0}}"));
+              out = out + b(parses(
+                "{\\"name\\":\\"A\\",\\"point\\":{\\"x\\":\\"no\\",\\"y\\":0},\\"many\\":[],\\"data\\":{}}"));
+              out = out + b(parses("42"));
+              out = out + b(parses("null"));
+              out = out + b(parses(
+                "{\\"name\\":\\"A\\",\\"point\\":{\\"x\\":0,\\"y\\":0},\\"data\\":{},\\"many\\":[{\\"x\\":1.0,\\"y\\":0},{\\"x\\":0,\\"y\\":2.0}]}"));
               return out;
             }
 
@@ -2724,11 +2750,11 @@ public class JsSemanticEmitterTest {
                 cur = next;
                 i = i + 1;
               }
-              let text: string = Form$toJson(form);
-              let back: Form | null = Form$fromJson(text);
+              let text: string = encodeForm(form);
+              let back: Form | null = decodeForm(text);
               let backText: string = "";
               if (back !== null) {
-                backText = Form$toJson(back);
+                backText = encodeForm(back);
               } else {
                 return "NULL";
               }
@@ -2741,35 +2767,35 @@ public class JsSemanticEmitterTest {
             export function toJsonFailure(): string {
               let item: Item = { v: 1, data: {} };
               item.data.f = "valid";
-              let boom: (v: Item) => string = Item$toJson;
+              let boom: (v: Item) => string = encodeItem;
               return boom(item);
             }
 
             export function toJsonCycle(): string {
               let item: Item = { v: 1, data: {} };
               item.data.self = item.data;
-              return Item$toJson(item);
+              return encodeItem(item);
             }
 
             export function main(): null {
               return null;
             }
             """;
-        // The failing walk's origin: the invoking call expression inside
-        // `toJsonFailure` (1-based line and column of the callee token).
+        // Encoding failure belongs to the builtin expression inside the
+        // ordinary encoder body, not to the calling function or host.
         int failureLine = 0;
         int failureColumn = 0;
         int line = 0;
         for (String text : appSource.split("\n", -1)) {
             line++;
-            int callee = text.indexOf("boom(item)");
+            int callee = text.indexOf("JSON.stringify(v)");
             if (callee >= 0) {
                 failureLine = line;
                 failureColumn = callee + 1;
             }
         }
         check(failureLine > 0,
-            "the fixture records the failing helper call expression");
+            "the fixture independently records the builtin encoding expression");
         Fixture fixture = compileFixture(root, appSource,
             Map.of("src/lib.deal", """
                 // @jsonable
@@ -2801,12 +2827,16 @@ public class JsSemanticEmitterTest {
             step("jsonStates", () => app.jsonStates.$f("d.js", 9, 9));
             step("deep", () => app.deepChain.$f(600, "d.js", 10, 10));
             const runtime = require("./deal/runtime.js");
-            const originalEncode = app.Item$toJson.$f;
-            app.Item$toJson.$f = function(value, ...origin) {
-              runtime.tableSet(value.data, "f", String.fromCharCode(0xD800));
-              const legal = originalEncode(value, ...origin);
-              if (!legal.includes('\\\\ud800')) throw new Error("lone unit was not escaped");
-              runtime.tableSet(value.data, "f", Symbol("invalid-json-value"));
+            const originalEncode = runtime.jsonStringifyText;
+            let tested = false;
+            runtime.jsonStringifyText = function(value, ...origin) {
+              if (value.$classname === "@src/app.deal/Item" && !tested) {
+                tested = true;
+                runtime.tableSet(value.data, "f", String.fromCharCode(0xD800));
+                const legal = originalEncode(value, ...origin);
+                if (!legal.includes('\\\\ud800')) throw new Error("lone unit was not escaped");
+                runtime.tableSet(value.data, "f", Symbol("invalid-json-value"));
+              }
               return originalEncode(value, ...origin);
             };
             try {
@@ -2816,7 +2846,7 @@ public class JsSemanticEmitterTest {
               out.walk = e.code + ":" + e.message + ":at=" + e.file + ":"
                 + e.line + ":" + e.column;
             }
-            app.Item$toJson.$f = originalEncode;
+            runtime.jsonStringifyText = originalEncode;
             try {
               app.toJsonCycle.$f("d.js", 12, 12);
               out.cycle = "no-failure";
@@ -2831,7 +2861,7 @@ public class JsSemanticEmitterTest {
         String report = run.output();
         check(report.contains("\"directHelper\":\"ok:{\\\"v\\\":1,"
                 + "\\\"data\\\":{}}|{\\\"v\\\":7,\\\"data\\\":{}}\""),
-            "a direct call of a generated JSON helper keeps its own"
+            "a direct call of an ordinary encoder keeps its own"
                 + " creation site while another function holds a"
                 + " function-typed alias of it: " + report);
         check(report.contains("\"aliasReassign\":\"ok:2\""),
@@ -2873,12 +2903,10 @@ public class JsSemanticEmitterTest {
                 + "\\\"many\\\":[],\\\"node\\\":{\\\"v\\\":5,"
                 + "\\\"data\\\":{}},\\\"data\\\":{}}"
                 + "|FFFFFT\""),
-            "fromJson decodes provided values before the omitted imported"
-                + " provider defaults, keeps the three optional states"
-                + " distinct, writes the declared order with the absent"
-                + " optional omitted, and returns the language null for a"
-                + " duplicate key, a nested extra key, a wrong provided kind,"
-                + " a scalar document and a top-level null while the"
+            "contextual decoding keeps the three optional states"
+                + " distinct, writes declaration order with absent optionals"
+                + " omitted, and throws for a duplicate key, nested extra key,"
+                + " wrong provided kind, scalar document and top-level null while the"
                 + " class-array document decodes: " + report);
         check(report.contains("\"deep\":\"ok:SAME\""),
             "a 600-link finite table chain inside a class table field"
@@ -2888,9 +2916,9 @@ public class JsSemanticEmitterTest {
             "a fixture-only symbol in a declared Record field raises the closed"
                 + " walk tuple: " + report);
         check(report.contains("app.deal:" + failureLine + ":" + failureColumn),
-            "the walk failure keeps the invoking call expression's own"
+            "the encoding failure keeps the builtin expression's own"
                 + " origin (app.deal line " + failureLine + ", column "
-                + failureColumn + "), never the generated helper's anchor: "
+                + failureColumn + "), never the caller's origin: "
                 + report);
         check(report.contains("\"cycle\":\"E8001:cyclic value cannot be"
                 + " encoded as JSON\""),
@@ -4529,25 +4557,25 @@ public class JsSemanticEmitterTest {
         Path root = Files.createTempDirectory(tmpRoot, "stdlib");
         Fixture fixture = compileFixture(root, """
             import * as output from "std/console";
-            import * as json from "std/json";
+
             import * as str from "std/string";
             import * as time from "std/time";
 
             export function checks(): string {
               output.log("out-line");
               output.error("err-line");
-              let parse: (s: string) => Record<string, unknown> = json.parse;
-              if (json.parse !== parse) {
+              let lengthOf: (s: string) => number = str.length;
+              if (str.length !== lengthOf || lengthOf("x") !== 1 || str.length("xy") !== 2) {
                 throw { code: "STDLIB_IDENTITY", message: "surface" };
               }
-              let stored: Record<string, unknown> = parse("{\\"n\\":1.0}");
-              let direct: Record<string, unknown> = json.parse("{\\"n\\":2.0}");
+              let stored: Record<string, unknown> = JSON.parse("{\\"n\\":1.0}");
+              let direct: Record<string, unknown> = JSON.parse("{\\"n\\":2.0}");
               let a: number = stored.n as number;
               let b: number = direct.n as number;
               if (a !== 1 || b !== 2) {
                 throw { code: "STDLIB_CALL", message: "values" };
               }
-              let text: string = json.stringify(stored) as string;
+              let text: string = JSON.stringify(stored) as string;
               if (text !== "{\\"n\\":1}") {
                 throw { code: "STDLIB_JSON", message: text };
               }
@@ -4563,7 +4591,7 @@ public class JsSemanticEmitterTest {
             }
 
             export function duplicateKey(): Record<string, unknown> {
-              return json.parse("{\\"a\\":1.0,\\"a\\":2.0}");
+              return JSON.parse("{\\"a\\":1.0,\\"a\\":2.0}");
             }
 
             export function main(): null { return null; }
@@ -4572,20 +4600,24 @@ public class JsSemanticEmitterTest {
             JsSemanticEmitter.emitProductionProject(fixture.emissionInput(false));
         String app = sourceOf(emission, "app");
         check(app.contains("$require(\"./std/console\")")
-                && app.contains("$require(\"./std/json\")")
                 && app.contains("$require(\"./std/string\")")
                 && app.contains("$require(\"./std/time\")"),
             "every stdlib import requires the deployed module by its"
                 + " relative specifier (never an ambient module lookup): "
                 + app);
-        checkEq(1, countOccurrences(app, "$require(\"./std/json\")"),
+        checkEq(1, countOccurrences(app, "$require(\"./std/string\")"),
             "one recorded stdlib import is one execution registration: "
                 + app);
-        check(app.contains("$d") && app.contains("[\"parse\"].$f("),
+        check(app.contains("$d") && app.contains("[\"length\"].$f("),
             "the cataloged direct call invokes the deployed module's typed"
                 + " entry: " + app);
 
+        check(app.contains("$rt.jsonStringifyText(")
+                && !app.contains("$require(\"./std/json\")"),
+            "builtin stringify renders its runtime algorithm without a callable JSON module");
         Path out = stage(fixture, "stdlib", emission);
+        check(!Files.exists(out.resolve("std/json.js")),
+            "the builtin JSON driver executes without staging std/json");
         writeFileIn(out, "driver.js", """
             const app = require("./app.js");
             const out = { checks: app.checks.$f() };

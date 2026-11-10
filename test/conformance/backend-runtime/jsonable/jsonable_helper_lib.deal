@@ -1,4 +1,5 @@
 // @expected: companion
-// @description: Classified support module — jsonable helper declaration for the imported-helper fixture (v1.2 defect snippet 36)
-// @jsonable
+// @description: Declared class and ordinary exported JSON functions for cross-module callable controls.
 export class Model { name: string; }
+export function encode(value: Model): string { return JSON.stringify(value) as string; }
+export function decode(text: string): Model { return JSON.parse(text); }

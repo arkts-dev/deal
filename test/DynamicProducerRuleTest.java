@@ -919,19 +919,19 @@ public class DynamicProducerRuleTest {
     }
 
     private static final String STDLIB_READ_SOURCE = """
-        import * as console from "std/console";
+        import * as output from "std/console";
 
         export function main(): null {
-          let f: (x: string) => void = console.log;
+          let f: (x: string) => void = output.log;
           return null;
         }
         """;
 
     private static final String NAMESPACE_READ_SOURCE = """
-        import * as console from "std/console";
+        import * as output from "std/console";
 
         export function main(): null {
-          let c: Record<string, unknown> = {log: console.log};
+          let c: Record<string, unknown> = {log: output.log};
           let g: (x: string) => void = c.log as (x: string) => void;
           return null;
         }

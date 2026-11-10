@@ -581,6 +581,10 @@ public final class ProductionProjectEmission {
         if (runtime.isEmpty()) {
             return Optional.of(runtimeLibraryMissing(runtimeFileName));
         }
+        if (extension.equals("lua")
+                && stager.stageRuntimeCopy("deal/json.lua", distributionHome).isEmpty()) {
+            return Optional.of(runtimeLibraryMissing("deal/json.lua"));
+        }
         for (String stdlibModule : StdlibModuleResolver.SPEC_STDLIB_MODULES) {
             String implementation = stdlibModule.substring("std/".length());
             if (stager.stageStdlibCopy(implementation, extension,

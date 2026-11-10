@@ -257,7 +257,7 @@ public final class SourceModuleResolverTest {
             OutputConfigResolver.Source.MANIFEST,
             OutputConfigResolver.Kind.MANIFEST_RELATIVE_PATH,
             "build/lua", dir.resolve("build/lua").normalize().toString(), null);
-        // The pinned six-file set mirrors ProjectLocator step 6: the
+        // The pinned five-file set mirrors ProjectLocator step 6: the
         // canonical (fully symlink-resolved) path of each spec-listed
         // file that exists as a regular file under the surface.
         List<String> stdlibDeclarationFiles = new ArrayList<>();
@@ -449,7 +449,7 @@ public final class SourceModuleResolverTest {
         SourceModuleResolver.ResolveResult console =
             resolver.resolve(matrixImporter().toString(), "std/console");
         check(console instanceof SourceModuleResolver.ResolveResult.Resolved,
-            "bare std/console resolves (6-module filter)");
+            "bare std/console resolves (five-module filter)");
         SourceModuleLocation consoleLocation =
             ((SourceModuleResolver.ResolveResult.Resolved) console).location();
         check(consoleLocation.moduleClassification()
@@ -549,7 +549,7 @@ public final class SourceModuleResolverTest {
             "failed resolutions register nothing (resolved count: "
                 + resolver.resolvedLocations().size() + ")");
 
-        // Non-spec std/... bare import is E2003 outside the 6-module filter.
+        // Non-spec std/... bare import is E2003 outside the five-module filter.
         SourceModuleResolver.ResolveResult nonSpec =
             resolver.resolve(matrixImporter().toString(), "std/io");
         check(nonSpec instanceof SourceModuleResolver.ResolveResult.Failure failure
@@ -973,7 +973,7 @@ public final class SourceModuleResolverTest {
     /**
      * Regression (review finding): a spec-listed stdlib declaration file
      * that is itself a symlink must still classify as BuiltinModule for
-     * every spelling. ProjectLocator derives the canonical six-file set
+     * every spelling. ProjectLocator derives the canonical five-file set
      * at locate (each existing file fully symlink-resolved) and
      * publishes it on ProjectContext.stdlibDeclarationFiles; the pure
      * classifier compares the canonical source URI against that set, so

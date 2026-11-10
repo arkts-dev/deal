@@ -37,24 +37,42 @@ public final class ClassPresenceProductionTest {
           ensure(Object.hasOwn(item, "optionalNullable"));
           delete item.optionalNullable;
           ensure(!Object.hasOwn(item, "optionalNullable"));
-          ensure(model.Item$fromJson("{}") === null);
-          ensure(model.Item$fromJson("{\\"value\\":1}") === null);
-          ensure(model.Item$fromJson("{\\"value\\":1,\\"nullable\\":null,\\"extra\\":2}") === null);
-          ensure(model.Item$fromJson("{\\"value\\":\\"bad\\",\\"nullable\\":null}") === null);
-          let decoded: model.Item | null = model.Item$fromJson("{\\"nullable\\":null,\\"value\\":3}");
+          for (let text of [`{}`, `{"value":1}`,
+              `{"value":1,"nullable":null,"extra":2}`, `{"value":"bad","nullable":null}`]) {
+            let original = item;
+            let rejected: boolean = false;
+            try { item = JSON.parse(text); }
+            catch (failure) {
+              if (failure instanceof Error) {
+                rejected = failure.code === "E8001" || failure.code === "E8007";
+                if (!rejected) { throw failure; }
+              }
+            }
+            ensure(rejected && item === original && item.value === 7 && item.nullable === null);
+          }
+          let decoded: model.Item | null = JSON.parse(`{"nullable":null,"value":3}`);
           if (decoded !== null) {
             ensure(decoded.value === 3);
             ensure(decoded.nullable === null);
             ensure(!Object.hasOwn(decoded, "optional"));
             ensure(!Object.hasOwn(decoded, "optionalNullable"));
           } else { throw {code: "CLASS_DECODE", message: "required fields"}; }
-          ensure(Outer$fromJson("{\\"item\\":{}}") === null);
-          let outer: Outer | null = Outer$fromJson("{\\"item\\":{\\"value\\":4,\\"nullable\\":null}}");
+          let rejectedNested: boolean = false;
+          let outer: Outer | null = null;
+          try { outer = JSON.parse(`{"item":{}}`); }
+          catch (failure) {
+            if (failure instanceof Error) {
+              rejectedNested = failure.code === "E8001";
+              if (!rejectedNested) { throw failure; }
+            }
+          }
+          ensure(rejectedNested && outer === null);
+          outer = JSON.parse(`{"item":{"value":4,"nullable":null}}`);
           if (outer !== null) {
             ensure(outer.item.value === 4);
             ensure(!Object.hasOwn(outer.item, "optionalNullable"));
           } else { throw {code: "CLASS_NESTED", message: "nested fields"}; }
-          let present: model.Item | null = model.Item$fromJson("{\\"value\\":5,\\"nullable\\":null,\\"optionalNullable\\":null}");
+          let present: model.Item | null = JSON.parse(`{"value":5,"nullable":null,"optionalNullable":null}`);
           if (present !== null) {
             ensure(Object.hasOwn(present, "optionalNullable"));
             ensure((present.optionalNullable as number | null) === null);

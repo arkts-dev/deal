@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: type-system, nullable, comparison, narrowing, classes, optional
 
-import * as console from "std/console";
+import * as printer from "std/console";
 
 class Flags {
   flag?: boolean | null;
@@ -180,6 +180,6 @@ export function main(): null {
   expectFalse("deleted direct read is not null", deletedRead === null);
   expectTrue("deleted direct read is non-null", deletedRead !== null);
 
-  console.log("OK");
+  printer.log("OK");
   return null;
 }

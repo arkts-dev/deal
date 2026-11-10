@@ -7,14 +7,14 @@
  * derives every expectation from the shared authorities — the merged v1.6
  * `SharedStdlibSemantics` (JSON parse/encode and the string, table, math and
  * time operations) and `FailureContractRegistry` (arm text) — and never from
- * the observation itself. The class walks' expectations are authored from
- * docs/spec-v1.6.md's `@jsonable` rules.
+ * the observation itself. Contextual reconstruction's declaration-order,
+ * presence, error and rollback expectations follow docs/spec-v1.6.md.
  *
  * The driver is also the emitted module for the runtime: it defines the seven
  * export-surface functions and the closed arm table, installs the table from
  * `deal_project_start`, and stands in for the emitted per-class JSON plans with
- * two test plans over a record-shaped instance (a driver-side stand-in for the
- * emitted per-layout struct; no published runtime symbol is replaced).
+ * exact per-class structs, precise GC maps and registered nominal access
+ * seams (no published runtime symbol is replaced).
  *
  * `DEAL_JSON_CASE=<n>` in the environment selects one deterministic producer or
  * invariant defect (n >= 1) instead of the acceptance run; it must terminate
@@ -35,6 +35,7 @@
  */
 #define _POSIX_C_SOURCE 200809L
 #include <locale.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/resource.h>
@@ -44,6 +45,7 @@
 #include "deal/native/entry.h"
 #include "deal/native/error.h"
 #include "deal/native/json.h"
+#include "deal/native/host.h"
 #include "deal/native/memory.h"
 #include "deal/native/platform.h"
 #include "deal/native/std.h"
@@ -72,8 +74,7 @@ static const char *const arm_parameters_21[] =
 static const char *const arm_parameters_22[] = {"field", "classId"};
 static const char *const arm_parameters_23[] =
     {"oneBasedByteOffset", "reason"};
-static const char *const arm_parameters_24[] = {"fieldPath", "actual"};
-static const char *const arm_parameters_25[] = {"actual"};
+static const char *const arm_parameters_24[] = {"actual"};
 
 static const deal_arm_record arm_records[] = {
     {0U, "E8001", "expected {kind}", arm_parameters_0, 1U,
@@ -127,11 +128,9 @@ static const deal_arm_record arm_records[] = {
      arm_parameters_22, 2U, DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U},
     {23U, "E8001", "JSON parse error at position {oneBasedByteOffset}: {reason}",
      arm_parameters_23, 2U, DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U},
-    {24U, "E8001", "value at {fieldPath} is not JSON serializable: {actual}",
-     arm_parameters_24, 2U, DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 1U},
-    {25U, "E8001", "unsupported type for JSON encoding: {actual}",
-     arm_parameters_25, 1U, DEAL_ARM_SCOPE_TOP_LEVEL, 1U, 1U},
-    {26U, "E8001", "cyclic value cannot be encoded as JSON", NULL, 0U,
+    {24U, "E8001", "unsupported type for JSON encoding: {actual}",
+     arm_parameters_24, 1U, DEAL_ARM_SCOPE_TOP_LEVEL, 1U, 1U},
+    {25U, "E8001", "cyclic value cannot be encoded as JSON", NULL, 0U,
      DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U}
 };
 
@@ -425,6 +424,61 @@ static deal_table *record_with_text(const char *key, const char *text) {
     return record_with(key, deal_data_of_reference(DEAL_DATA_STRING, value));
 }
 
+static deal_outcome_data encoding_callable(void *function,
+        const deal_check_input *arguments, uint32_t count,
+        const deal_origin *origin) {
+    (void)function;
+    (void)arguments;
+    (void)count;
+    (void)origin;
+    check(0, "JSON encoding must not invoke a callable");
+    deal_outcome_data outcome = {0};
+    outcome.value = deal_data_of_undefined();
+    return outcome;
+}
+
+/* Reference storage carries actual runtime identities, not descriptor tags.
+ * Functions substitute null; builtin Error elements serialize their own fields.
+ * Nullish descriptors use the same reference layout without losing null. */
+static void observe_reference_array_encoding(void) {
+    deal_root_scope_push();
+    deal_fn *function = deal_fn_create(encoding_callable, NULL, 0u, "()->void", 0);
+    (void)deal_root_scope_hold(function);
+    deal_error *error = deal_error_create("KEPT", "message", &call_origin);
+    (void)deal_root_scope_hold(error);
+    const char *descriptors[] = {"()->void", "?()->void", "Error", "?Error"};
+    for (size_t index = 0u; index < 4u; index += 1u) {
+        deal_array *array = deal_container_array_new_typed(
+            DEAL_LAYOUT_ELEMENT_REFERENCE,
+            deal_descriptor_reference(deal_descriptor_intern(descriptors[index])), 0u);
+        (void)deal_root_scope_hold(array);
+        void *reference = index < 2u ? (void *)function : (void *)error;
+        deal_container_array_append(array, &reference);
+        if (index % 2u != 0u) {
+            reference = (void *)deal_null_singleton;
+            deal_container_array_append(array, &reference);
+        }
+        deal_outcome_data encoded = deal_json_stringify(
+            deal_data_of_reference(DEAL_DATA_ARRAY, array), &call_origin);
+        (void)deal_root_scope_hold_data(&encoded.value);
+        const char *expected = index == 0u ? "[null]" : index == 1u ? "[null,null]"
+            : index == 2u ? "[{\"code\":\"KEPT\",\"message\":\"message\"}]"
+            : "[{\"code\":\"KEPT\",\"message\":\"message\"},null]";
+        check(encoded.error == NULL && encoded.value.tag == DEAL_DATA_STRING,
+            "reference-array JSON encoding succeeds");
+        if (encoded.error == NULL && encoded.value.tag == DEAL_DATA_STRING) {
+            check(deal_text_byte_length(encoded.value.reference) == strlen(expected)
+                && memcmp(deal_text_bytes(encoded.value.reference), expected,
+                    strlen(expected)) == 0,
+                "reference-array JSON encoding preserves actual function/Error identity");
+        }
+        check(*(void *const *)deal_container_array_element(array, 0u)
+                == (index < 2u ? (void *)function : (void *)error),
+            "JSON encoding preserves reference-array storage identity");
+    }
+    deal_root_scope_pop();
+}
+
 static void observe_encode_rules(void) {
     /* A record with an undefined-valued and a function-valued member: both are
      * omitted while the remaining keys keep their creation order, and an
@@ -442,7 +496,9 @@ static void observe_encode_rules(void) {
     deal_container_table_write(table, dropped, &undefined_value);
     deal_string *hidden = deal_text_new("hidden", 6u);
     (void)deal_root_scope_hold(hidden);
-    deal_data function_value = deal_data_of_reference(DEAL_DATA_FUNCTION, table);
+    deal_fn *callable = deal_fn_create(encoding_callable, NULL, 0u, "()->void", 0);
+    (void)deal_root_scope_hold(callable);
+    deal_data function_value = deal_data_of_reference(DEAL_DATA_FUNCTION, callable);
     deal_container_table_write(table, hidden, &function_value);
     deal_string *index_key = deal_text_new("0", 1u);
     (void)deal_root_scope_hold(index_key);
@@ -462,7 +518,9 @@ static void observe_encode_rules(void) {
     deal_container_array_append(array, &first);
     deal_data second = deal_data_of_undefined();
     deal_container_array_append(array, &second);
-    deal_data third = deal_data_of_reference(DEAL_DATA_FUNCTION, array);
+    callable = deal_fn_create(encoding_callable, NULL, 0u, "()->void", 0);
+    (void)deal_root_scope_hold(callable);
+    deal_data third = deal_data_of_reference(DEAL_DATA_FUNCTION, callable);
     deal_container_array_append(array, &third);
     deal_data fourth = deal_data_of_null();
     deal_container_array_append(array, &fourth);
@@ -505,10 +563,10 @@ static void observe_encode_rules(void) {
     /* The v1.6 root rules: an undefined or function root yields undefined. */
     observe_encode("root-undefined", deal_data_of_undefined());
     deal_root_scope_push();
-    deal_table *root_holder = deal_container_table_new();
-    (void)deal_root_scope_hold(root_holder);
+    callable = deal_fn_create(encoding_callable, NULL, 0u, "()->void", 0);
+    (void)deal_root_scope_hold(callable);
     observe_encode("root-function",
-                   deal_data_of_reference(DEAL_DATA_FUNCTION, root_holder));
+                   deal_data_of_reference(DEAL_DATA_FUNCTION, callable));
     deal_root_scope_pop();
 }
 
@@ -553,12 +611,11 @@ static void print_string_array(const char *label, const deal_array *array) {
     }
 }
 
-/* One std call's result observation. */
-static void observe_std(const char *label, uint32_t operation_id,
-                        const deal_check_input *arguments, uint32_t count) {
+/* Observe a completed operation without imposing a second result boundary. */
+static void observe_result(const char *label, deal_outcome_data outcome) {
     deal_root_scope_push();
-    deal_outcome_data outcome = deal_std_call(operation_id, arguments, count,
-                                             &call_origin);
+    if (outcome.error != NULL) (void)deal_root_scope_hold(outcome.error);
+    else (void)deal_root_scope_hold_data(&outcome.value);
     /* A console effect is published before the observation that reports the
      * call's completion, so the two stream buffers never interleave. */
     deal_platform_flush_stdout();
@@ -614,6 +671,27 @@ static void observe_std(const char *label, uint32_t operation_id,
         printf("OTHER\t%u\n", (unsigned)value.tag);
         break;
     }
+    deal_root_scope_pop();
+}
+
+/* One std call's result observation. */
+static void observe_std(const char *label, uint32_t operation_id,
+                        const deal_check_input *arguments, uint32_t count) {
+    deal_root_scope_push();
+    deal_outcome_data outcome = deal_std_call(operation_id, arguments, count,
+                                             &call_origin);
+    observe_result(label, outcome);
+    deal_root_scope_pop();
+}
+
+/* One contextual Record parse, with the target supplied to reconstruction. */
+static void observe_record_decode(const char *label, const char *json) {
+    deal_root_scope_push();
+    deal_string *text = deal_text_new(json, strlen(json));
+    (void)deal_root_scope_hold(text);
+    deal_outcome_data outcome = deal_json_decode(text,
+        deal_descriptor_intern("record"), NULL, NULL, &call_origin);
+    observe_result(label, outcome);
     deal_root_scope_pop();
 }
 
@@ -805,8 +883,8 @@ static void observe_stdlib(void) {
         deal_root_scope_pop();
     }
 
-    /* std/json parse: the record root and the two closed return-boundary
-     * failures. */
+    /* Contextual Record parsing accepts objects and rejects other root kinds
+     * inside reconstruction, never at a retired module's return boundary. */
     {
         static const struct { const char *label; const char *json; } cases[] = {
             {"parse-record", "{\"a\":1}"},
@@ -815,35 +893,22 @@ static void observe_stdlib(void) {
             {"parse-null-root", "null"}
         };
         for (unsigned index = 0; index < 4u; index += 1u) {
-            deal_root_scope_push();
-            deal_string *text = deal_text_new(cases[index].json,
-                                              strlen(cases[index].json));
-            (void)deal_root_scope_hold(text);
-            deal_check_input arguments[1];
-            arguments[0] = string_argument(text);
-            observe_std(cases[index].label, DEAL_STDLIB_JSON_PARSE, arguments, 1u);
-            deal_root_scope_pop();
+            observe_record_decode(cases[index].label, cases[index].json);
         }
     }
 
-    /* std/json stringify through the closed operation. */
+    /* Builtin stringify calls the generic runtime primitive directly. */
     {
         deal_root_scope_push();
         deal_table *table = record_with_text("k", "v");
-        deal_check_input arguments[1];
-        arguments[0] = datum_argument(deal_data_of_reference(DEAL_DATA_TABLE, table));
-        observe_std("stringify-record", DEAL_STDLIB_JSON_STRINGIFY, arguments, 1u);
+        observe_result("stringify-record", deal_json_stringify(
+            deal_data_of_reference(DEAL_DATA_TABLE, table), &call_origin));
         deal_root_scope_pop();
 
-        deal_check_input undefined_argument[1];
-        undefined_argument[0] = datum_argument(deal_data_of_undefined());
-        observe_std("stringify-undefined", DEAL_STDLIB_JSON_STRINGIFY,
-                    undefined_argument, 1u);
-
-        deal_check_input number_arguments[1];
-        number_arguments[0] = number_argument(1.5);
-        observe_std("stringify-number", DEAL_STDLIB_JSON_STRINGIFY,
-                    number_arguments, 1u);
+        observe_result("stringify-undefined", deal_json_stringify(
+            deal_data_of_undefined(), &call_origin));
+        observe_result("stringify-number", deal_json_stringify(
+            deal_data_of_number(1.5), &call_origin));
     }
 
     /* std/math. */
@@ -893,17 +958,20 @@ static void observe_stdlib(void) {
         }
     }
 
-    /* A stdlib parameter crossing failure and a result crossing failure. */
+    /* Ordinary stdlib and builtin JSON string-operand admission failures. */
     {
         deal_check_input arguments[1];
         arguments[0] = number_argument(1.0);
         observe_std("length-kind-failure", DEAL_STDLIB_STRING_LENGTH, arguments, 1u);
     }
     {
-        deal_check_input arguments[1];
-        arguments[0] = datum_argument(deal_data_of_undefined());
-        observe_std("stringify-nothing-failure", DEAL_STDLIB_JSON_PARSE,
-                    arguments, 1u);
+        deal_check_input input = datum_argument(deal_data_of_undefined());
+        deal_outcome_data outcome;
+        memset(&outcome, 0, sizeof(outcome));
+        deal_check_context context = {&call_origin, 0};
+        outcome.error = deal_check_value(deal_descriptor_intern("string"), input,
+            DEAL_BOUNDARY_TYPE_DESCRIPTOR, &context).error;
+        observe_result("stringify-nothing-failure", outcome);
     }
 }
 
@@ -914,8 +982,15 @@ static void observe_stdlib(void) {
 static const char *const outer_atom = "@src/model.deal/Outer";
 static const char *const inner_atom = "@src/model.deal/Inner";
 
-/* The driver-side instance marker: the class atom of the instance. */
-static const char *const instance_atom_key = "\001atom";
+/* Distinct emitted-layout stand-ins. Runtime consumers obtain nominal identity
+ * only through the registered read seam, never a Record marker. */
+#define OUTER_LAYOUT (DEAL_LAYOUT_EMITTED_BASE + 10u)
+#define INNER_LAYOUT (DEAL_LAYOUT_EMITTED_BASE + 11u)
+#define NODE_LAYOUT (DEAL_LAYOUT_EMITTED_BASE + 12u)
+typedef struct { uint8_t presence[8]; deal_data fields[8]; } outer_instance;
+typedef struct { uint8_t presence[2]; deal_data fields[2]; } inner_instance;
+typedef struct { uint8_t presence[2]; deal_data fields[2]; } node_instance;
+static deal_data build_instance(const deal_class_layout *layout);
 
 static deal_class_field outer_fields[8];
 static deal_class_field inner_fields[2];
@@ -932,90 +1007,85 @@ static deal_class_field node_fields[2];
 static deal_class_layout node_layout;
 static deal_json_class_plan node_plan;
 
-/* 1 when the instance carries exactly `atom`. */
-static int instance_is(const deal_data *instance, const char *atom) {
-    if (instance->tag != DEAL_DATA_CLASS || instance->reference == NULL) {
-        return 0;
-    }
-    deal_table *fields = (deal_table *)instance->reference;
-    deal_string *key = deal_text_new(instance_atom_key,
-        strlen(instance_atom_key));
-    (void)deal_root_scope_hold(key);
-    if (!deal_container_table_has(fields, key)) {
-        return 0;
-    }
-    deal_data recorded = deal_container_table_read(fields, key);
-    if (recorded.tag != DEAL_DATA_STRING || recorded.reference == NULL) {
-        return 0;
-    }
-    const deal_string *carried = (const deal_string *)recorded.reference;
-    size_t length = strlen(atom);
-    if (deal_text_byte_length(carried) != length) {
-        return 0;
-    }
-    return memcmp(deal_text_bytes(carried), atom, length) == 0;
+static uint32_t instance_layout(const deal_class_layout *layout) {
+    if (layout == &outer_layout) return OUTER_LAYOUT;
+    if (layout == &inner_layout) return INNER_LAYOUT;
+    if (layout == &node_layout) return NODE_LAYOUT;
+    deal_platform_fault("fixture: unknown class layout");
 }
 
-/* The test construction seam: one record-shaped instance of the plan's class. */
+static int instance_slots(const deal_data *instance,
+                          const deal_class_layout *layout,
+                          deal_data **fields, uint8_t **presence) {
+    if (instance->tag != DEAL_DATA_CLASS || instance->reference == NULL
+            || deal_object_layout(instance->reference) != instance_layout(layout)) return 0;
+    if (layout == &outer_layout) {
+        outer_instance *value = instance->reference;
+        *fields = value->fields; *presence = value->presence;
+    } else if (layout == &inner_layout) {
+        inner_instance *value = instance->reference;
+        *fields = value->fields; *presence = value->presence;
+    } else {
+        node_instance *value = instance->reference;
+        *fields = value->fields; *presence = value->presence;
+    }
+    return 1;
+}
+
+/* A construction callback is also a safepoint: only its live inputs and
+ * rebuilt children may survive, not discarded field-lookup scratch. */
+static int check_decode_scratch;
+static uint64_t decode_document_objects;
+
+/* The construction seam writes already validated fields with their barriers. */
 static deal_outcome_data test_construct(const deal_class_layout *layout,
                                         const deal_data *values,
                                         const uint8_t *presence,
                                         void *context) {
     (void)context;
+    if (check_decode_scratch) {
+        deal_gc_collect_full();
+        deal_gc_statistics_record statistics;
+        deal_gc_statistics(&statistics);
+        check(statistics.object_count == decode_document_objects,
+            "decode must release lookup text before invoking construction");
+    }
     deal_outcome_data outcome;
     memset(&outcome, 0, sizeof(outcome));
-    deal_table *fields = deal_container_table_new();
-    (void)deal_root_scope_hold(fields);
-    deal_string *atom_key = deal_text_new(instance_atom_key,
-        strlen(instance_atom_key));
-    (void)deal_root_scope_hold(atom_key);
-    deal_string *atom = deal_text_new(layout->class_atom,
-        strlen(layout->class_atom));
-    (void)deal_root_scope_hold(atom);
-    deal_data atom_value = deal_data_of_reference(DEAL_DATA_STRING, atom);
-    deal_container_table_write(fields, atom_key, &atom_value);
+    outcome.value = build_instance(layout);
+    deal_data *fields = NULL;
+    uint8_t *stored_presence = NULL;
+    (void)instance_slots(&outcome.value, layout, &fields, &stored_presence);
     for (size_t index = 0; index < layout->field_count; index += 1u) {
-        if (!presence[index]) {
-            continue;
-        }
-        deal_string *name = deal_text_new(layout->fields[index].name,
-            strlen(layout->fields[index].name));
-        (void)deal_root_scope_hold(name);
-        deal_container_table_write(fields, name, &values[index]);
+        if (!presence[index]) continue;
+        deal_store_barrier_data(outcome.value.reference, &values[index]);
+        fields[index] = values[index];
+        stored_presence[index] = 1u;
     }
-    outcome.value = deal_data_of_reference(DEAL_DATA_CLASS, fields);
     return outcome;
 }
 
-/* The test field seam: one field of one record-shaped instance. */
+/* The field-count sentinel proves exact nominal ownership without reading a
+ * field; ordinary presence-only readers may omit the value output. */
 static int test_read_field(const deal_data *instance, size_t index,
                            deal_check_input *value, uint8_t *present,
                            void *context) {
     const deal_class_layout *layout = (const deal_class_layout *)context;
-    if (layout == NULL || index >= layout->field_count
-            || !instance_is(instance, layout->class_atom)) {
-        return 0;
-    }
-    deal_table *fields = (deal_table *)instance->reference;
-    deal_string *name = deal_text_new(layout->fields[index].name,
-        strlen(layout->fields[index].name));
-    (void)deal_root_scope_hold(name);
-    *present = (uint8_t)deal_container_table_has(fields, name);
-    if (value == NULL) return 1;
-    memset(value, 0, sizeof(*value));
-    value->presentation = DEAL_PRESENT_DATUM;
-    if (!*present) return 1;
-    value->datum = deal_container_table_read(fields, name);
-    if (value->datum.tag == DEAL_DATA_CLASS) {
-        /* The nested instance's own canonical atom, which the two test plans
-         * carry as static text. */
-        value->class_atom = instance_is(&value->datum, inner_atom)
-            ? inner_atom : outer_atom;
+    deal_data *fields = NULL;
+    uint8_t *presence = NULL;
+    if (layout == NULL || !instance_slots(instance, layout, &fields, &presence)) return 0;
+    if (index == layout->field_count) return 1;
+    if (index > layout->field_count) return 0;
+    if (present != NULL) *present = presence[index];
+    if (value != NULL) {
+        memset(value, 0, sizeof(*value));
+        value->presentation = DEAL_PRESENT_DATUM;
+        if (presence[index]) deal_host_present_datum(fields[index], value);
     }
     return 1;
 }
 
-/* The test plan registry: one plan per @jsonable class atom. */
+/* The test plan registry: one declaration schema per exact class atom. */
 static const deal_json_class_plan *test_lookup(const char *class_atom,
                                                void *context) {
     (void)context;
@@ -1029,6 +1099,27 @@ static const deal_json_class_plan *test_lookup(const char *class_atom,
         return &node_plan;
     }
     return NULL;
+}
+
+static deal_outcome test_create(void *context, void **out) {
+    deal_data instance = build_instance(context);
+    *out = instance.reference;
+    return (deal_outcome){NULL};
+}
+
+static deal_outcome test_store(void *context, void *instance, size_t index,
+                                const deal_check_input *value, int present) {
+    const deal_class_layout *layout = context;
+    deal_data datum = deal_data_of_reference(DEAL_DATA_CLASS, instance);
+    deal_data *fields = NULL;
+    uint8_t *presence = NULL;
+    if (!instance_slots(&datum, layout, &fields, &presence) || index >= layout->field_count)
+        deal_platform_fault("fixture: invalid class store");
+    deal_data stored = present ? value->datum : deal_data_of_undefined();
+    deal_store_barrier_data(instance, &stored);
+    fields[index] = stored;
+    presence[index] = (uint8_t)present;
+    return (deal_outcome){NULL};
 }
 
 static void define_plans(void) {
@@ -1100,49 +1191,85 @@ static void define_plans(void) {
     node_plan.construct = test_construct;
     node_plan.read_field = test_read_field;
     node_plan.context = &node_layout;
+
+#define SLOT_OFFSET(type, index) ((uint32_t)(offsetof(type, fields) \
+    + sizeof(deal_data) * (index) + offsetof(deal_data, reference)))
+    static const uint32_t outer_refs[] = {
+        SLOT_OFFSET(outer_instance, 0), SLOT_OFFSET(outer_instance, 1),
+        SLOT_OFFSET(outer_instance, 2), SLOT_OFFSET(outer_instance, 3),
+        SLOT_OFFSET(outer_instance, 4), SLOT_OFFSET(outer_instance, 5),
+        SLOT_OFFSET(outer_instance, 6), SLOT_OFFSET(outer_instance, 7)};
+    static const uint32_t inner_refs[] = {
+        SLOT_OFFSET(inner_instance, 0), SLOT_OFFSET(inner_instance, 1)};
+    static const uint32_t node_refs[] = {
+        SLOT_OFFSET(node_instance, 0), SLOT_OFFSET(node_instance, 1)};
+#undef SLOT_OFFSET
+    static const deal_layout layouts[] = {
+        {OUTER_LAYOUT, 0u, sizeof(outer_instance), outer_refs, 8u},
+        {INNER_LAYOUT, 0u, sizeof(inner_instance), inner_refs, 2u},
+        {NODE_LAYOUT, 0u, sizeof(node_instance), node_refs, 2u},
+        {DEAL_LAYOUT_EMITTED_BASE, 0u, 8u, NULL, 0u}};
+    deal_layout_install(layouts, 4u);
+    static const deal_host_class_access access[] = {
+        {&outer_layout, test_create, test_store, test_read_field, &outer_layout},
+        {&inner_layout, test_create, test_store, test_read_field, &inner_layout},
+        {&node_layout, test_create, test_store, test_read_field, &node_layout}};
+    deal_host_class_access_register(outer_atom, &access[0]);
+    deal_host_class_access_register(inner_atom, &access[1]);
+    deal_host_class_access_register(node_atom, &access[2]);
+    deal_json_plans_install(test_lookup, NULL);
 }
 
-/* One fromJson observation: the produced instance re-encoded, or `null`. */
+/* One contextual class parse: publish only on success, retaining an existing
+ * destination and descendant alias on every scanner/schema rejection. */
 static void observe_from_class(const char *label, const char *json) {
-    deal_string *text = deal_text_new(json, strlen(json));
     deal_root_scope_push();
+    deal_table *prior = record_with_text("kept", "original");
+    deal_data destination = deal_data_of_reference(DEAL_DATA_TABLE, prior);
+    deal_data alias = destination;
+    deal_string *text = deal_text_new(json, strlen(json));
     (void)deal_root_scope_hold(text);
-    deal_outcome_data decoded = deal_json_from_class(text, &outer_plan,
-        test_lookup, NULL, &call_origin);
+    deal_outcome_data decoded = deal_json_decode(text,
+        deal_descriptor_intern(outer_atom), test_lookup, NULL, &call_origin);
+    if (decoded.error == NULL) destination = decoded.value;
     printf("FROM\t%s\t", label);
     if (decoded.error != NULL) {
+        (void)deal_root_scope_hold(decoded.error);
+        check(destination.tag == alias.tag && destination.reference == alias.reference,
+              "rejected contextual parse preserves the destination identity");
+        deal_string *key = deal_text_new("kept", 4u);
+        (void)deal_root_scope_hold(key);
+        deal_data kept = deal_container_table_read(prior, key);
+        check(kept.tag == DEAL_DATA_STRING
+                && deal_text_transport_length((deal_string *)kept.reference) == 8u
+                && memcmp(deal_text_transport_bytes((deal_string *)kept.reference),
+                          "original", 8u) == 0,
+              "rejected contextual parse preserves the aliased descendant");
         printf("ERROR\t");
         print_failure(decoded.error);
         printf("\n");
         deal_root_scope_pop();
         return;
     }
-    if (decoded.value.tag == DEAL_DATA_NULL) {
-        printf("NULL\n");
-        deal_root_scope_pop();
-        return;
-    }
     (void)deal_root_scope_hold_data(&decoded.value);
-    deal_outcome_string encoded = deal_json_to_class(&outer_plan, &decoded.value,
-        test_lookup, NULL, &call_origin);
+    deal_outcome_data encoded = deal_json_stringify(decoded.value, &call_origin);
     if (encoded.error != NULL) {
         printf("ERROR\t");
         print_failure(encoded.error);
         printf("\n");
     } else {
         printf("TEXT\t");
-        write_text(encoded.value);
+        write_text((const deal_string *)encoded.value.reference);
         printf("\n");
     }
     deal_root_scope_pop();
 }
 
-/* One toJson observation over a driver-built instance. */
+/* One builtin stringify observation over a driver-built nominal instance. */
 static void observe_to_class(const char *label, deal_data instance) {
     deal_root_scope_push();
     (void)deal_root_scope_hold_data(&instance);
-    deal_outcome_string encoded = deal_json_to_class(&outer_plan, &instance,
-        test_lookup, NULL, &call_origin);
+    deal_outcome_data encoded = deal_json_stringify(instance, &call_origin);
     printf("TO\t%s\t", label);
     if (encoded.error != NULL) {
         printf("ERROR\t");
@@ -1150,36 +1277,39 @@ static void observe_to_class(const char *label, deal_data instance) {
         printf("\n");
     } else {
         printf("TEXT\t");
-        write_text(encoded.value);
+        write_text((const deal_string *)encoded.value.reference);
         printf("\n");
     }
     deal_root_scope_pop();
 }
 
-/* One driver-built instance of `layout`; the caller owns the root scope. */
+/* One driver-built instance; every slot has its own exact reference offset. */
 static deal_data build_instance(const deal_class_layout *layout) {
-    deal_table *fields = deal_container_table_new();
-    (void)deal_root_scope_hold(fields);
-    deal_string *atom_key = deal_text_new(instance_atom_key,
-        strlen(instance_atom_key));
-    (void)deal_root_scope_hold(atom_key);
-    deal_string *atom = deal_text_new(layout->class_atom,
-        strlen(layout->class_atom));
-    (void)deal_root_scope_hold(atom);
-    deal_data atom_value = deal_data_of_reference(DEAL_DATA_STRING, atom);
-    deal_container_table_write(fields, atom_key, &atom_value);
-    deal_data instance;
-    memset(&instance, 0, sizeof(instance));
-    instance = deal_data_of_reference(DEAL_DATA_CLASS, fields);
-    return instance;
+    size_t size = layout == &outer_layout ? sizeof(outer_instance)
+        : layout == &inner_layout ? sizeof(inner_instance) : sizeof(node_instance);
+    void *instance = deal_alloc(instance_layout(layout), size);
+    (void)deal_root_scope_hold(instance);
+    return deal_data_of_reference(DEAL_DATA_CLASS, instance);
 }
 
-/* Stores one field of one driver-built instance. */
+/* Fixture-owned stores can model hostile missing/undefined storage, but still
+ * use the precise emitted layout and insertion barrier. */
 static void put_field(deal_data instance, const char *name, deal_data value) {
-    deal_table *fields = (deal_table *)instance.reference;
-    deal_string *key = deal_text_new(name, strlen(name));
-    (void)deal_root_scope_hold(key);
-    deal_container_table_write(fields, key, &value);
+    uint32_t id = deal_object_layout(instance.reference);
+    const deal_class_layout *layout = id == OUTER_LAYOUT ? &outer_layout
+        : id == INNER_LAYOUT ? &inner_layout : &node_layout;
+    deal_data *fields = NULL;
+    uint8_t *presence = NULL;
+    if (!instance_slots(&instance, layout, &fields, &presence))
+        deal_platform_fault("fixture: invalid instance");
+    for (size_t index = 0u; index < layout->field_count; ++index) {
+        if (strcmp(name, layout->fields[index].name) != 0) continue;
+        deal_store_barrier_data(instance.reference, &value);
+        fields[index] = value;
+        presence[index] = 1u;
+        return;
+    }
+    deal_platform_fault("fixture: unknown field");
 }
 
 /* A `[string]` array of the given texts. */
@@ -1219,8 +1349,123 @@ static deal_data inner_array(double first_id, double second_id) {
     return deal_data_of_reference(DEAL_DATA_ARRAY, array);
 }
 
+/* One identity can have weaker and stronger reached descriptor obligations.
+ * A Record visit must not discharge a later typed class-array position. */
+static void observe_live_alias_descriptors(void) {
+    deal_root_scope_push();
+    deal_data owner = build_instance(&outer_layout);
+    deal_string *name = deal_text_new("kept", 4u);
+    (void)deal_root_scope_hold(name);
+    deal_data text = deal_data_of_reference(DEAL_DATA_STRING, name);
+    put_field(owner, "name", text);
+    put_field(owner, "bio", deal_data_of_null());
+    put_field(owner, "tags", string_array(NULL, NULL));
+    deal_data child = build_instance(&inner_layout);
+    put_field(child, "id", deal_data_of_number(7));
+    deal_table *props = deal_container_table_new();
+    (void)deal_root_scope_hold(props);
+    deal_string *key = deal_text_new("alias", 5u);
+    (void)deal_root_scope_hold(key);
+    deal_container_table_write(props, key, &child);
+    put_field(owner, "props", deal_data_of_reference(DEAL_DATA_TABLE, props));
+    deal_array *items = deal_container_array_new_typed(DEAL_LAYOUT_ELEMENT_DATUM,
+        deal_descriptor_reference(deal_descriptor_intern(inner_atom)), 0u);
+    (void)deal_root_scope_hold(items);
+    deal_container_array_append(items, &child);
+    put_field(owner, "items", deal_data_of_reference(DEAL_DATA_ARRAY, items));
+    put_field(owner, "label", deal_data_of_null());
+    deal_check_input input = {0};
+    deal_host_present_datum(owner, &input);
+    deal_check_context context = {&call_origin, 0};
+    deal_descriptor *descriptor = deal_descriptor_intern(outer_atom);
+    check(deal_check_live_value(descriptor, input, DEAL_BOUNDARY_TYPE_DESCRIPTOR,
+        &context).error == NULL, "shared class admits before field corruption");
+    put_field(child, "id", text);
+    /* Unknown itself has no nominal field-type obligation. */
+    check(deal_check_live_value(deal_descriptor_intern("unknown"), input,
+        DEAL_BOUNDARY_TYPE_DESCRIPTOR, &context).error == NULL,
+        "unknown visit does not impose a class's declared field types");
+    deal_outcome rejected = deal_check_live_value(descriptor, input,
+        DEAL_BOUNDARY_TYPE_DESCRIPTOR, &context);
+    check(rejected.error != NULL,
+        "Record alias visit must not suppress a later typed class-array check");
+    if (rejected.error != NULL) {
+        (void)deal_root_scope_hold(rejected.error);
+        const char *code = NULL, *message = NULL, *expected = NULL, *actual = NULL;
+        const char *file = NULL, *cause = NULL;
+        int32_t line = 0, column = 0;
+        (void)deal_error_code(rejected.error, &code);
+        (void)deal_error_message(rejected.error, &message);
+        (void)deal_error_expected(rejected.error, &expected);
+        (void)deal_error_actual(rejected.error, &actual);
+        (void)deal_error_source_file(rejected.error, &file);
+        (void)deal_error_line(rejected.error, &line);
+        (void)deal_error_column(rejected.error, &column);
+        (void)deal_error_cause_code(rejected.error, &cause);
+        check(code != NULL && strcmp(code, "E8003") == 0
+            && message != NULL && strcmp(message, "array element 1 type mismatch") == 0
+            && expected != NULL && strcmp(expected, inner_atom) == 0
+            && actual != NULL && strcmp(actual, inner_atom) == 0
+            && cause != NULL && strcmp(cause, "E8001") == 0,
+            "shared class rejection retains the indexed wrapper and original leaf");
+        check(file != NULL && strcmp(file, call_origin.source_file) == 0
+            && line == call_origin.line && column == call_origin.column,
+            "shared class rejection retains the consuming operation origin");
+    }
+    check(deal_container_table_read(props, key).reference == child.reference
+        && ((deal_data *)deal_container_array_element(items, 0u))->reference == child.reference,
+        "rejected shared graph retains both aliases");
+    deal_data *fields = NULL;
+    uint8_t *presence = NULL;
+    (void)instance_slots(&child, &inner_layout, &fields, &presence);
+    check(presence[0] && fields[0].reference == name,
+        "rejection leaves the hostile field unchanged");
+    put_field(child, "id", deal_data_of_number(7));
+    deal_gc_collect_full();
+    check(deal_check_live_value(descriptor, input, DEAL_BOUNDARY_TYPE_DESCRIPTOR,
+        &context).error == NULL, "same shared graph readmits after repair and collection");
+    check(deal_container_table_read(props, key).reference == child.reference
+        && ((deal_data *)deal_container_array_element(items, 0u))->reference == child.reference,
+        "repair preserves shared class identity");
+    /* Required absence participates in the same declaration-order walk as
+     * present fields; a later missing field cannot preempt an earlier kind. */
+    (void)instance_slots(&owner, &outer_layout, &fields, &presence);
+    presence[7] = 0u;
+    put_field(owner, "name", deal_data_of_number(9));
+    rejected = deal_check_live_value(descriptor, input, DEAL_BOUNDARY_TYPE_DESCRIPTOR, &context);
+    check(rejected.error != NULL, "earlier invalid field rejects before later required absence");
+    if (rejected.error != NULL) {
+        char *snapshot = deal_error_snapshot(rejected.error);
+        check(strcmp(snapshot, "{\"code\":\"E8001\",\"message\":\"expected string\","
+            "\"sourceFile\":\"native/json-stdlib.deal\",\"line\":12,\"column\":5,"
+            "\"expected\":\"string\",\"actual\":\"number\",\"frames\":0}") == 0,
+            "declaration-order first failure is the earlier present field");
+        deal_error_snapshot_release(snapshot);
+    }
+    put_field(owner, "name", text);
+    rejected = deal_check_live_value(descriptor, input, DEAL_BOUNDARY_TYPE_DESCRIPTOR, &context);
+    check(rejected.error != NULL, "repair exposes later required absence even when undefined is admitted");
+    if (rejected.error != NULL) {
+        char *snapshot = deal_error_snapshot(rejected.error);
+        check(strcmp(snapshot, "{\"code\":\"E8001\",\"message\":\"expected string\","
+            "\"sourceFile\":\"native/json-stdlib.deal\",\"line\":12,\"column\":5,"
+            "\"expected\":\"string\",\"actual\":\"undefined\",\"frames\":0}") == 0,
+            "required absence remains a separate undefined projection");
+        deal_error_snapshot_release(snapshot);
+    }
+    check(!presence[7] && fields[0].reference == name
+        && deal_container_table_read(props, key).reference == child.reference
+        && ((deal_data *)deal_container_array_element(items, 0u))->reference == child.reference,
+        "ordered rejections preserve absence, fields and original aliases");
+    put_field(owner, "label", deal_data_of_undefined());
+    deal_gc_collect_full();
+    check(deal_check_live_value(descriptor, input, DEAL_BOUNDARY_TYPE_DESCRIPTOR,
+        &context).error == NULL, "same graph readmits after both ordered repairs");
+    deal_root_scope_pop();
+}
+
 static void observe_class_walks(void) {
-    /* fromJson: a complete document, decoded recursively in declaration order
+    /* Contextual parse: a complete document, decoded in declaration order
      * and re-encoded in the same order; the optional field stays absent. */
     observe_from_class("complete",
         "{\"name\":\"Ada\",\"bio\":null,\"tags\":[\"x\",\"y\"],"
@@ -1248,12 +1493,12 @@ static void observe_class_walks(void) {
         "{\"name\":\"Ada\",\"bio\":null,\"tags\":[1],\"props\":{},\"items\":[]}");
     observe_from_class("non-object-root", "[]");
     observe_from_class("syntax-defect",
-        "{\"name\":\"Ada\",\"bio\":null}");
+        "{\"name\":\"Ada\",\"bio\":null");
     observe_from_class("extra-present-undefined-member",
         "{\"name\":\"Ada\",\"nick\":null,\"bio\":null,\"tags\":[],"
         "\"props\":{},\"items\":[],\"extra\":null}");
-    /* A required field whose type admits undefined must still be present: an
-     * omission is the same null answer as any other missing required key. */
+    /* A required field whose type admits undefined must still be present:
+     * omission throws with actual undefined rather than publishing null. */
     observe_from_class("required-undefined-omitted",
         "{\"name\":\"Ada\",\"bio\":null,\"tags\":[],\"props\":{},"
         "\"items\":[]}");
@@ -1277,7 +1522,7 @@ static void observe_class_walks(void) {
     deal_root_scope_pop();
 
     /* A present undefined in an undefined-admitting optional field is omitted;
-     * the same value in a required `string` field is the walk arm. */
+     * the same value in a required `string` field is an encoding failure. */
     deal_root_scope_push();
     deal_data with_undefined = build_instance(&outer_layout);
     put_field(with_undefined, "name",
@@ -1403,6 +1648,130 @@ static void observe_class_walks(void) {
                   deal_data_of_reference(DEAL_DATA_TABLE, props));
     }
     observe_to_class("record-cycle", record_cycle);
+    put_field(record_cycle, "items", deal_data_of_boolean(0));
+    observe_to_class("cycle-before-later-kind", record_cycle);
+    put_field(record_cycle, "props", empty_record());
+    observe_to_class("later-array-kind", record_cycle);
+    deal_data retained_items = inner_array(7.0, 9.0);
+    put_field(record_cycle, "items", retained_items);
+    deal_check_input retained_child;
+    deal_array_present_element(retained_items.reference, 1u, &retained_child);
+    put_field(retained_child.datum, "id", deal_data_of_boolean(0));
+    observe_to_class("typed-element-invalid", record_cycle);
+    deal_outcome_data rejected = deal_json_stringify(record_cycle, &call_origin);
+    size_t cause_length = 0u;
+    const char *cause_code = deal_error_cause_code_bytes(rejected.error, &cause_length);
+    check(cause_code != NULL && cause_length == 5u && memcmp(cause_code,"E8001",5u)==0,
+          "typed encoder element keeps its original leaf cause");
+    put_field(retained_child.datum, "id", deal_data_of_number(9.0));
+    deal_gc_collect_full();
+    observe_to_class("typed-element-repaired", record_cycle);
+    deal_data nullable_owner = build_instance(&node_layout);
+    deal_data nullable_child = build_instance(&node_layout);
+    deal_array *nullable_list = deal_container_array_new_typed(DEAL_LAYOUT_ELEMENT_DATUM,
+        deal_descriptor_reference(deal_descriptor_intern("@src/model.deal/Node")), 0u);
+    (void)deal_root_scope_hold(nullable_list);
+    deal_container_array_append(nullable_list, &nullable_child);
+    put_field(nullable_owner, "list", deal_data_of_reference(DEAL_DATA_ARRAY, nullable_list));
+    put_field(nullable_child, "child", text_datum("bad"));
+    observe_to_class("nullable-array-descendant-invalid", nullable_owner);
+    put_field(nullable_child, "child", deal_data_of_null());
+    deal_gc_collect_full();
+    observe_to_class("nullable-array-descendant-repaired", nullable_owner);
+    /* A boxed slot's carried nominal identity, never its persistent element
+     * descriptor, owns admission. Reject a sibling and repair the same slot. */
+    deal_data sibling = build_instance(&inner_layout);
+    put_field(sibling, "id", deal_data_of_number(7.0));
+    deal_container_array_store(nullable_list, 0u, &sibling);
+    deal_outcome_data sibling_failure = deal_json_stringify(nullable_owner, &call_origin);
+    check(sibling_failure.error != NULL,
+        "boxed class-array sibling rejects before selecting its field plan");
+    if (sibling_failure.error != NULL) {
+        (void)deal_root_scope_hold(sibling_failure.error);
+        size_t length = 0u;
+        const char *code = deal_error_code_bytes(sibling_failure.error, &length);
+        check(length == 5u && memcmp(code, "E8003", 5u) == 0,
+            "boxed class-array sibling retains its element failure");
+        code = deal_error_cause_code_bytes(sibling_failure.error, &length);
+        check(code != NULL && length == 5u && memcmp(code, "E8001", 5u) == 0,
+            "boxed class-array sibling retains its nominal leaf cause");
+        char *snapshot = deal_error_snapshot(sibling_failure.error);
+        check(strcmp(snapshot, "{\"code\":\"E8003\","
+            "\"message\":\"array element 1 type mismatch\","
+            "\"sourceFile\":\"native/json-stdlib.deal\",\"line\":12,\"column\":5,"
+            "\"expected\":\"@src/model.deal/Node\","
+            "\"actual\":\"@src/model.deal/Inner\",\"frames\":0,\"cause\":\"E8001\"}") == 0,
+            "boxed class-array sibling pins its nominal tuple and operation origin");
+        deal_error_snapshot_release(snapshot);
+    }
+    check(((const deal_data *)deal_container_array_element(nullable_list, 0u))->reference
+            == sibling.reference,
+        "boxed class-array rejection preserves sibling storage");
+    deal_fn *wrong_callable = deal_fn_create(encoding_callable, NULL, 0u, "()->void", 0);
+    (void)deal_root_scope_hold(wrong_callable);
+    deal_data wrong_function = deal_data_of_reference(DEAL_DATA_FUNCTION, wrong_callable);
+    deal_container_array_store(nullable_list, 0u, &wrong_function);
+    deal_outcome_data function_failure = deal_json_stringify(nullable_owner, &call_origin);
+    check(function_failure.error != NULL,
+        "boxed class-array function rejects without invocation");
+    if (function_failure.error != NULL) {
+        (void)deal_root_scope_hold(function_failure.error);
+        char *snapshot = deal_error_snapshot(function_failure.error);
+        check(strcmp(snapshot, "{\"code\":\"E8003\","
+            "\"message\":\"array element 1 type mismatch\","
+            "\"sourceFile\":\"native/json-stdlib.deal\",\"line\":12,\"column\":5,"
+            "\"expected\":\"@src/model.deal/Node\","
+            "\"actual\":\"function\",\"frames\":0,\"cause\":\"E8001\"}") == 0,
+            "boxed class-array function pins its kind tuple and operation origin");
+        deal_error_snapshot_release(snapshot);
+    }
+    check(((const deal_data *)deal_container_array_element(nullable_list, 0u))->reference
+            == wrong_callable,
+        "boxed class-array rejection preserves signed-function storage");
+    deal_container_array_store(nullable_list, 0u, &nullable_child);
+    deal_gc_collect_full();
+    deal_outcome_data sibling_repaired = deal_json_stringify(nullable_owner, &call_origin);
+    check(sibling_repaired.error == NULL && sibling_repaired.value.tag == DEAL_DATA_STRING,
+        "boxed class-array repair encodes on the same identity");
+    if (sibling_repaired.error == NULL && sibling_repaired.value.tag == DEAL_DATA_STRING) {
+        const char *expected = "{\"list\":[{\"child\":null}]}";
+        check(deal_text_byte_length(sibling_repaired.value.reference) == strlen(expected)
+            && memcmp(deal_text_bytes(sibling_repaired.value.reference), expected,
+                strlen(expected)) == 0,
+            "boxed class-array repair preserves exact surviving fields");
+    }
+    check(((const deal_data *)deal_container_array_element(nullable_list, 0u))->reference
+            == nullable_child.reference,
+        "boxed class-array repair preserves the original child identity");
+    /* A declared array supplies child validation even without persistent
+     * element metadata. Retain and repair this very storage under collection. */
+    deal_array *unrecorded = deal_container_array_new(DEAL_LAYOUT_ELEMENT_DATUM, 0u);
+    (void)deal_root_scope_hold(unrecorded);
+    deal_container_array_append(unrecorded, &nullable_child);
+    put_field(nullable_owner, "list", deal_data_of_reference(DEAL_DATA_ARRAY, unrecorded));
+    put_field(nullable_child, "child", text_datum("bad"));
+    observe_to_class("unrecorded-array-descendant-invalid", nullable_owner);
+    put_field(nullable_child, "child", deal_data_of_null());
+    deal_gc_collect_full();
+    observe_to_class("unrecorded-array-descendant-repaired", nullable_owner);
+    deal_data grandchild = build_instance(&node_layout);
+    deal_array *nested = deal_container_array_new(DEAL_LAYOUT_ELEMENT_DATUM, 0u);
+    (void)deal_root_scope_hold(nested);
+    deal_container_array_append(nested, &grandchild);
+    put_field(nullable_child, "list", deal_data_of_reference(DEAL_DATA_ARRAY, nested));
+    put_field(grandchild, "child", text_datum("bad"));
+    observe_to_class("nested-array-descendant-invalid", nullable_owner);
+    put_field(grandchild, "child", deal_data_of_null());
+    deal_container_array_append(unrecorded, &nullable_child);
+    deal_gc_collect_full();
+    observe_to_class("nested-array-shared-repaired", nullable_owner);
+    deal_array *wrong_descriptor = deal_container_array_new_typed(DEAL_LAYOUT_ELEMENT_DATUM,
+        deal_descriptor_reference(deal_descriptor_intern("number")), 0u);
+    (void)deal_root_scope_hold(wrong_descriptor);
+    put_field(nullable_owner, "list", deal_data_of_reference(DEAL_DATA_ARRAY, wrong_descriptor));
+    observe_to_class("nullable-array-persistent-mismatch", nullable_owner);
+    put_field(nullable_owner, "list", deal_data_of_reference(DEAL_DATA_ARRAY, unrecorded));
+    observe_to_class("nullable-array-persistent-repaired", nullable_owner);
     deal_root_scope_pop();
 
     /* The v1.6 required-undefined asymmetry on the encode side: `label!: ?!string`
@@ -1421,10 +1790,11 @@ static void observe_class_walks(void) {
     observe_to_class("required-undefined-present", required_undefined);
     deal_root_scope_pop();
 
-    /* A walk failure three segments deep: only the failure projection
-     * materializes the dotted/indexed spelling `props.a.b[0]`. */
+    /* A nominal child three segments deep: retain both accepted traversal and
+     * failed-leaf ownership, followed by repair of that same child. */
     deal_root_scope_push();
     deal_data deep_member = build_instance(&outer_layout);
+    deal_data deep_child = deal_data_of_undefined();
     put_field(deep_member, "name",
               text_datum("Ada"));
     put_field(deep_member, "bio", deal_data_of_null());
@@ -1439,9 +1809,9 @@ static void observe_class_walks(void) {
         deal_array *nested_array = deal_container_array_new_typed(
             DEAL_LAYOUT_ELEMENT_DATUM, 0u, 0u);
         (void)deal_root_scope_hold(nested_array);
-        deal_data member = build_instance(&inner_layout);
-        put_field(member, "id", deal_data_of_number(1.0));
-        deal_container_array_append(nested_array, &member);
+        deep_child = build_instance(&inner_layout);
+        put_field(deep_child, "id", deal_data_of_number(1.0));
+        deal_container_array_append(nested_array, &deep_child);
         deal_data nested_value =
             deal_data_of_reference(DEAL_DATA_ARRAY, nested_array);
         deal_container_table_write(inner_record, nested_key, &nested_value);
@@ -1456,6 +1826,11 @@ static void observe_class_walks(void) {
                   deal_data_of_reference(DEAL_DATA_TABLE, props));
     }
     observe_to_class("record-deep-member", deep_member);
+    put_field(deep_child, "id", deal_data_of_undefined());
+    observe_to_class("record-deep-invalid", deep_member);
+    put_field(deep_child, "id", deal_data_of_number(2.0));
+    deal_gc_collect_full();
+    observe_to_class("record-deep-repaired", deep_member);
     deal_root_scope_pop();
 }
 
@@ -1473,18 +1848,14 @@ static size_t count_class_depth(deal_data root, const char *field,
                                 int through_array) {
     size_t depth = 0u;
     deal_root_scope_push();
-    deal_string *key = deal_text_new(field, strlen(field));
-    if (key == NULL) {
-        deal_platform_fault("json: deep walk key allocation failed");
-    }
-    (void)deal_root_scope_hold(key);
+    size_t index = strcmp(field, "list") == 0 ? 1u : 0u;
     deal_data current = root;
     while (current.tag == DEAL_DATA_CLASS && current.reference != NULL) {
-        deal_table *fields = (deal_table *)current.reference;
-        if (!deal_container_table_has(fields, key)) {
-            break;
-        }
-        deal_data next = deal_container_table_read(fields, key);
+        deal_check_input input;
+        uint8_t present = 0u;
+        if (!test_read_field(&current, index, &input, &present, &node_layout)
+                || !present) break;
+        deal_data next = input.datum;
         if (next.tag == DEAL_DATA_NULL || next.tag == DEAL_DATA_UNDEFINED) {
             break;
         }
@@ -1549,8 +1920,8 @@ static void observe_class_depth(const char *label, int through_array,
     deal_platform_release(json);
     deal_root_scope_push();
     (void)deal_root_scope_hold(text);
-    deal_outcome_data decoded = deal_json_from_class(text, &node_plan,
-        test_lookup, NULL, &call_origin);
+    deal_outcome_data decoded = deal_json_decode(text,
+        deal_descriptor_intern(node_atom), test_lookup, NULL, &call_origin);
     printf("CLASSDEEP\t%s\t%u\t", label, (unsigned)depth);
     if (decoded.error != NULL) {
         printf("ERROR\t");
@@ -1567,6 +1938,42 @@ static void observe_class_depth(const char *label, int through_array,
     (void)deal_root_scope_hold_data(&decoded.value);
     printf("%u\n", (unsigned)count_class_depth(decoded.value,
         through_array != 0 ? "list" : "child", through_array));
+    deal_root_scope_pop();
+}
+
+/* Compare live reconstruction inputs with the identical parsed document.
+ * This asserts reachability, not a timing/allocation-count threshold. The
+ * numeric field contributes no managed child and the callback has not yet
+ * allocated the instance, so both live heaps must contain the same objects. */
+static void observe_decode_scratch_lifetime(void) {
+    deal_root_scope_push();
+    deal_string *text = deal_text_new("{\"id\":7}", 8u);
+    (void)deal_root_scope_hold(text);
+    deal_descriptor *target = deal_descriptor_intern(inner_atom);
+    deal_root_scope_push();
+    deal_outcome_data parsed = deal_json_parse(text, &call_origin);
+    check(parsed.error == NULL, "scratch lifetime reference document parses");
+    (void)deal_root_scope_hold_data(&parsed.value);
+    deal_gc_collect_full();
+    deal_gc_statistics_record statistics;
+    deal_gc_statistics(&statistics);
+    decode_document_objects = statistics.object_count;
+    deal_root_scope_pop();
+    deal_gc_collect_full();
+    check_decode_scratch = 1;
+    deal_outcome_data decoded = deal_json_decode(text, target,
+        test_lookup, NULL, &call_origin);
+    check_decode_scratch = 0;
+    check(decoded.error == NULL && decoded.value.tag == DEAL_DATA_CLASS,
+        "scratch lifetime reconstruction still publishes its instance");
+    (void)deal_root_scope_hold_data(&decoded.value);
+    deal_gc_collect_full();
+    deal_check_input field;
+    uint8_t present = 0u;
+    check(test_read_field(&decoded.value, 0u, &field, &present, &inner_layout)
+            && present && field.datum.tag == DEAL_DATA_NUMBER
+            && field.datum.number == 7.0,
+        "constructed field survives lookup scratch reclamation");
     deal_root_scope_pop();
 }
 
@@ -1647,8 +2054,11 @@ static void run_acceptance(void) {
     observe_depth("nested-2000", 2000u);
 
     observe_encode_rules();
+    observe_reference_array_encoding();
     observe_stdlib();
     observe_class_walks();
+    observe_decode_scratch_lifetime();
+    observe_live_alias_descriptors();
 
     deal_platform_flush_stdout();
     deal_platform_flush_stderr();
@@ -1657,6 +2067,12 @@ static void run_acceptance(void) {
         printf("FAILURES: %d\n", failures);
         deal_platform_exit(1);
     }
+}
+
+/* Deliberately incomplete declaration lookup; fixture-only producer defect. */
+static const deal_json_class_plan *incomplete_lookup(const char *atom, void *context) {
+    (void)atom;
+    return (const deal_json_class_plan *)context;
 }
 
 /* One deterministic producer or invariant defect, selected at run time so one
@@ -1682,27 +2098,23 @@ static void run_defect(int selection) {
         deal_json_class_plan incomplete = inner_plan;
         incomplete.construct = NULL;
         deal_string *text = deal_text_new("{\"id\":1}", 8u);
-        (void)deal_json_from_class(text, &incomplete, test_lookup, NULL,
-                                   &call_origin);
+        (void)deal_json_decode(text, deal_descriptor_intern(inner_atom),
+            incomplete_lookup, &incomplete, &call_origin);
         break;
     }
     case 6: {
-        /* An instance whose recorded class is not the plan's class: the field
-         * seam refuses it and the walk reports the invariant fault. */
+        /* A lookup with a substituted sibling plan: actual nominal identity
+         * still comes from the instance's registered access seam. */
         deal_root_scope_push();
         deal_data instance = build_instance(&outer_layout);
-        (void)deal_json_to_class(&inner_plan, &instance, test_lookup, NULL,
-                                 &call_origin);
+        outer_plan = inner_plan;
+        (void)deal_json_stringify(instance, &call_origin);
         deal_root_scope_pop();
         break;
     }
     case 7: {
         /* An array whose element layout is not one of the runtime's boxed
          * element layouts: the element read is the invariant fault. */
-        static const deal_layout emitted_layouts[] = {
-            { DEAL_LAYOUT_EMITTED_BASE, 0u, 8u, NULL, 0u }
-        };
-        deal_layout_install(emitted_layouts, 1u);
         deal_root_scope_push();
         deal_array *array = deal_container_array_new_typed(
             DEAL_LAYOUT_EMITTED_BASE,
@@ -1717,8 +2129,7 @@ static void run_defect(int selection) {
         put_field(instance, "tags", deal_data_of_reference(DEAL_DATA_ARRAY, array));
         put_field(instance, "props", empty_record());
         put_field(instance, "items", inner_array(0.0 / 0.0, 0.0 / 0.0));
-        (void)deal_json_to_class(&outer_plan, &instance, test_lookup, NULL,
-                                 &call_origin);
+        (void)deal_json_stringify(instance, &call_origin);
         deal_root_scope_pop();
         break;
     }

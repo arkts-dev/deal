@@ -1,6 +1,6 @@
 // @spec: Modules, declarations, standard library, and host ABI — Package manifest
-// @description: File-version directives are rejected; the project manifest owns the version
-// @expected: compile-error E1044
+// @description: Version-like comments are whitespace; the project manifest alone owns the version
+// @expected: compile-ok
 // @features: directives, modules, v1.4
 
 // @deal-version 1.3

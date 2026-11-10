@@ -3,8 +3,6 @@
 // production backend and run its exported main:
 //   deal compile src/main.deal --backend luajit|jvm|js --output <dir>
 
-import * as console from "std/console";
-import * as json from "std/json";
 import * as math from "std/math";
 import * as strings from "std/string";
 import * as tables from "std/table";
@@ -118,7 +116,7 @@ function useTables(): number {
 }
 
 function useJson(): string {
-  let raw: Record<string, unknown> = json.parse("{\"name\":\"Ada\",\"score\":7}");
+  let raw: Record<string, unknown> = JSON.parse("{\"name\":\"Ada\",\"score\":7}");
   let name: string = raw.name as string;
   let score: number = raw.score as number;
   if (name !== "Ada") {
@@ -127,7 +125,7 @@ function useJson(): string {
   if (score !== 7) {
     fail("json score mismatch");
   }
-  return json.stringify(raw) as string;
+  return JSON.stringify(raw) as string;
 }
 
 function useMath(): number {

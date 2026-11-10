@@ -2,7 +2,7 @@
 // @description: callable-bad-signature-root
 // @expected: runtime-ok
 // @features: boundary-validation
-import * as console from "std/console";
+import * as printer from "std/console";
 import * as host from "host/probe";
 
-export function main():null{try{let u=host.f();console.log("PUBLISHED");}catch(e){console.log("REJECT");}return null;}
+export function main():null{try{let u=host.f();printer.log("PUBLISHED");}catch(e){printer.log("REJECT");}return null;}

@@ -42,7 +42,7 @@ public class DistributionHomeTest {
         testClasspathResourceTier();
         testDealHomeFilesystemTier();
         testCwdFallbackTier();
-        testAllSixModulesResolverDriven();
+        testAllModulesResolverDriven();
         testFileAtStdIsNotASurface();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
@@ -61,11 +61,15 @@ public class DistributionHomeTest {
         Path project = tempDir("project-local");
         Path classpathRoot = tempDir("project-local-cp");
         Path dealHome = tempDir("project-local-home");
+        writeText(classpathRoot.resolve("deal/json.lua"), "resource JSON\n");
+        writeText(dealHome.resolve("deal/json.lua"), "home JSON\n");
 
         writeText(project.resolve("std/console.d.deal"),
             "export function projectConsole(): null;\n");
         writeText(project.resolve("std/console.lua"),
             "project console lua\n");
+        writeText(project.resolve("deal/json.lua"),
+            "forbidden project JSON override\n");
 
         writeText(classpathRoot.resolve("std/console.d.deal"),
             "export function resourceConsole(): null;\n");
@@ -130,6 +134,8 @@ public class DistributionHomeTest {
                 "runtime resolves from classpath resources (beats DEAL_HOME)");
             checkBytes("resource runtime\n", readAll(runtime),
                 "runtime bytes are the classpath-resource bytes");
+            checkRuntimeResource(home, "deal/json.lua",
+                DistributionHome.TIER_CLASSPATH_RESOURCES, "resource JSON\n");
 
             Map<String, Map<String, Type>> exports =
                 StdlibModuleResolver.stdlibExports(home);
@@ -157,6 +163,8 @@ public class DistributionHomeTest {
         Path manifestDir = tempDir("classpath-manifest");
         Path classpathRoot = tempDir("classpath-root");
         Path dealHome = tempDir("classpath-home");
+        writeText(classpathRoot.resolve("deal/json.lua"), "resource JSON\n");
+        writeText(dealHome.resolve("deal/json.lua"), "home JSON\n");
 
         writeText(classpathRoot.resolve("std/console.d.deal"),
             "export function resourceConsole(): null;\n");
@@ -219,6 +227,8 @@ public class DistributionHomeTest {
                 "runtime wins the classpath-resource tier (beats DEAL_HOME)");
             checkBytes("resource runtime\n", readAll(runtime),
                 "runtime bytes are the classpath-resource bytes");
+            checkRuntimeResource(home, "deal/json.lua",
+                DistributionHome.TIER_CLASSPATH_RESOURCES, "resource JSON\n");
 
             Map<String, Map<String, Type>> exports =
                 StdlibModuleResolver.stdlibExports(home);
@@ -247,6 +257,7 @@ public class DistributionHomeTest {
         Path manifestDir = tempDir("home-manifest");
         Path classpathRoot = tempDir("home-classpath");
         Path dealHome = tempDir("home-root");
+        writeText(dealHome.resolve("deal/json.lua"), "home JSON\n");
 
         // The classpath carries resources but lacks the std/ prefix.
         writeText(classpathRoot.resolve("unrelated.txt"),
@@ -309,6 +320,8 @@ public class DistributionHomeTest {
                     + " (beats the checkout CWD)");
             checkBytes("home runtime\n", readAll(runtime),
                 "runtime bytes are the DEAL_HOME bytes");
+            checkRuntimeResource(home, "deal/json.lua",
+                DistributionHome.TIER_DISTRIBUTION_HOME, "home JSON\n");
 
             Map<String, Map<String, Type>> exports =
                 StdlibModuleResolver.stdlibExports(home);
@@ -404,6 +417,8 @@ public class DistributionHomeTest {
             "runtime read wins the CWD fallback tier");
         checkBytes(readRepoFile("deal/runtime.lua"), readAll(runtime),
             "runtime bytes are the checkout deal/runtime.lua bytes");
+        checkRuntimeResource(home, "deal/json.lua",
+            DistributionHome.TIER_CWD_FALLBACK, readRepoFile("deal/json.lua"));
 
         Optional<DistributionHome.ResolvedSource> jsRuntime =
             home.resolveRuntimeSource("deal/runtime.js");
@@ -419,15 +434,18 @@ public class DistributionHomeTest {
     }
 
     // =========================================================================
-    // All six spec-listed modules resolve in each environment
+    // All five spec-listed modules resolve in each environment
     // =========================================================================
 
-    private static void testAllSixModulesResolverDriven() throws Exception {
-        System.out.println("-- All six spec-listed modules in each environment");
+    private static void testAllModulesResolverDriven() throws Exception {
+        System.out.println("-- All five spec-listed modules in each environment");
 
-        // Classpath-resource environment: the six real declarations with
-        // per-module marker exports.
-        Path classpathRoot = tempDir("six-classpath");
+        // Classpath-resource environment: the five real declarations with
+        // per-module marker exports. Retired assets cannot grant resolution.
+        Path classpathRoot = tempDir("stdlib-classpath");
+        writeText(classpathRoot.resolve("std/json.d.deal"), "export function parse(s:string):unknown;\n");
+        writeText(classpathRoot.resolve("std/json.lua"), "return {}\n");
+        writeText(classpathRoot.resolve("std/json.js"), "module.exports={};\n");
         for (String name : StdlibModuleResolver.SPEC_STDLIB_MODULES
                 .stream().map(m -> m.substring("std/".length())).toList()) {
             String marker = "export function marker_" + name
@@ -435,9 +453,16 @@ public class DistributionHomeTest {
             writeText(classpathRoot.resolve("std/" + name + ".d.deal"),
                 marker + readRepoFile("std/" + name + ".d.deal"));
         }
-        Path manifestDir = tempDir("six-manifest");
+        Path manifestDir = tempDir("stdlib-manifest");
+        writeText(manifestDir.resolve("std/json.d.deal"), "export function parse(s:string):unknown;\n");
+        writeText(manifestDir.resolve("std/json.lua"), "return {}\n");
+        writeText(manifestDir.resolve("std/json.js"), "module.exports={};\n");
         DistributionHome resourceHome = DistributionHome.forManifestDirectory(
             manifestDir.toString(), loaderOver(classpathRoot));
+        check(resourceHome.resolveStdlibDeclaration("json").isEmpty()
+                && resourceHome.resolveStdlibImplementation("json", "lua").isEmpty()
+                && resourceHome.resolveStdlibImplementation("json", "js").isEmpty(),
+            "local and classpath retired JSON assets do not resolve as stdlib resources");
         for (String name : DistributionHome.SPEC_STDLIB_MODULE_NAMES) {
             Optional<DistributionHome.ResolvedSource> decl =
                 resourceHome.resolveStdlibDeclaration(name);
@@ -464,9 +489,9 @@ public class DistributionHomeTest {
                     + " parses through the resolver with its marker export");
         }
 
-        // DEAL_HOME environment: resources lack the std/ prefix, all six
+        // DEAL_HOME environment: resources lack the std/ prefix, all five
         // declarations live under $DEAL_HOME/std.
-        Path dealHome = tempDir("six-home");
+        Path dealHome = tempDir("stdlib-home");
         for (String name : StdlibModuleResolver.SPEC_STDLIB_MODULES
                 .stream().map(m -> m.substring("std/".length())).toList()) {
             String marker = "export function marker_" + name
@@ -474,7 +499,7 @@ public class DistributionHomeTest {
             writeText(dealHome.resolve("std/" + name + ".d.deal"),
                 marker + readRepoFile("std/" + name + ".d.deal"));
         }
-        Path emptyClasspath = tempDir("six-empty-cp");
+        Path emptyClasspath = tempDir("stdlib-empty-cp");
         System.setProperty(DistributionHome.DEAL_HOME_PROPERTY,
             dealHome.toString());
         try {
@@ -509,7 +534,7 @@ public class DistributionHomeTest {
             System.clearProperty(DistributionHome.DEAL_HOME_PROPERTY);
         }
 
-        // CWD environment: all six resolve from the checkout.
+        // CWD environment: all five resolve from the checkout.
         DistributionHome cwdHome = DistributionHome.forManifestDirectory(
             manifestDir.toString(), loaderOver(emptyClasspath));
         for (String name : DistributionHome.SPEC_STDLIB_MODULE_NAMES) {
@@ -586,6 +611,14 @@ public class DistributionHomeTest {
     private static void writeText(Path file, String text) throws IOException {
         Files.createDirectories(file.getParent());
         Files.writeString(file, text);
+    }
+
+    private static void checkRuntimeResource(DistributionHome home, String resource,
+                                             String tier, String expected) throws IOException {
+        Optional<DistributionHome.ResolvedSource> source = home.resolveRuntimeSource(resource);
+        check(source.isPresent() && tier.equals(source.get().tier()),
+            resource + " resolves from " + tier + " without a project-local runtime tier");
+        checkBytes(expected, readAll(source), resource + " retains the selected tier's bytes");
     }
 
     private static String readRepoFile(String relative) throws IOException {

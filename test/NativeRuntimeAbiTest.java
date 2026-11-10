@@ -96,6 +96,7 @@ public final class NativeRuntimeAbiTest {
             System.out.println("native compiler: " + NativeCompiler.compiler().path()
                 + " (major " + NativeCompiler.compiler().major() + ")");
             testToolchainPin();
+            testSanitizerRelaunchClassification();
             testPublishedUnitsCompileCleanly();
             testAbiRecordConformance();
             testNullishRepresentation();
@@ -474,6 +475,7 @@ public final class NativeRuntimeAbiTest {
             terminalSuccessAndDeferral(level);
             terminalProjectsACarriedEntryError(level);
             terminalProjectsACarriedStartError(level);
+            terminalPreservesTextSpans(level);
         }
     }
 
@@ -607,6 +609,48 @@ public final class NativeRuntimeAbiTest {
                 + level + ": " + driven.describe());
         checkEq("", driven.stderr(),
             "the driver projection writes no stderr at -O" + level);
+    }
+
+    private static void terminalPreservesTextSpans(int level) throws IOException {
+        Path product = buildProduct(level, "12", "terminal-spans-o" + level);
+        if (product == null) return;
+        String expected = "DEAL_ERROR_CODE: A\0B\nDEAL_ERROR_SNAPSHOT: "
+            + "{\"code\":\"A\\u0000B\",\"message\":\"C\\u0000D\\uD800\","
+            + "\"sourceFile\":\"native/terminal-fixture.deal\",\"line\":7,\"column\":3,\"frames\":3,"
+            + "\"cause\":\"E\\u0000\\uDFFF\"}\n";
+        for (boolean driver : new boolean[]{false, true}) {
+            for (boolean sanitized : new boolean[]{false, true}) {
+                Path executable = product;
+                if (sanitized || driver) {
+                    executable = scratch.resolve("terminal-spans-driver-" + driver
+                        + "-sanitized-" + sanitized + "-o" + level);
+                    var flags = new ArrayList<String>();
+                    if (sanitized) flags.addAll(NativeCompiler.SANITIZER_FLAGS);
+                    flags.add("-DDEAL_STUB_CASE=12");
+                    var units = List.of(fixture("module_stub.c"), fixture("registry_empty.c"));
+                    var link = NativeCompiler.link(published, level,
+                        driver ? NativeCompiler.driverSources(published, units, fixture("driver_main.c"))
+                            : NativeCompiler.productSources(published, units), flags, executable);
+                    check(link.succeeded(), "terminal spans build at -O" + level
+                        + " driver=" + driver + " sanitized=" + sanitized + ": " + link.describe());
+                    if (!link.succeeded()) continue;
+                }
+                for (boolean stress : new boolean[]{false, true}) {
+                    Map<String,String> environment = new java.util.HashMap<>();
+                    environment.put("DEAL_GC_STRESS", stress ? "1" : "0");
+                    if (sanitized) environment.putAll(NativeCompiler.sanitizerEnvironment());
+                    NativeCompiler.Result run = sanitized
+                        ? NativeCompiler.runSanitized(executable, scratch, environment).result()
+                        : NativeCompiler.execute(executable, scratch, environment);
+                    String configuration = " at -O" + level + " driver=" + driver
+                        + " sanitized=" + sanitized + " stress=" + stress;
+                    checkEq(1, run.exitCode(), "lossless terminal exits 1" + configuration);
+                    checkEq((driver ? "load:start\nload:done\nmain:start\n" : "") + expected,
+                        run.stdout(), "terminal raw code and escaped snapshot retain post-NUL text" + configuration);
+                    checkEq("", run.stderr(), "lossless terminal stderr" + configuration);
+                }
+            }
+        }
     }
 
     private static void terminalProjectsACarriedStartError(int level)
@@ -833,10 +877,10 @@ public final class NativeRuntimeAbiTest {
      * the sanitizer does not intercept (a C11-created thread would run without
      * a registered shadow stack and abort inside the thread start); and a host
      * whose address-space-randomization entropy puts the sanitizer's shadow
-     * mapping out of reach cannot start any instrumented process, so the same
-     * instrumented product is relaunched with randomization disabled for that
-     * child only. Both are properties of the sanitizer runtime, not of the
-     * queue, and every acceptance assertion is still applied to the run.</p>
+     * mapping out of reach launches the instrumented product with randomization
+     * disabled for that child when available. Only explicit shadow-mapping
+     * startup failures permit bounded relaunches. Both accommodations concern
+     * the sanitizer runtime, not the queue; every assertion still applies.</p>
      */
     private static void testCompletionQueueRaceProbe() throws IOException {
         System.out.println("-- the instrumented completion-queue probe --");
@@ -858,13 +902,11 @@ public final class NativeRuntimeAbiTest {
         NativeCompiler.Result run = sanitized.result();
         boolean relaunched = sanitized.relaunched();
         if (relaunched) {
-            System.out.println("   (the sanitizer's shadow mapping needs "
-                + "address-space randomization disabled on this host; "
-                + "the same instrumented product was relaunched)");
+            System.out.println("   (explicit sanitizer shadow-mapping startup "
+                + "failure; the same instrumented product was relaunched)");
         }
         String where = relaunched
-            ? " (relaunched with address-space randomization disabled for the "
-                + "child only)" : "";
+            ? " (same instrumented product relaunched after an explicit shadow-mapping startup failure)" : "";
         checkEq(0, run.exitCode(), "the instrumented concurrent queue workload "
             + "exits zero" + where + ": " + run.describe());
         checkEq("queue ok\n", run.stdout(), "the instrumented concurrent queue "
@@ -980,6 +1022,82 @@ public final class NativeRuntimeAbiTest {
                 "the missing-definition failure names " + symbol + ": "
                     + partialLink.stderr());
         }
+    }
+
+    /** Only explicit shadow-memory initialization failures permit a relaunch. */
+    private static void testSanitizerRelaunchClassification() throws IOException {
+        String shadow = "Shadow memory range interleaves with an existing memory mapping. ASan cannot proceed correctly. ABORTING.\n";
+        String reserve = "ReserveShadowMemoryRange failed while trying to map 0x1000 bytes\n";
+        String thread = "FATAL: ThreadSanitizer: unexpected memory mapping 0x1000-0x2000\n";
+        for (String diagnostic : List.of(shadow, reserve, thread)) {
+            check(NativeCompiler.sanitizerStartupFailure(
+                new NativeCompiler.Result(1, "", diagnostic)),
+                "explicit shadow initialization failure permits a relaunch");
+            check(!NativeCompiler.sanitizerStartupFailure(
+                new NativeCompiler.Result(0, "", diagnostic)),
+                "successful execution never permits a relaunch");
+            check(!NativeCompiler.sanitizerStartupFailure(
+                new NativeCompiler.Result(1, "workload reached\n", diagnostic)),
+                "workload stdout prevents a startup relaunch");
+            for (String finding : List.of("ERROR: AddressSanitizer: heap-use-after-free\n",
+                    "WARNING: ThreadSanitizer: data race\n", "runtime error: signed overflow\n",
+                    "AddressSanitizer:DEADLYSIGNAL\n", "DEAL_RUNTIME_FAULT: json: invalid plan\n")) {
+                check(!NativeCompiler.sanitizerStartupFailure(
+                    new NativeCompiler.Result(66, "", diagnostic + finding)),
+                    "a real sanitizer report outranks shadow startup text");
+            }
+        }
+        int index = 0;
+        for (String diagnostic : List.of("", "AddressSanitizer:DEADLYSIGNAL\n",
+                "Segmentation fault\n", "DEAL_RUNTIME_FAULT: json: invalid plan\n",
+                "ERROR: AddressSanitizer: heap-use-after-free\n",
+                "WARNING: ThreadSanitizer: data race\n", "runtime error: signed overflow\n",
+                shadow + "ERROR: AddressSanitizer: heap-use-after-free\n",
+                thread + "WARNING: ThreadSanitizer: data race\n")) {
+            check(!NativeCompiler.sanitizerStartupFailure(
+                new NativeCompiler.Result(66, "", diagnostic)),
+                "silent, signal, invariant and sanitizer failures cannot relaunch");
+            Path counter = scratch.resolve("sanitizer-run-count-" + index);
+            Path child = scratch.resolve("sanitizer-rejection-" + index++);
+            Files.writeString(child, "#!/bin/sh\nprintf 'run\\n' >> \"$DEAL_RUN_COUNTER\"\n"
+                + "printf '%s' \"$DEAL_RUN_DIAGNOSTIC\" >&2\nexit 66\n");
+            if (!child.toFile().setExecutable(true))
+                throw new IOException("cannot make sanitizer classification child executable");
+            var observed = NativeCompiler.runSanitized(child, scratch,
+                Map.of("DEAL_RUN_COUNTER", counter.toString(), "DEAL_RUN_DIAGNOSTIC", diagnostic));
+            check(!observed.relaunched(), "a workload failure executes without a relaunch");
+            checkEq(66, observed.result().exitCode(), "workload failure exit is preserved");
+            checkEq("", observed.result().stdout(), "silent workload stdout is preserved");
+            checkEq(diagnostic, observed.result().stderr(), "workload diagnostic is preserved");
+            checkEq("run\n", Files.readString(counter), "failed workload executes exactly once");
+        }
+        Path signalCounter = scratch.resolve("sanitizer-signal-count");
+        Path signaled = scratch.resolve("sanitizer-signaled-child");
+        Files.writeString(signaled, "#!/bin/sh\nprintf 'run\\n' >> \"$DEAL_RUN_COUNTER\"\nkill -KILL \"$$\"\n");
+        if (!signaled.toFile().setExecutable(true))
+            throw new IOException("cannot make signaled child executable");
+        var killed = NativeCompiler.runSanitized(signaled, scratch,
+            Map.of("DEAL_RUN_COUNTER", signalCounter.toString()));
+        check(!killed.relaunched(), "an actual silent signal never permits relaunch");
+        checkEq(137, killed.result().exitCode(), "actual signal exit is preserved");
+        checkEq("", killed.result().stdout(), "actual signal stdout stays empty");
+        checkEq("", killed.result().stderr(), "actual signal stderr stays empty");
+        checkEq("run\n", Files.readString(signalCounter), "signaled child executes exactly once");
+
+        Path mappingCounter = scratch.resolve("sanitizer-mapping-count");
+        Path mapping = scratch.resolve("sanitizer-mapping-child");
+        Files.writeString(mapping, "#!/bin/sh\nprintf 'run\\n' >> \"$DEAL_RUN_COUNTER\"\n"
+            + "printf '%s' \"$DEAL_RUN_DIAGNOSTIC\" >&2\nexit 66\n");
+        if (!mapping.toFile().setExecutable(true))
+            throw new IOException("cannot make mapping child executable");
+        var unmapped = NativeCompiler.runSanitized(mapping, scratch,
+            Map.of("DEAL_RUN_COUNTER", mappingCounter.toString(), "DEAL_RUN_DIAGNOSTIC", shadow));
+        boolean canRelaunch = NativeCompiler.disableAslrCommand(mapping) != null;
+        checkEq(canRelaunch, unmapped.relaunched(), "explicit mapping retry requires the child launcher");
+        checkEq(66, unmapped.result().exitCode(), "exhausted mapping failure stays a failure");
+        checkEq(shadow, unmapped.result().stderr(), "exhausted mapping diagnostic is preserved");
+        checkEq("run\n".repeat(canRelaunch ? 1 + NativeCompiler.SANITIZER_RELAUNCH_ATTEMPTS : 1),
+            Files.readString(mappingCounter), "explicit mapping relaunches obey the fixed bound");
     }
 
     // =========================================================================

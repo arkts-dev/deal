@@ -165,7 +165,9 @@ public final class SharedStdlibSemantics {
         }
 
         /** A table value carrying its first-insertion-order model. */
-        record Table(SemanticTable<Value> table) implements Value {
+        record Table(SemanticTable<Value> table, deal.semantic.ir.ClassLayout layout) implements Value {
+
+            public Table(SemanticTable<Value> table) { this(table, null); }
 
             public Table {
                 Objects.requireNonNull(table, "table must not be null");
@@ -173,12 +175,15 @@ public final class SharedStdlibSemantics {
 
             @Override
             public ActualKind actualKind() {
-                return ActualKind.TABLE;
+                return layout == null ? ActualKind.TABLE : ActualKind.CLASS;
             }
         }
 
-        /** An array value carrying its ordered element model. */
-        record Array(SemanticArray<Value> elements) implements Value {
+        /** An array value carrying its ordered element model and persistent descriptor. */
+        record Array(SemanticArray<Value> elements,
+                     deal.semantic.ir.RuntimeDescriptor elementDescriptor) implements Value {
+
+            public Array(SemanticArray<Value> elements) { this(elements, null); }
 
             public Array {
                 Objects.requireNonNull(elements, "elements must not be null");
@@ -200,7 +205,10 @@ public final class SharedStdlibSemantics {
          * never the {@code class:} IR/trace spelling; no other algorithm
          * consumes an {@code Other} value.
          */
-        record Other(ActualKind kind, java.lang.String classId) implements Value {
+        record Other(ActualKind kind, java.lang.String classId,
+                     deal.semantic.ir.BoundaryValueView boundaryView) implements Value {
+
+            public Other(ActualKind kind, java.lang.String classId) { this(kind, classId, null); }
 
             public Other {
                 Objects.requireNonNull(kind, "kind must not be null");
@@ -575,29 +583,7 @@ public final class SharedStdlibSemantics {
     }
 
     /**
-     * Attaches the walk's internal position metadata to one rendered arm
-     * failure: the {@code JSON_TO_ERROR} row's {@code fieldPath} key with
-     * the walk's own spelling (owned here) beside the arm's actual token.
-     * The visible tuple stays exactly the arm's own render — the metadata
-     * is internal and the emitted runtimes carry no such field; the
-     * failure's own fields are never re-derived here.
-     */
-    private static BoundaryFailure withWalkMetadata(BoundaryFailure rendered,
-                                                    String fieldPath) {
-        Map<String, String> metadata = new LinkedHashMap<>();
-        for (String key : FailureContractRegistry.row(rendered.policy()).metadataKeys()) {
-            switch (key) {
-                case "fieldPath" -> metadata.put(key, fieldPath);
-                case "actual" -> metadata.put(key, rendered.actual());
-                default -> { }
-            }
-        }
-        return new BoundaryFailure(rendered.policy(), rendered.code(), rendered.message(),
-            rendered.expected(), rendered.actual(), metadata, rendered.cause());
-    }
-
-    /**
-     * The std/json rejection arm's carrier classification of one semantic
+     * The builtin encoding rejection arm's carrier classification of one semantic
      * value (P2 item 2 with the arm's two pinned members): the absent
      * marker is {@code nil}, a DEAL function value is {@code function},
      * and every other table-carried value
@@ -619,7 +605,7 @@ public final class SharedStdlibSemantics {
                 case MISSING -> FailureProjections.CarrierKind.ABSENT;
                 case FUNCTION -> FailureProjections.CarrierKind.DEAL_FUNCTION;
                 case CLASS, ASYNC_OPERATION -> FailureProjections.CarrierKind.TABLE;
-                default -> throw new Defect("the std/json rejection arm carries no "
+                default -> throw new Defect("the stringify rejection arm carries no "
                     + "carrier kind for the actual kind " + other.kind()
                     + " (producer defect)");
             };
@@ -912,20 +898,15 @@ public final class SharedStdlibSemantics {
     }
 
     /**
-     * The internal stringify failure: the first declaration-order path and
-     * the failing value's carrier kind (the arm's actual projection).
+     * The first reached unsupported carrier during builtin serialization.
      */
     private static final class JsonStringifyFailure extends RuntimeException {
 
         private static final long serialVersionUID = 1L;
 
-        final String fieldPath;
         final FailureProjections.CarrierKind carrierKind;
 
-        JsonStringifyFailure(String fieldPath, FailureProjections.CarrierKind carrierKind) {
-            super("value at " + fieldPath + " is not JSON serializable: "
-                + FailureProjections.carrierKindToken(carrierKind));
-            this.fieldPath = fieldPath;
+        JsonStringifyFailure(FailureProjections.CarrierKind carrierKind) {
             this.carrierKind = carrierKind;
         }
     }
@@ -978,36 +959,14 @@ public final class SharedStdlibSemantics {
     }
 
     /**
-     * {@code JSON_STRINGIFY}: finite acyclic JSON-shaped data
-     * (string-keyed objects, arrays, and null/boolean/int/number/string
-     * leaves); object fields in first-insertion order, arrays in index
-     * order; RFC-8259 escaping (control characters U+0000–U+001F as the
-     * named short escapes {@code \b \f \n \r \t} or {@code \\u00XX},
-     * quote, backslash; surrogate pairs emitted as raw scalar UTF-8);
-     * shortest round-trippable decimal number formatting
-     * ({@link deal.semantic.ir.NumberSemantics}); the first unsupported value in
-     * declaration order fails through the
-     * {@code JSON_STRINGIFY_UNSUPPORTED} arm — E8001
-     * {@code unsupported type for JSON encoding: {actual}} with the
-     * arm's own pinned expected text and actual = the failing value's
-     * carrier-kind projection ({@code nil}, {@code table},
-     * {@code function}, {@code number}, {@code string}),
-     * origin = the call origin. The walker's field path stays internal
-     * and never surfaces. Unsupported values and nonfinite numbers fail
-     * through that arm; a path-local container re-entry (a true cycle)
-     * fails through the walk family's closed cycle arm — E8001
-     * {@code cyclic value cannot be encoded as JSON} with no parameters
-     * and no expected/actual; acyclic finite data never fails, shared
-     * acyclic children are duplicated rather than rejected.
-     *
-     * <p>{@code {fieldPath}} spelling (owned here): a dot-separated
-     * pre-order traversal from the root value — table fields append the
-     * field name, array elements append the 0-based element index, and
-     * the root itself has the empty path ({@code {"a": [1, fn]}} fails
-     * at {@code a.1}). The first failure in declaration order wins:
-     * table keys in first-insertion order, array elements in index
-     * order, pre-order depth-first.</p>
-     *
+     * Builtin JSON serialization follows numeric-key/creation order for Records,
+     * declaration order for classes and index order for arrays. Validate declared
+     * positions as reached, before omission or substitution, with ordinary typed
+     * failures and array leaf causes. Undefined/functions omit in objects and
+     * substitute null in arrays; nonfinite numbers encode as null. Unsupported
+     * presentations and path-local cycles retain separate closed arms at the
+     * operation origin. Shared acyclic children encode independently. Traversal
+     * uses explicit frames and original container identities, with no depth cap.
      */
     public static Outcome<Value> jsonStringify(SourceOrigin origin, SemanticTable<Value> table) {
         return jsonStringify(origin, new Value.Table(table));
@@ -1026,60 +985,83 @@ public final class SharedStdlibSemantics {
         Set<Object> path = Collections.newSetFromMap(new IdentityHashMap<>());
         try {
             stringifyRoot(out, value, path);
+        } catch (JsonPositionFailure failure) {
+            return new Outcome.Failure<>(new StdlibFailure(failure.failure, origin));
         } catch (JsonStringifyCycle cycle) {
             // The walk family's closed cycle arm: the needle's own fact
             // selects the arm at the call origin, with no parameters and
             // no expected/actual fields.
-            return failOf(FailurePolicyId.JSON_TO_ERROR, 2, null, null,
+            return failOf(FailurePolicyId.JSON_TO_ERROR, 1, null, null,
                 new LinkedHashMap<>(), origin);
         } catch (JsonStringifyFailure stringifyFailure) {
-            // The STDLIB_CALL(JSON_STRINGIFY) rejection: the
-            // JSON_STRINGIFY_UNSUPPORTED arm's own render — its pinned
-            // expected text and the carrier-kind projection of the
-            // failing value. The walk's own position (the {fieldPath}
-            // spelling owned here) stays internal metadata and is never
-            // part of the visible projection the three consumers compare.
             return new Outcome.Failure<>(new StdlibFailure(
-                withWalkMetadata(
-                    FailureProjections.stringifyUnsupported(
-                        stringifyFailure.carrierKind),
-                    stringifyFailure.fieldPath),
-                origin));
+                FailureProjections.stringifyUnsupported(stringifyFailure.carrierKind), origin));
         }
         return new Outcome.Success<>(Value.string(out.toString()));
     }
 
-    /**
-     * One node of the walk's lazy field path: the parent chain plus this
-     * node's segment. The dot-separated text is rendered only when a
-     * failure projects it, so a deep chain never builds a quadratic path
-     * prefix.
-     */
-    private static final class PathNode {
+    private record JsonArrayPosition(int index, deal.semantic.ir.RuntimeDescriptor descriptor,
+                                     Value value, JsonArrayPosition parent) {}
 
-        final PathNode parent;
-        final String segment;
-
-        PathNode(PathNode parent, String segment) {
-            this.parent = parent;
-            this.segment = segment;
-        }
+    private static final class JsonPositionFailure extends RuntimeException {
+        private static final long serialVersionUID = 1L;
+        final BoundaryFailure failure;
+        JsonPositionFailure(BoundaryFailure failure) { this.failure = failure; }
     }
 
-    /** Renders one child position's dot-separated path (the root path is empty). */
-    private static String pathText(PathNode parent, String segment) {
-        if (parent == null) {
-            return segment;
+    private static JsonPositionFailure jsonPositionFailure(BoundaryFailure leaf,
+                                                           JsonArrayPosition arrays) {
+        BoundaryFailure failure = leaf;
+        for (JsonArrayPosition position = arrays; position != null; position = position.parent()) {
+            String actual = position.value() instanceof Value.Array ? "array"
+                : FailureProjections.typedBoundaryToken(position.value().actualKind(),
+                    position.value() instanceof Value.Table table && table.layout() != null
+                        ? table.layout().classId().text() : null);
+            failure = FailureContractRegistry.render(FailureArmId.ARRAY_ELEMENT_KIND,
+                Map.of("oneBasedIndex", Integer.toString(position.index())),
+                position.descriptor().canonicalSpecText(), actual, leaf);
         }
-        ArrayDeque<String> segments = new ArrayDeque<>();
-        for (PathNode node = parent; node != null; node = node.parent) {
-            segments.push(node.segment);
+        return new JsonPositionFailure(failure);
+    }
+
+    /** Check only the reached position; descendants belong to the encoder stack. */
+    private static deal.semantic.ir.RuntimeDescriptor jsonPosition(
+            deal.semantic.ir.RuntimeDescriptor descriptor, Value value, JsonArrayPosition arrays) {
+        if (descriptor == null) return null;
+        if (descriptor instanceof deal.semantic.ir.RuntimeDescriptor.Nullable nullable) {
+            if (nullable.admitsNull() && value instanceof Value.Null
+                    || nullable.admitsUndefined() && jsonUndefined(value)) return null;
+            descriptor = nullable.inner();
         }
-        StringBuilder text = new StringBuilder();
-        for (String part : segments) {
-            text.append(part).append('.');
-        }
-        return text.append(segment).toString();
+        if (descriptor instanceof deal.semantic.ir.RuntimeDescriptor.Unknown) return null;
+        deal.semantic.ir.BoundaryValueView view = switch (value) {
+            case Value.Table table -> table.layout() == null
+                ? deal.semantic.ir.BoundaryValueView.of(ActualKind.TABLE)
+                : deal.semantic.ir.BoundaryValueView.ofClass(table.layout().classId().text());
+            case Value.Array array -> deal.semantic.ir.BoundaryValueView.ofArray(List.of())
+                .withArrayElementDescriptor(array.elementDescriptor());
+            case Value.Number number -> deal.semantic.ir.BoundaryValueView.ofNumber(number.value());
+            case Value.String string -> string.scalar() instanceof UnicodeScalars.Invalid
+                ? deal.semantic.ir.BoundaryValueView.ofInvalidUnicode(UnicodeScalars.Defect.MALFORMED)
+                : deal.semantic.ir.BoundaryValueView.of(ActualKind.STRING);
+            case Value.Other other -> other.boundaryView() != null ? other.boundaryView()
+                : other.kind() == ActualKind.CLASS
+                    ? deal.semantic.ir.BoundaryValueView.ofClass(other.classId())
+                    : deal.semantic.ir.BoundaryValueView.of(other.kind());
+            default -> deal.semantic.ir.BoundaryValueView.of(value.actualKind());
+        };
+        var outcome = deal.semantic.ir.BoundaryExecutor.check(
+            descriptor instanceof deal.semantic.ir.RuntimeDescriptor.Func
+                ? FailurePolicyId.FUNCTION_SIGNATURE : FailurePolicyId.TYPE_DESCRIPTOR,
+            descriptor, view, deal.semantic.ir.BoundaryContext.none());
+        if (outcome instanceof deal.semantic.ir.BoundaryOutcome.Fail fail)
+            throw jsonPositionFailure(fail.failure(), arrays);
+        return descriptor instanceof deal.semantic.ir.RuntimeDescriptor.Array array ? array.element() : null;
+    }
+
+    private static boolean jsonUndefined(Value value) {
+        return value instanceof Value.Undefined
+            || value instanceof Value.Other other && other.kind() == ActualKind.MISSING;
     }
 
     /**
@@ -1093,23 +1075,22 @@ public final class SharedStdlibSemantics {
         final SemanticTable<Value> table;
         final SemanticArray<Value> array;
         final List<String> keys;
-        final PathNode path;
+        deal.semantic.ir.ClassLayout layout;
+        deal.semantic.ir.RuntimeDescriptor elementDescriptor;
+        JsonArrayPosition arrays;
         int index;
         int emitted;
 
-        StringifyFrame(SemanticTable<Value> table, List<String> keys,
-                       PathNode path) {
+        StringifyFrame(SemanticTable<Value> table, List<String> keys) {
             this.table = table;
             this.array = null;
             this.keys = keys;
-            this.path = path;
         }
 
-        StringifyFrame(SemanticArray<Value> array, PathNode path) {
+        StringifyFrame(SemanticArray<Value> array) {
             this.table = null;
             this.array = array;
             this.keys = null;
-            this.path = path;
         }
     }
 
@@ -1123,7 +1104,7 @@ public final class SharedStdlibSemantics {
      */
     private static void stringifyRoot(StringBuilder out, Value root, Set<Object> path) {
         Deque<StringifyFrame> stack = new ArrayDeque<>();
-        stringifyChild(out, root, null, "", path, stack);
+        stringifyChild(out, root, path, stack, null, null);
         while (!stack.isEmpty()) {
             StringifyFrame frame = stack.peek();
             if (frame.table == null) {
@@ -1132,8 +1113,10 @@ public final class SharedStdlibSemantics {
                     if (i > 0) {
                         out.append(',');
                     }
-                    stringifyChild(out, frame.array.elementAt(i), frame.path,
-                        Integer.toString(i), path, stack);
+                    Value element = frame.array.elementAt(i);
+                    JsonArrayPosition arrays = frame.elementDescriptor == null ? frame.arrays
+                        : new JsonArrayPosition(i + 1, frame.elementDescriptor, element, frame.arrays);
+                    stringifyChild(out, element, path, stack, frame.elementDescriptor, arrays);
                 } else {
                     out.append(']');
                     path.remove(frame.array);
@@ -1150,15 +1133,28 @@ public final class SharedStdlibSemantics {
                         + " is not — a producer defect, never a projection");
                 }
                 SemanticTable.Lookup<Value> lookup = frame.table.get(key);
+                deal.semantic.ir.RuntimeDescriptor descriptor = null;
+                if (frame.layout != null) {
+                    var field = frame.layout.fields().get(i);
+                    descriptor = field.descriptor();
+                    if (lookup instanceof SemanticTable.Lookup.Missing<Value>) {
+                        if (field.required()) throw jsonPositionFailure(
+                            FailureProjections.kindFailure(frame.layout.classId().text(),
+                                frame.layout.classId().text()), frame.arrays);
+                        continue;
+                    }
+                }
                 if (!(lookup instanceof SemanticTable.Lookup.Present<Value> present)) {
                     throw new Defect("a table key returned by keys() is always present; got "
                         + "Missing for '" + key + "' — a producer defect, never a projection");
                 }
+                jsonPosition(descriptor, present.value(), frame.arrays);
                 if (jsonOmitted(present.value())) continue;
                 if (frame.emitted++ > 0) out.append(',');
                 appendJsonString(out, key);
                 out.append(':');
-                stringifyChild(out, present.value(), frame.path, key, path, stack);
+                stringifyChild(out, present.value(), path, stack,
+                    descriptor, frame.arrays);
             } else {
                 out.append('}');
                 path.remove(frame.table);
@@ -1169,24 +1165,24 @@ public final class SharedStdlibSemantics {
 
     /** Opens one table on the walk: the path-local cycle check, then the pending frame. */
     private static void openTable(StringBuilder out, SemanticTable<Value> table,
-                                  PathNode pathNode, Set<Object> path,
+                                  Set<Object> path,
                                   Deque<StringifyFrame> stack) {
         if (!path.add(table)) {
             throw new JsonStringifyCycle();
         }
         out.append('{');
-        stack.push(new StringifyFrame(table, table.keys(), pathNode));
+        stack.push(new StringifyFrame(table, table.keys()));
     }
 
     /** Opens one array on the walk: the path-local cycle check, then the pending frame. */
     private static void openArray(StringBuilder out, SemanticArray<Value> array,
-                                  PathNode pathNode, Set<Object> path,
+                                  Set<Object> path,
                                   Deque<StringifyFrame> stack) {
         if (!path.add(array)) {
             throw new JsonStringifyCycle();
         }
         out.append('[');
-        stack.push(new StringifyFrame(array, pathNode));
+        stack.push(new StringifyFrame(array));
     }
 
     /**
@@ -1195,9 +1191,12 @@ public final class SharedStdlibSemantics {
      * declaration-order failure wins (pre-order), exactly as the
      * recursive walk selected it.
      */
-    private static void stringifyChild(StringBuilder out, Value value, PathNode parentPath,
-                                       String segment, Set<Object> path,
-                                       Deque<StringifyFrame> stack) {
+    private static void stringifyChild(StringBuilder out, Value value, Set<Object> path,
+                                       Deque<StringifyFrame> stack,
+                                       deal.semantic.ir.RuntimeDescriptor descriptor,
+                                       JsonArrayPosition arrays) {
+        var elementDescriptor = jsonPosition(descriptor, value, arrays);
+        int depth = stack.size();
         switch (value) {
             case Value.Null ignored -> out.append("null");
             case Value.Undefined ignored -> out.append("null");
@@ -1211,18 +1210,30 @@ public final class SharedStdlibSemantics {
                 if (string.scalar() instanceof UnicodeScalars.Invalid) {
                     // An invalid scalar sequence is still a string carrier
                     // on the carrier-kind projection.
-                    throw new JsonStringifyFailure(pathText(parentPath, segment),
-                        FailureProjections.CarrierKind.STRING);
+                    throw new JsonStringifyFailure(FailureProjections.CarrierKind.STRING);
                 }
                 appendJsonString(out, ((UnicodeScalars.Valid) string.scalar()).carrier());
             }
-            case Value.Table table -> openTable(out, table.table(),
-                parentPath == null && segment.isEmpty() ? null : new PathNode(parentPath, segment), path, stack);
-            case Value.Array array -> openArray(out, array.elements(),
-                parentPath == null && segment.isEmpty() ? null : new PathNode(parentPath, segment), path, stack);
+            case Value.Table table -> openTable(out, table.table(), path, stack);
+            case Value.Array array -> openArray(out, array.elements(), path, stack);
             case Value.Other other -> {
                 if (other.kind() == ActualKind.FUNCTION || other.kind() == ActualKind.MISSING) out.append("null");
-                else throw new JsonStringifyFailure(pathText(parentPath, segment), stringifyCarrierKind(other));
+                else throw new JsonStringifyFailure(stringifyCarrierKind(other));
+            }
+        }
+        if (stack.size() > depth) {
+            StringifyFrame frame = stack.peek();
+            frame.arrays = arrays;
+            frame.elementDescriptor = elementDescriptor;
+            if (value instanceof Value.Table table && table.layout() != null) {
+                frame.layout = table.layout();
+                // Class names obey declaration order, never object-index sorting.
+                stack.pop();
+                StringifyFrame nominal = new StringifyFrame(table.table(),
+                    table.layout().fields().stream().map(f -> f.name()).toList());
+                nominal.layout = frame.layout;
+                nominal.arrays = arrays;
+                stack.push(nominal);
             }
         }
     }

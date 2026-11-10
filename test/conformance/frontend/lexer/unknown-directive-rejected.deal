@@ -1,6 +1,6 @@
 // @spec: Lexical elements — Comment semantics
-// @description: a compiler directive comment with an unrecognized directive name is a compile-time error (v1.2)
-// @expected: compile-error E1044
+// @description: Unrecognized @ comment contents are whitespace
+// @expected: compile-ok
 // @features: directives, v1.2
 
 // @not-a-directive

@@ -12,7 +12,7 @@ export function readMissing(b: LibBox): null | undefined {
   return b.n;
 }
 
-// @jsonable
+
 export class LibNote {
   label: string;
   n?: null;

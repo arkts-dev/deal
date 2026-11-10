@@ -67,12 +67,11 @@ public final class NativeRuntimeDeploymentTest {
 
     /** The runtime, driver and stdlib assets every distribution still carries. */
     private static final List<String> EXISTING_ASSETS = List.of(
-        "deal/runtime.lua", "deal/runtime.js",
+        "deal/runtime.lua", "deal/json.lua", "deal/runtime.js",
         "deal/lua_async_export_driver.lua",
         "std/console.d.deal", "std/console.lua", "std/console.js",
         "std/string.d.deal", "std/string.lua", "std/string.js",
         "std/table.d.deal", "std/table.lua", "std/table.js",
-        "std/json.d.deal", "std/json.lua", "std/json.js",
         "std/math.d.deal", "std/math.lua", "std/math.js",
         "std/time.d.deal", "std/time.lua", "std/time.js"
     );
@@ -354,7 +353,7 @@ public final class NativeRuntimeDeploymentTest {
                 + "its checkout file");
         for (String asset : EXISTING_ASSETS) {
             boolean required = asset.startsWith("std/")
-                ? script.contains("STDLIB_MODULES=(console string table json math time)")
+                ? script.contains("STDLIB_MODULES=(console string table math time)")
                     && script.contains("std/$module.d.deal")
                     && script.contains("std/$module.lua")
                     && script.contains("std/$module.js")

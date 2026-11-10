@@ -1,13 +1,17 @@
-// @spec: Classes — @jsonable nested element validation
-// @description: Extra keys inside nested class arrays are rejected by fromJson
+// @spec: Standard library builtins — JSON decoding
+// @description: Extra keys inside imported class array elements reject without changing the destination
 // @expected: runtime-ok
 // @features: jsonable, arrays, diagnostics
 
 import * as Lib from "./jsonable_batch2_lib";
 
 export function test_jsonable_nested_array_extra_key_rejected(): null {
-  let p: Lib.Parent | null = Lib.Parent$fromJson("{\"children\":[{\"value\":1,\"extra\":2}]}");
-  if (p !== null) { throw { code: "TEST_FAIL", message: "nested extra key should be rejected" }; }
+  let original: Lib.Parent = Lib.makeParent(3, 4);
+  let p = original;
+  let rejected = false;
+  try { p = JSON.parse("{\"children\":[{\"value\":1,\"extra\":2}]}"); }
+  catch (e) { let error = e as Error; rejected = error.code === "E8007" && error.message.includes("extra field 'extra'"); }
+  if (!rejected || p !== original || p.children[1].value !== 4) { throw { code: "TEST_FAIL", message: "nested extra key rejection or rollback failed" }; }
   return null;
 }
 

@@ -55,7 +55,7 @@ import java.util.Objects;
  *       else {@code <processCWD>/std} when that exists as a directory,
  *       else absent ({@code null}). Absence is not an error.</li>
  *   <li>{@code stdlibDeclarationFiles} — the canonical (fully
- *       symlink-resolved) absolute path texts of the six spec-listed
+ *       symlink-resolved) absolute path texts of the five spec-listed
  *       stdlib declaration files under the pinned surface, in pinned
  *       module order ({@code console}, {@code string}, {@code table},
  *       {@code json}, {@code math}, {@code time}). A file contributes

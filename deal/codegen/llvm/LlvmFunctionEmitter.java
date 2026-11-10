@@ -665,8 +665,7 @@ final class LlvmFunctionEmitter {
             case FIELD_READ -> emitFieldRead(op);
             case FIELD_WRITE -> emitFieldWrite(op);
             case FIELD_DELETE -> emitFieldDelete(op);
-            case JSON_FROM_CLASS -> emitJsonFromClass(op);
-            case JSON_TO_CLASS -> emitJsonToClass(op);
+            case JSON_PARSE -> emitJsonParse(op);
             case BINDING_ALLOC -> emitBindingAlloc(op);
             case ENTRY_INVOKE -> {
                 // Structural: the entry delegation is
@@ -5974,74 +5973,28 @@ final class LlvmFunctionEmitter {
                 1 + field.presenceIndex()) + debugAttachment(op));
     }
 
-    // -- the generated JSON walks --------------------------------------------
+    // -- contextual JSON reconstruction --------------------------------------
 
-    /**
-     * {@code JSON_FROM_CLASS} ({@code C$fromJson}, R6): the runtime parses and
-     * walks the emitted class plan in declaration order and answers the
-     * language null datum on every parse, extra-key, required-presence or field
-     * failure, so nothing partial is ever published.
-     */
-    private void emitJsonFromClass(SemanticOp op) {
-        KindPayload.JsonFromClassPayload payload =
-            (KindPayload.JsonFromClassPayload) op.payload();
-        LlvmClassPlans.ClassDef def =
-            session.classDefinition(payload.layout().classId());
+    /** Strict contextual reconstruction; only a completed target is published. */
+    private void emitJsonParse(SemanticOp op) {
+        var payload = (KindPayload.JsonParsePayload) op.payload();
         String text = loadValue(payload.jsonString(), LlvmTypeMapper.STRING, op);
-        String outcome = callRecordReturn(op, "deal_json_from_class",
-            "%struct.deal_outcome_data", List.of(
-                LlvmTypeMapper.STRING + " " + text,
-                "%struct.deal_json_class_plan* @" + def.planSymbol(),
-                "i8* bitcast (" + LlvmClassPlans.PLAN_TYPE + "* (i8*, i8*)* @"
-                    + LlvmClassPlans.LOOKUP_NAME + " to i8*)",
-                "i8* null",
-                "%struct.deal_origin* " + originValue(op)));
-        String error = emitTemporary(op, "extractvalue"
-            + " %struct.deal_outcome_data " + outcome + ", 0");
+        session.referenceRuntimeEntry("deal_descriptor_intern");
+        String target = emitTemporary(op, "call %struct.deal_descriptor* @deal_descriptor_intern("
+            + session.data.operand(session.data.intern(payload.target().canonicalSpecText())) + ")");
+        String lookup = session.classes().isEmpty() ? "i8* null"
+            : "i8* bitcast (" + LlvmClassPlans.PLAN_TYPE + "* (i8*, i8*)* @"
+                + LlvmClassPlans.LOOKUP_NAME + " to i8*)";
+        String outcome = callRecordReturn(op, "deal_json_decode", "%struct.deal_outcome_data", List.of(
+            LlvmTypeMapper.STRING + " " + text,
+            "%struct.deal_descriptor* " + target,
+            lookup,
+            "i8* null", "%struct.deal_origin* " + originValue(op)));
+        String error = emitTemporary(op, "extractvalue %struct.deal_outcome_data " + outcome + ", 0");
         branchOnFailure(op, error, "json");
-        String datum = emitTemporary(op, "extractvalue"
-            + " %struct.deal_outcome_data " + outcome + ", 1");
-        RuntimeDescriptor readType = op.resultType()
-            instanceof RuntimeDescriptor descriptor ? descriptor
-            : RuntimeDescriptor.Unknown.INSTANCE;
-        storeResult(op, stagedRepresentation(readType),
-            LlvmDataValues.unbox(session, sink, readType, datum));
-    }
-
-    /**
-     * {@code JSON_TO_CLASS} ({@code C$toJson}, R6): the runtime encodes the
-     * instance's declared fields in declaration order, omits absent optionals
-     * and undefined-valued present fields, encodes non-finite numbers as null
-     * and rejects a cycle, publishing either the complete text or the arm's own
-     * failure and never partial output.
-     */
-    private void emitJsonToClass(SemanticOp op) {
-        KindPayload.JsonToClassPayload payload =
-            (KindPayload.JsonToClassPayload) op.payload();
-        LlvmClassPlans.ClassDef def =
-            session.classDefinition(payload.layout().classId());
-        RuntimeDescriptor actual = descriptorOfValue(payload.classValue());
-        String instance = loadValue(payload.classValue(),
-            LlvmTypeMapper.classRepresentation(payload.layout().classId()), op);
-        String slot = newAlloca(LlvmTypeMapper.DATA, "jsonvalue");
-        emit("store " + LlvmTypeMapper.DATA + " "
-            + emitDatum(actual, instance, op) + ", " + LlvmTypeMapper.DATA
-            + "* " + slot);
-        String outcome = callRecordReturn(op, "deal_json_to_class",
-            "%struct.deal_outcome_string", List.of(
-                "%struct.deal_json_class_plan* @" + def.planSymbol(),
-                LlvmTypeMapper.DATA + "* " + slot,
-                "i8* bitcast (" + LlvmClassPlans.PLAN_TYPE + "* (i8*, i8*)* @"
-                    + LlvmClassPlans.LOOKUP_NAME + " to i8*)",
-                "i8* null",
-                "%struct.deal_origin* %callorigin"));
-        String error = emitTemporary(op, "extractvalue"
-            + " %struct.deal_outcome_string " + outcome + ", 0");
-        branchOnFailure(op, error, "json");
-        String text = emitTemporary(op, "extractvalue"
-            + " %struct.deal_outcome_string " + outcome + ", 1");
-        storeResult(op, LlvmTypeMapper.STRING, narrowFromAbi(
-            RuntimeDescriptor.String.INSTANCE, text, op));
+        String datum = emitTemporary(op, "extractvalue %struct.deal_outcome_data " + outcome + ", 1");
+        storeResult(op, stagedRepresentation(payload.target()),
+            LlvmDataValues.unbox(session, sink, payload.target(), datum));
     }
 
     /** Stores one op result from a recorded source descriptor (C3). */

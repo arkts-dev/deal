@@ -8,6 +8,7 @@ import java.util.*;
 /** Exact LLVM-only omissions. Never consulted by the common conformance lanes. */
 final class NativeKnownSkips {
     private final Map<String, Map<String, String>> entries = new LinkedHashMap<>();
+    static final Set<String> COMPOSITIONS = Set.of("json-parse-deep");
 
     static NativeKnownSkips none() { return new NativeKnownSkips(); }
 
@@ -32,6 +33,10 @@ final class NativeKnownSkips {
                 case "host" -> {
                     if (key.endsWith(".c") || key.endsWith(".d.deal"))
                         throw new IllegalArgumentException("LLVM host key must be a stem: " + key);
+                }
+                case "composition" -> {
+                    if (!COMPOSITIONS.contains(key))
+                        throw new IllegalArgumentException("unknown LLVM composition key: " + key);
                 }
                 case "operation" -> SemanticOpKind.valueOf(key);
                 case "boundary" -> BoundaryKind.valueOf(key);
@@ -77,7 +82,8 @@ final class NativeKnownSkips {
     static void controls() {
         for (String invalid : List.of("case\tbackend-runtime/a.deal\t", "case\t../a.deal\tx",
                 "host\t/a\tx", "host\ta*\tx", "suite\tall\tx", "operation\tINVENTED\tx",
-                "boundary\tINVENTED\tx", "host\ta\tx\nwrong")) {
+                "boundary\tINVENTED\tx", "host\ta\tx\nwrong",
+                "composition\tunknown\tx", "composition\tjson-parse-deep-failure\tx")) {
             boolean rejected = false;
             try { parse(List.of(invalid)); } catch (IllegalArgumentException expected) { rejected = true; }
             if (!rejected) throw new AssertionError("accepted invalid LLVM skip: " + invalid);
@@ -100,6 +106,12 @@ final class NativeKnownSkips {
         try { skips.remaining("host", Set.of()); }
         catch (AssertionError expected) { rejected = true; }
         if (!rejected) throw new AssertionError("accepted stale LLVM requirement skip");
+        var composition = parse(List.of("composition\tjson-parse-deep\tknown timeout"));
+        if (!composition.contains("composition", "json-parse-deep")
+                || composition.contains("case", "json-parse-deep")
+                || composition.contains("composition", "json-parse-deep-failure")
+                || none().contains("composition", "json-parse-deep"))
+            throw new AssertionError("composition omission escaped its exact LLVM subject");
     }
 
     public static void main(String[] args) throws Exception {

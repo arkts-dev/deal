@@ -182,7 +182,7 @@ public final class ContainerClaimingSeam {
             case STDLIB_CALL -> List.of(SemanticCapability.STDLIB_SEMANTICS);
 
             case CLASS_NEW, CLASS_FACTORY, FIELD_READ, FIELD_WRITE,
-                 FIELD_DELETE, JSON_FROM_CLASS, JSON_TO_CLASS ->
+                 FIELD_DELETE ->
                 List.of(SemanticCapability.CLASSES);
             case HAS_FIELD -> List.of(SemanticCapability.CONTAINERS_AND_STRINGS);
             default -> List.of();

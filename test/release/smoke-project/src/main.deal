@@ -1,7 +1,6 @@
 import * as c from "std/console";
 import * as str from "std/string";
 
-// @jsonable
 export class Message {
   text: string;
   note: string | null;
@@ -9,19 +8,26 @@ export class Message {
 }
 
 export function main(): null {
-  let missing: Message | null = Message$fromJson("{}");
-  if (missing !== null) {
-    throw { code: "SMOKE_REQUIRED", message: "required fields were filled" };
+  let destination: Message = {text: "kept", note: null};
+  let original = destination;
+  let rejected = false;
+  try {
+    destination = JSON.parse("{}");
+  } catch (e) {
+    let error = e as Error;
+    if (error.code !== "E8001") { throw error; }
+    rejected = true;
   }
-  let message: Message | null = Message$fromJson('{"text":"deal","note":null}');
-  let text: string = "";
-  if (message !== null) {
-    if (Object.hasOwn(message, "tag")) {
-      throw { code: "SMOKE_OPTIONAL", message: "omitted optional became present" };
-    }
-    text = message.text;
-  } else {
-    throw { code: "SMOKE_JSON", message: "complete structural record rejected" };
+  if (!rejected || destination !== original || destination.text !== "kept") {
+    throw { code: "SMOKE_REQUIRED", message: "required-key rejection changed destination" };
+  }
+  let message: Message = JSON.parse('{"text":"deal","note":null}');
+  if (Object.hasOwn(message, "tag")) {
+    throw { code: "SMOKE_OPTIONAL", message: "omitted optional became present" };
+  }
+  let text = message.text;
+  if ((JSON.stringify(message) as string) !== '{"text":"deal","note":null}') {
+    throw { code: "SMOKE_JSON", message: "contextual reconstruction did not round-trip" };
   }
   let supplied: Message = {text: text, note: null};
   let wide: number = 2147483648 + 0.5;

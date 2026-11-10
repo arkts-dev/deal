@@ -365,16 +365,15 @@ public class CheckedProjectBuilderTest {
     }
 
     // =========================================================================
-    // 2b. @jsonable synthetic exports in a declaration entry
+    // 2b. Declaration entries export only explicit AST declarations
     // =========================================================================
 
     static void testJsonableSyntheticExports() {
-        System.out.println("-- @jsonable synthetic exports in a declaration entry --");
+        System.out.println("-- declaration exports ignore injected helper-shaped facts --");
 
-        // Synthetic declaration AST: export @jsonable class User { name: string; }.
+        // Injected export-map facts must not manufacture source declarations.
         ClassDeclaration user = new ClassDeclaration(span(), "User",
-            List.of(new ClassField(span(), "name", false, false, nt("string"))),
-            java.util.Set.of(deal.ast.DeclarationDirective.JSONABLE));
+            List.of(new ClassField(span(), "name", false, false, nt("string"))));
         ProgramNode ast = programOf(new ExportDeclaration(span(), user));
         Map<String, Type> exports = new LinkedHashMap<>();
         exports.put("User", IdentityTestFixtures.classType("User", "lib"));
@@ -386,7 +385,7 @@ public class CheckedProjectBuilderTest {
 
         CheckedProjectBuildResult result = CheckedProjectBuilder.build(invocation(),
             new ModuleId("lib"), List.of(fact));
-        check(!result.hasErrors(), "the @jsonable declaration entry builds: "
+        check(!result.hasErrors(), "the explicit declaration entry builds: "
             + result.diagnostics());
         if (result.hasErrors()) {
             return;
@@ -395,11 +394,9 @@ public class CheckedProjectBuilderTest {
         check(entry.kind() == ExternalModuleKind.HOST,
             "the declaration entry is HOST");
         check(entry.exports().equals(List.of(
-                new ExportInterface("User", "@lib/User"),
-                new ExportInterface("User$fromJson", "(string) => @lib/User | null"),
-                new ExportInterface("User$toJson", "(@lib/User) => string"))),
-            "declared exports in declaration order, then the @jsonable synthetics where "
-                + "the export map carries them; got " + entry.exports());
+                new ExportInterface("User", "@lib/User"))),
+            "only the explicit class exports; injected helper facts grant no names: "
+                + entry.exports());
         check(entry.classes().size() == 1
                 && entry.classes().get(0).classId().text().equals("@lib/User")
                 && entry.classes().get(0).fields().equals(List.of(
@@ -742,8 +739,7 @@ public class CheckedProjectBuilderTest {
             "backend-runtime/modules/declaration-only-import-compile.deal");
         LexResult entryLex = new Lexer(entrySource, entryPath.toString()).tokenize();
         check(!entryLex.hasErrors(), "fixture lexes without errors");
-        ParseResult entryParsed = new Parser(entryLex.tokens(), entryPath.toString(),
-            entryLex.directiveEvents()).parse();
+        ParseResult entryParsed = new Parser(entryLex.tokens(), entryPath.toString()).parse();
         ProgramNode entryProgram = entryParsed.program();
         StubModuleResolver resolver = new StubModuleResolver();
         resolver.register("./declaration_only_lib", Map.of("declaredAdd",
@@ -774,8 +770,7 @@ public class CheckedProjectBuilderTest {
             Files.readString(declPath),
             "backend-runtime/modules/declaration_only_lib.d.deal");
         LexResult declLex = new Lexer(declSource, declPath.toString()).tokenize();
-        ParseResult declParsed = new Parser(declLex.tokens(), declPath.toString(),
-            declLex.directiveEvents()).parse();
+        ParseResult declParsed = new Parser(declLex.tokens(), declPath.toString()).parse();
         ProgramNode declProgram = declParsed.program();
 
         String entryBefore = IrDumper.dump(entryProgram, checkResult,
@@ -1075,8 +1070,7 @@ public class CheckedProjectBuilderTest {
     private static Span firstImportSpan(Path file) throws IOException {
         String source = Files.readString(file, StandardCharsets.UTF_8);
         LexResult lex = new Lexer(source, file.toString()).tokenize();
-        ParseResult parsed = new Parser(lex.tokens(), file.toString(),
-            lex.directiveEvents()).parse();
+        ParseResult parsed = new Parser(lex.tokens(), file.toString()).parse();
         return ((ImportDeclaration) parsed.program().statements().get(0))
             .span();
     }

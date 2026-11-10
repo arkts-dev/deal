@@ -1,6 +1,7 @@
 // IR golden fixture: jsonable-classes
 // Tests class declarations with various field patterns:
-// required and optional fields across the primitive types.
+// required and optional fields across the primitive types, with explicit
+// contextual JSON decoding and builtin encoding. Comments create no helpers.
 
 class Point {
     x: number;
@@ -22,4 +23,12 @@ class Config {
 
 function makePoint(x: number, y: number): Point {
     return { x: x, y: y };
+}
+
+function decodePoint(text: string): Point {
+    return JSON.parse(text);
+}
+
+function encodePoint(point: Point): string {
+    return JSON.stringify(point) as string;
 }

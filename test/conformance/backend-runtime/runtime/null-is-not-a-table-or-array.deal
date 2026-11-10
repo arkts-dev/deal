@@ -3,10 +3,10 @@
 // @expected: runtime-ok
 // @features: tables, arrays, null, runtime-errors, v1.4
 
-import * as json from "std/json";
+
 
 export function test_null_is_not_a_container(): null {
-  let holder: Record<string, unknown> = json.parse("{\"n\":null}");
+  let holder: Record<string, unknown> = JSON.parse("{\"n\":null}");
   let tableCode: string = "";
   try {
     let t: Record<string, unknown> = holder.n as Record<string, unknown>;
@@ -32,7 +32,7 @@ export function test_null_is_not_a_container(): null {
   // The empty container controls: a real empty table and a real empty
   // array are values, never confused with the null sentinel.
   let emptyTable: Record<string, unknown> = {};
-  let encoded: string = json.stringify(emptyTable) as string;
+  let encoded: string = JSON.stringify(emptyTable) as string;
   if (encoded !== "{}") {
     throw { code: "TEST_FAIL", message: "the empty table did not encode: " + encoded };
   }

@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: control-flow, for-of, arrays, json
 
-import * as json from "std/json";
+
 
 export function test_for_of_array_order(): null {
   let digits: number = 0;
@@ -13,7 +13,7 @@ export function test_for_of_array_order(): null {
 }
 
 export function test_for_of_json_decoded_array_order(): null {
-  let data: Record<string, unknown> = json.parse("{\"items\":[\"Ada\",\"Bob\",\"Cara\"]}");
+  let data: Record<string, unknown> = JSON.parse("{\"items\":[\"Ada\",\"Bob\",\"Cara\"]}");
   let items: unknown[] = data.items as unknown[];
   let count: number = 0;
   let first: string = "";
@@ -33,7 +33,7 @@ export function test_for_of_json_decoded_array_order(): null {
   if (collected !== "AdaBobCara") {
     throw { code: "TEST_FAIL", message: "for-of decoded array element order mismatch" };
   }
-  if ((json.stringify(data) as string) !== "{\"items\":[\"Ada\",\"Bob\",\"Cara\"]}") {
+  if ((JSON.stringify(data) as string) !== "{\"items\":[\"Ada\",\"Bob\",\"Cara\"]}") {
     throw { code: "TEST_FAIL", message: "for-of decoded array table round-trip mismatch" };
   }
   return null;

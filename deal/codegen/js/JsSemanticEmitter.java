@@ -16,6 +16,7 @@ import deal.semantic.ir.ClassFactoryRegistry;
 import deal.semantic.ir.ClassId;
 import deal.semantic.ir.ClassInterface;
 import deal.semantic.ir.ClassLayout;
+import deal.semantic.ir.ConstructionProvider;
 import deal.semantic.ir.ControlSelector;
 import deal.semantic.ir.ExternalExecutionOwner;
 import deal.semantic.ir.ExternalModuleInterface;
@@ -82,21 +83,20 @@ import java.util.Set;
  * {@code ASYNC_START}/{@code AWAIT} realization with the single
  * await-site completion check; the host-driven callback crossing of
  * {@code CALLBACK_INVOKE}; the structured control-flow ops; the module
- * init/import/export/entry ops; and the class family — per-attempt
- * default thunks, local and imported-provider construction
- * ({@code CLASS_NEW} under the LOCAL, SHARED_FACTORY and builtin owners),
- * the private defaults-only factory transfer ({@code CLASS_FACTORY}), the
- * presence-aware field reads/writes/deletes, the JSON from/to walkers over
- * the canonical descriptor arrays, and the public class surface (META, the
- * full-construction {@code C$new} and the hidden {@code C$fields} export
- * of a {@code @jsonable} class). The builtin {@code Error} construction is
+ * init/import/export/entry ops; and the class family — local and
+ * imported-provider construction ({@code CLASS_NEW} under the LOCAL,
+ * SHARED_FACTORY and builtin owners), the private provider transfer
+ * ({@code CLASS_FACTORY}), presence-aware field reads/writes/deletes,
+ * contextual {@code JSON_PARSE} over structural schemas and builtin JSON
+ * encoding, and the public class surface (META and full-construction
+ * {@code C$new}). The builtin {@code Error} construction is
  * realized because {@code THROW} transport needs the tagged error carrier.
  * The HOST/STDLIB boundary is realized from the admitted occurrence facts
  * and the structural declaration surface: one raw Node require per
  * resolved host file, one validating {@code $rt.loadHost} per source HOST
  * import declaration (the occurrence-owned typed surface carrying fresh
- * wrappers and synthesized {@code C$new}/{@code C$fields} over the raw
- * META/defaults references), every host read and call through that
+ * wrappers and synthesized {@code C$new} over the declared structural
+ * metadata), every host read and call through that
  * occurrence's own surface entry, the once-only stdlib surface behind the
  * recorded relative require, the cataloged {@code STDLIB_CALL} rows over
  * the deployed stdlib modules, and the host-declaration class construction
@@ -201,34 +201,11 @@ public final class JsSemanticEmitter {
          * project order. Two declarations of one identity (a
          * harness-synthesized pair; a resolved source file is its own
          * identity) may declare different fields, so no identity-keyed
-         * single layout is a declaration: a construction, factory or JSON
-         * helper resolves the layout of its own declaring unit (or of the
+         * single layout is a declaration: a construction or factory
+         * resolves the layout of its own declaring unit (or of the
          * factory/registration owner it records).
          */
         private final Map<ClassId, List<ClassLayout>> declaredLayouts =
-            new LinkedHashMap<>();
-        /** The declaring units of one canonical class identity, project order. */
-        private final Map<ClassId, List<ModuleId>> declaringModules =
-            new LinkedHashMap<>();
-        /**
-         * The plan-bearing ({@code @jsonable}) declaring unit of each
-         * identity, by project order: the unique declaration that generates
-         * the identity's JSON helpers. A multiple-declaration identity
-         * carries at most one here when the shared admission admits it; a
-         * project whose JSON plan key is ambiguous fails closed before
-         * rendering.
-         */
-        private final Map<ClassId, List<ModuleId>> jsonPlanBearers =
-            new LinkedHashMap<>();
-        /**
-         * The declaration unit whose layout the canonical JSON plan key
-         * carries: the unique plan-bearing declaration, or (for an identity
-         * the shared admission never lets a nested link select) the
-         * emission order's last declaration. Every cross-module
-         * {@code $fields} read resolves this owner's published surface,
-         * never a first-seen sibling.
-         */
-        private final Map<ClassId, ModuleId> jsonPlanOwners =
             new LinkedHashMap<>();
         /** Declaration-module and builtin registration layouts. */
         private final Map<ClassId, ClassLayout> seedLayouts =
@@ -248,22 +225,9 @@ public final class JsSemanticEmitter {
         /** The construction entry of every exported class (interface index fact). */
         private final Map<ClassId, ClassFactoryId> constructionEntries =
             new LinkedHashMap<>();
-        /**
-         * The {@code @jsonable} classes each unit itself declares (its own
-         * generated JSON helpers): a same-identity sibling declaration that
-         * is not plan-bearing publishes no {@code C$fields} and no helper
-         * export.
-         */
-        private final Map<ModuleId, Set<ClassId>> jsonableClassesByModule =
-            new LinkedHashMap<>();
-        /** Emitted {@code $fields} descriptor arrays, by class identity. */
-        private final Map<ClassId, String> classFieldsExprs =
-            new LinkedHashMap<>();
         /** Emitted {@code $plan} constructor plans, by class identity. */
         private final Map<ClassId, String> classPlanExprs =
             new LinkedHashMap<>();
-        /** The call-site span parameter names of the closure being emitted. */
-        private String currentCallSpan;
         /**
          * The canonical async token's owning start op per token id (the
          * op whose result is the {@link AsyncTokenId.Canonical}).
@@ -497,12 +461,11 @@ public final class JsSemanticEmitter {
          * declaration's layout per canonical class identity (plus the
          * project's declaration-module registration layouts), the
          * interface index's exported-class entries with their recorded
-         * construction entries, the generated JSON-helper declarations per
-         * unit. A
-         * canonical identity may cover two declarations (a
+         * construction entries. A canonical identity may cover two declarations (a
          * harness-synthesized pair) with different fields, so the declared
-         * layouts stay per declaration and the cross-module JSON surface
-         * resolves the plan-bearing declaration. These are the structural
+         * layouts stay per declaration. Contextual JSON reconstruction
+         * consumes registered structural schemas, not helper exports.
+         * These are the structural
          * facts the class arms render from; no class fact is rediscovered
          * from source text, an alias name or a target ABI registry.
          */
@@ -513,9 +476,6 @@ public final class JsSemanticEmitter {
                     declaredLayouts
                         .computeIfAbsent(entry.getKey(), key -> new ArrayList<>())
                         .add(entry.getValue());
-                    declaringModules
-                        .computeIfAbsent(entry.getKey(), key -> new ArrayList<>())
-                        .add(unit.moduleId());
                 }
             }
             for (Map.Entry<ClassId, ClassRegistrationSeeds.ClassRegistration> entry
@@ -534,72 +494,6 @@ public final class JsSemanticEmitter {
                         .add(classInterface.classId());
                 }
             }
-            for (Map.Entry<ModuleId, LoweredModuleUnit> moduleEntry
-                    : units.entrySet()) {
-                for (SemanticOp op : moduleEntry.getValue().ops()) {
-                    switch (op.payload()) {
-
-                        case KindPayload.JsonFromClassPayload payload ->
-                            indexJsonableDeclaration(moduleEntry.getKey(),
-                                payload.layout().classId());
-                        case KindPayload.JsonToClassPayload payload ->
-                            indexJsonableDeclaration(moduleEntry.getKey(),
-                                payload.layout().classId());
-                        default -> {
-                        }
-                    }
-                }
-            }
-            // The canonical JSON plan key carries the unique plan-bearing
-            // declaration's layout; an identity the shared admission never
-            // lets a nested link select falls back to the emission order's
-            // last declaration, exactly like the lowering's plan-owner fact.
-            for (Map.Entry<ClassId, List<ModuleId>> entry
-                    : declaringModules.entrySet()) {
-                List<ModuleId> bearers = jsonPlanBearers.get(entry.getKey());
-                jsonPlanOwners.put(entry.getKey(),
-                    bearers != null && bearers.size() == 1
-                        ? bearers.get(0)
-                        : entry.getValue().get(entry.getValue().size() - 1));
-            }
-            // Every generated JSON helper descends from a module-level
-            // exported @jsonable class: a helper class outside its own
-            // declaring unit's exported-class set would carry no descriptor
-            // array and no public surface, so the disagreement fails closed
-            // here. The check is per declaring unit: a same-identity sibling
-            // declaration never satisfies it on the helper's behalf.
-            for (Map.Entry<ModuleId, Set<ClassId>> entry
-                    : jsonableClassesByModule.entrySet()) {
-                List<ClassId> exported = exportedClassesOf(entry.getKey());
-                for (ClassId classId : entry.getValue()) {
-                    if (!exported.contains(classId)) {
-                        throw new SharedEmissionFailure("the @jsonable class "
-                            + classId + " is not one of the exported classes of"
-                            + " its module '" + entry.getKey().path() + "':"
-                            + " the generated helpers and their descriptor"
-                            + " export exist for module-level exported"
-                            + " @jsonable classes only (producer defect)", null);
-                    }
-                }
-            }
-        }
-
-        /** One unit's own plan-bearing declaration of a class identity. */
-        private void indexJsonableDeclaration(ModuleId module, ClassId classId) {
-            jsonableClassesByModule
-                .computeIfAbsent(module, key -> new LinkedHashSet<>())
-                .add(classId);
-            List<ModuleId> bearers = jsonPlanBearers
-                .computeIfAbsent(classId, key -> new ArrayList<>());
-            if (!bearers.contains(module)) {
-                bearers.add(module);
-            }
-        }
-
-        /** Whether one unit itself generates the identity's JSON helpers. */
-        private boolean unitDeclaresJsonable(ModuleId module, ClassId classId) {
-            Set<ClassId> classes = jsonableClassesByModule.get(module);
-            return classes != null && classes.contains(classId);
         }
 
         /**
@@ -846,7 +740,8 @@ public final class JsSemanticEmitter {
             // source namespace bindings or export-read occurrences.
             java.util.Set<ModuleId> builtinAlgorithms = new java.util.LinkedHashSet<>();
             for (SemanticOp operation : unit.ops()) {
-                if (operation.payload() instanceof KindPayload.StdlibCallPayload algorithm) {
+                if (operation.payload() instanceof KindPayload.StdlibCallPayload algorithm
+                        && algorithm.function() != StdlibFunctionId.JSON_STRINGIFY) {
                     ModuleId dependency = new ModuleId(stdlibRowOf(operation, algorithm.function()).modulePath());
                     if (!stdlibSurfaces.containsKey(dependency)) builtinAlgorithms.add(dependency);
                 }
@@ -872,6 +767,16 @@ public final class JsSemanticEmitter {
             }
             emit("$rt.initModule(" + jsString(module.path()) + ", () => {");
             indent++;
+            // Declaration seeds include private descendants, not just exported
+            // class values. Reconstruction consumes their validated layouts
+            // without publishing factories or granting source construction.
+            for (Map.Entry<ClassId, ClassRegistrationSeeds.ClassRegistration> entry
+                    : input.seeds().registrations().entrySet()) {
+                if (entry.getValue().owner() == ConstructionProvider.HOST_DECLARATION) {
+                    emit("$rt.registerClassPlan(" + jsString(entry.getKey().text())
+                        + ", " + boundaryPlanText(entry.getValue().layout()) + ");");
+                }
+            }
             emitModuleInitBody(unit, unit.moduleInit().initBlock());
             indent--;
             emit("});");
@@ -1193,8 +1098,11 @@ public final class JsSemanticEmitter {
                 case FIELD_READ -> emitFieldRead(op);
                 case FIELD_WRITE -> emitFieldWrite(op);
                 case FIELD_DELETE -> emitFieldDelete(op);
-                case JSON_FROM_CLASS -> emitJsonFromClass(op);
-                case JSON_TO_CLASS -> emitJsonToClass(op);
+                case JSON_PARSE -> {
+                    var payload = (KindPayload.JsonParsePayload) op.payload();
+                    emit(slotOf(op) + " = $rt.jsonDecode(" + slot(payload.jsonString()) + ", "
+                        + jsString(payload.target().canonicalSpecText()) + ", " + spanArgs(op) + ");");
+                }
                 case CLASS_FACTORY -> throw unsupported(op, "the"
                     + " detached " + op.kind() + " " + op.opId() + " executes"
                     + " only under its triggering constructor or factory arm —"
@@ -1486,7 +1394,7 @@ case NUMBER_ADD -> "(" + numeric(left) + " + "
                     + ") { $rt.fail(\"E8002\", \"array index out of bounds\","
                     + " " + spanArgs(boundary) + "); }");
                 // The carrier split is $rt.arrayAt's own (a native Array
-                // first, the std/json array-marked Map second): every
+                // first, the JSON array-marked Map second): every
                 // carrier checkArray admits reads at the checked position,
                 // and the declared element's number kind selects the
                 // read-side variant carrier a decoded slot materializes.
@@ -1554,7 +1462,7 @@ case NUMBER_ADD -> "(" + numeric(left) + " + "
                     + ");");
             } else {
                 // The carrier split is $rt.arraySet's own (a native Array
-                // assigns the slot, the std/json array-marked Map sets its
+                // assigns the slot, the JSON array-marked Map sets its
                 // array-form key) so a write through one alias is observed
                 // by every alias and by the shared encode walk; the written
                 // value's own static number kind records the slot variant.
@@ -1846,22 +1754,12 @@ private void emitBindingLoad(SemanticOp op) {
             LoweredModuleUnit owner = ownerOfFunction(functionId);
             List<BindingId> parameters = functionParameters.getOrDefault(
                 functionId.id(), List.of());
-            boolean callSpan = needsCallSpan(owner, function.body());
             StringBuilder params = new StringBuilder();
             for (int i = 0; i < parameters.size(); i++) {
                 if (i > 0) {
                     params.append(", ");
                 }
                 params.append(cell(parameters.get(i), 0));
-            }
-            if (callSpan) {
-                // The trailing call-site span triple every emitted call
-                // appends; the generated @jsonable toJson body reads it as
-                // the shared JSON_TO_ERROR projection's call origin.
-                if (params.length() > 0) {
-                    params.append(", ");
-                }
-                params.append("$file, $line, $column");
             }
             // An async declared body emits the native async function: the
             // awaited operations suspend and complete through real
@@ -1883,13 +1781,7 @@ private void emitBindingLoad(SemanticOp op) {
                     : "function " + name + "(" + params + ") {"));
             indent++;
             emitCallbackCrossing(functionId, parameters);
-            String previousSpan = currentCallSpan;
-            currentCallSpan = callSpan ? "$file, $line, $column" : null;
-            try {
-                emitFunctionBody(owner, function.body());
-            } finally {
-                currentCallSpan = previousSpan;
-            }
+            emitFunctionBody(owner, function.body());
             indent--;
             emit("}, " + jsString("DEAL_BODY") + suffix);
         }
@@ -2997,7 +2889,7 @@ private void emitBindingLoad(SemanticOp op) {
          * resolved host file once and validates it against the structural
          * declaration surface through {@code $rt.loadHost}: the returned
          * typed surface is the source import occurrence's own (fresh
-         * wrappers and synthesized {@code C$new}/{@code C$fields} over the
+         * wrappers and synthesized {@code C$new} over the
          * raw META/defaults references), and it is the only surface the
          * occurrence's reads and calls reach. A STDLIB import requires the
          * deployed (project-overridable) stdlib module; that surface is
@@ -3185,10 +3077,15 @@ private void emitBindingLoad(SemanticOp op) {
                 callArguments.add(slot(boundaryPayload.input()));
             }
             callArguments.add(spanArgs(op));
-            ModuleId stdlibModule = new ModuleId(row.modulePath());
-            emit(slotOf(op) + " = " + stdlibSurface(op, stdlibModule) + "["
-                + jsString(row.exportName()) + "].$f("
-                + String.join(", ", callArguments) + ");");
+            if (payload.function() == StdlibFunctionId.JSON_STRINGIFY) {
+                emit(slotOf(op) + " = $rt.jsonStringifyText("
+                    + callArguments.getFirst() + ", [], " + spanArgs(op) + ");");
+            } else {
+                ModuleId stdlibModule = new ModuleId(row.modulePath());
+                emit(slotOf(op) + " = " + stdlibSurface(op, stdlibModule) + "["
+                    + jsString(row.exportName()) + "].$f("
+                    + String.join(", ", callArguments) + ");");
+            }
             SemanticOp returnBoundary = stdlibReturnBoundary(op);
             if (returnBoundary != null) {
                 KindPayload.BoundaryPayload boundaryPayload =
@@ -3501,15 +3398,10 @@ private void emitBindingLoad(SemanticOp op) {
                     null);
                 beginMappedClassGroup(unit, classId);
                 emitClassPlan(classId, layout);
-                if (unitDeclaresJsonable(unit.moduleId(), classId)) {
-                    emitClassFieldsArray(classId, layout);
-                }
                 emitted = true;
             }
             if (!exported.isEmpty()) {
-                emit("// The public class surface: the META value, the"
-                    + " full-construction C$new, and (for a @jsonable class)");
-                emit("// the hidden C$fields descriptor export.");
+                emit("// The public class surface: META and full-construction C$new.");
                 for (ClassId classId : exported) {
                     String modulePath = unit.moduleId().path();
                     String name = classId.name();
@@ -3528,11 +3420,6 @@ private void emitBindingLoad(SemanticOp op) {
                         + jsString(classId.text()) + ", "
                         + classPlanExprs.get(classId) + ", provided, $file,"
                         + " $line, $column));");
-                    if (unitDeclaresJsonable(unit.moduleId(), classId)) {
-                        emit("$rt.publishModule(" + jsString(modulePath) + ", "
-                            + jsString(name + "$fields") + ", "
-                            + classFieldsExprs.get(classId) + ");");
-                    }
                 }
             }
             if (emitted) {
@@ -3542,8 +3429,8 @@ private void emitBindingLoad(SemanticOp op) {
 
         /**
          * Opens the mapped group of one exported class's derived wrapper
-         * group (its constructor plan, its {@code $fields} descriptor array
-         * and its published public surface) at the class's recorded local
+         * group (its constructor plan and published public surface) at the
+         * class's recorded local
          * declaration site — the copied origin of the class's
          * {@code CLASS_FACTORY} construction entry. A class the project
          * never constructs, imports or decodes records no factory op: its
@@ -3633,171 +3520,6 @@ private void emitBindingLoad(SemanticOp op) {
             emit("const " + name + " = " + boundaryPlanText(layout) + ";");
             classPlanExprs.put(classId, name);
             emit("$rt.registerClassPlan(" + jsString(classId.text()) + ", " + name + ");");
-        }
-
-        /**
-         * One class's declaration-order {@code $fields} descriptor array (the
-         * pinned JSON descriptor shape): the field name, the closed JSON kind,
-         * the nested class/array sub-shape, the optional/nullable flags, the
-         * has-default flag and the per-field default evaluator. A same-module
-         * class-valued field carries its nested array inline (the checked
-         * jsonable dependency graph is acyclic); a class of another module
-         * carries that module's published {@code C$fields} export, so its own
-         * default blocks run in their owning module.
-         */
-        private void emitClassFieldsArray(ClassId classId, ClassLayout layout) {
-            String name = "$f" + classId.name();
-            emit("const " + name + " = "
-                + fieldsArrayText(classId, layout, new LinkedHashSet<>()) + ";");
-            classFieldsExprs.put(classId, name);
-        }
-
-        private String fieldsArrayText(ClassId classId, ClassLayout layout,
-                                       Set<ClassId> stack) {
-            if (!stack.add(classId)) {
-                throw new SharedEmissionFailure("the @jsonable class " + classId
-                    + " closes a class-valued descriptor cycle: the checked"
-                    + " jsonable dependency graph is acyclic (producer defect)",
-                    null);
-            }
-            StringBuilder array = new StringBuilder("[");
-            for (int i = 0; i < layout.fields().size(); i++) {
-                if (i > 0) {
-                    array.append(", ");
-                }
-                array.append(fieldEntryText(classId, layout.fields().get(i), stack));
-            }
-            array.append("]");
-            stack.remove(classId);
-            return array.toString();
-        }
-
-        private String fieldEntryText(ClassId classId,
-                                      ClassLayout.FieldLayout field,
-                                      Set<ClassId> stack) {
-            RuntimeDescriptor descriptor = field.descriptor();
-            boolean nullable = descriptor instanceof RuntimeDescriptor.Nullable n && n.admitsNull();
-            RuntimeDescriptor base = descriptor instanceof RuntimeDescriptor.Nullable n ? n.inner() : descriptor;
-            StringBuilder entry = new StringBuilder("{ name: ")
-                .append(jsString(field.name()))
-                .append(", jtype: ").append(jsString(jsonJType(base)));
-            switch (base) {
-                case RuntimeDescriptor.Class classDescriptor -> {
-                    entry.append(", className: ")
-                        .append(jsString(classDescriptor.classId().text()))
-                        .append(", fields: ")
-                        .append(nestedFieldsText(classDescriptor.classId(), stack));
-                }
-                case RuntimeDescriptor.Array array -> entry.append(", elementDescriptor: ")
-                    .append(jsString(array.element().canonicalSpecText())).append(", element: ")
-                    .append(elementEntryText(array.element(), stack));
-                default -> {
-                }
-            }
-            entry.append(", optional: ").append(!field.required())
-                .append(", nullable: ").append(nullable)
-                .append(", undefinedable: ").append(descriptor instanceof RuntimeDescriptor.Undefined
-                    || descriptor instanceof RuntimeDescriptor.Nullable n
-                        && (n.admitsUndefined() || n.inner() instanceof RuntimeDescriptor.Undefined));
-            return entry.append(" }").toString();
-        }
-
-        /** The nested descriptor array of one class-valued field. */
-        private String nestedFieldsText(ClassId nested, Set<ClassId> stack) {
-            ModuleId owner = jsonPlanOwners.get(nested);
-            if (owner == null) {
-                ModuleId declarationModule =
-                    declarationModuleOfClass.get(nested);
-                if (declarationModule != null
-                        && !units.containsKey(declarationModule)) {
-                    // A declaration-file class has no implementation unit, so
-                    // it generates no C$fields record and no class-default
-                    // evaluator: a nested JSON walk over it cannot be
-                    // rendered. The shared JSON layout validation rejects the
-                    // link before rendering, so reaching this is a producer
-                    // defect.
-                    throw new SharedEmissionFailure("the class " + nested
-                        + " of a jsonable field is declared by the module '"
-                        + declarationModule.path() + "' which has no"
-                        + " implementation unit: the nested"
-                        + " declaration-class walk has no plan, factory or"
-                        + " default evaluator (producer defect)", null);
-                }
-                throw new SharedEmissionFailure("the class " + nested
-                    + " of a jsonable field resolves in no declaration of"
-                    + " the project closure (producer defect)", null);
-            }
-            if (owner.equals(currentModule)) {
-                ClassLayout nestedLayout = unitLayoutOf(currentModule, nested);
-                if (nestedLayout == null) {
-                    throw new SharedEmissionFailure("the plan-bearing jsonable"
-                        + " class " + nested + " carries no layout in its"
-                        + " declaring unit (producer defect)", null);
-                }
-                return fieldsArrayText(nested, nestedLayout, stack);
-            }
-            // The canonical JSON plan key carries the plan-bearing
-            // declaration's layout: a consumer reads that declaration's
-            // published descriptor array, never a same-identity sibling's.
-            return "$rt.readModule(" + jsString(owner.path()) + ", "
-                + jsString(nested.name() + "$fields") + ")";
-        }
-
-        /** One array element's descriptor entry (no name/default roles). */
-        private String elementEntryText(RuntimeDescriptor element,
-                                        Set<ClassId> stack) {
-            boolean nullable = element instanceof RuntimeDescriptor.Nullable n && n.admitsNull();
-            RuntimeDescriptor base = element instanceof RuntimeDescriptor.Nullable n ? n.inner() : element;
-            StringBuilder entry = new StringBuilder("{ jtype: ")
-                .append(jsString(jsonJType(base)));
-            switch (base) {
-                case RuntimeDescriptor.Class classDescriptor -> {
-                    entry.append(", className: ")
-                        .append(jsString(classDescriptor.classId().text()))
-                        .append(", fields: ")
-                        .append(nestedFieldsText(classDescriptor.classId(), stack));
-                }
-                case RuntimeDescriptor.Array array -> entry.append(", elementDescriptor: ")
-                    .append(jsString(array.element().canonicalSpecText())).append(", element: ")
-                    .append(elementEntryText(array.element(), stack));
-                default -> {
-                }
-            }
-            return entry.append(", optional: false, nullable: ")
-                .append(nullable).append(", undefinedable: ").append(element instanceof RuntimeDescriptor.Undefined
-                    || element instanceof RuntimeDescriptor.Nullable n
-                        && (n.admitsUndefined() || n.inner() instanceof RuntimeDescriptor.Undefined)).append(" }").toString();
-        }
-
-        /** The closed JSON kind name of one canonical descriptor. */
-        private String jsonJType(RuntimeDescriptor descriptor) {
-            if (descriptor == RuntimeDescriptor.Undefined.INSTANCE) return "undefined";
-            if (descriptor == RuntimeDescriptor.Null.INSTANCE) {
-                return "null";
-            }
-            if (descriptor == RuntimeDescriptor.Boolean.INSTANCE) {
-                return "boolean";
-            }
-            if (descriptor == RuntimeDescriptor.Number.INSTANCE) {
-                return "number";
-            }
-            if (descriptor == RuntimeDescriptor.String.INSTANCE) {
-                return "string";
-            }
-            if (descriptor == RuntimeDescriptor.Table.INSTANCE) {
-                return "table";
-            }
-            if (descriptor instanceof RuntimeDescriptor.Class) {
-                return "class";
-            }
-            if (descriptor instanceof RuntimeDescriptor.Array) {
-                return "array";
-            }
-            throw new SharedEmissionFailure("the @jsonable field descriptor "
-                + descriptor.canonicalSpecText() + " is not a JSON kind: the"
-                + " checker's jsonable-field rule admits the primitive, array,"
-                + " nullable and jsonable-class shapes only (producer defect)",
-                null);
         }
 
         // ----- Construction -----
@@ -4185,84 +3907,6 @@ private void emitBindingLoad(SemanticOp op) {
                 + ", $rt.MISSING);");
         }
 
-        // ----- JSON helpers -----
-
-        /**
-         * {@code JSON_FROM_CLASS}: the canonical JS JSON walker over the
-         * class's declaration-order descriptor array. Every parse, key,
-         * required-presence, supplied-value or validation failure returns
-         * DEAL null without publishing a partial instance.
-         */
-        private void emitJsonFromClass(SemanticOp op) {
-            KindPayload.JsonFromClassPayload payload =
-                (KindPayload.JsonFromClassPayload) op.payload();
-            requireLocalJsonLayout(op, payload.layout());
-            emit(slotOf(op) + " = $rt.jsonFromJson("
-                + jsString(payload.layout().classId().text()) + ", "
-                + classFieldsExpr(op, payload.layout().classId()) + ", "
-                + slot(payload.jsonString()) + ", " + callSpanArgs(op) + ");");
-        }
-
-        /**
-         * {@code JSON_TO_CLASS}: the canonical JS JSON walker over the
-         * class's declaration-order descriptor array. Absent optionals are
-         * omitted, present nulls are preserved, and the first declaration-
-         * order unsupported/cycle/nonfinite value raises E8001 at the current
-         * call expression's own origin (the generated helper forwards its
-         * call-site span).
-         */
-        private void emitJsonToClass(SemanticOp op) {
-            KindPayload.JsonToClassPayload payload =
-                (KindPayload.JsonToClassPayload) op.payload();
-            requireLocalJsonLayout(op, payload.layout());
-            emit(slotOf(op) + " = $rt.jsonToJson("
-                + jsString(payload.layout().classId().text()) + ", "
-                + slot(payload.classValue()) + ", "
-                + classFieldsExpr(op, payload.layout().classId()) + ", "
-                + callSpanArgs(op) + ");");
-        }
-
-        /**
-         * The generated JSON helper of one class runs over exactly its own
-         * declaring unit's layout: the helper is generated by that
-         * declaration, so the recorded payload layout must be its layout
-         * (a same-identity sibling's layout is never substituted).
-         */
-        private void requireLocalJsonLayout(SemanticOp op, ClassLayout layout) {
-            requirePayloadLayout(op, layout.classId(), layout);
-            ClassLayout unitLayout = unitLayoutOf(currentModule,
-                layout.classId());
-            if (unitLayout == null || !unitLayout.equals(layout)) {
-                throw rejected(op, "the " + op.kind() + " " + op.opId()
-                    + " records a layout of " + layout.classId() + " that"
-                    + " differs from its declaring unit's layout (producer"
-                    + " defect)");
-            }
-        }
-
-        /** The emitted {@code $fields} binding of one jsonable class. */
-        private String classFieldsExpr(SemanticOp op, ClassId classId) {
-            if (unitLayoutOf(currentModule, classId) == null) {
-                throw rejected(op, "the @jsonable class " + classId
-                    + " is not declared by the module '" + currentModule.path()
-                    + " that generates its JSON helpers (producer defect)");
-            }
-            // The module emits one descriptor array per class it declares
-            // and generates helpers for; the binding every local helper
-            // reads is its own declaration's array.
-            return "$f" + classId.name();
-        }
-
-        /**
-         * The span arguments of one generated JSON helper operation: the
-         * enclosing closure's own call-site span parameters when the helper
-         * body declares them (the call origin the shared JSON_TO_ERROR
-         * projection names), otherwise the operation's recorded origin.
-         */
-        private String callSpanArgs(SemanticOp op) {
-            return currentCallSpan != null ? currentCallSpan : spanArgs(op);
-        }
-
         // ----- Class-fact lookups -----
 
         /** One declared field of a layout, or null. */
@@ -4350,66 +3994,6 @@ private void emitBindingLoad(SemanticOp op) {
                     || op.origin().span() == null ? null
                 : op.origin().span().range();
             return new SharedEmissionFailure(message, range);
-        }
-
-        /**
-         * Whether one body (structures included) carries a generated
-         * {@code JSON_TO_CLASS} operation: exactly those closures declare the
-         * trailing call-site span parameters the shared toJson projection
-         * renders its failure origin from.
-         */
-        private boolean needsCallSpan(LoweredModuleUnit unit, BlockId block) {
-            return needsCallSpan(unit, block, new HashSet<>());
-        }
-
-        private boolean needsCallSpan(LoweredModuleUnit unit, BlockId block,
-                                      Set<BlockId> seen) {
-            if (block == null || !seen.add(block)) {
-                return false;
-            }
-            List<OpId> members = memberOps(unit, block);
-            if (members == null) {
-                return false;
-            }
-            for (OpId opId : members) {
-                SemanticOp op = opsById.get(opId);
-                if (op == null) {
-                    continue;
-                }
-                if (op.kind() == SemanticOpKind.JSON_TO_CLASS) {
-                    return true;
-                }
-                switch (op.payload()) {
-                    case KindPayload.BranchPayload payload -> {
-                        if (needsCallSpan(unit, payload.selectedBlock(), seen)
-                                || needsCallSpan(unit, payload.alternateBlock(),
-                                    seen)) {
-                            return true;
-                        }
-                    }
-                    case KindPayload.LoopPayload payload -> {
-                        if (needsCallSpan(unit, payload.initBlock(), seen)
-                                || needsCallSpan(unit, payload.bodyBlock(), seen)
-                                || needsCallSpan(unit, payload.updateBlock(), seen)) {
-                            return true;
-                        }
-                    }
-                    case KindPayload.ForEachPayload payload -> {
-                        if (needsCallSpan(unit, payload.body(), seen)) {
-                            return true;
-                        }
-                    }
-                    case KindPayload.TryCatchPayload payload -> {
-                        if (needsCallSpan(unit, payload.tryBlock(), seen)
-                                || needsCallSpan(unit, payload.catchBlock(), seen)) {
-                            return true;
-                        }
-                    }
-                    default -> {
-                    }
-                }
-            }
-            return false;
         }
 
         // =====================================================================

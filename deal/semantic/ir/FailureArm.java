@@ -100,10 +100,9 @@ public record FailureArm(
         /** The carried canonical signature text. */
         CARRIED_SIGNATURE,
         /**
-         * The retained sibling-owned marker of the closed vocabulary: no
-         * declared arm carries it after the {@code @jsonable} walk arm's
-         * binding (the completeness invariant's terminal condition), and
-         * every render-time guard rejects a hand-built marked arm.
+         * The reserved sibling-owned marker of the closed vocabulary. No
+         * declared arm may carry it, and every render-time guard rejects a
+         * hand-built marked arm.
          */
         SIBLING_OWNED
     }
@@ -156,8 +155,6 @@ public record FailureArm(
         EXPECTED,
         /** The host-load actual text. */
         ACTUAL,
-        /** The JSON field path. */
-        FIELD_PATH,
         /** The one-based JSON parse byte offset. */
         ONE_BASED_BYTE_OFFSET
     }
@@ -200,9 +197,9 @@ public record FailureArm(
         /** The exporting/invoking unit's program span. */
         PROGRAM_SPAN,
         /**
-         * The retained sibling-owned origin convention of the closed
-         * vocabulary: no declared arm carries it after the {@code @jsonable}
-         * walk arm's binding, and a hand-built marked arm fails closed.
+         * The reserved sibling-owned origin convention of the closed
+         * vocabulary: no declared arm may carry it, and a hand-built marked
+         * arm fails closed.
          */
         SIBLING_OWNED
     }

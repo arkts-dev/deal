@@ -4,7 +4,7 @@
 // @expected: runtime-ok
 
 import * as outputx from "std/console";
-import * as json from "std/json";
+
 import * as Values from "./reassignment_value_lib";
 
 export function test_imported_function_binding(): number {
@@ -20,6 +20,6 @@ export function test_imported_function_binding(): number {
 
 export function main(): null {
   let imported: number = test_imported_function_binding();
-  outputx.log(json.stringify({ imported: imported }) as string);
+  outputx.log(JSON.stringify({ imported: imported }) as string);
   return null;
 }

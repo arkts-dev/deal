@@ -85,6 +85,7 @@ import deal.semantic.ir.BoundaryRealization;
 import deal.semantic.ir.CaptureMode;
 import deal.semantic.ir.ClassBindingFacts;
 import deal.semantic.ir.ClassId;
+import deal.semantic.ir.ClassLayout;
 import deal.semantic.ir.ConstructKind;
 import deal.semantic.ir.ControlSelector;
 import deal.semantic.ir.ConstructionProvider;
@@ -1144,14 +1145,11 @@ public final class SemanticLowerer {
         // provider and fails closed without one (never a first alias).
         java.util.Set<ClassId> projectAmbiguousClassIds =
             ambiguousProjectClassIds(checkedProject);
-        // The plan-bearing (jsonable) declarations of the same identity:
-        // only a genuine two-plan collision makes the generated JSON plan
-        // key ambiguous; a single plan-bearing declaration keeps every
-        // nested link exact. The plan owner resolves the declaration the
-        // generated plan table carries under the canonical key (the
-        // unique plan-bearing declaration when one exists, the emission
-        // order's last declaration otherwise).
-        JsonPlanFacts jsonPlanFacts = jsonPlanFacts(checkedProject, interfaceIndex);
+        // Every class declaration contributes a contextual schema. A duplicate
+        // canonical identity has no selectable JSON owner, regardless of comments.
+        JsonPlanFacts jsonPlanFacts = jsonPlanFacts(checkedProject);
+        ClassConstructionValidator.JsonSchemaContext dependencyLayouts =
+            ClassConstructionValidator.JsonSchemaContext.forProject(interfaceIndex, seeds.seeds());
 
         for (CheckedModuleInput module : checkedProject.modules()) {
             SemanticRequirementManifest manifest =
@@ -1179,7 +1177,7 @@ public final class SemanticLowerer {
                 ownInterface, comparisonFacts,
                 inProjectFactoryFacts, inProjectProviderFacts,
                 providerConstructionEntries, declaredParameterAnnotations,
-                projectAmbiguousClassIds, jsonPlanFacts);
+                projectAmbiguousClassIds, jsonPlanFacts, dependencyLayouts);
             if (lowered.hasErrors()) {
                 return projectFailureResult(lowered.diagnostics());
             }
@@ -1189,6 +1187,7 @@ public final class SemanticLowerer {
                 return projectFailureResult(List.of(namespaceFailure.get()));
             }
             units.put(module.moduleId(), lowered.unit());
+            dependencyLayouts = dependencyLayouts.withUnit(lowered.unit());
             tables.put(module.moduleId(), lowered.unit().bodyTable());
             registries.put(module.moduleId(), lowered.unit().classFactories());
             if (!lowered.externalEntries().isEmpty()) {
@@ -1260,41 +1259,11 @@ public final class SemanticLowerer {
         return java.util.Collections.unmodifiableSet(ambiguous);
     }
 
-    /**
-     * The generated-JSON-plan facts of the project's class identities
-     * (the canonical plan key is the class identity):
-     *
-     * <ul>
-     *   <li>{@code ambiguous} — the identities carrying more than one
-     *   plan-bearing ({@code @jsonable}) declaration: the generated plan
-     *   table can carry only one declaration's plan under the key, so such
-     *   a project fails closed (the generated helpers themselves are
-     *   ambiguous, not only the nested links);</li>
-     *   <li>{@code owners} — for every identity carrying more than one
-     *   declaration, the declaration whose layout and defaults the
-     *   generated plan table carries: the unique plan-bearing declaration
-     *   when exactly one exists, the emission order's last declaration
-     *   otherwise;</li>
-     *   <li>{@code ownerEntries} — the owner's construction entry when the
-     *   owner is exported, so the nested-link admission and the per-module
-     *   validation resolve the owner's exact shared-factory facts.</li>
-     * </ul>
-     *
-     * <p>A declaration file's {@code @jsonable} directive has no effect
-     * (its classes generate no plan), so only implementation modules
-     * contribute; the checked project's module list covers exactly those,
-     * in dependency order — the order the emitters merge the project's
-     * class layouts in.</p>
-     */
-    private record JsonPlanFacts(java.util.Set<ClassId> ambiguous,
-                                 Map<ClassId, ModuleId> owners,
-                                 Map<ClassId, deal.semantic.ir.ClassFactoryId>
-                                     ownerEntries) {}
+    /** Duplicate structural schema identities; no declaration is chosen as owner. */
+    private record JsonPlanFacts(java.util.Set<ClassId> ambiguous) {}
 
-    private static JsonPlanFacts jsonPlanFacts(CheckedProjectInput checkedProject,
-            deal.semantic.ir.ProjectInterfaceIndex interfaceIndex) {
+    private static JsonPlanFacts jsonPlanFacts(CheckedProjectInput checkedProject) {
         Map<ClassId, java.util.List<ModuleId>> declarations = new LinkedHashMap<>();
-        Map<ClassId, java.util.List<ModuleId>> planBearers = new LinkedHashMap<>();
         for (CheckedModuleInput module : checkedProject.modules()) {
             SymbolTable table = module.checks() == null
                 ? null : module.checks().symbolTable();
@@ -1320,63 +1289,14 @@ public final class SemanticLowerer {
                 }
                 declarations.computeIfAbsent(classId,
                     key -> new java.util.ArrayList<>()).add(module.moduleId());
-                if (classDeclaration.isJsonable()) {
-                    planBearers.computeIfAbsent(classId,
-                        key -> new java.util.ArrayList<>()).add(module.moduleId());
-                }
             }
         }
         java.util.Set<ClassId> ambiguous = new java.util.LinkedHashSet<>();
-        Map<ClassId, ModuleId> owners = new LinkedHashMap<>();
-        for (Map.Entry<ClassId, java.util.List<ModuleId>> entry
-                : declarations.entrySet()) {
-            java.util.List<ModuleId> bearers = planBearers.get(entry.getKey());
-            int bearerCount = bearers == null ? 0 : bearers.size();
-            if (bearerCount > 1) {
-                ambiguous.add(entry.getKey());
-            }
-            if (entry.getValue().size() > 1) {
-                owners.put(entry.getKey(), bearerCount == 1
-                    ? bearers.get(0)
-                    : entry.getValue().get(entry.getValue().size() - 1));
-            }
+        for (Map.Entry<ClassId, java.util.List<ModuleId>> entry : declarations.entrySet()) {
+            if (entry.getValue().size() > 1) ambiguous.add(entry.getKey());
         }
-        Map<ClassId, deal.semantic.ir.ClassFactoryId> ownerEntries =
-            new LinkedHashMap<>();
-        Map<ModuleId, Map<ClassId, deal.semantic.ir.ClassFactoryId>> moduleEntries =
-            constructionEntriesOf(interfaceIndex);
-        for (Map.Entry<ClassId, ModuleId> owner : owners.entrySet()) {
-            Map<ClassId, deal.semantic.ir.ClassFactoryId> byClass =
-                moduleEntries.get(owner.getValue());
-            if (byClass == null) {
-                continue;
-            }
-            deal.semantic.ir.ClassFactoryId entry =
-                byClass.get(owner.getKey());
-            if (entry != null) {
-                ownerEntries.put(owner.getKey(), entry);
-            }
-        }
-        return new JsonPlanFacts(
-            java.util.Collections.unmodifiableSet(ambiguous),
-            java.util.Collections.unmodifiableMap(owners),
-            java.util.Collections.unmodifiableMap(ownerEntries));
-    }
-
-    /**
-     * The validator-facing plan-owner facts of the project's
-     * multiple-declaration class identities (the owner declaration and its
-     * construction entry when exported).
-     */
-    private static Map<ClassId, ClassConstructionValidator.ClassPlanOwner> jsonPlanOwners(
-            JsonPlanFacts facts) {
-        Map<ClassId, ClassConstructionValidator.ClassPlanOwner> owners =
-            new LinkedHashMap<>();
-        for (Map.Entry<ClassId, ModuleId> entry : facts.owners().entrySet()) {
-            owners.put(entry.getKey(), new ClassConstructionValidator.ClassPlanOwner(
-                entry.getValue(), facts.ownerEntries().get(entry.getKey())));
-        }
-        return java.util.Collections.unmodifiableMap(owners);
+        // No first/last declaration is nominated for an ambiguous canonical key.
+        return new JsonPlanFacts(java.util.Collections.unmodifiableSet(ambiguous));
     }
 
     /**
@@ -1403,21 +1323,6 @@ public final class SemanticLowerer {
                     // fallback).
                     byName.computeIfAbsent(function.name(), ignored -> new ArrayList<>())
                         .add(ModuleLowerer.parameterTypeSpans(function.params()));
-                }
-                if (declaration instanceof ClassDeclaration classDeclaration
-                        && classDeclaration.isJsonable()) {
-                    // The generated @jsonable helper declarations (R3):
-                    // a cross-module helper call's declared-parameter
-                    // cell is declaration-owned like any declared
-                    // callee's. The helper has exactly one generated
-                    // parameter, and its declaration site is the class
-                    // declaration's own span, so the index records that
-                    // span — never the invoking call site.
-                    for (String helper : List.of(classDeclaration.name() + "$fromJson",
-                            classDeclaration.name() + "$toJson")) {
-                        byName.computeIfAbsent(helper, ignored -> new ArrayList<>())
-                            .add(List.of(classDeclaration.span()));
-                    }
                 }
             }
             index.put(module.moduleId(),
@@ -1459,7 +1364,8 @@ public final class SemanticLowerer {
                 providerConstructionEntries,
             Map<ModuleId, DeclaredParameterAnnotations> declaredParameterAnnotations,
             java.util.Set<ClassId> projectAmbiguousClassIds,
-            JsonPlanFacts jsonPlanFacts) {
+            JsonPlanFacts jsonPlanFacts,
+            ClassConstructionValidator.JsonSchemaContext dependencyLayouts) {
         ModuleLowerer lowerer = new ModuleLowerer(module.moduleId(), module.sourceId(),
             module.checks(), allocator, true, true, true, false, false, false,
             module.ast().span(), true, true, ownInterface,
@@ -1470,9 +1376,6 @@ public final class SemanticLowerer {
         lowerer.setProviderFactoryFacts(Map.copyOf(providerFactoryFacts),
             providerConstructionEntries, module.classLiteralProviders());
         lowerer.setProjectAmbiguousClassIds(projectAmbiguousClassIds);
-        lowerer.setAmbiguousJsonPlanClassIds(jsonPlanFacts.ambiguous());
-        lowerer.setJsonPlanOwners(jsonPlanFacts.owners(),
-            jsonPlanFacts.ownerEntries());
         lowerer.setE7Facts(module.exports(), calleeExternalEntries,
             callbackExports);
         try {
@@ -1499,7 +1402,7 @@ public final class SemanticLowerer {
             unit.classFactories(), ownInterface,
             Map.copyOf(sharedFactories), seeds.registrations(),
             Map.copyOf(providerFactoryFacts),
-            jsonPlanFacts.ambiguous(), jsonPlanOwners(jsonPlanFacts));
+            jsonPlanFacts.ambiguous(), dependencyLayouts);
         if (unitChain.isPresent()) {
             return LoweredProjectModule.failure(List.of(unitChain.get()));
         }
@@ -1639,10 +1542,8 @@ public final class SemanticLowerer {
     /**
      * The composed per-module production admission over the supplied
      * provider-keyed shared-factory facts and the project-wide set of
-     * class identities carrying more than one plan-bearing
-     * ({@code @jsonable}) declaration: only such an identity's generated
-     * JSON plan key is ambiguous, so only its nested JSON links fail
-     * closed.
+     * class identities carrying more than one declaring provider:
+     * contextual schemas cannot choose among ambiguous declarations.
      */
     public static Optional<CompilerDiagnostic> validateProjectUnit(
             LoweredModuleUnit unit,
@@ -1658,31 +1559,20 @@ public final class SemanticLowerer {
             java.util.Set<ClassId> ambiguousJsonPlanClassIds) {
         return validateProjectUnit(unit, table, facts, bindingFacts, factories,
             ownInterface, sharedFactories, declarationClasses,
-            providerFactoryFacts, ambiguousJsonPlanClassIds, Map.of());
+            providerFactoryFacts, ambiguousJsonPlanClassIds,
+            ClassConstructionValidator.JsonSchemaContext.empty());
     }
 
-    /**
-     * The composed per-module production admission over the supplied
-     * provider-keyed shared-factory facts, the project-wide ambiguous
-     * plan-key identities and the recorded plan owners of the
-     * multiple-declaration class identities: every nested JSON link of an
-     * identity the generated plan table carries under the canonical key
-     * validates the owner declaration's layout — never the unit-local
-     * sibling an identity-keyed lookup would mask it with.
-     */
     public static Optional<CompilerDiagnostic> validateProjectUnit(
-            LoweredModuleUnit unit,
-            StructuredBodyTable table,
-            SemanticIrValidator.ComparisonFacts facts,
-            ClassBindingFacts bindingFacts,
+            LoweredModuleUnit unit, StructuredBodyTable table,
+            SemanticIrValidator.ComparisonFacts facts, ClassBindingFacts bindingFacts,
             deal.semantic.ir.ClassFactoryRegistry factories,
             deal.semantic.ir.ExternalModuleInterface ownInterface,
             Map<ClassId, SharedFactoryFacts> sharedFactories,
             Map<ClassId, ClassRegistrationSeeds.ClassRegistration> declarationClasses,
-            Map<deal.semantic.ir.ClassFactoryId, SharedFactoryFacts>
-                providerFactoryFacts,
+            Map<deal.semantic.ir.ClassFactoryId, SharedFactoryFacts> providerFactoryFacts,
             java.util.Set<ClassId> ambiguousJsonPlanClassIds,
-            Map<ClassId, ClassConstructionValidator.ClassPlanOwner> jsonPlanOwners) {
+            ClassConstructionValidator.JsonSchemaContext dependencyLayouts) {
         Objects.requireNonNull(unit, "unit must not be null");
         Objects.requireNonNull(table, "table must not be null");
         Objects.requireNonNull(facts, "facts must not be null");
@@ -1696,7 +1586,6 @@ public final class SemanticLowerer {
             "providerFactoryFacts must not be null");
         Objects.requireNonNull(ambiguousJsonPlanClassIds,
             "ambiguousJsonPlanClassIds must not be null");
-        Objects.requireNonNull(jsonPlanOwners, "jsonPlanOwners must not be null");
         Optional<CompilerDiagnostic> viewMismatch = checkSuppliedViews(unit, table,
             bindingFacts, factories, facts);
         if (viewMismatch.isPresent()) {
@@ -1726,7 +1615,7 @@ public final class SemanticLowerer {
         }
         return ClassConstructionValidator.validate(unit, ownedTable, ownedFactories,
             ownInterface, sharedFactories, declarationClasses,
-            providerFactoryFacts, ambiguousJsonPlanClassIds, jsonPlanOwners);
+            providerFactoryFacts, ambiguousJsonPlanClassIds, dependencyLayouts);
     }
 
     /**
@@ -2630,29 +2519,6 @@ public final class SemanticLowerer {
          */
         private java.util.Set<ClassId> projectAmbiguousClassIds =
             java.util.Set.of();
-        /**
-         * The canonical class identities carrying more than one
-         * plan-bearing ({@code @jsonable}) declaration in the project: the
-         * generated JSON plan key is the canonical identity, so only such
-         * an identity has no single nested plan and its JSON links fail
-         * closed. A same-identity declaration without a generated plan
-         * registers none and never makes the key ambiguous.
-         */
-        private java.util.Set<ClassId> ambiguousJsonPlanClassIds =
-            java.util.Set.of();
-        /**
-         * The recorded plan owner of every canonical identity carrying
-         * more than one declaration (the unique plan-bearing declaration
-         * when one exists, the emission order's last declaration
-         * otherwise) and the owner's construction entry when exported.
-         * The generated JSON plan table carries exactly this declaration's
-         * layout under the canonical key, so the nested-link admission and
-         * the per-module validation resolve through it.
-         */
-        private Map<ClassId, ModuleId> jsonPlanOwners = Map.of();
-        private Map<ClassId, deal.semantic.ir.ClassFactoryId> jsonPlanOwnerEntries =
-            Map.of();
-
         private ClassRegistrationSeeds registrationSeeds =
             ClassRegistrationSeeds.builtinErrorOnly();
 
@@ -2852,9 +2718,7 @@ public final class SemanticLowerer {
          * the hoist beside the shape reservation, and never for
          * {@code main} (the {@code ENTRY_INVOKE} delegation owns its single
          * invocation shape), for a callback export (host-driven
-         * {@code CALLBACK_INVOKE}), or for the generated helper (its
-         * same-module references keep the landed {@code LoweredBody} call
-         * shape — R3(b)).
+         * {@code CALLBACK_INVOKE}).
          */
         private final Map<FunctionId, String> moduleEntryExportNames =
             new LinkedHashMap<>();
@@ -2907,18 +2771,6 @@ public final class SemanticLowerer {
             boolean callSiteUsed;
             InvocationShape shape;
             OpId shapeOpId;
-            /**
-             * True for a compiler-generated {@code @jsonable} helper
-             * context (R3(b)): the declaring module's own reference to
-             * the helper calls the class's generated closure identity
-             * through the landed {@code LoweredBody} call shape, never
-             * the module surface's external entry — the reserved
-             * {@code EXTERNAL_ENTRY} record (and the body's
-             * {@code EXTERNAL_RETURN} cell it names) stays the
-             * cross-module callers' invocation.
-             */
-            boolean generatedHelper;
-
             FunctionContext(FunctionId functionId, BlockId bodyBlock,
                             RuntimeDescriptor.Func signature, OpId returnBoundaryOpId,
                             OpId callSiteOpId) {
@@ -3971,19 +3823,6 @@ public final class SemanticLowerer {
                         importDecl.span(), FailurePolicyId.NO_DEAL_FAILURE);
                 }
             }
-            // The generated @jsonable helper names (R3): the declaring
-            // module's exported helpers are module-level functions of the
-            // module surface, so their names hoist exactly like declared
-            // module-level functions — one binding cell at module-init
-            // top, one pre-allocated closure identity, one reserved
-            // invocation context — and the class-declaration walk reuses
-            // them (the declaration-position CLOSURE_NEW + BINDING_INIT).
-            // This pass runs only in the production project session (the
-            // class-core-only seam keeps its landed three-op generated
-            // bodies).
-            if (fullProgram && classCore && e7Calls) {
-                hoistJsonHelperAllocs(statements);
-            }
             if (fullProgram && closureCore) {
                 // The module-level declared bodies' execution bindings are
                 // registered at the hoist (C10/K12: every lowered body owns
@@ -4013,7 +3852,7 @@ public final class SemanticLowerer {
         }
 
         /**
-         * Register module-level structural layouts, factories and JSON helpers
+         * Register module-level structural layouts and factories
          * before body lowering, so forward class references see complete facts.
          * Registration executes no field expression. The declaration-position
          * walk emits nothing for an already hoisted declaration.
@@ -4086,97 +3925,6 @@ public final class SemanticLowerer {
                     + "identity " + identity + " carries a different "
                     + "function-binding registration (" + previous + ") than "
                     + produced + " (producer defect)");
-            }
-        }
-
-        /**
-         * Hoists the generated {@code C$fromJson}/{@code C$toJson} names
-         * of every module-level {@code @jsonable} class declaration (the
-         * helper-family realization): the helper is a module-level export
-         * function, so its name resolves through the same binding
-         * environment a declared module function uses — the module-init
-         * {@code BINDING_ALLOC}, the pre-allocated closure identity
-         * ({@code functionIdentity}), the reserved body context
-         * ({@code moduleFunctionContexts}) with its single return
-         * boundary and call-site identity, the exported helper's
-         * {@code EXTERNAL_ENTRY} shape, and the recorded module function
-         * identity the E7 publication reads. A reference before the class
-         * declaration therefore resolves, and the declaration-position
-         * walk publishes the one identity the registration names (never a
-         * second closure for one class).
-         *
-         * <p>The generated signatures flow from the checker's synthetic
-         * {@code C$fromJson}/{@code C$toJson} root-scope function symbols
-         * through the single {@code DescriptorService} producer. A
-         * {@code @jsonable} class without the synthetic symbols is a
-         * fact defect. The helper's declaration-owned parameter origin is
-         * the class declaration's own span (the generated declaration's
-         * site), recorded on the context so a caller's declared-parameter
-         * cell reads a declaration-owned span, never the call site.</p>
-         */
-        private void hoistJsonHelperAllocs(List<StatementNode> statements) {
-            SymbolTable scope = currentCheckerScope();
-            for (StatementNode statement : statements) {
-                StatementNode declaration = statement instanceof ExportDeclaration export
-                    ? export.declaration() : statement;
-                if (!(declaration instanceof ClassDeclaration classDeclaration)
-                        || !classDeclaration.isJsonable()) {
-                    continue;
-                }
-                for (boolean fromJson : new boolean[] {true, false}) {
-                    String name = classDeclaration.name()
-                        + (fromJson ? "$fromJson" : "$toJson");
-                    Symbol symbol = scope == null ? null : scope.resolve(name);
-                    if (!(symbol instanceof Symbol.FunctionSymbol functionSymbol)) {
-                        throw new ConstructUnlowered("the @jsonable class '"
-                            + classDeclaration.name() + "' has no checked " + name
-                            + " function symbol (the checker defines the synthetic"
-                            + " symbols for every @jsonable class — a fact defect)",
-                                classDeclaration.span());
-                    }
-                    RuntimeDescriptor.Func signature =
-                        jsonHelperSignatureOf(functionSymbol, classDeclaration);
-                    BindingId binding = ids.nextBindingId(module, nextOrdinal++, 0);
-                    BindingCoreIncarnation incarnation = new BindingCoreIncarnation(
-                        INITIAL_LOOP_GENERATION, moduleInitBlock, BindingCellKind.DIRECT,
-                        true, BindingProducer.BINDING_ALLOC, false);
-                    registerBinding(name, binding, incarnation);
-                    FunctionId functionId = ids.nextFunctionId(module, nextOrdinal++, 0);
-                    BlockId bodyBlock = allocateBlock();
-                    OpId returnBoundaryOpId = ids.nextOpId(module, nextOrdinal++, 0);
-                    OpId callSiteOpId = ids.nextOpId(module, nextOrdinal++, 0);
-                    FunctionContext context = new FunctionContext(functionId, bodyBlock,
-                        signature, returnBoundaryOpId, callSiteOpId,
-                        List.of(classDeclaration.span()));
-                    // R3(b): the declaring module's own reference to the
-                    // helper resolves the class's generated closure
-                    // identity and calls it through the landed
-                    // LoweredBody call shape (see lowerDirectCall).
-                    context.generatedHelper = true;
-                    if (isExported(name)) {
-                        // The exported helper still records exactly one
-                        // EXTERNAL_ENTRY (R3(a)): a cross-module
-                        // reference realizes the closed CALL(EXTERNAL)
-                        // SHARED_BODY cell over that entry, and the
-                        // entry's cell keeps the body's return boundary
-                        // kind (EXTERNAL_RETURN) even when the same
-                        // module also calls the helper directly.
-                        OpId shapeOpId = ids.nextOpId(module, nextOrdinal++, 0);
-                        context.assignShape(InvocationShape.EXTERNAL_ENTRY_SHAPE,
-                            shapeOpId);
-                    }
-                    functionContexts.put(incarnation, context);
-                    moduleFunctionContexts.put(name, context);
-                    contextsByBindingId.put(binding, context);
-                    contextsByFunctionId.put(functionId, context);
-                    ValueId closureIdentity = ids.nextValueId(module, nextOrdinal++, 0);
-                    functionIdentity.put(incarnation, closureIdentity);
-                    moduleFunctionIdentities.put(name, closureIdentity);
-                    emitUserNullOp(SemanticOpKind.BINDING_ALLOC,
-                        new KindPayload.BindingAllocPayload(binding, moduleInitBlock, true,
-                            cellKinds.cellKindOf(incarnation), INITIAL_LOOP_GENERATION),
-                        classDeclaration.span(), FailurePolicyId.NO_DEAL_FAILURE);
-                }
             }
         }
 
@@ -4322,18 +4070,12 @@ public final class SemanticLowerer {
         }
 
         /**
-         * One module-level class declaration's complete layout surface:
-         * the {@link deal.semantic.ir.ClassLayout} the class identity
-         * resolves to, the owning declaration, and the field descriptors
-         * and exact declaring providers the declaration walk's default and
-         * JSON arms consume. The layout is a declaration fact, not a body
-         * fact, so it is complete before any function body lowers.
+         * One explicit class declaration's structural layout and owning AST
+         * declaration. These facts are complete before any function body lowers.
          */
         private record ClassLayoutPlan(
             deal.semantic.ir.ClassLayout layout,
-            ClassDeclaration declaration,
-            Map<String, RuntimeDescriptor> descriptors,
-            Map<String, ModuleId> fieldProviders) {
+            ClassDeclaration declaration) {
         }
 
         /**
@@ -4344,7 +4086,7 @@ public final class SemanticLowerer {
          * earlier function body must resolve the module's own layout even
          * though the declaration statement has not been walked yet. Only
          * the structural layout registers here — never a default
-         * expression, a JSON helper, or a factory (registration executes
+         * expression or a factory (registration executes
          * no defaults). The declaration walk emits those at the
          * declaration's own position and reuses the registered layout.
          */
@@ -4384,8 +4126,6 @@ public final class SemanticLowerer {
         private ClassLayoutPlan computeClassLayout(ClassId classId,
                                                    ClassDeclaration declaration) {
             List<deal.semantic.ir.ClassLayout.FieldLayout> fields = new ArrayList<>();
-            Map<String, RuntimeDescriptor> descriptors = new LinkedHashMap<>();
-            Map<String, ModuleId> fieldProviders = new LinkedHashMap<>();
             for (ClassField field : declaration.fields()) {
                 Type fieldType = fieldTypeOf(field.type());
                 RuntimeDescriptor descriptor;
@@ -4399,32 +4139,15 @@ public final class SemanticLowerer {
                 }
                 fields.add(new deal.semantic.ir.ClassLayout.FieldLayout(field.name(),
                     descriptor, !field.optional(), ConstructionProvider.LOCAL));
-                descriptors.put(field.name(), descriptor);
-                // The field's exact declaring declaration (the checked
-                // annotation's own class symbol): a bare name is the
-                // module's own declaration, a qualified name the
-                // imported module's own declared symbol. The generated
-                // JSON plan table is keyed by the canonical class
-                // identity, so this recorded provider selects the exact
-                // declaration of every nested JSON link.
-                Symbol.ClassSymbol annotationSymbol =
-                    deal.checker.NameResolver.classSymbolInScope(
-                        currentCheckerScope(), field.type());
-                if (annotationSymbol != null
-                        && !annotationSymbol.modulePath().isEmpty()) {
-                    fieldProviders.put(field.name(),
-                        new ModuleId(annotationSymbol.modulePath()));
-                }
             }
             return new ClassLayoutPlan(
-                new deal.semantic.ir.ClassLayout(classId, fields), declaration,
-                descriptors, fieldProviders);
+                new deal.semantic.ir.ClassLayout(classId, fields), declaration);
         }
 
         private void lowerClassDeclaration(ClassDeclaration declaration, boolean exported) {
             if (hoistedClassDeclarations.contains(declaration)) {
                 // The module-level declaration already lowered at the hoist
-                // (its layout, defaults, helpers, and construction entry are
+                // (its layout and construction entry are
                 // declaration facts): the walk position owns no emission.
                 return;
             }
@@ -4447,25 +4170,6 @@ public final class SemanticLowerer {
                 classLayouts.put(classId, plan.layout());
                 unitClassDeclarations.put(classId, declaration);
             }
-            Map<String, RuntimeDescriptor> descriptors = plan.descriptors();
-            Map<String, ModuleId> fieldProviders = plan.fieldProviders();
-            deal.semantic.ir.ClassLayout layout = plan.layout();
-
-            if (declaration.isJsonable()) {
-                if (ambiguousJsonPlanClassIds.contains(classId)) {
-                    throw new ConstructUnlowered("the @jsonable class '"
-                        + declaration.name() + "' carries canonical class identity "
-                        + classId + " together with another plan-bearing"
-                        + " (@jsonable) declaration in the project (same-directory"
-                        + " sibling declarations): the generated JSON plan table is"
-                        + " keyed by the canonical identity, so the generated JSON"
-                        + " plan key cannot select the exact declaration — the"
-                        + " project fails closed with no partial project",
-                        declaration.span());
-                }
-                lowerJsonFunctions(declaration, classId, layout, fieldProviders);
-            }
-
             if (!exported) {
                 return;
             }
@@ -4497,307 +4201,6 @@ public final class SemanticLowerer {
             // never part of the module-init flow).
             emitTarget().add(op);
             factoryRegistry.put(interfaceEntry.constructionEntry(), opId);
-        }
-
-        private void lowerJsonFunctions(ClassDeclaration declaration, ClassId classId,
-                                        deal.semantic.ir.ClassLayout layout,
-                                        Map<String, ModuleId> fieldProviders) {
-            rejectAmbiguousJsonNestedClasses(declaration, layout, fieldProviders);
-            // The generated signatures flow from the checker's synthetic
-            // C$fromJson/C$toJson function symbols through the single
-            // DescriptorService producer (the producer-singularity rule:
-            // no RuntimeDescriptor is ever constructed directly here).
-            SymbolTable scope = currentCheckerScope();
-            Symbol fromSymbol = scope == null ? null
-                : scope.resolve(declaration.name() + "$fromJson");
-            Symbol toSymbol = scope == null ? null
-                : scope.resolve(declaration.name() + "$toJson");
-            if (!(fromSymbol instanceof Symbol.FunctionSymbol fromFunction)
-                    || !(toSymbol instanceof Symbol.FunctionSymbol toFunction)) {
-                throw new ConstructUnlowered("the @jsonable class '"
-                    + declaration.name() + "' has no checked C$fromJson/C$toJson "
-                    + "function symbols (the checker defines the synthetic symbols for "
-                    + "every @jsonable class — a fact defect)", declaration.span());
-            }
-            RuntimeDescriptor.Func fromSignature =
-                jsonHelperSignatureOf(fromFunction, declaration);
-            RuntimeDescriptor.Func toSignature =
-                jsonHelperSignatureOf(toFunction, declaration);
-            RuntimeDescriptor fromResult = fromSignature.returnType();
-            RuntimeDescriptor toResult = toSignature.returnType();
-            RuntimeDescriptor fromParameter = fromSignature.paramTypes().get(0);
-            RuntimeDescriptor toParameter = toSignature.paramTypes().get(0);
-
-            // C$fromJson(s: string): C|null — structural decode, no initializer children.
-            OpId fromJsonOpId = lowerJsonFunction(declaration, layout, fromSignature,
-                fromParameter, fromResult, FailurePolicyId.JSON_FROM_NULL, true);
-
-            // C$toJson(v: C): string.
-            lowerJsonFunction(declaration, layout, toSignature, toParameter, toResult,
-                FailurePolicyId.JSON_TO_ERROR, false);
-        }
-
-        /**
-         * The fail-closed rejection of a generated JSON link whose nested
-         * class identity carries more than one plan-bearing
-         * ({@code @jsonable}) declaration in the project (a
-         * harness-synthesized pair): the emitted plan table is keyed by
-         * the canonical class identity, so two generated plans cannot
-         * select one — a named E6005 with no partial project, never a first
-         * alias or a sibling's plan. An identity whose only plan-bearing
-         * declaration is unique keeps its nested link exact: a
-         * same-identity declaration without a generated plan registers no
-         * plan and cannot collide with it.
-         */
-        private void rejectAmbiguousJsonNestedClasses(ClassDeclaration declaration,
-                                                      deal.semantic.ir.ClassLayout layout,
-                                                      Map<String, ModuleId> fieldProviders) {
-            for (deal.semantic.ir.ClassLayout.FieldLayout field : layout.fields()) {
-                ClassId nested = nestedClassIdOf(field.descriptor());
-                if (nested == null) {
-                    continue;
-                }
-                if (ambiguousJsonPlanClassIds.contains(nested)) {
-                    throw new ConstructUnlowered("the @jsonable class '"
-                        + declaration.name() + "' field '" + field.name()
-                        + "' references nested class " + nested + " whose canonical"
-                        + " identity carries more than one plan-bearing (@jsonable)"
-                        + " declaration in the project (same-directory sibling"
-                        + " declarations): the generated JSON plan key cannot select"
-                        + " the exact declaration, so the link fails closed with no"
-                        + " partial project",
-                        declaration.span());
-                }
-                ModuleId owner = jsonPlanOwners.get(nested);
-                if (owner == null) {
-                    // A single declaration: the canonical plan key is exact.
-                    continue;
-                }
-                ModuleId provider = fieldProviders.get(field.name());
-                if (owner.equals(provider)) {
-                    // The generated JSON plan table carries exactly this
-                    // field's declaring declaration under the canonical key.
-                    continue;
-                }
-                throw new ConstructUnlowered("the @jsonable class '"
-                    + declaration.name() + "' field '" + field.name()
-                    + "' references nested class " + nested + " whose generated"
-                    + " JSON plan key carries the declaration of module '"
-                    + owner.path() + "' while the field's declared type resolves"
-                    + (provider == null
-                        ? " no recorded declaring module"
-                        : " the declaration of module '" + provider.path() + "'")
-                    + " (same-directory sibling declarations): the generated JSON"
-                    + " plan key cannot select the exact declaration, so the link"
-                    + " fails closed with no partial project",
-                    declaration.span());
-            }
-        }
-
-        /**
-         * The class identity of a JSON-walk descriptor, or {@code null} for
-         * a non-class descriptor (the nullable/array inner forms recurse
-         * like the generated walk).
-         */
-        private static ClassId nestedClassIdOf(RuntimeDescriptor descriptor) {
-            return switch (descriptor) {
-                case RuntimeDescriptor.Class cls -> cls.classId();
-                case RuntimeDescriptor.Nullable nullable ->
-                    nestedClassIdOf(nullable.inner());
-                case RuntimeDescriptor.Array array ->
-                    nestedClassIdOf(array.element());
-                default -> null;
-            };
-        }
-
-        /**
-         * The checked signature of one generated {@code @jsonable} helper
-         * ({@code C$fromJson}/{@code C$toJson}): the single
-         * {@link ContainerPayloadDescriptors} bridge over the checker's
-         * synthetic function symbol. The generated declaration's site is
-         * the owning class declaration (D2), so a corrupted checked
-         * signature fails closed at that declaration's own range — never
-         * the canonical empty-file anchor — while an already attached
-         * (inner) range always wins.
-         */
-        private RuntimeDescriptor.Func jsonHelperSignatureOf(
-                Symbol.FunctionSymbol functionSymbol, ClassDeclaration declaration) {
-            try {
-                return (RuntimeDescriptor.Func)
-                    ContainerPayloadDescriptors.resultDescriptorOf(
-                        functionSymbol.funcType());
-            } catch (ContainerPayloadDescriptors.Defect defect) {
-                throw defect.withRange(declaration.span().range());
-            }
-        }
-
-        /**
-         * Emits one generated {@code @jsonable} function: the body block
-         * (parameter {@code BINDING_ALLOC}, parameter {@code
-         * BINDING_LOAD}, the single JSON op — the parameter load
-         * result wired as the JSON payload's operand — and, in the
-         * production project session, the body's single {@code RETURN}
-         * of the JSON op's result with its return boundary), then the
-         * {@code CLOSURE_NEW} op publishing the fresh function identity
-         * with the {@code LoweredFunction} record and the
-         * {@code LoweredBody} registration through the registry seam,
-         * and finally the buffered body ops flushed after the closure
-         * (the closure-expression precedent's pinned unit order). The
-         * JSON op's id is returned for the helper body.
-         *
-         * <p><b>The production session reuses the hoisted helper
-         * context (R3).</b> When the class walk runs inside the
-         * production project session, the helper name was hoisted
-         * ({@link #hoistJsonHelperAllocs}): the body block, the function
-         * id, the closure identity, the single return boundary, and the
-         * reserved invocation identity come from that hoist, so the
-         * declaration position publishes exactly one closure identity
-         * per class and a reference resolves the same body. The
-         * class-core-only seam keeps its landed generated shape (a fresh
-         * identity and the three-op body).</p>
-         */
-        private OpId lowerJsonFunction(ClassDeclaration declaration,
-                                       deal.semantic.ir.ClassLayout layout,
-                                       RuntimeDescriptor.Func signature,
-                                       RuntimeDescriptor parameterDescriptor,
-                                       RuntimeDescriptor jsonResultType,
-                                       FailurePolicyId jsonPolicy,
-                                       boolean fromJson) {
-            String helperName = declaration.name()
-                + (fromJson ? "$fromJson" : "$toJson");
-            FunctionContext helperContext = fullProgram && classCore && e7Calls
-                ? moduleFunctionContexts.get(helperName) : null;
-            BlockId bodyBlock = helperContext != null
-                ? helperContext.bodyBlock : allocateBlock();
-            FunctionId functionId = helperContext != null
-                ? helperContext.functionId : ids.nextFunctionId(module, nextOrdinal++, 0);
-            ValueId closureIdentity;
-            BindingId helperBinding = null;
-            if (helperContext != null) {
-                FrameEntry hoisted = frameEntryOf(helperName);
-                if (hoisted == null) {
-                    throw new IllegalStateException("hoisted @jsonable helper "
-                        + "registration missing for '" + helperName
-                        + "' (producer defect)");
-                }
-                helperBinding = hoisted.cell().id;
-                closureIdentity = functionIdentity.get(hoisted.incarnation());
-                if (closureIdentity == null) {
-                    throw new IllegalStateException("pre-assigned @jsonable helper "
-                        + "identity missing for '" + helperName + "' (producer defect)");
-                }
-            } else {
-                closureIdentity = ids.nextValueId(module, nextOrdinal++, 0);
-            }
-            List<SemanticOp> bodyOps = new ArrayList<>();
-            emitTargets.push(bodyOps);
-            blockStack.push(bodyBlock);
-            OpId jsonOpId;
-            try {
-                // The parameter ALLOC at the body entry (the pinned
-                // parameter model: DIRECT, mutable, generation 0, the
-                // body-root block).
-                BindingId parameterBinding = ids.nextBindingId(module, nextOrdinal++, 0);
-                BindingCoreIncarnation incarnation = new BindingCoreIncarnation(
-                    INITIAL_LOOP_GENERATION, bodyBlock, BindingCellKind.DIRECT,
-                    true, BindingProducer.BINDING_ALLOC, false);
-                parameterBindings.add(parameterBinding);
-                AnchorId allocAnchor = ids.nextAnchorId(module, nextOrdinal++, 0);
-                OpId allocOpId = ids.nextOpId(module, nextOrdinal++, 0);
-                SourceOrigin allocOrigin = new SourceOrigin(sourceId,
-                    toSourceSpan(declaration.span()), SourceOriginKind.SYNTHETIC,
-                    allocAnchor, null);
-                emit(buildOp(allocOpId, SemanticOpKind.BINDING_ALLOC,
-                    new KindPayload.BindingAllocPayload(parameterBinding, bodyBlock, true,
-                        cellKinds.cellKindOf(incarnation), INITIAL_LOOP_GENERATION),
-                    null, null, FailurePolicyId.NO_DEAL_FAILURE, allocOrigin));
-
-                // The parameter load: the generated body's only operand
-                // producer.
-                ValueId loadValue = ids.nextValueId(module, nextOrdinal++, 0);
-                AnchorId loadAnchor = ids.nextAnchorId(module, nextOrdinal++, 0);
-                OpId loadOpId = ids.nextOpId(module, nextOrdinal++, 0);
-                SourceOrigin loadOrigin = new SourceOrigin(sourceId,
-                    toSourceSpan(declaration.span()), SourceOriginKind.SYNTHETIC,
-                    loadAnchor, null);
-                emit(buildOp(loadOpId, SemanticOpKind.BINDING_LOAD,
-                    new KindPayload.BindingLoadPayload(parameterBinding,
-                        INITIAL_LOOP_GENERATION),
-                    loadValue, parameterDescriptor, FailurePolicyId.NO_DEAL_FAILURE,
-                    loadOrigin));
-
-                // The single JSON op of the body: payload-referenced
-                // operand wiring (the FIELD_READ precedent), the pinned
-                // policy and result type, a SYNTHETIC origin at the class
-                // declaration span.
-                ValueId jsonResult = ids.nextValueId(module, nextOrdinal++, 0);
-                AnchorId jsonAnchor = ids.nextAnchorId(module, nextOrdinal++, 0);
-                jsonOpId = ids.nextOpId(module, nextOrdinal++, 0);
-                SourceOrigin jsonOrigin = new SourceOrigin(sourceId,
-                    toSourceSpan(declaration.span()), SourceOriginKind.SYNTHETIC,
-                    jsonAnchor, null);
-                KindPayload payload = fromJson
-                    ? new KindPayload.JsonFromClassPayload(layout, loadValue)
-                    : new KindPayload.JsonToClassPayload(loadValue, layout);
-                emit(buildOp(jsonOpId,
-                    fromJson ? SemanticOpKind.JSON_FROM_CLASS : SemanticOpKind.JSON_TO_CLASS,
-                    payload, jsonResult, jsonResultType, jsonPolicy, jsonOrigin));
-
-                if (helperContext != null) {
-                    // The generated body's single transfer of the JSON
-                    // op's result through its declaration-owned return
-                    // boundary (R3): the helper's JSON result is the
-                    // function's returned value, so a caller observes the
-                    // landed JSON_FROM_CLASS/JSON_TO_CLASS semantics.
-                    AnchorId returnAnchor = ids.nextAnchorId(module, nextOrdinal++, 0);
-                    OpId returnOpId = ids.nextOpId(module, nextOrdinal++, 0);
-                    SourceOrigin returnOrigin = new SourceOrigin(sourceId,
-                        toSourceSpan(declaration.span()), SourceOriginKind.SYNTHETIC,
-                        returnAnchor, null);
-                    ensureReturnBoundary(helperContext, jsonResult, declaration.span(),
-                        returnOpId);
-                    emit(buildOp(returnOpId, SemanticOpKind.RETURN,
-                        new KindPayload.ReturnPayload(jsonResult,
-                            helperContext.functionId, helperContext.invocationOpId(),
-                            helperContext.returnBoundaryOpId),
-                        null, null, FailurePolicyId.NO_DEAL_FAILURE, returnOrigin));
-                    terminateBlock();
-                }
-            } finally {
-                blockStack.pop();
-                emitTargets.pop();
-            }
-            // The CLOSURE_NEW producer: the fresh function identity, the
-            // LoweredFunction record, and the LoweredBody registration
-            // through the registry seam (generated synthetics are
-            // ordinary CLOSURE_NEW producers).
-            AnchorId closureAnchor = ids.nextAnchorId(module, nextOrdinal++, 0);
-            OpId closureOpId = ids.nextOpId(module, nextOrdinal++, 0);
-            FunctionExecutionBinding.LoweredBody binding =
-                new FunctionExecutionBinding.LoweredBody(functionId, bodyBlock);
-            SourceOrigin closureOrigin = new SourceOrigin(sourceId,
-                toSourceSpan(declaration.span()), SourceOriginKind.SYNTHETIC,
-                closureAnchor, currentParent());
-            emit(buildOp(closureOpId, SemanticOpKind.CLOSURE_NEW,
-                new KindPayload.ClosureNewPayload(functionId, signature, List.of(), binding),
-                closureIdentity, signature, FailurePolicyId.NO_DEAL_FAILURE,
-                closureOrigin));
-            if (helperBinding != null) {
-                // The declaration-position initialization of the hoisted
-                // helper binding (the module-function shape): the closure
-                // identity is the cell's value from here on, and the E7
-                // publication publishes exactly that identity.
-                emitUserNullOp(SemanticOpKind.BINDING_INIT,
-                    new KindPayload.BindingInitPayload(helperBinding,
-                        INITIAL_LOOP_GENERATION, closureIdentity),
-                    declaration.span(), FailurePolicyId.NO_DEAL_FAILURE);
-            }
-            functions.put(functionId, new LoweredFunction(functionId, signature, List.of(),
-                bodyBlock, helperName));
-            registerDeclaredBody(new FunctionAllocationIdentity(closureIdentity.id()),
-                functionId, bodyBlock);
-            emitTarget().addAll(bodyOps);
-            return jsonOpId;
         }
 
         /**
@@ -8510,41 +7913,6 @@ public final class SemanticLowerer {
         }
 
         /**
-         * Installs the project-wide set of canonical class identities
-         * carrying more than one plan-bearing ({@code @jsonable})
-         * declaration: only such an identity's generated JSON plan key is
-         * ambiguous, so only its nested JSON links fail closed. A
-         * same-identity declaration without a generated plan registers no
-         * plan and keeps the single-plan link exact.
-         */
-        public void setAmbiguousJsonPlanClassIds(java.util.Set<ClassId> ambiguous) {
-            java.util.Objects.requireNonNull(ambiguous,
-                "ambiguous must not be null");
-            this.ambiguousJsonPlanClassIds = java.util.Collections
-                .unmodifiableSet(new java.util.LinkedHashSet<>(ambiguous));
-        }
-
-        /**
-         * Installs the recorded plan owners of the project's
-         * multiple-declaration class identities (the unique plan-bearing
-         * declaration when one exists, the emission order's last
-         * declaration otherwise) and the owner's construction entry when
-         * exported: every nested JSON link and its validation resolves
-         * the owner declaration's own layout.
-         */
-        public void setJsonPlanOwners(Map<ClassId, ModuleId> owners,
-                Map<ClassId, deal.semantic.ir.ClassFactoryId> ownerEntries) {
-            java.util.Objects.requireNonNull(owners,
-                "owners must not be null");
-            java.util.Objects.requireNonNull(ownerEntries,
-                "ownerEntries must not be null");
-            this.jsonPlanOwners = java.util.Collections
-                .unmodifiableMap(new java.util.LinkedHashMap<>(owners));
-            this.jsonPlanOwnerEntries = java.util.Collections
-                .unmodifiableMap(new java.util.LinkedHashMap<>(ownerEntries));
-        }
-
-        /**
          * The checked exact declaration of one class-typed receiver
          * expression (the checker's per-expression record), or
          * {@code null} when the expression's class-typed declaration is
@@ -8771,6 +8139,14 @@ public final class SemanticLowerer {
             if (call.callee() instanceof MemberAccessExpr member
                     && member.object() instanceof IdentifierExpr namespace) {
                 deal.checker.BuiltinCall builtin = deal.checker.BuiltinCall.resolve(namespace.name(), member.field());
+                if (builtin == deal.checker.BuiltinCall.JSON_PARSE) {
+                    ValueId text = lowerOperand(call.args().getFirst());
+                    RuntimeDescriptor target = valueDescriptorOf(checkedType(call));
+                    return emitOperandOp(SemanticOpKind.JSON_PARSE,
+                        new KindPayload.JsonParsePayload(text, target), List.of(text),
+                        List.of(RuntimeDescriptor.String.INSTANCE), call.span(), target,
+                        FailurePolicyId.JSON_RECONSTRUCTION, slot);
+                }
                 if (builtin == deal.checker.BuiltinCall.ARRAY_FROM) return lowerArrayFrom(call, slot);
                 if (builtin == deal.checker.BuiltinCall.OBJECT_KEYS) {
                     ExpressionNode argument = call.args().getFirst();
@@ -9055,38 +8431,19 @@ public final class SemanticLowerer {
                 dynamicCallee);
         }
 
-        /**
-         * Records the source-call invocation shape of one body invocation
-         * through the closed single-shape guard. The generated
-         * {@code @jsonable} helper (R3(b)) is the one body whose reserved
-         * shape is never replaced: its declaration's reserved
-         * {@code EXTERNAL_ENTRY} stays the cross-module invocation record,
-         * and a same-module reference — a direct call
-         * ({@link #lowerDirectCall}) or a call carried through a
-         * function-typed binding ({@link #lowerIndirectCall}) — invokes the
-         * declaration's generated closure through the landed
-         * {@code LoweredBody} call shape while the body's single return
-         * cell keeps the entry's kind. Every other body assigns
-         * {@code SOURCE_CALL} through the guard, so a genuine two-shape
-         * invocation still fails closed.
-         */
+        /** Records the source invocation through the closed single-shape guard. */
         private void assignSourceCallShape(FunctionContext context) {
-            if (!context.generatedHelper) {
-                context.assignShape(InvocationShape.SOURCE_CALL, context.callSiteOpId);
-            }
+            context.assignShape(InvocationShape.SOURCE_CALL, context.callSiteOpId);
         }
 
         /**
          * The module's exported function name whose reserved invocation
          * shape is the declaration's {@code EXTERNAL_ENTRY}, or {@code null}
          * for every body whose same-module references are source
-         * invocations. The generated {@code @jsonable} helper is excluded:
-         * its reserved entry stays the cross-module invocation record while
-         * its same-module references keep the landed {@code LoweredBody}
-         * call shape (R3(b)).
+         * invocations.
          */
         private String moduleEntryExportName(FunctionContext context) {
-            if (context == null || context.generatedHelper || !e7Calls
+            if (context == null || !e7Calls
                     || context.shape != InvocationShape.EXTERNAL_ENTRY_SHAPE) {
                 return null;
             }
@@ -9095,13 +8452,7 @@ public final class SemanticLowerer {
 
         private ValueId lowerDirectCall(CallExpr call, ValueId slot, IdentifierExpr identifier,
                                         FunctionContext context) {
-            // The generated @jsonable helper's declaring module calls the
-            // class's generated closure identity through the landed
-            // LoweredBody call shape (R3(b)): the reserved EXTERNAL_ENTRY
-            // stays the cross-module invocation record, so the helper
-            // keeps its shape (and the body's EXTERNAL_RETURN cell the
-            // entry names) while this call is a direct body call.
-            boolean entryInvocation = !context.generatedHelper && e7Calls
+            boolean entryInvocation = e7Calls
                 && context.shape == InvocationShape.EXTERNAL_ENTRY_SHAPE;
             if (e7Calls && !entryInvocation) {
                 assignSourceCallShape(context);
@@ -9305,8 +8656,7 @@ public final class SemanticLowerer {
          */
         private boolean captureCarriedInvocation(BindingId binding,
                                                  FunctionContext context) {
-            if (!context.generatedHelper && e7Calls
-                    && context.shape == InvocationShape.EXTERNAL_ENTRY_SHAPE) {
+            if (e7Calls && context.shape == InvocationShape.EXTERNAL_ENTRY_SHAPE) {
                 // The exported entry's reserved shape owns the invocation
                 // record: a same-module reference realizes the entry's own
                 // invocation over the shared body (the entry op's module-level
@@ -9317,12 +8667,6 @@ public final class SemanticLowerer {
             }
             if (nestedGroupMemberBindings.contains(binding)) {
                 return true;
-            }
-            if (context.generatedHelper) {
-                // The generated @jsonable helper carries no creation-site
-                // captures by construction, so a same-module reference's
-                // factory reconstruction is the same closure at every site.
-                return false;
             }
             if (bodiesPendingCaptures.contains(context.functionId)) {
                 return true;

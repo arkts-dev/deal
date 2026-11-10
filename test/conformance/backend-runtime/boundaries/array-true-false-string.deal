@@ -2,7 +2,7 @@
 // @description: array-True-False-string
 // @expected: runtime-ok
 // @features: boundary-validation
-import * as console from "std/console";
+import * as printer from "std/console";
 import * as host from "host/probe";
 
-export function main():null{let u=host.f();let v=u;try{let a=v as string[];console.log("OK");}catch(e){console.log("REJECT");}return null;}
+export function main():null{let u=host.f();let v=u;try{let a=v as string[];printer.log("OK");}catch(e){printer.log("REJECT");}return null;}

@@ -1,21 +1,20 @@
-// @spec: Classes — @jsonable fromJson rejects extra keys
-// @description: @jsonable fromJson returns null when JSON contains unknown keys
+// @spec: Standard library builtins — JSON decoding
+// @description: Unknown class keys throw, and rejection preserves an existing destination.
 // @expected: runtime-ok
-// @features: jsonable, fromJson, validation
+// @features: json, classes, validation
 
-// @jsonable
-export class Item {
-  name: string;
-}
+export class Item { name: string; }
 
 export function test_fromJson_extra_keys(): null {
-  let result: Item | null = Item$fromJson("{\"name\":\"ok\",\"extra\":42}");
-  if (result !== null) {
-    throw { code: "TEST_FAIL", message: "fromJson should return null for extra keys" };
+  let original: Item = {name: "original"};
+  let result = original;
+  let rejected = false;
+  try { result = JSON.parse("{\"name\":\"ok\",\"extra\":42}"); }
+  catch (e) { let error = e as Error; rejected = error.code === "E8007" && error.message.includes("extra field 'extra'"); }
+  if (!rejected || result !== original || result.name !== "original") {
+    throw {code: "TEST_FAIL", message: "extra key rejection changed destination"};
   }
   return null;
 }
 
-export function main(): null {
-  return null;
-}
+export function main(): null { return null; }

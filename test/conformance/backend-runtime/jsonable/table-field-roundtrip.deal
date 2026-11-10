@@ -1,89 +1,29 @@
-// @spec: Classes — @jsonable Record fields
-// @description: Generated Record field walkers roundtrip object values and binary64 numeric leaves, including negative boundary values and long zero-padded exponents.
+// @spec: Standard library builtins — JSON
+// @description: Contextual Record fields roundtrip object values, negative binary64 boundaries and long zero-padded exponents.
 // @expected: runtime-ok
-// @features: jsonable, table, roundtrip, v1.4
+// @features: json, table, roundtrip
 
-// @jsonable
-export class Wrapper {
-  data: Record<string, unknown>;
+export class Wrapper { data: Record<string, unknown>; }
+
+function roundtrip(text: string, expected: number): void {
+  let first: Wrapper = JSON.parse(text);
+  let again: Wrapper = JSON.parse(JSON.stringify(first) as string);
+  if ((again.data.v as number) !== expected || again === first || again.data === first.data) {
+    throw {code: "TEST_FAIL", message: "Record binary64 roundtrip value or freshness changed"};
+  }
 }
 
 export function test_jsonable_table_field(): null {
-  let w: Wrapper = { data: { count: 3, name: "deal" } };
-  let json: string = Wrapper$toJson(w);
-  let w2: Wrapper | null = Wrapper$fromJson(json);
-  if (w2 !== null) {
-    let count: number = w2.data.count as number;
-    let name: string = w2.data.name as string;
-    if (count !== 3 || name !== "deal") {
-      throw { code: "TEST_FAIL", message: "table field roundtrip mismatch" };
-    }
-  } else {
-    throw { code: "TEST_FAIL", message: "fromJson returned null" };
+  let w: Wrapper = {data: {count: 3, name: "deal"}};
+  let w2: Wrapper = JSON.parse(JSON.stringify(w) as string);
+  if ((w2.data.count as number) !== 3 || (w2.data.name as string) !== "deal") {
+    throw {code: "TEST_FAIL", message: "table field roundtrip mismatch"};
   }
-  // Values on either side of the signed32 edge retain their binary64
-  // value through generated decode, encode, and decode.
-  let below: Wrapper | null = Wrapper$fromJson("{\"data\":{\"v\":-2147483649}}");
-  if (below !== null) {
-    let text: string = Wrapper$toJson(below);
-    let decoded: Wrapper | null = Wrapper$fromJson(text);
-    if (decoded === null) { throw { code: "TEST_FAIL", message: "roundtrip rejected object" }; }
-    let payload: Record<string, unknown> = {};
-    if (decoded !== null) { payload = decoded.data; }
-    let value: number = payload.v as number;
-    if (value !== -2147483649) {
-      throw { code: "TEST_FAIL", message: "-2147483649 changed value" };
-    }
-  } else {
-    throw { code: "TEST_FAIL", message: "a negative boundary token must decode" };
-  }
-  let lower: Wrapper | null = Wrapper$fromJson("{\"data\":{\"v\":-2147483648}}");
-  if (lower !== null) {
-    let text: string = Wrapper$toJson(lower);
-    let decoded: Wrapper | null = Wrapper$fromJson(text);
-    if (decoded === null) { throw { code: "TEST_FAIL", message: "roundtrip rejected object" }; }
-    let payload: Record<string, unknown> = {};
-    if (decoded !== null) { payload = decoded.data; }
-    let value: number = payload.v as number;
-    if (value !== -2147483648) {
-      throw { code: "TEST_FAIL", message: "-2147483648 changed value" };
-    }
-  } else {
-    throw { code: "TEST_FAIL", message: "the negative signed32 edge must decode" };
-  }
-  let far: Wrapper | null = Wrapper$fromJson("{\"data\":{\"v\":-9999999999}}");
-  if (far !== null) {
-    let text: string = Wrapper$toJson(far);
-    let decoded: Wrapper | null = Wrapper$fromJson(text);
-    if (decoded === null) { throw { code: "TEST_FAIL", message: "roundtrip rejected object" }; }
-    let payload: Record<string, unknown> = {};
-    if (decoded !== null) { payload = decoded.data; }
-    let value: number = payload.v as number;
-    if (value !== -9999999999) {
-      throw { code: "TEST_FAIL", message: "-9999999999 changed value" };
-    }
-  } else {
-    throw { code: "TEST_FAIL", message: "a far negative boundary token must decode" };
-  }
-  // Leading exponent zeroes do not change the binary64 value, even when
-  // the exponent token is longer than 18 characters.
-  let padded: Wrapper | null = Wrapper$fromJson("{\"data\":{\"v\":1e0000000000000000001}}");
-  if (padded !== null) {
-    let text: string = Wrapper$toJson(padded);
-    let again: Wrapper | null = Wrapper$fromJson(text);
-    if (again === null) {
-      throw { code: "TEST_FAIL", message: "padded exponent roundtrip rejected" };
-    } else {
-      let data: Record<string, unknown> = again.data;
-      let value: number = data.v as number;
-      if (value !== 10) { throw { code: "TEST_FAIL", message: "padded exponent value changed" }; }
-    }
-  } else {
-    throw { code: "TEST_FAIL", message: "a zero-padded long exponent must decode" };
-  }
+  roundtrip("{\"data\":{\"v\":-2147483649}}", -2147483649);
+  roundtrip("{\"data\":{\"v\":-2147483648}}", -2147483648);
+  roundtrip("{\"data\":{\"v\":-9999999999}}", -9999999999);
+  roundtrip("{\"data\":{\"v\":1e0000000000000000001}}", 10);
   return null;
 }
 
-export function main(): null {
-  return null;
-}
+export function main(): null { return null; }

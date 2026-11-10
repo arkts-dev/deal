@@ -184,10 +184,10 @@ public class ProductionProjectEmissionTest {
     /** The one-main probe: the entry main publishes one effect byte line. */
     private static final String PROBE_APP_SOURCE = """
         import * as lib from "./lib";
-        import * as console from "std/console";
+        import * as output from "std/console";
 
         export function main(): null {
-          console.log("PROBE|MAIN-ONCE");
+          output.log("PROBE|MAIN-ONCE");
           return null;
         }
 
@@ -202,11 +202,11 @@ public class ProductionProjectEmissionTest {
      * the failing catalog entry, never another matching import's.
      */
     private static final String TWO_STDLIB_APP_SOURCE = """
-        import * as console from "std/console";
+        import * as output from "std/console";
         import * as str from "std/string";
 
         export function main(): null {
-          console.log("PROBE|STDLIB-IMPORT");
+          output.log("PROBE|STDLIB-IMPORT");
           return null;
         }
         """;
@@ -227,14 +227,14 @@ public class ProductionProjectEmissionTest {
         """;
 
     /**
-     * The generated-helper-origin fixture: one {@code @jsonable} class
-     * whose synthetic {@code Widget$fromJson}/{@code Widget$toJson}
-     * checked signatures the declaration-origin probe corrupts, plus the
-     * production entry.
+     * Explicit JSON provider functions with a nominal schema; origin probes
+     * corrupt their checked signatures without manufacturing declarations.
      */
     private static final String GENERATED_HELPER_APP_SOURCE = """
         // @jsonable
         export class Widget { n: number; }
+        export function decode(s: string): Widget { return JSON.parse(s); }
+        export function encode(v: Widget): string { return JSON.stringify(v) as string; }
         export function main(): null { return null; }
         """;
 
@@ -651,7 +651,7 @@ public class ProductionProjectEmissionTest {
      * The JavaScript production drive's class/HOST/call/async/stdlib
      * fixture: one host declaration module carrying a declared class and two
      * declared functions, one implementation library carrying an exported
-     * {@code @jsonable} class and a sync and an async export, and the entry
+     * class with an ordinary encoder and sync/async exports, and the entry
      * module that reads the host occurrence's typed surface, constructs both
      * the host-declared and the imported class, calls across the module
      * boundary, and awaits the cross-module async export.
@@ -673,6 +673,10 @@ public class ProductionProjectEmissionTest {
           y: number;
         }
 
+        export function encode(p: Point): string {
+          return JSON.stringify(p) as string;
+        }
+
         export function add(a: number, b: number): number {
           return a + b;
         }
@@ -686,7 +690,7 @@ public class ProductionProjectEmissionTest {
         import * as lib from "./lib";
         import * as cfg from "host/cfg";
         import * as cfg2 from "host/cfg";
-        import * as console from "std/console";
+        import * as output from "std/console";
 
         export function main(): null {
           if (cfg.alpha === cfg2.alpha) {
@@ -707,10 +711,10 @@ public class ProductionProjectEmissionTest {
           if (total !== 7) {
             throw { code: "JS_PROBE", message: "cross-module call" };
           }
-          if (lib.Point$toJson({ x: 3, y: 4 }) !== "{\\"x\\":3.0,\\"y\\":4.0}") {
-            throw { code: "JS_PROBE", message: "json helper" };
+          if (lib.encode({ x: 3, y: 4 }) !== "{\\"x\\":3,\\"y\\":4}") {
+            throw { code: "JS_PROBE", message: "ordinary JSON encoder" };
           }
-          console.log("PROBE|JS|MAIN");
+          output.log("PROBE|JS|MAIN");
           return null;
         }
 
@@ -726,7 +730,7 @@ public class ProductionProjectEmissionTest {
      * source is the call result of {@code make}, evaluated once at creation.
      */
     private static final String CALL_RESULT_ADAPTER_APP_SOURCE = """
-        import * as console from "std/console";
+        import * as output from "std/console";
 
         export function main(): null {
           let c: Counter = {n: 0, x: 11};
@@ -746,7 +750,7 @@ public class ProductionProjectEmissionTest {
           if (holder.counter.n !== 0) {
             throw { code: "JS_PROBE", message: "nested later-class default" };
           }
-          console.log("PROBE|JS|DECLARATION-ORDER");
+          output.log("PROBE|JS|DECLARATION-ORDER");
           return null;
         }
 
@@ -774,7 +778,7 @@ public class ProductionProjectEmissionTest {
      * resolves the retained source value's class at execution.
      */
     private static final String AWAIT_ADAPTER_APP_SOURCE = """
-        import * as console from "std/console";
+        import * as output from "std/console";
 
         export async function entry(): Promise<number> {
           return await worker();
@@ -791,7 +795,7 @@ public class ProductionProjectEmissionTest {
           if (first !== 41 || second !== 43) {
             throw { code: "JS_PROBE", message: "await adapter result" };
           }
-          console.log("PROBE|JS|AWAIT-ADAPTER");
+          output.log("PROBE|JS|AWAIT-ADAPTER");
           return first;
         }
 
@@ -802,7 +806,7 @@ public class ProductionProjectEmissionTest {
           if (first !== 41 || second !== 43) {
             throw { code: "JS_PROBE", message: "await async adapter result" };
           }
-          console.log("PROBE|JS|AWAIT-ASYNC-ADAPTER");
+          output.log("PROBE|JS|AWAIT-ASYNC-ADAPTER");
           return first;
         }
 
@@ -826,7 +830,7 @@ public class ProductionProjectEmissionTest {
      * awaited invocation completes with the source's own promise.
      */
     private static final String ASYNC_CALL_RESULT_ADAPTER_APP_SOURCE = """
-        import * as console from "std/console";
+        import * as output from "std/console";
 
         export async function entry(): Promise<number> {
           return await worker();
@@ -839,7 +843,7 @@ public class ProductionProjectEmissionTest {
           if (first !== 41 || second !== 43) {
             throw { code: "JS_PROBE", message: "async adapter result" };
           }
-          console.log("PROBE|JS|ASYNC-ADAPTER");
+          output.log("PROBE|JS|ASYNC-ADAPTER");
           return first;
         }
 
@@ -857,7 +861,7 @@ public class ProductionProjectEmissionTest {
      * Mutual and self-returning callables construct finite nominal values.
      */
     private static final String RECURSIVE_CALLABLE_APP_SOURCE = """
-        import * as console from "std/console";
+        import * as output from "std/console";
         export function main(): null {
           let a: A = {makeB: makeB};
           let b: B = {n: 2, makeA: makeA};
@@ -865,7 +869,7 @@ public class ProductionProjectEmissionTest {
           if (a.makeB().n !== 2 || b.makeA().makeB().n !== 2 || self.make().n !== 3) {
             throw {code: "JS_PROBE", message: "provided recursive callable"};
           }
-          console.log("PROBE|JS|RECURSIVE-CALLABLES");
+          output.log("PROBE|JS|RECURSIVE-CALLABLES");
           return null;
         }
         function makeA(): A { return {makeB: makeB}; }
@@ -881,7 +885,7 @@ public class ProductionProjectEmissionTest {
      * class layouts. Every required field is supplied explicitly.
      */
     private static final String NESTED_RECURSIVE_FIELDS_APP_SOURCE = """
-        import * as console from "std/console";
+        import * as output from "std/console";
 
         export function main(): null {
           let self: Self = {child: {child: null}};
@@ -907,7 +911,7 @@ public class ProductionProjectEmissionTest {
           } else {
             throw { code: "JS_PROBE", message: "mutual default a" };
           }
-          console.log("PROBE|JS|NESTED-FIELDS");
+          output.log("PROBE|JS|NESTED-FIELDS");
           return null;
         }
 
@@ -1051,7 +1055,7 @@ public class ProductionProjectEmissionTest {
             // and the complete runtime/stdlib deployment copies.
             checkEq(Set.of("app.js", "lib.js", "app.deal.map.json",
                     "lib.deal.map.json", "deal/runtime.js", "std/console.js",
-                    "std/string.js", "std/table.js", "std/json.js",
+                    "std/string.js", "std/table.js",
                     "std/math.js", "std/time.js"),
                 Set.copyOf(stager.stagedSet().relativePaths()),
                 "the staged set is the complete artifact/map/runtime/stdlib"
@@ -1880,7 +1884,7 @@ public class ProductionProjectEmissionTest {
 
     /** Explicit nullable leaves terminate recursive supplied-field values. */
     private static final String SUPPLIED_RECURSIVE_FIELDS_APP_SOURCE = """
-        import * as console from "std/console";
+        import * as output from "std/console";
 
         export function main(): null {
           let n: Node = { next: null };
@@ -1895,7 +1899,7 @@ public class ProductionProjectEmissionTest {
           if (b.a !== null) {
             throw { code: "JS_PROBE", message: "mutual override lost" };
           }
-          console.log("PROBE|JS|SUPPLIED-FIELDS");
+          output.log("PROBE|JS|SUPPLIED-FIELDS");
           return null;
         }
 
@@ -2192,15 +2196,13 @@ public class ProductionProjectEmissionTest {
                         StandardCharsets.UTF_8).contains("main"),
                 "the accepted JS compile publishes the typed-AST IR dump");
 
-            // The JS-backend rejection with --dump-ir: the extern-C import
-            // rejects in phase 4, the held dump is discarded with the stage
-            // tree, and the prior live set stays untouched.
-            writeFileIn(project, "src/math.d.deal", """
-                // @extern-c
-                export function add(a: number, b: number): number;
+            // A retired JSON import rejects even with a project-local declaration
+            // trap. The held dump and previous live set remain untouched.
+            writeFileIn(project, "src/json.d.deal", """
+                export function parse(s: string): unknown;
                 """);
             writeFileIn(project, "src/app.deal", """
-                import * as math from "native/math";
+                import * as json from "std/json";
                 export function main(): null { return null; }
                 """);
             // The previous live set carries an older dump: a rejected
@@ -2210,12 +2212,8 @@ public class ProductionProjectEmissionTest {
             stagingStarts[0] = 0;
             CompilationOrchestrator rejected;
             try {
-                // A staging fault at the first staging operation: with the
-                // retired immediate JS dump staging the phase-1/3 dump write
-                // would be that first operation and would abort the compile
-                // before the backend rejection. Deferring the dump makes the
-                // first staging operation a phase-4 deployment copy, so the
-                // E1044 rejection is already recorded when the fault fires.
+                // Any premature dump staging must fail this negative control:
+                // the import diagnostic must win and staging must never begin.
                 PublicationStager.installPublishFault(step -> {
                     if (PublicationStager.FAULT_STEP_STAGING_BEGAN.equals(
                             step)) {
@@ -2224,24 +2222,22 @@ public class ProductionProjectEmissionTest {
                             "injected staging failure (JS dump probe)");
                     }
                 });
-                rejected = compileJs(project, entry, out, true,
-                    Map.of("native/math",
-                        project.resolve("src/math.d.deal").toString()));
+                rejected = compileJs(project, entry, out, true, Map.of());
             } finally {
                 PublicationStager.clearPublishFault();
             }
             check(!rejected.compile(),
-                "the extern-C-importing JS compile is rejected");
+                "the retired-JSON-importing JS compile is rejected");
             List<CompilerDiagnostic> rejectedErrors =
                 rejected.diagnostics().stream()
                     .filter(d -> "error".equals(d.severity())).toList();
             checkEq(1, rejectedErrors.size(),
-                "the rejection is the one E1044 (the dump never staged ahead"
+                "the rejection is the one E2003 (the dump never staged ahead"
                     + " of it): " + rejected.diagnostics());
-            checkEq("E1044",
+            checkEq("E2003",
                 rejectedErrors.isEmpty() ? null : rejectedErrors.get(0).code(),
-                "the dump-deferral rejection keeps the E1044 backend"
-                    + " rejection");
+                "dump deferral keeps the retired-module rejection");
+            checkEq(0, stagingStarts[0], "rejection begins no staging transaction");
             checkEq("previous dump\n",
                 Files.readString(out.resolve("app.ir.txt"),
                     StandardCharsets.UTF_8),
@@ -2316,8 +2312,7 @@ public class ProductionProjectEmissionTest {
             // missing, so the runtime copy is the one required resource the
             // resolved surface does not provide.
             Files.createDirectories(root.resolve("std"));
-            for (String module : List.of("console", "string", "table", "json",
-                    "math", "time")) {
+            for (String module : List.of("console", "string", "table", "math", "time")) {
                 Files.copy(Path.of("std", module + ".js"),
                     root.resolve("std").resolve(module + ".js"),
                     java.nio.file.StandardCopyOption.REPLACE_EXISTING);
@@ -2401,8 +2396,9 @@ public class ProductionProjectEmissionTest {
                     "exactly one staged artifact at the pinned entry path");
                 check(luaStager.stagedSet().artifact("lib.lua").isEmpty(),
                     "no per-module sibling artifact stages");
-                check(luaStager.stagedSet().artifact("deal/runtime.lua").isPresent(),
-                    "the complete LuaJIT runtime deployment copy stages");
+                check(luaStager.stagedSet().artifact("deal/runtime.lua").isPresent()
+                        && luaStager.stagedSet().artifact("deal/json.lua").isPresent(),
+                    "both internal LuaJIT runtime resources stage");
                 check(luaStager.stagedSet().artifact("std/console.lua").isPresent(),
                     "the complete stdlib deployment copies stage");
                 check(luaStager.stagedSet().artifact("app.deal.map.json").isPresent()
@@ -2412,7 +2408,7 @@ public class ProductionProjectEmissionTest {
                 checkEq(luaStager.stagedSet().size(),
                     3 + luaStager.stagedSet().relativePaths().stream()
                         .filter(path -> path.startsWith("std/")
-                            || path.equals("deal/runtime.lua")).toList().size(),
+                            || path.startsWith("deal/")).toList().size(),
                     "the LuaJIT staged set is the project artifact, its two "
                         + "sidecars, and the deployment copies");
                 defaultRun = new DefaultLuaRun(new String(luaStager.stagedSet()
@@ -3252,38 +3248,35 @@ public class ProductionProjectEmissionTest {
     }
 
     /**
-     * ISSUE-0750: the generated @jsonable helper signatures are
-     * declaration-owned through the real {@code lowerProject} entry too:
-     * a corrupted checked {@code Widget$fromJson}/{@code Widget$toJson}
-     * signature fails the project lowering closed with no project, and
-     * the shared E6005 carries the owning class declaration's own exact
-     * range for both generated signatures.
+     * Explicit JSON provider signatures remain declaration-owned through
+     * lowerProject. Corruption rejects without a project at each function's
+     * exact range; comment text cannot manufacture provider functions.
      */
     private static void testGeneratedHelperDescriptorOrigins() throws Exception {
-        System.out.println("-- the corrupted generated @jsonable helper signatures keep "
-            + "the class declaration's own range through lowerProject --");
+        System.out.println("-- corrupted explicit JSON provider signatures keep "
+            + "their function ranges through lowerProject --");
 
         Fixture prepared = compileProject(Map.of(
             "src/app.deal", GENERATED_HELPER_APP_SOURCE), Map.of());
         try {
-            for (String helper : List.of("Widget$fromJson", "Widget$toJson")) {
+            for (String helper : List.of("decode", "encode")) {
                 Fixture fixture = freshCheckedFacts(prepared);
-                ClassDeclaration target = null;
+                FunctionDeclaration target = null;
                 SymbolTable table = null;
                 for (CheckedModuleInput module : fixture.checkedProject().modules()) {
                     for (StatementNode statement : module.ast().statements()) {
                         StatementNode declaration =
                             statement instanceof ExportDeclaration export
                                 ? export.declaration() : statement;
-                        if (declaration instanceof ClassDeclaration classDeclaration
-                                && classDeclaration.isJsonable()) {
-                            target = classDeclaration;
+                        if (declaration instanceof FunctionDeclaration function
+                                && function.name().equals(helper)) {
+                            target = function;
                             table = module.checks().symbolTable();
                         }
                     }
                 }
                 check(target != null && table != null,
-                    "the fixture carries the checked @jsonable class Widget");
+                    "the fixture carries the explicit JSON provider " + helper);
                 if (target == null || table == null) {
                     continue;
                 }
@@ -3298,18 +3291,22 @@ public class ProductionProjectEmissionTest {
                     continue;
                 }
                 DiagnosticRange range = result.diagnostics().get(0).range();
+                String declarationText = helper.equals("decode")
+                    ? "function decode(s: string): Widget { return JSON.parse(s); }"
+                    : "function encode(v: Widget): string { return JSON.stringify(v) as string; }";
+                int offset = GENERATED_HELPER_APP_SOURCE.indexOf(declarationText);
+                int line = helper.equals("decode") ? 3 : 4;
                 check(range.origin() == RangeOrigin.SOURCE
                         && range.file().endsWith("src/app.deal")
-                        && range.startLine() == 2 && range.startColumn() == 8
-                        && range.endLine() == 2 && range.endColumn() == 35
-                        && range.startScalarOffset() == 20
-                        && range.endScalarOffset() == 47
-                        && range.scalarLength() == 27,
-                    "the corrupted " + helper + " failure carries the class "
-                        + "declaration's own exact SOURCE range 2:8-2:35 [20,47) "
-                        + "length 27; got " + range);
+                        && range.startLine() == line && range.startColumn() == 8
+                        && range.endLine() == line + 1 && range.endColumn() == 7
+                        && range.startScalarOffset() == offset
+                        && range.endScalarOffset() == offset + declarationText.length() + 7
+                        && range.scalarLength() == declarationText.length() + 7,
+                    "the corrupted " + helper + " failure keeps its independently "
+                        + "located explicit function range; got " + range);
                 check(range.equals(target.span().range()),
-                    "the " + helper + " range is exactly the class declaration's own "
+                    "the " + helper + " range is exactly the function declaration's own "
                         + "converted range; got " + range);
             }
         } finally {
@@ -3523,7 +3520,7 @@ public class ProductionProjectEmissionTest {
                 checkEq(artifact, result.artifactRelativePath(), label + " entry artifact");
                 checkEq(1L, stager.stagedSet().relativePaths().stream()
                     .filter(path -> path.endsWith(backend == Backend.LUAJIT ? ".lua" : ".java")
-                        && !path.startsWith("std/") && !path.equals("deal/runtime.lua")).count(),
+                        && !path.startsWith("std/") && !path.startsWith("deal/")).count(),
                     label + " one staged project artifact");
                 if (!result.emitted()) {
                     continue;
@@ -3542,8 +3539,10 @@ public class ProductionProjectEmissionTest {
                     check(source.contains("__asyncEntries[\"" + LIB.path() + "#getValue\"]"),
                         label + " includes callee async export entry");
                 }
-                writeFileIn(fixture.root(), "deal/runtime.lua",
-                    Files.readString(Path.of("deal/runtime.lua"), StandardCharsets.UTF_8));
+                for (String resource : List.of("deal/runtime.lua", "deal/json.lua")) {
+                    writeFileIn(fixture.root(), resource,
+                        Files.readString(Path.of(resource), StandardCharsets.UTF_8));
+                }
                 writeFileIn(fixture.root(), "probe.lua", """
                     local surfaces = dofile("out-luajit/app.lua")
                     assert(type(surfaces) == "table", "entry surface")
@@ -3712,7 +3711,7 @@ public class ProductionProjectEmissionTest {
             "the default compile prints no warning");
         check(defaultRun.paths().containsAll(Set.of("app.lua",
                 "app.deal.map.json", "lib.deal.map.json",
-                "deal/runtime.lua", "std/console.lua")),
+                "deal/runtime.lua", "deal/json.lua", "std/console.lua")),
             "the default compile stages the chunk, one sidecar per "
                 + "constituent source, the runtime and the stdlib copies: "
                 + defaultRun.paths());
@@ -3957,8 +3956,8 @@ public class ProductionProjectEmissionTest {
         """;
     private static final String CONSOLE_EMITTER_APP = """
         import * as lib from "./lib";
-        import * as console from "std/console";
-        export function main(): null { console.log("PROBE|MAIN-ONCE"); return null; }
+        import * as output from "std/console";
+        export function main(): null { output.log("PROBE|MAIN-ONCE"); return null; }
         export function label(): string { return "app"; }
         """;
 
@@ -4103,9 +4102,9 @@ public class ProductionProjectEmissionTest {
             assertEmitterRun("console main once", runPublished(console, null), 0, "PROBE|MAIN-ONCE\n");
         }
         String libMain = """
-            import * as console from "std/console";
+            import * as output from "std/console";
             export function add(a: number, b: number): number { return a + b; }
-            export function main(): null { console.log("PROBE|LIB-MAIN"); return null; }
+            export function main(): null { output.log("PROBE|LIB-MAIN"); return null; }
             """;
         try (PublishedEmitter nonentry = publishedEmitter(Backend.LUAJIT, libMain, CONSOLE_EMITTER_APP)) {
             for (ModuleId module : List.of(LIB, new ModuleId("app"))) {

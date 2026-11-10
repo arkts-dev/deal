@@ -902,8 +902,7 @@ public class CanonicalJsonTest {
             case FIELD_READ -> new KindPayload.FieldReadPayload(v0, CLS, "f");
             case FIELD_WRITE -> new KindPayload.FieldWritePayload(v0, CLS, "f", v1);
             case FIELD_DELETE -> new KindPayload.FieldDeletePayload(v0, CLS, "f");
-            case JSON_FROM_CLASS -> new KindPayload.JsonFromClassPayload(LAYOUT, v0);
-            case JSON_TO_CLASS -> new KindPayload.JsonToClassPayload(v0, LAYOUT);
+            case JSON_PARSE -> new KindPayload.JsonParsePayload(v0, RuntimeDescriptor.Unknown.INSTANCE);
             case MODULE_INIT -> new KindPayload.ModuleInitPayload(APP, List.of(), b0);
             case MODULE_IMPORT -> new KindPayload.ModuleImportPayload(
                 "a", new ModuleId("a"), ModuleImportKind.COMPILED);

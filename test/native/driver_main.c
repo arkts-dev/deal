@@ -33,13 +33,27 @@ static void driver_append(driver_buffer *buffer, const char *bytes,
     buffer->length += length;
 }
 
-static void driver_append_string(driver_buffer *buffer, const char *text) {
+static void driver_append_string_span(driver_buffer *buffer, const char *text,
+                                      size_t length) {
     static const char hex[] = "0123456789ABCDEF";
     driver_append(buffer, "\"", 1);
     if (text != NULL) {
-        for (const unsigned char *cursor = (const unsigned char *)text;
-                *cursor != 0; cursor += 1) {
+        for (size_t index = 0u; index < length; index += 1u) {
+            const unsigned char *cursor = (const unsigned char *)text + index;
             unsigned char byte = *cursor;
+            /* WTF-8 surrogate triples are lone UTF-16 units, not raw JSON UTF-8. */
+            if (byte == 0xedU && length - index >= 3u
+                    && cursor[1] >= 0xa0U && cursor[1] <= 0xbfU
+                    && cursor[2] >= 0x80U && cursor[2] <= 0xbfU) {
+                unsigned int unit = ((unsigned int)(byte & 0x0fU) << 12)
+                    | ((unsigned int)(cursor[1] & 0x3fU) << 6)
+                    | (unsigned int)(cursor[2] & 0x3fU);
+                char escaped[6] = {'\\', 'u', hex[(unit >> 12) & 0xfU],
+                    hex[(unit >> 8) & 0xfU], hex[(unit >> 4) & 0xfU], hex[unit & 0xfU]};
+                driver_append(buffer, escaped, sizeof(escaped));
+                index += 2u;
+                continue;
+            }
             switch (byte) {
                 case '"': driver_append(buffer, "\\\"", 2); break;
                 case '\\': driver_append(buffer, "\\\\", 2); break;
@@ -66,6 +80,10 @@ static void driver_append_string(driver_buffer *buffer, const char *text) {
         }
     }
     driver_append(buffer, "\"", 1);
+}
+
+static void driver_append_string(driver_buffer *buffer, const char *text) {
+    driver_append_string_span(buffer, text, text == NULL ? 0u : strlen(text));
 }
 
 static void driver_append_integer(driver_buffer *buffer, int32_t value) {
@@ -108,8 +126,11 @@ static void driver_snapshot(deal_error *error, driver_buffer *buffer) {
     int32_t line = 0;
     int32_t column = 0;
     int32_t frames = 0;
-    int has_code = deal_error_code(error, &code);
-    int has_message = deal_error_message(error, &message);
+    size_t code_length = 0u;
+    size_t message_length = 0u;
+    size_t cause_length = 0u;
+    code = deal_error_code_bytes(error, &code_length);
+    message = deal_error_message_bytes(error, &message_length);
     int has_file = deal_error_source_file(error, &source_file);
     int has_line = deal_error_line(error, &line);
     int has_column = deal_error_column(error, &column);
@@ -117,9 +138,9 @@ static void driver_snapshot(deal_error *error, driver_buffer *buffer) {
     int first = 1;
     driver_append(buffer, "{", 1);
     driver_key(buffer, "code", &first);
-    driver_append_string(buffer, has_code ? code : "");
+    driver_append_string_span(buffer, code, code_length);
     driver_key(buffer, "message", &first);
-    driver_append_string(buffer, has_message ? message : "");
+    driver_append_string_span(buffer, message, message_length);
     if (has_file && has_line && has_column) {
         driver_key(buffer, "sourceFile", &first);
         driver_append_string(buffer, source_file);
@@ -140,9 +161,10 @@ static void driver_snapshot(deal_error *error, driver_buffer *buffer) {
         driver_key(buffer, "frames", &first);
         driver_append_integer(buffer, frames);
     }
-    if (deal_error_cause_code(error, &cause)) {
+    cause = deal_error_cause_code_bytes(error, &cause_length);
+    if (cause != NULL) {
         driver_key(buffer, "cause", &first);
-        driver_append_string(buffer, cause);
+        driver_append_string_span(buffer, cause, cause_length);
     }
     driver_append(buffer, "}", 1);
     buffer->bytes[buffer->length] = 0;
@@ -154,9 +176,8 @@ static int driver_terminal(deal_error *error) {
     const char *code = NULL;
     buffer.length = 0;
     buffer.bytes[0] = 0;
-    if (!deal_error_code(error, &code)) {
-        code = "";
-    }
+    size_t code_length = 0u;
+    code = deal_error_code_bytes(error, &code_length);
     driver_snapshot(error, &buffer);
     char *runtime_snapshot = deal_error_snapshot(error);
     if (strcmp(runtime_snapshot, buffer.bytes) != 0) {
@@ -166,7 +187,7 @@ static int driver_terminal(deal_error *error) {
     }
     deal_error_snapshot_release(runtime_snapshot);
     deal_platform_write_stdout("DEAL_ERROR_CODE: ", 17);
-    deal_platform_write_stdout(code, strlen(code));
+    if (code != NULL) deal_platform_write_stdout(code, code_length);
     deal_platform_write_stdout("\n", 1);
     deal_platform_write_stdout("DEAL_ERROR_SNAPSHOT: ", 21);
     deal_platform_write_stdout(buffer.bytes, buffer.length);

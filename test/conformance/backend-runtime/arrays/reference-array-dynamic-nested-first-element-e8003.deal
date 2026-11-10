@@ -3,7 +3,7 @@
 // @expected: runtime-error E8003
 // @features: descriptors, number[], dynamic-boundaries
 
-import * as json from "std/json";
+
 
 export function test_array_dynamic_nested_first_element(): number {
   let inner: Record<string, unknown>[] | null = [{value: 7}];

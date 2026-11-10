@@ -3,12 +3,10 @@
 // catalog when a parent conformance fixture imports it. The v1.2 gate
 // (ISSUE-0107) removes unclassified skips: every .deal file carries an
 // explicit classification, and companions must keep compiling standalone.
-// @jsonable
 export class Address {
   city: string;
 }
 
-// @jsonable
 export class User {
   name: string;
   addresses: Address[];

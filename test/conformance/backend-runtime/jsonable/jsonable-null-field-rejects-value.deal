@@ -1,13 +1,16 @@
-// @spec: Classes
-// @description: fromJson rejects a non-null JSON value for a null-typed field.
+// @spec: Standard library builtins — JSON decoding
+// @description: A null-typed field rejects a non-null JSON value; explicit null is a valid control.
 // @expected: runtime-ok
-// @features: jsonable, null, validation
+// @features: json, null, validation
 
-// @jsonable
 export class Marker { value: null; }
 
 export function main(): null {
-  let m: Marker | null = Marker$fromJson("{\"value\":0}");
-  if (m !== null) { throw { code: "TEST_FAIL", message: "non-null value accepted" }; }
+  let rejected = false;
+  try { let invalid: Marker = JSON.parse("{\"value\":0}"); }
+  catch (e) { let error = e as Error; rejected = error.code === "E8001" && error.message === "expected null"; }
+  if (!rejected) { throw {code: "TEST_FAIL", message: "non-null value accepted"}; }
+  let valid: Marker = JSON.parse("{\"value\":null}");
+  if (valid.value !== null) { throw {code: "TEST_FAIL", message: "explicit null changed"}; }
   return null;
 }

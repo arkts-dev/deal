@@ -1523,7 +1523,7 @@ public class ProductionDispatchTest {
      * imported declaration under the real backends.
      */
     private static final String PLAN_IMPORTED_OTHER_SOURCE = """
-        // @jsonable
+
         export class Point { a: number; }
         """;
 
@@ -1533,12 +1533,16 @@ public class ProductionDispatchTest {
 
         export class Point { nick: string; }
 
-        // @jsonable
+
         export class Wrap { p: other.Point; }
 
         export function main(): null {
           let w: Wrap = {p: {a: 7}};
-          let s: string = Wrap$toJson(w);
+          let decoded: Wrap = JSON.parse(JSON.stringify(w) as string);
+          if (!(decoded.p instanceof other.Point) || decoded === w || decoded.p === w.p) {
+            throw { code: "WRONG", message: "imported reconstruction identity" };
+          }
+          let s: string = JSON.stringify(decoded) as string;
           if (s !== "{\\\"p\\\":{\\\"a\\\":7}}") {
             throw { code: "WRONG", message: s };
           }
@@ -1562,15 +1566,19 @@ public class ProductionDispatchTest {
         import * as outputx from "std/console";
         import * as other from "./other";
 
-        // @jsonable
+
         export class Point { nick: string; }
 
-        // @jsonable
+
         export class Wrap { p: Point; }
 
         export function main(): null {
           let w: Wrap = {p: {nick: "l"}};
-          let s: string = Wrap$toJson(w);
+          let decoded: Wrap = JSON.parse(JSON.stringify(w) as string);
+          if (!(decoded.p instanceof Point) || decoded === w || decoded.p === w.p) {
+            throw { code: "WRONG", message: "local reconstruction identity" };
+          }
+          let s: string = JSON.stringify(decoded) as string;
           if (s !== "{\\\"p\\\":{\\\"nick\\\":\\\"l\\\"}}") {
             throw { code: "WRONG", message: s };
           }
@@ -1701,46 +1709,59 @@ public class ProductionDispatchTest {
     }
 
     /**
-     * The declaration-file class as a {@code @jsonable} field type (review
-     * cycle 4, findings 1-2): the checker admits it — the visible declared
-     * {@code C$fromJson}/{@code C$toJson} are the jsonability fact (spec
-     * §JSON serialization) — but a declaration module carries no
-     * implementation lowering, so the class has no plan, factory or default
-     * evaluator and no production consumer realizes a nested
-     * declaration-class walk. The shared JSON layout validation therefore
-     * keeps the link fail closed on every backend: exactly one E6005
-     * {@code JSON_LAYOUT_COHERENCE}, no project emission and no published
-     * artifact. The shape never compiles on one lane and reaches a runtime
-     * walk as an infrastructure exception on another, and no nested
-     * declaration descriptor is emitted without its declared defaults.
+     * Contextual reconstruction uses exact declaration-file schemas without
+     * generated helpers, constructors or defaults. Execute nominal host
+     * consumption, ordered encoding and failed required-child rollback through
+     * both the production invocation and the public CLI.
      */
     private static final String DECLARED_JSON_MODEL_DECLARATION = """
-        export class Model { n: number; }
-        export function Model$fromJson(s: string): Model | null;
-        export function Model$toJson(v: Model): string;
+        export class Model { n: number; children?: (Model | null)[]; note?: string; }
+        export function read(v: Model): number;
         """;
 
     private static final String DECLARED_JSON_MODEL_MAIN = """
         import * as outputx from "std/console";
         import * as M from "model";
 
-        // @jsonable
+
         export class Holder { m: M.Model | null; }
 
         export function main(): null {
-          let h: Holder | null = Holder$fromJson("{\\\"m\\\":{}}");
-          if (h !== null) {
-            outputx.log(Holder$toJson(h));
+          let h: Holder = JSON.parse("{\\\"m\\\":{\\\"n\\\":7,\\\"children\\\":[{\\\"n\\\":9},null]}}");
+          let original: Holder = h;
+          let child: M.Model = h.m as M.Model;
+          if (!(child instanceof M.Model) || M.read(child) !== 7) {
+            throw {code:"WRONG",message:"declared nominal reconstruction"};
           }
+          let caught:boolean = false;
+          try { h = JSON.parse("{\\\"m\\\":{}}"); }
+          catch(e) { caught = (e as Error).code === "E8001"; }
+          if (!caught || h !== original || (h.m as M.Model) !== child || M.read(child) !== 7) {
+            throw {code:"WRONG",message:"declared child rollback"};
+          }
+          if ((JSON.stringify(h) as string) !== "{\\\"m\\\":{\\\"n\\\":7,\\\"children\\\":[{\\\"n\\\":9},null]}}") {
+            throw {code:"WRONG",message:"declared field encoding"};
+          }
+          let children: (M.Model | null)[] = child.children as (M.Model | null)[];
+          let nested: M.Model = children[0] as M.Model;
+          if (M.read(nested) !== 9 || children[1] !== null || Object.hasOwn(child, "note")) {
+            throw {code:"WRONG",message:"declared nested presence and host crossing"};
+          }
+          let made: M.Model = {n: 11, children: [nested, null]};
+          if (M.read(made) !== 11 || M.read(child) !== 7
+              || (JSON.stringify(made) as string) !== "{\\\"n\\\":11,\\\"children\\\":[{\\\"n\\\":9},null]}"
+              || children !== (child.children as (M.Model | null)[])) {
+            throw {code:"WRONG",message:"constructed host plan and retained aliases"};
+          }
+          outputx.log("ok");
           return null;
         }
         """;
 
-    private static void testProductionDeclarationClassJsonFieldFailsClosed()
+    private static void testProductionDeclarationClassJsonFieldReconstruction()
             throws Exception {
-        System.out.println("-- declaration-file class as a @jsonable field"
-            + " type: the shared JSON layout validation fails closed on every"
-            + " production lane --");
+        System.out.println("-- contextual declaration-file class fields: exact nominal"
+            + " reconstruction, host crossing, encoding and failed-child rollback --");
         for (String backend : List.of("js", "luajit", "jvm")) {
             Path project = Files.createTempDirectory(
                 "production-declared-json-");
@@ -1763,43 +1784,52 @@ public class ProductionDispatchTest {
 
                 ArmCompile arm = compileWithInvocation(project,
                     "src/main.deal", productionInvocation());
-                check(!arm.success(), backend + ": the declaration-class JSON"
-                    + " project fails closed");
+                check(arm.success(), backend + ": the declaration-class JSON"
+                    + " schema compiles: " + arm.orchestrator().diagnostics());
                 List<CompilerDiagnostic> errors = arm.orchestrator()
                     .diagnostics().stream()
                     .filter(d -> "error".equals(d.severity())).toList();
-                checkEq(1, errors.size(), backend + ": exactly one error"
-                    + " diagnostic: " + arm.orchestrator().diagnostics());
-                if (errors.size() == 1) {
-                    check(errors.get(0).code().equals("E6005")
-                            && errors.get(0).message().contains(
-                                "references imported nested class "
-                                    + "@$external/model/Model without"
-                                    + " shared-factory facts"),
-                        backend + ": the one failure is the pinned E6005"
-                            + " JSON_LAYOUT_COHERENCE nested"
-                            + " declaration-class rule: "
-                            + errors.get(0).message());
+                checkEq(0, errors.size(), backend + ": valid declared schema emits no errors");
+                checkEq(1, arm.orchestrator().semanticEmissionCount(),
+                    backend + ": the accepted schema records one project emission");
+                check(!artifactFiles(out).isEmpty(), backend + ": the schema publishes artifacts");
+                if (!arm.success()) continue;
+                switch (backend) {
+                    case "js" -> write(project, "out/model.js", """
+                        module.exports = {
+                          Model: {$kind:"class",$classname:"@$external/model/Model"},
+                          read: v => v.n
+                        };
+                        """);
+                    case "luajit" -> write(project, "out/model.lua", """
+                        return {Model={__kind="class",__classname="@$external/model/Model"},
+                          read=function(v) return v.n end}
+                        """);
+                    case "jvm" -> write(project, "Model.java", """
+                        final class Model {
+                          public static final String Model = "@$external/model/Model";
+                          public static Object read($DealRt.$Host$model$Model v) {
+                            return Double.valueOf(v.n);
+                          }
+                        }
+                        """);
+                    default -> throw new IllegalArgumentException(backend);
                 }
-                checkEq(0, arm.orchestrator().semanticEmissionCount(),
-                    backend + ": the rejected compile records no project"
-                        + " emission");
-                checkEq(List.of(), artifactFiles(out), backend
-                    + ": the rejected compile publishes no artifact");
+                checkRetainedSubjectRun(project, backend, "declared JSON schema", "ok\n",
+                    "jvm".equals(backend) ? new Path[]{project.resolve("Model.java")} : new Path[]{});
                 if ("js".equals(backend)) {
-                    // The public CLI carries the same failure, status and
-                    // absent artifact set.
+                    // Public CLI publication executes the same schema and rollback.
                     ProjectOutcome compile = productionCompile(project,
                         "src/main.deal", "out");
-                    checkEq(1, compile.exitCode(), "js: the public compile"
-                        + " rejects the declaration-class JSON field");
-                    check(compile.stderr().contains("E6005")
-                            && compile.stderr().contains(
-                                "without shared-factory facts"),
-                        "js: the public diagnostic carries the E6005 nested"
-                            + " declaration-class rule: " + compile.stderr());
-                    checkEq(List.of(), artifactFiles(out), "js: the public"
-                        + " rejection publishes no artifact");
+                    checkEq(0, compile.exitCode(), "js: the public compile accepts the declaration schema");
+                    checkEq("", compile.stderr(), "js: public declaration schema has no diagnostic");
+                    check(!artifactFiles(out).isEmpty(), "js: public schema compilation publishes artifacts");
+                    write(project,"out/model.js", """
+                        module.exports = {
+                          Model: {$kind:"class",$classname:"@$external/model/Model"},read:v=>v.n
+                        };
+                        """);
+                    checkRetainedSubjectRun(project,backend,"public declared JSON schema","ok\n");
                 }
             } finally {
                 deleteRecursively(project);
@@ -2331,8 +2361,7 @@ public class ProductionDispatchTest {
         if (lex.hasErrors()) {
             return null;
         }
-        ParseResult parse = new Parser(lex.tokens(), fileName,
-            lex.directiveEvents()).parse();
+        ParseResult parse = new Parser(lex.tokens(), fileName).parse();
         if (parse.hasErrors()) {
             return null;
         }
@@ -2535,8 +2564,10 @@ public class ProductionDispatchTest {
             if (luaCompile.exitCode() != 0) {
                 return;
             }
-            write(same, "deal/runtime.lua",
-                Files.readString(Path.of("deal/runtime.lua"), StandardCharsets.UTF_8));
+            for (String resource : List.of("deal/runtime.lua", "deal/json.lua")) {
+                write(same, resource,
+                    Files.readString(Path.of(resource), StandardCharsets.UTF_8));
+            }
             write(same, "probe.lua", """
                 local surfaces = dofile("out/main.lua")
                 assert(type(surfaces) == "table",
@@ -2619,16 +2650,17 @@ public class ProductionDispatchTest {
         Path removed = Files.createTempDirectory("production-dispatch-native-rejected-");
         try {
             write(removed, "deal.json", "{\"languageVersion\":\"1.6\",\"moduleRoots\":[\"src\"],\"output\":\"out\"}");
-            write(removed, "src/main.deal", "// @extern-c\nexport function main(): null { return null; }\n");
+            write(removed, "src/main.deal", "// @extern-c\nexport function main(): null { return missing(); }\n");
             for (String backend : List.of("js", "luajit", "jvm")) {
                 ProjectOutcome rejected = runProductionCli("compile",
                     removed.resolve("src/main.deal").toAbsolutePath().toString(),
                     "--backend", backend, "--output",
                     removed.resolve("out-" + backend).toAbsolutePath().toString());
-                check(rejected.exitCode() != 0 && rejected.stderr().contains("E1044"),
-                    backend + ": removed directive rejects at the frontend: " + rejected.stderr());
+                check(rejected.exitCode() != 0 && rejected.stderr().contains("E2001")
+                        && rejected.stderr().contains("Undeclared identifier 'missing'"),
+                    backend + ": unresolved call rejects independently of inert comment: " + rejected.stderr());
                 check(!Files.exists(removed.resolve("out-" + backend)),
-                    backend + ": removed directive publishes no artifact");
+                    backend + ": unresolved call publishes no artifact");
             }
         } finally {
             deleteRecursively(removed);
@@ -4535,34 +4567,34 @@ public class ProductionDispatchTest {
      * runtime {@code table} value the declared std/json parameter rejects.
      */
     private static final String JSON_CARRIER_TUPLE_V13_SOURCE = """
-        import * as json from "std/json";
+
 
         class Box {
           label: string;
         }
 
         export function arrayCarrier(): string {
-          let doc: Record<string, unknown> = json.parse("{\\"xs\\":[1.0,2.0]}");
-          return json.stringify(doc.xs) as string;
+          let doc: Record<string, unknown> = JSON.parse("{\\"xs\\":[1.0,2.0]}");
+          return JSON.stringify(doc.xs) as string;
         }
 
         export function nullCarrier(): string {
-          let doc: Record<string, unknown> = json.parse("{\\"n\\":null}");
-          return json.stringify(doc.n) as string;
+          let doc: Record<string, unknown> = JSON.parse("{\\"n\\":null}");
+          return JSON.stringify(doc.n) as string;
         }
 
         export function classCarrier(): string {
           let holder: Record<string, unknown> = {};
           let box: Box = {label: "b"};
           holder.box = box;
-          return json.stringify(holder.box) as string;
+          return JSON.stringify(holder.box) as string;
         }
 
         export function errorCarrier(): string {
           let holder: Record<string, unknown> = {};
           let failure: Error = {code: "", message: ""};
           holder.failure = failure;
-          return json.stringify(holder.failure) as string;
+          return JSON.stringify(holder.failure) as string;
         }
 
         export function main(): null {
@@ -4612,13 +4644,13 @@ public class ProductionDispatchTest {
             // position, and the carried canonical class atom for the two
             // class instances (the declared class and the builtin Error).
             int[] arrayAt = argumentPositionOf(JSON_CARRIER_TUPLE_V13_SOURCE,
-                "json.stringify(doc.xs)", "doc.xs");
+                "JSON.stringify(doc.xs)", "doc.xs");
             int[] nullAt = argumentPositionOf(JSON_CARRIER_TUPLE_V13_SOURCE,
-                "json.stringify(doc.n)", "doc.n");
+                "JSON.stringify(doc.n)", "doc.n");
             int[] classAt = argumentPositionOf(JSON_CARRIER_TUPLE_V13_SOURCE,
-                "json.stringify(holder.box)", "holder.box");
+                "JSON.stringify(holder.box)", "holder.box");
             int[] errorAt = argumentPositionOf(JSON_CARRIER_TUPLE_V13_SOURCE,
-                "json.stringify(holder.failure)", "holder.failure");
+                "JSON.stringify(holder.failure)", "holder.failure");
             String expected = String.join("\n",
                 "arrayCarrier|admitted|[1,2]",
                 "nullCarrier|admitted|null",
@@ -5311,7 +5343,7 @@ public class ProductionDispatchTest {
      * not a spec-listed stdlib implementation is missing required content — the
      * compile fails with the pinned E6000 and the absent output root stays
      * absent — while the complete surface publishes the artifact, its default
-     * source-map sidecar, the runtime and all six stdlib copies on both
+     * source-map sidecar, the runtime and all five stdlib copies on both
      * targets.
      */
     private static void testMissingDeploymentContentFails() throws Exception {
@@ -5319,7 +5351,7 @@ public class ProductionDispatchTest {
             + "implementation the resolved distribution surface does not provide "
             + "fails the compile with the pinned E6000 and publishes nothing on "
             + "both targets; the complete surface publishes the artifact, its "
-            + "default sidecar, the runtime and all six stdlib copies --");
+            + "default sidecar, the runtime and all five stdlib copies --");
 
         Path project = Files.createTempDirectory("production-dispatch-deploy-");
         Path partial = Files.createTempDirectory(
@@ -5343,7 +5375,7 @@ public class ProductionDispatchTest {
                     }
                 }
             }
-            for (String runtime : List.of("deal/runtime.lua", "deal/runtime.js")) {
+            for (String runtime : List.of("deal/runtime.lua", "deal/runtime.js", "deal/json.lua")) {
                 copyRepoFile(Path.of(runtime), complete.resolve(runtime));
                 copyRepoFile(Path.of(runtime), partial.resolve(runtime));
             }
@@ -5382,6 +5414,7 @@ public class ProductionDispatchTest {
                         + "default sidecar and the runtime: " + published);
                 List<String> deploymentCopies = new ArrayList<>(
                     List.of("deal/runtime." + extension));
+                if (backend.equals("luajit")) deploymentCopies.add("deal/json.lua");
                 for (String stdlibModule : stdlibModules) {
                     deploymentCopies.add(stdlibModule + "." + extension);
                 }
@@ -7353,7 +7386,7 @@ public class ProductionDispatchTest {
         testProductionNestedFieldAndTransitiveProviders();
         testProductionPlanOwnerJsonLinks();
         testProductionSameIdentitySiblingLayouts();
-        testProductionDeclarationClassJsonFieldFailsClosed();
+        testProductionDeclarationClassJsonFieldReconstruction();
         testProductionSameNameSiblingCollision();
         testProductionContextualCallSiblingCollision();
         testProductionShadowedLocalCalleeCollision();

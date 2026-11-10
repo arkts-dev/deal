@@ -1,22 +1,22 @@
-// @spec: Standard library declarations — std/json.d.deal
+// @spec: Standard library builtins — JSON decoding binary64 boundaries
 // @description: JSON numbers preserve binary64 values across signed32 boundaries, padded exponents and zero-sign serialization
 // @expected: runtime-ok
 // @features: stdlib, json, number
 
-import * as json from "std/json";
+
 import * as str from "std/string";
 
 function value(text: string): number {
-  let parsed: Record<string, unknown> = json.parse(text);
+  let parsed: Record<string, unknown> = JSON.parse(text);
   return parsed.v as number;
 }
 
 function roundtrip(text: string, expected: number): null {
-  let parsed: Record<string, unknown> = json.parse(text);
+  let parsed: Record<string, unknown> = JSON.parse(text);
   if ((parsed.v as number) !== expected) {
     throw {code: "TEST_FAIL", message: "numeric parse mismatch"};
   }
-  let encoded: string = json.stringify(parsed) as string;
+  let encoded: string = JSON.stringify(parsed) as string;
   if (value(encoded) !== expected) {
     throw {code: "TEST_FAIL", message: "numeric roundtrip mismatch"};
   }
@@ -24,7 +24,7 @@ function roundtrip(text: string, expected: number): null {
 }
 
 export function main(): null {
-  let t: Record<string, unknown> = json.parse("{\"a\":2147483647,\"b\":2147483648,\"c\":-2147483648,\"d\":-2147483649,\"z\":-0}");
+  let t: Record<string, unknown> = JSON.parse("{\"a\":2147483647,\"b\":2147483648,\"c\":-2147483648,\"d\":-2147483649,\"z\":-0}");
   if ((t.a as number) !== 2147483647 || (t.c as number) !== -2147483648) {
     throw {code: "TEST_FAIL", message: "signed32 boundary values"};
   }
@@ -33,7 +33,7 @@ export function main(): null {
   }
   let z: number = t.z as number;
   if (1 / z !== -1 / 0) { throw {code: "TEST_FAIL", message: "parse lost negative zero"}; }
-  let s: string = json.stringify(t) as string;
+  let s: string = JSON.stringify(t) as string;
   if (!str.contains(s, "\"z\":0") || str.contains(s, "-0")) {
     throw {code: "TEST_FAIL", message: "stringify must normalize negative zero"};
   }

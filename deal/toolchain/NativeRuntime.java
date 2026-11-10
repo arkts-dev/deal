@@ -29,7 +29,7 @@ import java.util.Optional;
  * units — are never part of this set, and neither is this Java file (the closed
  * constant, not the directory listing, is the authority).</p>
  *
- * <p>The six spec-listed stdlib modules are realized by the runtime's closed
+ * <p>The five spec-listed stdlib modules are realized by the runtime's closed
  * {@code std} operation surface, not by per-module artifacts; the spec-listed
  * {@code std/} declaration modules remain the compile-time type authority.</p>
  *

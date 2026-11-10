@@ -2,7 +2,7 @@
 // @description: keys valid record
 // @expected: runtime-ok
 // @features: boundary-validation, host-abi
-import * as console from "std/console";
+import * as printer from "std/console";
 import * as host from "host/probe";
 
-export function main():null{try{let r=host.get();console.log("ACCEPT");}catch(e){if(e instanceof Error){console.log(e.code);}}return null;}
+export function main():null{try{let r=host.get();printer.log("ACCEPT");}catch(e){if(e instanceof Error){printer.log(e.code);}}return null;}

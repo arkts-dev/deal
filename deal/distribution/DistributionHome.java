@@ -26,13 +26,13 @@ import java.util.Optional;
  *   <li><b>Language distribution</b> — classpath resources
  *       ({@code std/<m>.d.deal}, {@code std/<m>.lua},
  *       {@code std/<m>.js}, {@code deal/runtime.lua},
- *       {@code deal/runtime.js}), then the {@code DEAL_HOME} filesystem
+ *       {@code deal/json.lua}, {@code deal/runtime.js}), then the {@code DEAL_HOME} filesystem
  *       layout (the {@code deal.home} system property or the
  *       {@code DEAL_HOME} environment variable — the documented
  *       override for non-layout installs; the packaged {@code bin/deal}
  *       launcher supplies the distribution on the classpath).</li>
  *   <li><b>Checkout CWD fallback</b> — {@code <cwd>/std} and
- *       {@code <cwd>/deal/runtime.*} (dev mode only; never reachable
+ *       runtime algorithm resources under {@code <cwd>/deal/} (dev mode only; never reachable
  *       from an installed distribution whose surface is present).</li>
  * </ol>
  *
@@ -83,8 +83,8 @@ public final class DistributionHome {
     public static final String DEAL_HOME_ENV = "DEAL_HOME";
 
     /**
-     * The six spec-listed stdlib module names, in pinned declaration
-     * order — the same six names pinned by the stdlib authority (the
+     * The five spec-listed stdlib module names, in pinned declaration
+     * order — the same five names pinned by the stdlib authority (the
      * names behind {@code StdlibModuleResolver#SPEC_STDLIB_MODULES} and
      * {@code ModuleIdentityResolver#SPEC_STDLIB_MODULE_NAMES}; this
      * package is JDK-only and keeps its own pinned copy). Used only for
@@ -92,7 +92,7 @@ public final class DistributionHome {
      * classpath carries the {@code std/} prefix).
      */
     public static final List<String> SPEC_STDLIB_MODULE_NAMES = List.of(
-        "console", "string", "table", "json", "math", "time"
+        "console", "string", "table", "math", "time"
     );
 
     /**
@@ -263,6 +263,7 @@ public final class DistributionHome {
      */
     public Optional<ResolvedSource> resolveStdlibDeclaration(
             String moduleName) {
+        if (!SPEC_STDLIB_MODULE_NAMES.contains(moduleName)) return Optional.empty();
         return resolveStdlibFileImpl("std/" + moduleName + ".d.deal");
     }
 
@@ -275,6 +276,8 @@ public final class DistributionHome {
      */
     public Optional<ResolvedSource> resolveStdlibImplementation(
             String moduleName, String extension) {
+        if (!SPEC_STDLIB_MODULE_NAMES.contains(moduleName)
+                || !("lua".equals(extension) || "js".equals(extension))) return Optional.empty();
         return resolveStdlibFileImpl("std/" + moduleName + "." + extension);
     }
 

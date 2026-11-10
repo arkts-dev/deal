@@ -6168,8 +6168,7 @@ public class CanonicalProjectionParityTest {
                 }
             }
             check(found, "the callee '" + calleeName + "' is declared");
-            program = new deal.ast.ProgramNode(program.span(), statements,
-                program.fileDirectives());
+            program = new deal.ast.ProgramNode(program.span(), statements);
         }
         CompilerInvocation invocation = productionInvocation();
         deal.semantic.CheckedModuleInput input = new deal.semantic.CheckedModuleInput(
@@ -7577,15 +7576,15 @@ public class CanonicalProjectionParityTest {
                 local ok3 = pcall(__arm, "MARKED_ORIGIN", nil, "-", nil, nil)
                 print("ROW|MARKED_ORIGIN|" .. (ok3 and "RENDERED" or "DEFECT"))
                 __arms["MARKED_SOURCE"] = {c = "E8001",
-                  t = "value at {fieldPath} is not JSON serializable: {actual}",
-                  e = "NONE", a = "TYPED_BOUNDARY", s = "TOP_LEVEL",
-                  o = "CALL_EXPRESSION",
-                  k = "fieldPath=FIELD_PATH,actual=SIBLING_OWNED_ACTUAL"}
+                  t = "unsupported type for JSON encoding: {actual}",
+                  e = "PINNED_TEXT", p = "string, number, boolean, or table",
+                  a = "CARRIER_KIND", s = "TOP_LEVEL",
+                  o = "CALL_EXPRESSION", k = "actual=SIBLING_OWNED_ACTUAL"}
                 local ok4 = pcall(__arm, "MARKED_SOURCE",
-                  {fieldPath = "data.k", actual = "function"}, "-", nil, "function")
+                  {actual = "function"}, "-", "string, number, boolean, or table", "function")
                 print("ROW|MARKED_SOURCE|" .. (ok4 and "RENDERED" or "DEFECT"))
-                local ok5, value5 = pcall(__arm, "JSON_TO_WALK",
-                  {fieldPath = "data.k", actual = "function"}, "-", nil, "function")
+                local ok5, value5 = pcall(__arm, "JSON_STRINGIFY_UNSUPPORTED",
+                  {actual = "function"}, "-", "string, number, boolean, or table", "function")
                 print("ROW|WALK_CONTROL|" .. (ok5 and value5.m or "DEFECT"))
                 local ok6, value6 = pcall(__arm, "JSON_TO_WALK_CYCLE", nil, "-",
                   nil, nil)
@@ -7697,7 +7696,7 @@ public class CanonicalProjectionParityTest {
         check(inner.getOrDefault("MARKED_INNER_SOURCE", "").startsWith("DEFECT"),
             "the emitted prelude's parameter parser refuses a SIBLING_OWNED_ACTUAL "
                 + "parameter source on the inner-only render path: " + inner);
-        checkEq("value at data.k is not JSON serializable: function",
+        checkEq("unsupported type for JSON encoding: function",
             inner.getOrDefault("WALK_CONTROL", ""),
             "the emitted prelude keeps rendering the valid walk arm after the "
                 + "marked-slot guards");
@@ -7712,22 +7711,22 @@ public class CanonicalProjectionParityTest {
         // its declared fields, and the marker's remaining fail-closed subject
         // is a hand-built marked arm fed to the data-driven completeness check.
         BoundaryFailure walk = FailureContractRegistry.render(
-            FailureArmId.JSON_TO_WALK, Map.of("fieldPath", "a", "actual", "table"),
-            null, "table", null);
-        checkEq("value at a is not JSON serializable: table", walk.message(),
+            FailureArmId.JSON_STRINGIFY_UNSUPPORTED, Map.of("actual", "table"),
+            "string, number, boolean, or table", "table", null);
+        checkEq("unsupported type for JSON encoding: table", walk.message(),
             "the bound walk arm renders its own template through the registry");
         deal.codegen.jvm.JvmRuntime.DealError walkJvm =
-            deal.codegen.jvm.JvmRuntime.arm(FailureArmId.JSON_TO_WALK,
-                Map.of("fieldPath", "a", "actual", "table"), "-", null, "table");
+            deal.codegen.jvm.JvmRuntime.arm(FailureArmId.JSON_STRINGIFY_UNSUPPORTED,
+                Map.of("actual", "table"), "-", "string, number, boolean, or table", "table");
         checkEq(walk.message(), walkJvm.msg,
             "the JVM runtime renders the bound walk arm's identical message");
-        FailureArm walkArm = FailureContractRegistry.arm(FailureArmId.JSON_TO_WALK);
+        FailureArm walkArm = FailureContractRegistry.arm(FailureArmId.JSON_STRINGIFY_UNSUPPORTED);
         List<FailureArm> marked = new ArrayList<>(
             FailureContractRegistry.arms().values());
         marked.set(marked.indexOf(walkArm), new FailureArm(walkArm.id(),
             walkArm.policy(), walkArm.templateIndex(), walkArm.template(),
             walkArm.parameters(), walkArm.parameterSources(), walkArm.expectedSource(),
-            null, FailureArm.ActualProjection.SIBLING_OWNED, walkArm.origin(),
+            walkArm.pinnedExpectedText(), FailureArm.ActualProjection.SIBLING_OWNED, walkArm.origin(),
             walkArm.scope(), walkArm.code()));
         expectDefect(() -> FailureContractRegistry.checkArmConsistency(
             FailureContractRegistry.rows(), marked),
@@ -7753,6 +7752,7 @@ public class CanonicalProjectionParityTest {
             Path runtime = workspace.resolve("deal/runtime.lua");
             Files.createDirectories(runtime.getParent());
             Files.copy(Path.of("deal", "runtime.lua"), runtime);
+            Files.copy(Path.of("deal", "json.lua"), workspace.resolve("deal/json.lua"));
             Files.writeString(workspace.resolve("probe.lua"), """
                 local rt = require("deal.runtime")
                 local function row(label, desc, value)
@@ -8669,6 +8669,16 @@ public class CanonicalProjectionParityTest {
             checkEq(expected, error.expected(), run.consumer()
                 + ": the expected token");
             checkEq(actual, error.actual(), run.consumer() + ": the actual token");
+            check(error.cause() != null, run.consumer() + ": the leaf descriptor cause is retained");
+            if (error.cause() != null) {
+                checkEq("E8001", error.cause().code(), run.consumer() + ": leaf descriptor code");
+                checkEq("expected " + expected, error.cause().message(), run.consumer() + ": leaf descriptor message");
+                checkEq(originText, error.cause().origin(), run.consumer() + ": leaf descriptor origin");
+                checkEq(expected, error.cause().expected(), run.consumer() + ": leaf expected token");
+                checkEq(actual, error.cause().actual(), run.consumer() + ": leaf actual token");
+                checkEq(error.frames(), error.cause().frames(), run.consumer() + ": leaf active frames");
+                check(error.cause().cause() == null, run.consumer() + ": no invented nested cause");
+            }
         }
     }
 

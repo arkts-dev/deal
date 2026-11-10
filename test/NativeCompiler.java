@@ -460,23 +460,20 @@ public final class NativeCompiler {
     public record SanitizedRun(Result result, boolean relaunched) { }
 
     /**
-     * Runs one instrumented product, relaunching it with address-space
-     * randomization disabled for that child only when the sanitizer runtime
-     * could not map its shadow memory at all. A host whose randomization entropy
-     * puts the mapping out of reach kills the process before its workload: that
-     * startup failure is retried, while a genuine finding — a report on stderr or
-     * a workload that reached its own assertions — is returned as it is and never
-     * retried away.
+     * Runs one instrumented product with address-space randomization disabled
+     * for that child when setarch is available. Establish the sanitizer's
+     * address-space environment before the workload, rather than inferring an
+     * initialization failure from a silent crash. Only explicit shadow-memory
+     * initialization diagnostics permit bounded relaunches; every workload
+     * failure, including a silent signal, is returned without retry.
      */
     public static SanitizedRun runSanitized(Path product, Path workingDirectory,
                                             java.util.Map<String, String> environment) {
-        Result run = run(List.of(product.toAbsolutePath().toString()),
-            workingDirectory, environment);
-        if (!sanitizerStartupFailure(run)) {
-            return new SanitizedRun(run, false);
-        }
         List<String> withoutRandomization = disableAslrCommand(product);
-        if (withoutRandomization == null) {
+        List<String> command = withoutRandomization == null
+            ? List.of(product.toAbsolutePath().toString()) : withoutRandomization;
+        Result run = run(command, workingDirectory, environment);
+        if (!sanitizerStartupFailure(run) || withoutRandomization == null) {
             return new SanitizedRun(run, false);
         }
         boolean relaunched = false;
@@ -511,14 +508,24 @@ public final class NativeCompiler {
         String stderr = run.stderr();
         if (stderr.contains("ERROR: AddressSanitizer")
                 || stderr.contains("WARNING: ThreadSanitizer")
+                || stderr.contains("AddressSanitizer:DEADLYSIGNAL")
+                || stderr.contains("DEAL_RUNTIME_FAULT:")
                 || stderr.contains("runtime error:")) {
             return false;
         }
-        return run.stdout().isEmpty();
+        if (!run.stdout().isEmpty()) {
+            return false;
+        }
+        // Silence, a signal, or DEADLYSIGNAL alone does not establish a
+        // shadow-memory startup failure. Preserve those workload failures
+        // without a relaunch, even when no assertion printed to stdout.
+        return stderr.contains("Shadow memory range interleaves with an existing memory mapping. ASan cannot proceed correctly. ABORTING.")
+            || stderr.contains("ReserveShadowMemoryRange failed while trying to map")
+            || stderr.contains("FATAL: ThreadSanitizer: unexpected memory mapping ");
     }
 
     /**
-     * The instrumented product relaunched with {@code ADDR_NO_RANDOMIZE} for that
+     * The instrumented product launched with {@code ADDR_NO_RANDOMIZE} for that
      * child only (through {@code setarch -R}), or null when the host has no
      * {@code setarch}.
      */

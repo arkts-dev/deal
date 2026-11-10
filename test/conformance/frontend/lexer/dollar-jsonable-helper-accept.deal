@@ -1,6 +1,6 @@
 // @spec: Lexical elements — identifier restrictions
-// @description: Generated @jsonable C$fromJson/C$toJson helper names remain source-visible and callable
-// @expected: compile-ok
+// @description: Comments never introduce C$fromJson/C$toJson callable symbols
+// @expected: compile-error E2001
 // @features: classes, jsonable, generated-identifiers, accept-control
 
 // @jsonable

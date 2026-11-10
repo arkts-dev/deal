@@ -402,15 +402,15 @@ public class ContainerBoundaryProductionTest {
     private static final String GUARD_SEED = "export function main(): null { let x: number = true; return null; }";
 
     /**
-     * The marked case (B3): a real {@code std/json} decode whose nested
-     * arrays carry the mark. The failing element of the outer decoded array
-     * renders the reference kind {@code table}.
+     * Contextual Record reconstruction retains nested JSON arrays as arrays.
+     * A later hostile replacement reaches the array-element boundary, whose
+     * failing nested element reports its language kind {@code array}.
      */
     private static final String DECODED_NESTED_SOURCE = """
-        import * as json from "std/json";
+
 
         export function main(): null {
-          let t: Record<string, unknown> = json.parse("{\\"values\\":[[\\"x\\"],[\\"y\\"]]}");
+          let t: Record<string, unknown> = JSON.parse("{\\"values\\":[[\\"x\\"],[\\"y\\"]]}");
           let slots: Record<string, unknown>[][] = [[]];
           mutation.replaceFirst({slots: slots}, {value: t.values});
           let xs: Record<string, unknown>[][] = [slots[0]];
@@ -489,14 +489,14 @@ public class ContainerBoundaryProductionTest {
     /**
      * The decode tree's second nested level: a nested Record-array crossing
      * over a parsed {@code [[["x"]]]} reports the same marked element one
-     * wrap deeper, so the decode site marks every array of the tree
-     * recursively.
+     * wrap deeper, so the language array classification remains stable at
+     * every depth of the reconstructed tree.
      */
     private static final String DECODED_DEEP_NESTED_SOURCE = """
-        import * as json from "std/json";
+
 
         export function main(): null {
-          let t: Record<string, unknown> = json.parse("{\\"values\\":[[[\\"x\\"]]]}");
+          let t: Record<string, unknown> = JSON.parse("{\\"values\\":[[[\\"x\\"]]]}");
           let slots: Record<string, unknown>[][][] = [[]];
           mutation.replaceFirst({slots: slots}, {value: t.values});
           let xs: Record<string, unknown>[][][] = [slots[0]];
@@ -510,10 +510,10 @@ public class ContainerBoundaryProductionTest {
      * unchanged by the mark.
      */
     private static final String DECODED_INERTNESS_SOURCE = """
-        import * as json from "std/json";
+
 
         export function main(): null {
-          let t: Record<string, unknown> = json.parse("{\\"values\\":[[1.0,2.0],[3.0,4.0]]}");
+          let t: Record<string, unknown> = JSON.parse("{\\"values\\":[[1.0,2.0],[3.0,4.0]]}");
           let xs: unknown[] = t.values as unknown[];
           let first: unknown[] = xs[0] as unknown[];
           let alias: unknown[] = xs[0] as unknown[];
@@ -534,8 +534,8 @@ public class ContainerBoundaryProductionTest {
           if ((alias[1] as number) !== 9) {
             throw { code: "TEST_FAIL", message: "decoded alias mutation" };
           }
-          let encoded: string = json.stringify(t) as string;
-          if (json.stringify(json.parse(encoded)) !== json.stringify(json.parse("{\\"values\\":[[1,9],[3,4]]}"))) {
+          let encoded: string = JSON.stringify(t) as string;
+          if (JSON.stringify(JSON.parse(encoded)) !== JSON.stringify(JSON.parse("{\\"values\\":[[1,9],[3,4]]}"))) {
             throw { code: "TEST_FAIL", message: "decoded stringify: " + encoded };
           }
           return null;
@@ -547,11 +547,11 @@ public class ContainerBoundaryProductionTest {
      * descriptor with the landed {@code array} actual token.
      */
     private static final String DECODED_ADMISSION_SOURCE = """
-        import * as json from "std/json";
+
         import * as tables from "std/table";
 
         export function main(): null {
-          let t: Record<string, unknown> = json.parse("{\\"values\\":[[1.0,2.0]]}");
+          let t: Record<string, unknown> = JSON.parse("{\\"values\\":[[1.0,2.0]]}");
           let ks: string[] = tables.keys(t.values as Record<string, unknown>);
           return null;
         }
@@ -570,9 +570,9 @@ public class ContainerBoundaryProductionTest {
             + "tuples, and projection-only inertness (ISSUE-0710) --");
 
         driveFocusedFailures(
-            new FocusedFailure("decoded nested element (marked)",
+            new FocusedFailure("decoded nested array element",
                 DECODED_NESTED_SOURCE, 8, 42,
-                new Tuple("E8003", "array element 1 type mismatch", "[record]", "table")),
+                new Tuple("E8003", "array element 1 type mismatch", "[record]", "array")),
             new FocusedFailure("unmarked nested element", UNMARKED_NESTED_SOURCE,
                 6, 42,
                 new Tuple("E8003", "array element 1 type mismatch", "[record]", "array")),
@@ -584,9 +584,9 @@ public class ContainerBoundaryProductionTest {
             new FocusedFailure("keys-result nested element",
                 KEYS_NESTED_SOURCE, 9, 42,
                 new Tuple("E8003", "array element 1 type mismatch", "[record]", "array")),
-            new FocusedFailure("decoded element two levels down (marked)",
+            new FocusedFailure("decoded array element two levels down",
                 DECODED_DEEP_NESTED_SOURCE, 8, 44,
-                new Tuple("E8003", "array element 1 type mismatch", "[[record]]", "table")),
+                new Tuple("E8003", "array element 1 type mismatch", "[[record]]", "array")),
             new FocusedFailure("decoded array at a table descriptor",
                 DECODED_ADMISSION_SOURCE, 6, 34,
                 new Tuple("E8001", "expected table", "table", "array")));
@@ -625,13 +625,13 @@ public class ContainerBoundaryProductionTest {
      * must name number on the Oracle and both production artifacts.
      */
     private static final String INTEGRAL_NUMBER_ELEMENT_SOURCE = """
-        // @jsonable
+
         export class Doc {
           values: number[];
         }
 
         export function main(): null {
-          let d: Doc | null = Doc$fromJson("{\\"values\\":[2147483648]}");
+          let d: Doc | null = JSON.parse("{\\"values\\":[2147483648]}");
           if (d !== null) {
             let slots: string[] = [""];
             mutation.replaceFirst({slots: slots}, {value: d.values});
@@ -650,13 +650,13 @@ public class ContainerBoundaryProductionTest {
      * array. An incompatible persistent array assertion must not mask E8003.
      */
     private static final String NESTED_NUMBER_ELEMENT_SOURCE = """
-        // @jsonable
+
         export class Nest {
           values: Record<string, unknown>;
         }
 
         export function main(): null {
-          let d: Nest | null = Nest$fromJson("{\\"values\\":{\\"xs\\":[[],2147483648.0]}}");
+          let d: Nest | null = JSON.parse("{\\"values\\":{\\"xs\\":[[],2147483648.0]}}");
           if (d !== null) {
             let slots: string[][] = [[], []];
             mutation.replaceAt({slots: slots}, {value: d.values.xs}, 1);
@@ -673,13 +673,13 @@ public class ContainerBoundaryProductionTest {
      * the numeric element, independently from the flat class-field case.
      */
     private static final String NESTED_INNER_NUMBER_ELEMENT_SOURCE = """
-        // @jsonable
+
         export class Deep {
           values: number[][];
         }
 
         export function main(): null {
-          let d: Deep | null = Deep$fromJson("{\\"values\\":[[2147483648]]}");
+          let d: Deep | null = JSON.parse("{\\"values\\":[[2147483648]]}");
           if (d !== null) {
             let slots: string[] = [""];
             mutation.replaceFirst({slots: slots}, {value: d.values[0]});
@@ -697,13 +697,13 @@ public class ContainerBoundaryProductionTest {
      * ({@code string[][]}) and the value is the decoded nested array.
      */
     private static final String NESTED_ADMISSION_SOURCE = """
-        // @jsonable
+
         export class Ok {
           values: Record<string, unknown>;
         }
 
         export function main(): null {
-          let d: Ok | null = Ok$fromJson("{\\"values\\":{\\"xs\\":[[\\"a\\"]]}}");
+          let d: Ok | null = JSON.parse("{\\"values\\":{\\"xs\\":[[\\"a\\"]]}}");
           if (d !== null) {
             let ys: unknown[] = d.values.xs as unknown[];
             return null;
@@ -1522,6 +1522,7 @@ public class ContainerBoundaryProductionTest {
         Path runtimeTarget = workspace.resolve("deal").resolve("runtime.lua");
         Files.createDirectories(runtimeTarget.getParent());
         Files.copy(Path.of("deal", "runtime.lua"), runtimeTarget);
+        Files.copy(Path.of("deal", "json.lua"), runtimeTarget.resolveSibling("json.lua"));
         Path stdTarget = workspace.resolve("std");
         Files.createDirectories(stdTarget);
         try (var listing = Files.list(Path.of("std"))) {

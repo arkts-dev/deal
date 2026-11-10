@@ -1,11 +1,11 @@
 // @spec: Lexical elements — Operators
-// @description: Remainder syntax is rejected.
-// @expected: compile-error E1001
+// @description: Remainder retains the dividend sign, rather than floor-modulo semantics.
+// @expected: runtime-ok
 // @features: types, operators, diagnostics, arithmetic
 
 export function test_number_modulo_floor(): null {
   let n: number = -5.0 % 2.0;
-  if (n !== 1.0) { throw { code: "FLOOR_MOD_CHANGED", message: "number modulo" }; }
+  if (n !== -1.0) { throw { code: "FLOOR_MOD_CHANGED", message: "number modulo" }; }
   return null;
 }
 

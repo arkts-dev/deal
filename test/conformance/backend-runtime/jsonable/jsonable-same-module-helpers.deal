@@ -1,19 +1,21 @@
-// @spec: Classes — JSON serialization (@jsonable)
-// @description: Same-module generated C$toJson/C$fromJson helpers are callable module functions and roundtrip (v1.2 defect snippet 35)
+// @spec: Standard library builtins — JSON
+// @description: Ordinary same-module functions wrap JSON builtins and retain callable identity through values.
 // @expected: runtime-ok
-// @features: jsonable, modules, helpers, v1.2
+// @features: json, modules, functions
 
-// @jsonable
 export class Model { name: string; nick?: string | null; }
+export function encode(value: Model): string { return JSON.stringify(value) as string; }
+export function decode(text: string): Model { return JSON.parse(text); }
 
 export function test_same_module_helpers(): null {
   let a: Model = {name: ""};
-  let text: string = Model$toJson(a);
-  let b: Model | null = Model$fromJson(text);
-  if (b === null) { throw { code: "TEST_FAIL", message: "JSON roundtrip" }; }
+  let encoder: (value: Model) => string = encode;
+  let decoder: (text: string) => Model = decode;
+  let b: Model = decoder(encoder(a));
+  if (b.name !== "" || Object.hasOwn(b, "nick") || b === a || encoder !== encode || decoder !== decode) {
+    throw {code: "TEST_FAIL", message: "same-module JSON function roundtrip"};
+  }
   return null;
 }
 
-export function main(): null {
-  return null;
-}
+export function main(): null { return null; }

@@ -273,8 +273,7 @@ public class CompositeTerminatorAnalysisTest {
             fail(name + ": the probe lexes cleanly: " + lex.diagnostics());
             return null;
         }
-        ParseResult parse = new Parser(lex.tokens(), sourceId,
-            lex.directiveEvents()).parse();
+        ParseResult parse = new Parser(lex.tokens(), sourceId).parse();
         if (parse.hasErrors() || parse.program() == null) {
             fail(name + ": the probe parses cleanly: " + parse.diagnostics());
             return null;

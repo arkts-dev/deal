@@ -1,31 +1,21 @@
-// @spec: Classes — JSON serialization (@jsonable)
-// @description: Nested decoding rejects required omissions and preserves explicitly supplied fields.
+// @spec: Standard library builtins — JSON decoding
+// @description: Nested decoding rejects required omissions and preserves explicitly supplied fields without defaults.
 // @expected: runtime-ok
-// @features: jsonable, required-presence, nested-class
+// @features: json, required-presence, nested-class
 
-// @jsonable
 export class Child { n: number; }
-
-// @jsonable
 export class Parent { child: Child; }
 
 export function test_nested_default_application(): null {
-  if (Parent$fromJson("{\"child\":{}}") !== null) {
-    throw {code: "TEST_FAIL", message: "nested required omission accepted"};
+  for (let text of ["{\"child\":{}}", "{}"]) {
+    let rejected = false;
+    try { let invalid: Parent = JSON.parse(text); }
+    catch (e) { rejected = (e as Error).code === "E8001"; }
+    if (!rejected) { throw {code: "TEST_FAIL", message: "required omission accepted"}; }
   }
-  if (Parent$fromJson("{}") !== null) {
-    throw {code: "TEST_FAIL", message: "outer required omission accepted"};
-  }
-  let p: Parent | null = Parent$fromJson("{\"child\":{\"n\":7}}");
-  if (p === null) {
-    throw { code: "TEST_FAIL", message: "complete nested object rejected" };
-  } else {
-    let n: number = p.child.n;
-    if (n !== 7) { throw { code: "TEST_FAIL", message: "provided nested value missing" }; }
-  }
+  let p: Parent = JSON.parse("{\"child\":{\"n\":7}}");
+  if (p.child.n !== 7) { throw {code: "TEST_FAIL", message: "provided nested value missing"}; }
   return null;
 }
 
-export function main(): null {
-  return null;
-}
+export function main(): null { return null; }

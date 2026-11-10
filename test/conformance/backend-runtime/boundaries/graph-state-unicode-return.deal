@@ -2,7 +2,7 @@
 // @description: Revalidate retained graph at state-unicode-return
 // @expected: runtime-ok
 // @features: boundary-validation
-import * as console from "std/console";
+import * as printer from "std/console";
 import * as host from "host/probe";
-class B{r:Record<string,unknown>;}function consume(r:Record<string,unknown>):void{console.log("PARAM_BODY");}
-export function main():null{let r:Record<string,unknown>={};r.self=r;let old:Record<string,unknown>={};let d=old;let b:B={r:old};let xs:Record<string,unknown>[]=[old];let get: () => Record<string,unknown> = function():Record<string,unknown>{console.log("RETURN_BODY");return r;};host.corrupt(r);let returned=get();if(returned!==r || returned.self!==(r as unknown) || (returned.bad as string)!==`\uD800`){throw {code:"TEST",message:"return lost lone graph"};}console.log("ACCEPT");host.repair();if(Object.hasOwn(returned,"bad")){throw {code:"TEST",message:"returned alias did not observe repair"};}if(d===old){console.log("UNCHANGED");}else{console.log("STORED");}consume(r);console.log("RECOVERED");return null;}
+class B{r:Record<string,unknown>;}function consume(r:Record<string,unknown>):void{printer.log("PARAM_BODY");}
+export function main():null{let r:Record<string,unknown>={};r.self=r;let old:Record<string,unknown>={};let d=old;let b:B={r:old};let xs:Record<string,unknown>[]=[old];let get: () => Record<string,unknown> = function():Record<string,unknown>{printer.log("RETURN_BODY");return r;};host.corrupt(r);let returned=get();if(returned!==r || returned.self!==(r as unknown) || (returned.bad as string)!==`\uD800`){throw {code:"TEST",message:"return lost lone graph"};}printer.log("ACCEPT");host.repair();if(Object.hasOwn(returned,"bad")){throw {code:"TEST",message:"returned alias did not observe repair"};}if(d===old){printer.log("UNCHANGED");}else{printer.log("STORED");}consume(r);printer.log("RECOVERED");return null;}

@@ -1,13 +1,17 @@
-// @spec: Classes — @jsonable nested element validation
-// @description: Malformed nested array element type is rejected by fromJson
+// @spec: Standard library builtins — JSON decoding
+// @description: A scalar in an imported class array rejects without changing the destination
 // @expected: runtime-ok
 // @features: jsonable, arrays, diagnostics
 
 import * as Lib from "./jsonable_batch2_lib";
 
 export function test_jsonable_nested_array_malformed_element(): null {
-  let p: Lib.Parent | null = Lib.Parent$fromJson("{\"children\":[1]}");
-  if (p !== null) { throw { code: "TEST_FAIL", message: "malformed nested element should be rejected" }; }
+  let original: Lib.Parent = Lib.makeParent(3, 4);
+  let p = original;
+  let rejected = false;
+  try { p = JSON.parse("{\"children\":[1]}"); }
+  catch (e) { rejected = (e as Error).code === "E8001"; }
+  if (!rejected || p !== original || p.children[1].value !== 4) { throw { code: "TEST_FAIL", message: "malformed nested element rejection or rollback failed" }; }
   return null;
 }
 

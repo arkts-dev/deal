@@ -1,9 +1,9 @@
 // @spec: Tables — Table values
-// @description: A DEAL table may carry any string key, including every name of the runtime's private carrier vocabulary, and stays the table value: the keys survive std/json round-trips and std/table.keys as data, no key selects a class/array/function arm, and class fields may be named after them (v1.4)
+// @description: A DEAL table may carry any string key, including every name of the runtime's private carrier vocabulary, and stays the table value: the keys survive JSON round-trips and std/table.keys as data, no key selects a class/array/function arm, and class fields may be named after them (v1.4)
 // @expected: runtime-ok
 // @features: tables, classes, stdlib, v1.4
 
-import * as json from "std/json";
+
 import * as tablelib from "std/table";
 
 class Tagged {
@@ -47,8 +47,8 @@ export function test_table_carrier_keys_are_data(): null {
     __ptr: 8,
     data: 9,
   };
-  let text: string = json.stringify(t) as string;
-  let back: Record<string, unknown> = json.parse(text);
+  let text: string = JSON.stringify(t) as string;
+  let back: Record<string, unknown> = JSON.parse(text);
   let kind: string = back.__kind as string;
   let classname: string = back.__classname as string;
   let id: string = back.__id as string;

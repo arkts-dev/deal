@@ -1,10 +1,9 @@
-// @spec: Standard library declarations — std/json.d.deal
+// @spec: Standard library builtins — JSON
 // @description: Persistent descriptors on dynamic JSON arrays and ordinary JSON rules inside generated Record fields.
 // @expected: runtime-ok
 // @features: jsonable, arrays, unknown, assertions
-import * as json from "std/json";
 
-// @jsonable
+
 export class Box { data: Record<string, unknown>; numbers: number[]; }
 class Child { payload: number; }
 function check(ok: boolean): void { if (!ok) { throw {code: "FAIL", message: "JSON value contract"}; } }
@@ -16,7 +15,7 @@ function rejectsNumbers(value: unknown): boolean {
   return rejected;
 }
 function parsedArray(text: string): void {
-    let parsed = json.parse("{\"value\":" + text + "}");
+    let parsed: Record<string, unknown> = JSON.parse("{\"value\":" + text + "}");
     let value: unknown = parsed["value"];
     check(rejectsNumbers(value));
     let items = value as unknown[];
@@ -31,15 +30,14 @@ export function main(): null {
   let nestedTemplate = `${`🌍\\`}`;
   check(nestedTemplate === paired);
   parsedArray("[]"); parsedArray("[1]"); parsedArray("[null]");
-  let nested = json.parse("{\"inner\":[[]]}") as Record<string, unknown>;
+  let nested = JSON.parse("{\"inner\":[[]]}") as Record<string, unknown>;
   let outer = nested.inner as unknown[];
   check(rejectsNumbers(outer[0]));
-  let decoded = Box$fromJson("{\"data\":{\"inner\":[1]},\"numbers\":[1]}");
-  if (decoded === null) { throw {code: "FAIL", message: "decode"}; }
-  let box = decoded as Box;
+  let decoded: Box = JSON.parse("{\"data\":{\"inner\":[1]},\"numbers\":[1]}");
+  let box = decoded;
   check(rejectsNumbers(box.data.inner));
-  let nulls = Box$fromJson("{\"data\":{\"leaf\":null},\"numbers\":[]}");
-  if (nulls !== null) {
+  let nulls: Box = JSON.parse("{\"data\":{\"leaf\":null},\"numbers\":[]}");
+  {
     let record = nulls.data;
     check(Object.hasOwn(record, "leaf"));
     check(record.leaf === null); check(null === record.leaf);
@@ -50,7 +48,7 @@ export function main(): null {
     delete record.leaf;
     check(record.leaf !== null); check(!(record.leaf === null));
     check(!Object.hasOwn(record, "leaf"));
-  } else { throw {code: "FAIL", message: "null decode"}; }
+  }
   let numbers: unknown = box.numbers;
   check((numbers as number[]) === box.numbers);
   let wrong: boolean = false;
@@ -66,14 +64,14 @@ export function main(): null {
   data.items = items;
   data.child = child;
   let value: Box = {data: data, numbers: []};
-  let encoded = Box$toJson(value);
-  let round = json.stringify(json.parse(encoded));
-  check(round === json.stringify(json.parse("{\"data\":{\"1\":\"one\",\"2\":\"two\",\"items\":[null,null,null,null,0],\"child\":{\"payload\":4}},\"numbers\":[]}")));
+  let encoded = JSON.stringify(value) as string;
+  let round = JSON.stringify(JSON.parse(encoded));
+  check(round === JSON.stringify(JSON.parse("{\"data\":{\"1\":\"one\",\"2\":\"two\",\"items\":[null,null,null,null,0],\"child\":{\"payload\":4}},\"numbers\":[]}")));
   let shared: Record<string, unknown> = {a: data, b: data};
-  json.stringify(shared);
+  JSON.stringify(shared);
   data.cycle = data;
   let cycle: boolean = false;
-  try { Box$toJson(value); } catch (e) { if (e instanceof Error) { cycle = e.code === "E8001"; } }
+  try { JSON.stringify(value); } catch (e) { if (e instanceof Error) { cycle = e.code === "E8001"; } }
   check(cycle);
   return null;
 }

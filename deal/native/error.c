@@ -94,8 +94,7 @@ static const char *const deal_arm_parameters_21[] =
 static const char *const deal_arm_parameters_22[] = {"field", "classId"};
 static const char *const deal_arm_parameters_23[] =
     {"oneBasedByteOffset", "reason"};
-static const char *const deal_arm_parameters_24[] = {"fieldPath", "actual"};
-static const char *const deal_arm_parameters_25[] = {"actual"};
+static const char *const deal_arm_parameters_24[] = {"actual"};
 
 #define DEAL_ARM_ENTRY(id, parameters, count, scope, expected, actual) \
     {DEAL_ARM_ID_##id, parameters, count, scope, expected, actual}
@@ -149,9 +148,7 @@ static const deal_arm_repertoire_entry deal_arm_repertoire[] = {
         DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U),
     DEAL_ARM_ENTRY(JSON_PARSE_ERROR, deal_arm_parameters_23, 2U,
         DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U),
-    DEAL_ARM_ENTRY(JSON_TO_WALK, deal_arm_parameters_24, 2U,
-        DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 1U),
-    DEAL_ARM_ENTRY(JSON_STRINGIFY_UNSUPPORTED, deal_arm_parameters_25, 1U,
+    DEAL_ARM_ENTRY(JSON_STRINGIFY_UNSUPPORTED, deal_arm_parameters_24, 1U,
         DEAL_ARM_SCOPE_TOP_LEVEL, 1U, 1U),
     DEAL_ARM_ENTRY(JSON_TO_WALK_CYCLE, deal_arm_parameters_none, 0U,
         DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U)
@@ -296,6 +293,8 @@ int deal_arm_table_install(const deal_arm_table *table) {
 struct deal_error {
     char *code;
     char *message;
+    size_t code_length;
+    size_t message_length;
     char *source_file;
     int32_t line;
     int32_t column;
@@ -376,6 +375,8 @@ static deal_error *deal_error_allocate(const char *code, const char *message,
     deal_error *error = deal_alloc(DEAL_LAYOUT_ERROR, sizeof(*error));
     error->code = deal_platform_duplicate(code);
     error->message = deal_platform_duplicate(message);
+    error->code_length = strlen(code);
+    error->message_length = strlen(message);
     error->source_file = NULL;
     error->line = 0;
     error->column = 0;
@@ -440,8 +441,12 @@ deal_error *deal_error_create_strings(deal_string *code, deal_string *message,
     char *message_text = deal_error_text_of_string(message);
     deal_error *error = deal_error_allocate(code_text, message_text, origin, origin != NULL);
     error->unraised_construction = origin == NULL;
-    deal_platform_release(code_text);
-    deal_platform_release(message_text);
+    deal_platform_release(error->code);
+    deal_platform_release(error->message);
+    error->code = code_text;
+    error->message = message_text;
+    error->code_length = deal_text_transport_length(code);
+    error->message_length = deal_text_transport_length(message);
     return error;
 }
 
@@ -472,7 +477,7 @@ deal_string *deal_error_code_value(deal_error *error) {
     if (error->code == NULL) {
         return NULL;
     }
-    return deal_text_new(error->code, strlen(error->code));
+    return deal_text_new(error->code, error->code_length);
 }
 
 deal_string *deal_error_message_value(deal_error *error) {
@@ -482,7 +487,19 @@ deal_string *deal_error_message_value(deal_error *error) {
     if (error->message == NULL) {
         return NULL;
     }
-    return deal_text_new(error->message, strlen(error->message));
+    return deal_text_new(error->message, error->message_length);
+}
+
+const char *deal_error_code_bytes(deal_error *error, size_t *length) {
+    if (error == NULL || length == NULL) deal_platform_fault("error record: invalid text access");
+    *length = error->code_length;
+    return error->code;
+}
+
+const char *deal_error_message_bytes(deal_error *error, size_t *length) {
+    if (error == NULL || length == NULL) deal_platform_fault("error record: invalid text access");
+    *length = error->message_length;
+    return error->message;
 }
 
 void deal_error_set_code_value(deal_error *error, deal_string *code) {
@@ -492,6 +509,7 @@ void deal_error_set_code_value(deal_error *error, deal_string *code) {
     char *text = deal_error_text_of_string(code);
     deal_platform_release(error->code);
     error->code = text;
+    error->code_length = deal_text_transport_length(code);
 }
 
 void deal_error_set_message_value(deal_error *error, deal_string *message) {
@@ -501,6 +519,7 @@ void deal_error_set_message_value(deal_error *error, deal_string *message) {
     char *text = deal_error_text_of_string(message);
     deal_platform_release(error->message);
     error->message = text;
+    error->message_length = deal_text_transport_length(message);
 }
 
 /*
@@ -631,6 +650,14 @@ int deal_error_frame(deal_error *error, int32_t index, const char **out) {
     return deal_error_text_present(error->frames[index], out);
 }
 
+const char *deal_error_cause_code_bytes(deal_error *error, size_t *length) {
+    if (error == NULL || length == NULL) {
+        deal_platform_fault("error record: invalid text access");
+    }
+    *length = error->cause == NULL ? 0u : error->cause->code_length;
+    return error->cause == NULL ? NULL : error->cause->code;
+}
+
 int deal_error_cause_code(deal_error *error, const char **out) {
     if (error == NULL || error->cause == NULL) {
         return 0;
@@ -679,14 +706,29 @@ static void deal_snapshot_append(deal_snapshot_buffer *buffer,
 
 /* Minimal RFC 8259 escaping with raw UTF-8 non-ASCII (the shared canonical
  * serialization: `ErrorSnapshot.canonicalJson`). */
-static void deal_snapshot_append_string(deal_snapshot_buffer *buffer,
-                                       const char *text) {
+static void deal_snapshot_append_string_span(deal_snapshot_buffer *buffer,
+                                             const char *text, size_t length) {
     static const char hex[] = "0123456789ABCDEF";
     deal_snapshot_append(buffer, "\"", 1);
     if (text != NULL) {
         const unsigned char *cursor = (const unsigned char *)text;
-        while (*cursor != 0) {
+        const unsigned char *end = cursor + length;
+        while (cursor < end) {
             unsigned char byte = *cursor;
+            /* WTF-8 lone units are language text but not scalar UTF-8 JSON.
+             * Escape each unit without replacing or dropping its identity. */
+            if (byte == 0xEDu && (size_t)(end - cursor) >= 3u
+                    && cursor[1] >= 0xA0u && cursor[1] <= 0xBFu
+                    && (cursor[2] & 0xC0u) == 0x80u) {
+                unsigned int unit = ((unsigned int)(byte & 0x0Fu) << 12)
+                    | ((unsigned int)(cursor[1] & 0x3Fu) << 6)
+                    | (unsigned int)(cursor[2] & 0x3Fu);
+                char escaped[6] = {'\\', 'u', hex[(unit >> 12) & 15u],
+                    hex[(unit >> 8) & 15u], hex[(unit >> 4) & 15u], hex[unit & 15u]};
+                deal_snapshot_append(buffer, escaped, sizeof(escaped));
+                cursor += 3u;
+                continue;
+            }
             switch (byte) {
                 case '"': deal_snapshot_append(buffer, "\\\"", 2); break;
                 case '\\': deal_snapshot_append(buffer, "\\\\", 2); break;
@@ -714,6 +756,11 @@ static void deal_snapshot_append_string(deal_snapshot_buffer *buffer,
         }
     }
     deal_snapshot_append(buffer, "\"", 1);
+}
+
+static void deal_snapshot_append_string(deal_snapshot_buffer *buffer,
+                                       const char *text) {
+    deal_snapshot_append_string_span(buffer, text, text == NULL ? 0u : strlen(text));
 }
 
 /* Canonical decimal integer: no leading zeros, sign or exponent. */
@@ -764,9 +811,9 @@ char *deal_error_snapshot(const deal_error *error) {
     int first = 1;
     deal_snapshot_append(&buffer, "{", 1);
     deal_snapshot_append_key(&buffer, "code", &first);
-    deal_snapshot_append_string(&buffer, error->code);
+    deal_snapshot_append_string_span(&buffer, error->code, error->code_length);
     deal_snapshot_append_key(&buffer, "message", &first);
-    deal_snapshot_append_string(&buffer, error->message);
+    deal_snapshot_append_string_span(&buffer, error->message, error->message_length);
     if (error->has_origin) {
         deal_snapshot_append_key(&buffer, "sourceFile", &first);
         deal_snapshot_append_string(&buffer, error->source_file);
@@ -787,7 +834,7 @@ char *deal_error_snapshot(const deal_error *error) {
     deal_snapshot_append_integer(&buffer, (int64_t)error->frame_count);
     if (error->cause != NULL) {
         deal_snapshot_append_key(&buffer, "cause", &first);
-        deal_snapshot_append_string(&buffer, error->cause->code);
+        deal_snapshot_append_string_span(&buffer, error->cause->code, error->cause->code_length);
     }
     deal_snapshot_append(&buffer, "}", 1);
     deal_snapshot_reserve(&buffer, 1);
@@ -811,13 +858,13 @@ typedef struct {
 } deal_arm_buffer;
 
 static void deal_arm_buffer_reserve(deal_arm_buffer *buffer, size_t additional) {
-    size_t required = buffer->length + additional;
+    size_t required = deal_platform_checked_add(buffer->length, additional);
     if (required <= buffer->capacity) {
         return;
     }
     size_t capacity = buffer->capacity == 0u ? 64u : buffer->capacity;
     while (capacity < required) {
-        capacity *= 2u;
+        capacity = deal_platform_checked_multiply(capacity, 2u);
     }
     char *grown = deal_platform_allocate(capacity);
     if (buffer->bytes != NULL) {
@@ -864,7 +911,9 @@ static const char *deal_arm_parameter_value(const deal_arm_parameter *parameters
  */
 static char *deal_arm_instantiate(const deal_arm_record *record,
                                   const deal_arm_parameter *parameters,
-                                  size_t parameter_count) {
+                                  size_t parameter_count,
+                                  const deal_arm_text_parameter *spans,
+                                  size_t *rendered_length) {
     for (size_t index = 0; index < parameter_count; index += 1u) {
         if (parameters[index].name == NULL || parameters[index].value == NULL) {
             deal_platform_fault("arm render: malformed parameter data");
@@ -910,11 +959,23 @@ static char *deal_arm_instantiate(const deal_arm_record *record,
         if (value == NULL) {
             deal_platform_fault("arm render: placeholder outside the declaration");
         }
-        deal_arm_buffer_append(&buffer, value, strlen(value));
+        size_t length = strlen(value);
+        if (spans != NULL) {
+            for (size_t i = 0u; i < parameter_count; ++i) {
+                if (strlen(spans[i].name) == close - cursor - 1u
+                        && strncmp(spans[i].name, text + cursor + 1u, close - cursor - 1u) == 0) {
+                    value = spans[i].value;
+                    length = spans[i].length;
+                    break;
+                }
+            }
+        }
+        deal_arm_buffer_append(&buffer, value, length);
         cursor = close + 1u;
     }
     deal_arm_buffer_reserve(&buffer, 1u);
     buffer.bytes[buffer.length] = 0;
+    if (rendered_length != NULL) *rendered_length = buffer.length;
     return buffer.bytes;
 }
 
@@ -927,7 +988,7 @@ char *deal_arm_message(uint32_t arm_id, const deal_arm_parameter *parameters,
     if (parameter_count != 0u && parameters == NULL) {
         deal_platform_fault("arm render: malformed parameter data");
     }
-    return deal_arm_instantiate(record, parameters, parameter_count);
+    return deal_arm_instantiate(record, parameters, parameter_count, NULL, NULL);
 }
 
 void deal_arm_text_release(char *text) {
@@ -958,7 +1019,7 @@ deal_error *deal_error_materialize(uint32_t arm_id,
     if (parameter_count != 0u && parameters == NULL) {
         deal_platform_fault("arm render: malformed parameter data");
     }
-    char *message = deal_arm_instantiate(record, parameters, parameter_count);
+    char *message = deal_arm_instantiate(record, parameters, parameter_count, NULL, NULL);
     /* The cause is a runtime intermediate across the record's own allocation,
      * so one scoped root keeps it alive at that allocation safepoint (M5). */
     if (cause != NULL) {
@@ -977,6 +1038,37 @@ deal_error *deal_error_materialize(uint32_t arm_id,
     deal_error_set_expected(error, expected);
     deal_error_set_actual(error, actual);
     deal_arm_text_release(message);
+    return error;
+}
+
+deal_error *deal_error_materialize_text(uint32_t arm_id,
+    const deal_arm_text_parameter *parameters, size_t parameter_count,
+    const char *expected, const char *actual, const deal_origin *origin,
+    deal_error *cause) {
+    if (parameter_count != 0u && parameters == NULL)
+        deal_platform_fault("arm render: malformed parameter data");
+    deal_arm_parameter *shape = NULL;
+    if (parameter_count != 0u) {
+        shape = deal_platform_allocate(deal_platform_checked_multiply(parameter_count, sizeof(*shape)));
+        if (shape == NULL) deal_platform_fault("arm render: parameter allocation failed");
+    }
+    for (size_t i = 0u; i < parameter_count; ++i) {
+        if (parameters[i].value == NULL
+                || !deal_text_is_code_units(parameters[i].value, parameters[i].length))
+            deal_platform_fault("arm render: malformed parameter data");
+        shape[i].name = parameters[i].name;
+        shape[i].value = "";
+    }
+    /* Reuse closed-arm validation; the shared renderer substitutes spans. */
+    deal_error *error = deal_error_materialize(arm_id, shape, parameter_count,
+        expected, actual, origin, cause);
+    size_t length = 0u;
+    char *message = deal_arm_instantiate(deal_arm_record_of(arm_id), shape,
+        parameter_count, parameters, &length);
+    deal_platform_release(shape);
+    deal_platform_release(error->message);
+    error->message = message;
+    error->message_length = length;
     return error;
 }
 

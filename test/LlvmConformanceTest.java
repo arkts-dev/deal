@@ -99,6 +99,26 @@ public final class LlvmConformanceTest {
                 Files.deleteIfExists(implementation);
             }
             Files.delete(hostControls.resolve("probe.d.deal"));
+            Path selectedSidecar = source.resolveSibling("selected.expect.json");
+            Files.writeString(selectedSidecar, "{\"hostFixture\":\"selected\"}");
+            Files.writeString(hostControls.resolve("selected.d.deal"), "export function f(): void;\n");
+            Path selectedHost = hostControls.resolve("selected.c");
+            String selectedUnit = "#include \"host/probe.h\"\nconst deal_host_module deal_host_module_probe = {0};\n";
+            Files.writeString(selectedHost, selectedUnit);
+            validateNativeHosts(hostControls);
+            for (String defect : List.of("header", "registration", "duplicate")) {
+                Files.writeString(selectedHost, switch (defect) {
+                    case "header" -> selectedUnit.replace("host/probe.h", "host/selected.h");
+                    case "registration" -> selectedUnit.replace("deal_host_module_probe", "deal_host_module_selected");
+                    default -> selectedUnit + "const deal_host_module deal_host_module_probe = {0};\n";
+                });
+                boolean rejected = false;
+                try { validateNativeHosts(hostControls); } catch (AssertionError expected) { rejected = true; }
+                if (!rejected) throw new AssertionError("selected native host reconciliation accepted " + defect);
+            }
+            Files.delete(selectedSidecar);
+            Files.delete(selectedHost);
+            Files.delete(hostControls.resolve("selected.d.deal"));
             String body = "export function main(): null { return null; }\n"
                 + "export async function answer(): Promise<number> { return 42; }\n";
             Files.writeString(source, body);
@@ -186,6 +206,7 @@ public final class LlvmConformanceTest {
                         : "export function main(): null { return null; }\n");
                 Files.writeString(source, body);
                 Files.writeString(hosts.resolve("probe.d.deal"), variant.equals("opaque") ? "export function f(): unknown;\n"
+                    : variant.equals("json-walk") ? "export class C { x: string; }\nexport function f(): string;\n"
                     : atCall ? "export function f(): string;\n"
                     : variant.equals("signature") ? "export function f(): number;\n" : "export class C { x: number; }\n");
                 deal.semantic.ir.FailureArmId arm;
@@ -205,8 +226,8 @@ public final class LlvmConformanceTest {
                     arm = deal.semantic.ir.FailureArmId.JSON_STRINGIFY_UNSUPPORTED;
                     parameters = Map.of("actual", "table");
                 } else if (variant.equals("json-walk")) {
-                    arm = deal.semantic.ir.FailureArmId.JSON_TO_WALK;
-                    parameters = Map.of("fieldPath", "x", "actual", "number");
+                    arm = deal.semantic.ir.FailureArmId.TYPED_BOUNDARY_KIND;
+                    parameters = Map.of("kind", "string");
                 } else if (invalidText) {
                     arm = deal.semantic.ir.FailureArmId.HOST_SYNC_RETURN_CELL;
                     String inner = deal.semantic.ir.FailureContractRegistry.renderInner(
@@ -227,7 +248,8 @@ public final class LlvmConformanceTest {
                     parameters = Map.of("module", "host/probe", "name", "C", "defaults|fields", "fields");
                 }
                 var failure = deal.semantic.ir.FailureContractRegistry.render(arm, parameters,
-                    variant.equals("opaque") ? "unknown" : invalidText || variant.equals("typed-unicode") ? "string"
+                    variant.equals("opaque") ? "unknown" : invalidText || variant.equals("typed-unicode")
+                        || variant.equals("json-walk") ? "string"
                         : variant.equals("json-unsupported") ? "string, number, boolean, or table" : null,
                     variant.equals("opaque") ? "table" : invalidText ? "string" : variant.equals("typed-unicode") ? "invalid-unicode"
                         : variant.equals("json-walk") ? "number"
@@ -275,23 +297,33 @@ public final class LlvmConformanceTest {
                                 deal_outcome checked = deal_check_value(deal_descriptor_intern("string"), input,
                                     DEAL_BOUNDARY_TYPE_DESCRIPTOR, &context);
                                 """ : variant.equals("json-unsupported") ? """
-                                /* Deliberately unplanned test-owned class; ordinary emitted classes have plans. */
+                                /* A private opaque leaf, never a class-tagged Record. */
                                 deal_root_scope_push();
-                                deal_table *stand_in = deal_container_table_new();
-                                (void)deal_root_scope_hold(stand_in);
-                                deal_data datum = deal_data_of_reference(DEAL_DATA_CLASS, stand_in);
+                                static const deal_layout layout = {
+                                    DEAL_LAYOUT_EMITTED_BASE - 1u, 0u, sizeof(void *), NULL, 0u};
+                                deal_layout_define(&layout);
+                                void *leaf = deal_alloc(layout.id, sizeof(void *));
+                                (void)deal_root_scope_hold(leaf);
+                                deal_data datum = deal_data_of_reference(DEAL_DATA_OPAQUE, leaf);
                                 deal_outcome_data encoded = deal_json_stringify(datum, &origin);
                                 deal_outcome checked = {encoded.error};
                                 deal_root_scope_pop();
                                 """ : variant.equals("json-walk") ? """
                                 deal_root_scope_push();
-                                deal_table *instance = deal_container_table_new();
+                                const deal_host_class_access *access =
+                                    deal_host_class_access_of("@$external/host/probe/C");
+                                if (access == NULL) abort();
+                                void *instance = NULL;
+                                if (access->create(access->context, &instance).error != NULL) abort();
                                 (void)deal_root_scope_hold(instance);
-                                const deal_class_field field = {"x", deal_descriptor_intern("string"), 0};
-                                const deal_class_layout layout = {"@native/C", &field, 1u};
-                                const deal_json_class_plan plan = {&layout, NULL, read_field, NULL};
+                                /* Fixture-only hostile use of the emitted already-validated
+                                 * store seam; retain the exact typed layout and field presence. */
+                                deal_check_input wrong = {0};
+                                wrong.presentation = DEAL_PRESENT_DATUM;
+                                wrong.datum = deal_data_of_number(1);
+                                if (access->store(access->context, instance, 0u, &wrong, 1).error != NULL) abort();
                                 deal_data datum = deal_data_of_reference(DEAL_DATA_CLASS, instance);
-                                deal_outcome_string encoded = deal_json_to_class(&plan, &datum, lookup, (void *)&plan, &origin);
+                                deal_outcome_data encoded = deal_json_stringify(datum, &origin);
                                 deal_outcome checked = {encoded.error};
                                 deal_root_scope_pop();
                                 """ : """
@@ -305,28 +337,19 @@ public final class LlvmConformanceTest {
                                 deal_outcome checked = deal_class_construct(&layout, &supplied, 1u, &origin, &published);
                                 if (strcmp(published, "unpublished") != 0) abort();
                                 """;
-                            String seams = variant.equals("json-walk") ? """
-                                /* Test-owned class plan: a hostile field disagrees with its declared descriptor. */
-                                static int read_field(const deal_data *instance, size_t index,
-                                        deal_check_input *out, uint8_t *present, void *context) {
-                                    (void)instance; (void)context;
-                                    *present = index == 0u;
-                                    if (out == NULL) return 1;
-                                    memset(out, 0, sizeof(*out));
-                                    out->presentation = DEAL_PRESENT_DATUM;
-                                    out->datum = deal_data_of_number(1);
-                                    return 1;
-                                }
-                                static const deal_json_class_plan *lookup(const char *atom, void *context) {
-                                    return strcmp(atom, "@native/C") == 0 ? context : NULL;
-                                }
-                                """ : "";
-                            registration = seams + "static deal_host_result f(const deal_value *args, size_t argc) {\n"
+                            registration = "static deal_host_result f(const deal_value *args, size_t argc) {\n"
                                 + "(void)args; (void)argc;\nconst deal_origin origin = {\"" + coordinate + "\",3,3};\n"
                                 + check + "deal_host_result r = {0};\n"
                                 + "if (checked.error == NULL || deal_host_relay_error(checked.error, &r) != DEAL_OK) abort();\nreturn r;\n}\n"
-                                + "static const deal_host_export exports[] = {{\"f\",\"()->string\",DEAL_HOST_EXPORT_FUNCTION,0,f,NULL,NULL}};\n"
-                                + "const deal_host_module deal_host_module_probe = {\"host/probe\",exports,1u,NULL,0u,NULL};\n";
+                                + (variant.equals("json-walk")
+                                    ? "static const deal_host_field fields[] = {{\"x\",\"string\",0}};\n"
+                                        + "static const deal_host_class classes[] = {{\"" + atom + "\",fields,1u}};\n"
+                                        + "static const deal_host_export exports[] = {"
+                                        + "{\"f\",\"()->string\",DEAL_HOST_EXPORT_FUNCTION,0,f,NULL,NULL},"
+                                        + "{\"C\",\"" + atom + "\",DEAL_HOST_EXPORT_CLASS,0,NULL,NULL,&classes[0]}};\n"
+                                        + "const deal_host_module deal_host_module_probe = {\"host/probe\",exports,2u,classes,1u,NULL};\n"
+                                    : "static const deal_host_export exports[] = {{\"f\",\"()->string\",DEAL_HOST_EXPORT_FUNCTION,0,f,NULL,NULL}};\n"
+                                        + "const deal_host_module deal_host_module_probe = {\"host/probe\",exports,1u,NULL,0u,NULL};\n");
                         } else if (variant.equals("opaque")) registration = """
                             static deal_host_result f(const deal_value *args, size_t argc) {
                                 (void)args; (void)argc;
@@ -739,6 +762,25 @@ public final class LlvmConformanceTest {
     private static void validateNativeHosts(Path root, NativeKnownSkips skips) throws Exception {
         Set<String> declarations = new TreeSet<>(), implementations = new TreeSet<>();
         List<String> malformed = new ArrayList<>();
+        // Selected companions deploy under host/probe regardless of their file
+        // stem. Derive that identity from the same sidecars as materialization,
+        // not a growing list of specially named fixture directories.
+        Set<String> selectedCompanions = new LinkedHashSet<>();
+        Path runtime = root.resolveSibling("backend-runtime");
+        if (Files.isDirectory(runtime)) {
+            try (var sidecars = Files.walk(runtime)) {
+                for (Path sidecar : sidecars.filter(Files::isRegularFile)
+                        .filter(p -> p.toString().endsWith(".expect.json")).sorted().toList()) {
+                    var object = (CanonicalJson.Obj) CanonicalJson.parse(Files.readString(sidecar));
+                    for (var entry : object.entries()) {
+                        if (entry.key().equals("hostFixture")) {
+                            String selected = ((CanonicalJson.Str) entry.value()).value();
+                            if (!selected.isEmpty()) selectedCompanions.add(selected);
+                        }
+                    }
+                }
+            }
+        }
         try (var files = Files.walk(root)) {
             for (Path file : files.filter(Files::isRegularFile).sorted().toList()) {
                 String path = root.relativize(file).toString().replace('\\', '/');
@@ -746,7 +788,10 @@ public final class LlvmConformanceTest {
                 if (!path.endsWith(".c")) continue;
                 String stem = path.substring(0, path.length() - 2);
                 implementations.add(stem);
-                String module = stem.startsWith("boundaries/") ? "probe" : stem;
+                // Focused retained-boundary drivers also deploy this fixture
+                // family directly under host/probe without corpus sidecars.
+                String module = stem.startsWith("boundaries/") || selectedCompanions.contains(stem)
+                    ? "probe" : stem;
                 String source = Files.readString(file);
                 var registration = java.util.regex.Pattern.compile(
                     "\\bconst\\s+deal_host_module\\s+deal_host_module_"

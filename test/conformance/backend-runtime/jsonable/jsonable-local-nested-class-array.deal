@@ -1,20 +1,18 @@
-// @spec: Classes — @jsonable array of nested classes
-// @description: Local-module @jsonable array of nested classes roundtrips correctly
+// @spec: Standard library builtins — JSON
+// @description: Local-module arrays of nested classes roundtrip with declared values
 // @expected: runtime-ok
 // @features: jsonable, arrays, nested
 
-// @jsonable
 export class Child { value: number; }
 
-// @jsonable
 export class Parent { children: Child[]; }
 
 function child(v: number): Child { return { value: v }; }
 
 export function test_jsonable_local_nested_class_array(): null {
   let p: Parent = { children: [child(3), child(4)] };
-  let json: string = Parent$toJson(p);
-  let p2: Parent | null = Parent$fromJson(json);
+  let json: string = JSON.stringify(p) as string;
+  let p2: Parent | null = JSON.parse(json);
   if (p2 !== null) {
     if (p2.children[1].value !== 4) { throw { code: "TEST_FAIL", message: "local nested class array mismatch" }; }
     return null;

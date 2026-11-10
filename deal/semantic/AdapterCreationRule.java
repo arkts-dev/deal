@@ -327,7 +327,7 @@ public final class AdapterCreationRule {
                  UNTYPED_CLASS_INPUT, OPTIONAL_FIELD_READ, CONTEXTUAL_TABLE_READ,
                  IMPORTED_MEMBER_READ, MODULE_EXPORT, HOST_TO_DEAL, DEAL_TO_HOST,
                  STDLIB_RETURN, EXTERNAL_RETURN,
-                 JSON_FROM_FIELD, JSON_TO_FIELD, NARROWED_READ ->
+                 NARROWED_READ ->
                 PositionKind.TYPED_BOUNDARY;
         };
     }

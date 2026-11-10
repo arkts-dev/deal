@@ -573,7 +573,11 @@ public final class LoweringSupport {
             }
             case MemberAccessExpr memberAccessExpr -> {
                 scan.cover(ConstructKind.MEMBER_ACCESS);
-                walkExpression(memberAccessExpr.object(), module, scan, checkerScope);
+                // A reserved builtin namespace is syntax for the checked
+                // direct operation, not a runtime identifier/export read.
+                boolean builtinNamespace = memberAccessExpr.object() instanceof IdentifierExpr namespace
+                    && deal.checker.BuiltinCall.resolve(namespace.name(), memberAccessExpr.field()) != null;
+                if (!builtinNamespace) walkExpression(memberAccessExpr.object(), module, scan, checkerScope);
                 // The plan-time CLASSES arm: a member read on a class-typed
                 // (or cross-module nullable class) receiver lowers to
                 // FIELD_READ.
@@ -619,12 +623,12 @@ public final class LoweringSupport {
                 walkFunctionExpr(functionExpr, module, scan, checkerScope, false);
             case HasExpr hasExpr -> {
                 scan.cover(ConstructKind.HAS);
-                // The plan-time CLASSES arm: has() is checker-pinned to a
-                // class receiver with an optional field (E4005), so every
-                // has() expression lowers to HAS_FIELD.
+                // A checked class field name is embedded in HAS_FIELD;
+                // only a computed Record key produces an operand op.
                 scan.classConstruct = true;
                 walkExpression(hasExpr.object(), module, scan, checkerScope);
-                if (hasExpr.key() != null) walkExpression(hasExpr.key(), module, scan, checkerScope);
+                if (hasExpr.field() == null && hasExpr.key() != null)
+                    walkExpression(hasExpr.key(), module, scan, checkerScope);
             }
             case AssignmentExpr assignmentExpr -> {
                 scan.cover(ConstructKind.ASSIGNMENT);

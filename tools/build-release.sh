@@ -4,7 +4,7 @@
 # Self-locates, so it runs from any cwd. The distribution is exactly the
 # compiled production classes plus the matched v1.6 resource set: the two
 # runtime libraries, the LuaJIT async-export driver, the complete C11 runtime
-# deployment set, the six spec-listed stdlib modules' declarations and target
+# deployment set, the five spec-listed stdlib modules' declarations and target
 # implementations, and the launcher. Packaging requires every one of those
 # committed assets before it starts and requires the same complete set after it
 # copies, so an incomplete or mismatched distribution can neither be built nor
@@ -13,8 +13,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-# The six spec-listed stdlib modules, in spec declaration order.
-STDLIB_MODULES=(console string table json math time)
+# The five spec-listed stdlib modules, in spec declaration order.
+STDLIB_MODULES=(console string table math time)
 
 # The closed C11 runtime deployment set (llvm-native-backend-integration D6):
 # every file the LLVM arm stages, at the same relative path under dist. This
@@ -40,6 +40,7 @@ NATIVE_RUNTIME_FILES=(
 # The matched resource set every distribution carries.
 REQUIRED_ASSETS=(
   deal/runtime.lua
+  deal/json.lua
   deal/runtime.js
   deal/lua_async_export_driver.lua
   tools/deal-launcher.sh
@@ -66,12 +67,14 @@ rm -rf dist
 mkdir -p dist
 javac --release 25 -proc:none -d dist "${PROD_SOURCES[@]}"
 mkdir -p dist/std dist/bin
-cp deal/runtime.lua deal/runtime.js dist/deal/
+cp deal/runtime.lua deal/json.lua deal/runtime.js dist/deal/
 # The production LuaJIT async-export driver (the LuaJitAsyncExportInvoker
 # resource half): located classpath-first, so it ships beside the runtime
 # as one deployment unit.
 cp deal/lua_async_export_driver.lua dist/deal/
-cp std/*.d.deal std/*.lua std/*.js dist/std/
+for module in "${STDLIB_MODULES[@]}"; do
+  cp "std/$module.d.deal" "std/$module.lua" "std/$module.js" dist/std/
+done
 # The complete C11 runtime, one deployment copy per pinned file.
 mkdir -p dist/deal/native
 for file in "${NATIVE_RUNTIME_FILES[@]}"; do

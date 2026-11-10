@@ -1,5 +1,5 @@
--- DEAL Standard Library: std/json
--- Provides JSON encoding and decoding (simple pure-Lua implementation).
+-- Internal deployed JSON algorithms. These are plain runtime operations,
+-- not language function values or stdlib exports.
 --
 -- Parse accepts RFC 8259 escapes; each four-digit Unicode escape appends
 -- one UTF-16 unit, including lone surrogates. Malformed byte encodings and raw
@@ -7,7 +7,7 @@
 --
 -- Parsing rounds numeric tokens to binary64, preserving negative zero;
 -- duplicate decoded keys reject at the second key's opening quote.
--- The declared (string)->record result rejects non-object roots.
+-- Scanning accepts any JSON root; an explicit target owns reconstruction.
 -- Stringify accepts unknown: undefined/functions omit from objects, become
 -- null in arrays and yield undefined at the top level. Nonfinite numbers
 -- become null; both zero signs encode as 0. Finite values roundtrip.
@@ -16,16 +16,9 @@
 -- code/message, never transport metadata. Own object index keys precede
 -- other keys in creation order. Path-local cycles reject, shared children
 -- repeat. Explicit frames keep finite depth independent of the call stack.
--- Descriptor-directed generated @jsonable walks remain a separate contract.
---
--- parse's declared (string)->table exit (ISSUE-0824) rejects the two
--- non-table decode carriers with the shared typed-boundary tuple
--- (E8001 "expected table", expected "table", actual "array"/"null") at
--- the call-site triplet: a top-level decoded array reports the array
--- carrier and a top-level language null reports null, exactly like the
--- emitted chunk's table admission and the JS runtime's checkTable — a
--- decoded array or null never masquerades as a table return. Nested
--- containers and the top-level scalar results keep their representation.
+-- Exact class plans are artifact-local structural declarations. Reconstruction
+-- checks extras before fields, requires nonoptional presence and publishes only
+-- fresh completed graphs. It never invokes constructors, defaults or hooks.
 --
 -- Decoded arrays keep their array shape: every
 -- array the parser completes carries the private array carrier pair — the
@@ -39,23 +32,10 @@
 -- elements, never as an object holding private carrier keys; unmarked
 -- tables keep the existing numeric-key inference and object encoding.
 --
--- The other two runtime carriers keep their JSON shape (ISSUE-0839): a
--- numeric carrier ({[__K.jn] = true, k = "number", d = n})
--- encodes its binary64 payload with round-trippable decimal text, and a
--- chunk table carrier ([__K.t] with
--- the presence map [__K.keys] and the insertion-order list [__K.order])
--- encodes as an object over exactly its user string keys in the recorded
--- order. A table a chunk wrote outside TABLE_NEW carries only the
--- presence/order marks [__orderAdd] creates on the first write (and the
--- per-slot [__K.nK] marks [__numKey] records); it takes the same object
--- encoding, so a host that stringifies the written table never observes
--- the private marks. The per-slot [__K.nK] marks select the number-variant
--- spelling for a marked slot. None of these private table-object keys is
--- ever an encoded member. The presence map is the present-key authority for
--- an object carrier: the chunk's JSON_PARSE graph records a present null
--- member as a presence/order key with no stored value, so it stays a JSON
--- null member; a raw nil outside such a recorded key is the missing value
--- (the array and inferred-frame rule, ISSUE-0844).
+-- Read-side numeric carriers encode their binary64 payload, never private
+-- transport fields. Record presence and creation order use private maps;
+-- numeric slot marks do not affect spelling. Null uses the shared sentinel,
+-- independently of absent storage. No user string key selects metadata.
 
 local __rt = require("deal.runtime")
 
@@ -140,9 +120,7 @@ end
 -- Malformed byte sequences reject; lone UTF-16 units encode as Unicode
 -- escapes, while paired units remain a string pair.
 local function escape(s, file, line, column)
-  if not __rt.utf8_valid(s) then
-    unsupported(s, file, line, column)
-  end
+  __rt.check_string(s, file, line, column)
   return __rt.string_json_body(s)
 end
 
@@ -214,11 +192,93 @@ local function own_key_order(keys)
 end
 
 local function encode_value(v, file, line, column, path)
+  local function rejectIngress(value)
+    error(__rt._armErr('TYPED_BOUNDARY_KIND',{kind='unknown'},'E8001','unsupported unknown ingress',
+      file,line,column,'unknown',type(value)),0)
+  end
+  local function shallow(value)
+    if value==nil or value==__rt.__NULL or value==__rt.__UNDEFINED or value==__rt.__MISSING then return end
+    local t=type(value)
+    if t=='string' then __rt.check_string(value,file,line,column)
+    elseif t=='number' or t=='boolean' then return
+    elseif t~='table' then rejectIngress(value)
+    else
+      local kind=__rt.typed_kind(value)
+      if kind=='async-operation' or kind=='function' and not __rt.valid_function(value) then rejectIngress(value) end
+      if getmetatable(value)~=nil and rawget(value,__K.kind)==nil and rawget(value,__K.c)==nil
+          and rawget(value,__K.d)==nil and rawget(value,__K.fn)==nil and rawget(value,__K.f)==nil then rejectIngress(value) end
+    end
+  end
+  shallow(v)
   if omitted(v) then return __rt.__UNDEFINED end
   if type(path) ~= "table" then path = {} end
   local out = {}
   local frames = {}
-  local emit = function(val, isNumber)
+  local arrays
+  local function boundary(action)
+    local ok, result = pcall(action)
+    if ok then return result end
+    if type(result) ~= 'table' or result.code == nil then error(result, 0) end
+    local leaf = result
+    if leaf.code == 'E8003' and leaf.cause ~= nil then leaf = leaf.cause end
+    local position = arrays
+    while position ~= nil do
+      result = __rt._armErr('ARRAY_ELEMENT_KIND', {oneBasedIndex=position.index}, 'E8003',
+        'array element '..position.index..' type mismatch', file,line,column,
+        position.descriptor.text, __rt.typed_kind(position.value))
+      result.cause = leaf
+      position = position.parent
+    end
+    error(result, 0)
+  end
+  local function kindFailure(kind, value)
+    error(__rt._armErr('TYPED_BOUNDARY_KIND', {kind=kind=='class' and 'class instance' or kind},
+      'E8001', 'expected '..(kind=='class' and 'class instance' or kind), file,line,column,
+      kind, __rt.typed_kind(value)), 0)
+  end
+  local function position(descriptor, value)
+    if descriptor == nil then return nil end
+    return boundary(function()
+      local d = descriptor
+      if d.kind == 'nullable' then
+        if d.admitsNull and value == __rt.__NULL
+            or d.admitsUndefined and (value == __rt.__UNDEFINED or value == __rt.__MISSING) then return nil end
+        d = d.inner
+      end
+      if d.kind == 'class' then
+        if type(value) ~= 'table' or not (rawget(value,__K.kind)=='class'
+            or rawget(value,__K.c) or rawget(value,__K.d)) then kindFailure('class',value) end
+        local identity=rawget(value,__K.classname) or rawget(value,__K.id)
+          or (rawget(value,__K.d) and 'Error')
+        if identity == nil then kindFailure('class',value) end
+        if identity ~= d.name then error(__rt._armErr('CLASS_IDENTITY',
+          {expected=d.name,actual=identity},'E8001','expected instance of '..d.name..', got '..identity,
+          file,line,column,d.name,identity),0) end
+      elseif d.kind == 'array' then
+        if type(value)~='table' or value==__rt.__NULL or value==__rt.__UNDEFINED
+            or value==__rt.__MISSING then kindFailure('array',value) end
+        if not rawget(value,__K.a) then
+          if __rt.typed_kind(value)~='table' then kindFailure('array',value) end
+          for key in next,value do
+            if type(key)~='number' or key<1 or key%1~=0 then kindFailure('array',value) end
+          end
+        end
+        local persistent=rawget(value,__K.elementDescriptor)
+        if persistent~=nil and persistent~=d.element.text then kindFailure('array',value) end
+        return d.element
+      elseif d.name == 'record' then
+        if __rt.typed_kind(value)~='table' or type(value)~='table' or rawget(value,__K.a) then
+          kindFailure('table',value)
+        end
+      elseif d.name ~= 'unknown' then
+        __rt.check_canonical_type(d.text,value,file,line,column)
+      end
+      return nil
+    end)
+  end
+  local emit = function(val, isNumber, descriptor)
+    local elementDescriptor = position(descriptor,val)
+    shallow(val)
     if omitted(val) then out[#out + 1] = 'null'; return end
     if val == __rt.__NULL then
       out[#out + 1] = 'null'
@@ -275,12 +335,54 @@ local function encode_value(v, file, line, column, path)
         local order = rawget(val, __K.classOrder) or __K.classOrders[identity]
         if identity == 'Error' or rawget(val, __K.d) then order = {'code', 'message'} end
         if type(order) ~= 'table' then unsupported(val, file, line, column) end
+        local plan = rawget(val,__K.classPlan)
+        if identity=='Error' or rawget(val,__K.d) then plan={
+          {name='code',descriptor='string',required=true},
+          {name='message',descriptor='string',required=true}} end
+        if type(plan)~='table' then error('JSON class value has no exact field plan',0) end
+        -- Inspect structural metadata with raw reads only. Lua's border length
+        -- does not establish density and ignores nonnumeric entries entirely.
+        local count = 0
+        for key in next, order do
+          if type(key)~='number' or key<1 or key%1~=0 then
+            error('JSON class field plan/order mismatch',0)
+          end
+          count=count+1
+        end
+        local planCount = 0
+        for key in next, plan do
+          if type(key)~='number' or key<1 or key%1~=0 or key>count then
+            error('JSON class field plan/order mismatch',0)
+          end
+          planCount=planCount+1
+        end
+        if planCount~=count then error('JSON class field plan/order mismatch',0) end
+        local names = {}
+        for i=1,count do
+          local key, field = rawget(order,i), rawget(plan,i)
+          if type(key)~='string' or names[key] or type(field)~='table'
+              or rawget(field,'name')~=key then
+            error('JSON class field plan/order mismatch',0)
+          end
+          local optional, required = rawget(field,'optional'), rawget(field,'required')
+          if optional~=nil and type(optional)~='boolean'
+              or required~=nil and type(required)~='boolean'
+              or optional==nil and required==nil
+              or optional~=nil and required~=nil and optional==required
+              or type(rawget(field,'canonical') or rawget(field,'descriptor'))~='string' then
+            error('JSON class field plan/order mismatch',0)
+          end
+          if not __rt.parse_canonical_descriptor(rawget(field,'canonical') or rawget(field,'descriptor')) then
+            error('JSON class field has no canonical descriptor',0)
+          end
+          names[key]=true
+        end
         if path[val] then
           error(__rt._err('E8001', 'cyclic value cannot be encoded as JSON', file, line, column))
         end
         path[val] = true
         out[#out + 1] = '{'
-        frames[#frames + 1] = {kind = 'class', value = val, keys = order, index = 1, sorted = true}
+        frames[#frames + 1] = {kind = 'class', value = val, keys = order, plan=plan, arrays=arrays, index = 1, sorted = true}
         return
       end
       if carrierKind == "function"
@@ -316,7 +418,7 @@ local function encode_value(v, file, line, column, path)
           markedLen = #val
         end
         out[#out + 1] = '['
-        frames[#frames + 1] = {kind = 'array', value = val, index = 1, maxIdx = markedLen, marks = marks}
+        frames[#frames + 1] = {kind = 'array', value = val, arrays=arrays, descriptor=elementDescriptor, index = 1, maxIdx = markedLen, marks = marks}
         return
       end
       -- The chunk table carrier's own marks ([__K.t], the presence map
@@ -366,7 +468,7 @@ local function encode_value(v, file, line, column, path)
           end
         end
         out[#out + 1] = '{'
-        frames[#frames + 1] = {kind = 'object', value = val, keys = keys,
+        frames[#frames + 1] = {kind = 'object', value = val, keys = keys, arrays=arrays,
           presence = presence, index = 1, marks = marks}
         return
       end
@@ -382,27 +484,27 @@ local function encode_value(v, file, line, column, path)
       for k, _ in pairs(val) do
         if type(k) == 'number' then
           if k < 1 or k ~= math.floor(k) then
-            unsupported(val, file, line, column)
+            rejectIngress(val)
           end
           if k > maxIdx then maxIdx = k end
         elseif type(k) == 'string' then
           objectKey = true
         else
-          unsupported(val, file, line, column)
+          rejectIngress(val)
         end
       end
       if objectKey and maxIdx > 0 then
-        unsupported(val, file, line, column)
+        rejectIngress(val)
       end
       if maxIdx > 0 then
         out[#out + 1] = '['
-        frames[#frames + 1] = {kind = 'array', value = val, index = 1, maxIdx = maxIdx}
+        frames[#frames + 1] = {kind = 'array', value = val, arrays=arrays, descriptor=elementDescriptor, index = 1, maxIdx = maxIdx}
         return
       end
       local keys = {}
       for k, _ in pairs(val) do keys[#keys + 1] = k end
       out[#out + 1] = '{'
-      frames[#frames + 1] = {kind = 'object', value = val, keys = keys, index = 1}
+      frames[#frames + 1] = {kind = 'object', value = val, keys = keys, arrays=arrays, index = 1}
       return
     end
     -- Unsupported types: reject with runtime error
@@ -411,6 +513,7 @@ local function encode_value(v, file, line, column, path)
   emit(v, false)
   while #frames > 0 do
     local frame = frames[#frames]
+    arrays = frame.arrays
     if frame.keys ~= nil and not frame.sorted then
       own_key_order(frame.keys)
       frame.sorted = true
@@ -424,7 +527,9 @@ local function encode_value(v, file, line, column, path)
         local i = frame.index
         frame.index = i + 1
         if i > 1 then out[#out + 1] = ',' end
-        emit(frame.value[i], frame.marks ~= nil and frame.marks[i] == true)
+        local member = rawget(frame.value,i)
+        if frame.descriptor ~= nil then arrays={index=i,descriptor=frame.descriptor,value=member,parent=arrays} end
+        emit(member, frame.marks ~= nil and frame.marks[i] == true, frame.descriptor)
       end
     else
       if frame.index > #frame.keys then
@@ -434,7 +539,7 @@ local function encode_value(v, file, line, column, path)
       else
         local k = frame.keys[frame.index]
         frame.index = frame.index + 1
-        local element
+        local element, descriptor
         if frame.kind == 'class' then
           local fields = rawget(frame.value, __K.f)
           local presence = rawget(frame.value, __K.p)
@@ -442,16 +547,30 @@ local function encode_value(v, file, line, column, path)
             if k == 'message' then element = rawget(frame.value, 'm')
             else element = rawget(frame.value, 'code') end
           elseif type(fields) == 'table' then
-            if type(presence) ~= 'table' or rawget(presence, k) then element = rawget(fields, k) end
+            if type(presence) ~= 'table' or rawget(presence, k) then
+              element = rawget(fields,k)
+              if element==nil and type(presence)=='table' and rawget(presence,k) then element=__rt.__NULL end
+            end
           else element = rawget(frame.value, k) end
+          local field = rawget(frame.plan,frame.index-1)
+          if element==nil or element==__rt.__MISSING then
+            if rawget(field,'required')==true or rawget(field,'optional')==false then
+              boundary(function() kindFailure('class',frame.value) end)
+            end
+          else
+            descriptor=__rt.parse_canonical_descriptor(rawget(field,'canonical') or rawget(field,'descriptor'))
+            if descriptor==nil then error('JSON class field has no canonical descriptor',0) end
+            position(descriptor,element)
+          end
         else element = frame.value[k] end
+        shallow(element)
         local presentNull = element == nil and frame.presence ~= nil and frame.presence[k] == true
         if presentNull or not omitted(element) then
           if (frame.emitted or 0) > 0 then out[#out + 1] = ',' end
           frame.emitted = (frame.emitted or 0) + 1
           out[#out + 1] = '"' .. escape(k, file, line, column) .. '":'
           if presentNull then out[#out + 1] = 'null'
-          else emit(element, frame.marks ~= nil and frame.marks[k] == true) end
+          else emit(element, frame.marks ~= nil and frame.marks[k] == true, descriptor) end
         end
       end
     end
@@ -461,17 +580,16 @@ end
 
 --- Encode unknown to string or undefined. The trailing span triplet
 -- attributes cycle, invalid Unicode and unsupported-carrier failures.
-json.stringify = __rt.function_("(unknown)->!string", function(v, file, line, column)
-  __rt.check_type("unknown", v, file, line, column)
+function json.encode(v, file, line, column)
   return encode_value(v, file, line, column, {})
-end)
+end
 
---- Decode a JSON string to a Lua table. The trailing span triplet
--- carries the call site (ISSUE-0598): the entry string gate, every
--- parse error, and the declared (string)->table exit report it.
-json.parse = __rt.function_("(string)->record", function(s, file, line, column)
+-- Scan a complete document before any target-directed reconstruction.
+-- The trailing span triplet belongs to the JSON.parse expression.
+function json.scan(s, file, line, column, nullValue)
   __rt.check_string(s, file, line, column)
-  -- Simple recursive descent parser
+  nullValue = nullValue or __rt.__NULL
+  -- Scalar scanning with an explicit container-frame stack.
   local pos = 1
   local len = #s
 
@@ -479,26 +597,27 @@ json.parse = __rt.function_("(string)->record", function(s, file, line, column)
   -- position (the duplicate-key defect reports the second key's opening
   -- quote).
   local function parse_error_at(where, msg)
-    error(__rt._err("E8001", "JSON parse error at position " .. where .. ": " .. msg,
-      file, line, column, nil, nil))
+    error(__rt._armErr("JSON_PARSE_ERROR", {oneBasedByteOffset=tostring(where), reason=msg},
+      "E8001", "JSON parse error at position " .. where .. ": " .. msg,
+      file, line, column, nil, nil), 0)
   end
   local function parse_error(msg)
     parse_error_at(pos, msg)
   end
 
-  -- Read four characters as hexadecimal digits; the first result is the
-  -- value (nil when any character is not [0-9A-Fa-f]).
-  local function read_hex4(hex)
+  -- Advance one hex digit at a time so malformed escapes report the
+  -- first bad digit (or EOF), not the preceding 'u'.
+  local function read_hex4()
     local v = 0
-    for i = 1, 4 do
-      local d = string.byte(hex, i)
+    for _ = 1, 4 do
+      local d = string.byte(s, pos)
       local dv
-      if d >= 48 and d <= 57 then dv = d - 48
+      if d == nil then parse_error("invalid escape")
+      elseif d >= 48 and d <= 57 then dv = d - 48
       elseif d >= 65 and d <= 70 then dv = d - 55
       elseif d >= 97 and d <= 102 then dv = d - 87
-      else
-        return nil
-      end
+      else parse_error("invalid escape") end
+      pos = pos + 1
       v = v * 16 + dv
     end
     return v
@@ -509,27 +628,16 @@ json.parse = __rt.function_("(string)->record", function(s, file, line, column)
     return s:sub(pos, pos)
   end
 
-  local function read_char()
-    if pos > len then return nil end
-    local c = s:sub(pos, pos)
-    pos = pos + 1
-    return c
-  end
-
   local function expect_char(expected)
-    local c = read_char()
-    if c ~= expected then
-      parse_error("expected '" .. expected .. "', got '" .. (c or "EOF") .. "'")
-    end
-    return c
+    if peek() ~= expected then parse_error("missing colon") end
+    pos = pos + 1
   end
 
   local function expect_literal(word)
     for i = 1, #word do
-      local c = read_char()
-      if c ~= word:sub(i, i) then
-        parse_error("expected '" .. word .. "', got unexpected character '" .. (c or "EOF") .. "'")
-      end
+      if pos > len then parse_error("unexpected end of input") end
+      if peek() ~= word:sub(i, i) then parse_error("unexpected character") end
+      pos = pos + 1
     end
   end
 
@@ -563,7 +671,8 @@ json.parse = __rt.function_("(string)->record", function(s, file, line, column)
 
     if c == '{' then
       pos = pos + 1
-      frames[#frames + 1] = {kind = 'object', obj = {}, seen = {}, state = 0}
+      frames[#frames + 1] = {kind = 'object',
+        obj = {[__K.t]=true, [__K.keys]={}, [__K.order]={}}, seen = {}, state = 0}
       return __OPENED, false
     elseif c == '[' then
       pos = pos + 1
@@ -579,18 +688,13 @@ json.parse = __rt.function_("(string)->record", function(s, file, line, column)
       return false, false
     elseif c == 'n' then
       expect_literal("null")
-      return __rt.__NULL, false
+      return nullValue, false
     elseif c == '-' or (c >= '0' and c <= '9') then
       return parse_number()
     else
-      parse_error("unexpected character '" .. c .. "'")
+      parse_error("unexpected character")
     end
   end
-
-  -- The top-level container kind, recorded when the root frame opens:
-  -- the declared (string)->table exit reads it (a top-level array is the
-  -- array carrier, never a table return).
-  local top_kind = nil
 
   -- The stack-safe parse: an explicit frame stack replaces the recursive
   -- descent, so a finite nested document has no Lua call-stack bound.
@@ -626,6 +730,8 @@ json.parse = __rt.function_("(string)->record", function(s, file, line, column)
           parent.state = 5
         else
           parent.obj[parent.key] = completed
+          parent.obj[__K.keys][parent.key] = true
+          parent.obj[__K.order][#parent.obj[__K.order] + 1] = parent.key
           if completed_number then
             mark_number(parent.obj, parent.key)
           end
@@ -640,12 +746,6 @@ json.parse = __rt.function_("(string)->record", function(s, file, line, column)
           completed = parsed
           completed_number = is_number
           have_completed = true
-        else
-          -- The root frame: this branch is reached only with an empty
-          -- stack, so the frame just opened is the document root and its
-          -- kind is recorded exactly once (nested frames keep the stack
-          -- non-empty).
-          top_kind = frames[#frames].kind
         end
       else
         local frame = frames[#frames]
@@ -662,6 +762,7 @@ json.parse = __rt.function_("(string)->record", function(s, file, line, column)
             end
           elseif frame.state == 1 then
             skip_ws()
+            if pos > len then parse_error("unexpected end of input") end
             if peek() ~= '"' then
               parse_error("missing key")
             end
@@ -688,6 +789,7 @@ json.parse = __rt.function_("(string)->record", function(s, file, line, column)
           else
             skip_ws()
             local c = peek()
+            if c == nil then parse_error("unterminated object") end
             if c == '}' then
               pos = pos + 1
               completed = frame.obj
@@ -697,7 +799,7 @@ json.parse = __rt.function_("(string)->record", function(s, file, line, column)
               pos = pos + 1
               frame.state = 1
             else
-              parse_error("expected ',' or '}' in object, got '" .. (c or "EOF") .. "'")
+              parse_error("missing comma")
             end
           end
         else
@@ -721,6 +823,7 @@ json.parse = __rt.function_("(string)->record", function(s, file, line, column)
           else
             skip_ws()
             local c = peek()
+            if c == nil then parse_error("unterminated array") end
             if c == ']' then
               pos = pos + 1
               completed = mark_decoded_array(frame.arr, frame.index - 1)
@@ -730,7 +833,7 @@ json.parse = __rt.function_("(string)->record", function(s, file, line, column)
               pos = pos + 1
               frame.state = 2
             else
-              parse_error("expected ',' or ']' in array, got '" .. (c or "EOF") .. "'")
+              parse_error("missing comma")
             end
           end
         end
@@ -749,7 +852,7 @@ json.parse = __rt.function_("(string)->record", function(s, file, line, column)
       elseif c == '\\' then
         pos = pos + 1
         if pos > len then
-          parse_error("unterminated escape sequence in string")
+          parse_error("unterminated string")
         end
         local esc = s:sub(pos, pos)
         if esc == 'n' then parts[#parts+1] = '\n'
@@ -763,23 +866,17 @@ json.parse = __rt.function_("(string)->record", function(s, file, line, column)
         elseif esc == 'u' then
           -- RFC 8259 section 7: \u must be followed by exactly four
           -- hexadecimal digits (case-insensitive).
-          local hex = s:sub(pos+1, pos+4)
-          if #hex < 4 then
-            parse_error("invalid unicode escape: expected 4 hex digits")
-          end
-          local v = read_hex4(hex)
-          if v == nil then
-            parse_error("invalid unicode escape: expected 4 hex digits")
-          end
-          pos = pos + 4
+          pos = pos + 1
+          local v = read_hex4()
+          pos = pos - 1 -- common escape-tail advance below
           parts[#parts+1] = utf8_encode(v)
         else
-          parse_error("unknown escape sequence '\\" .. esc .. "'")
+          parse_error("invalid escape")
         end
       else
         -- Raw character: U+0000-U+001F must be escaped (RFC 8259 section 7).
         if string.byte(c) < 0x20 then
-          parse_error("raw control character in string (must be escaped)")
+          parse_error("unexpected character")
         end
         parts[#parts+1] = c
       end
@@ -794,7 +891,7 @@ json.parse = __rt.function_("(string)->record", function(s, file, line, column)
 
     -- Must have at least one digit before decimal point
     if pos > len or not s:sub(pos, pos):match('[0-9]') then
-      parse_error("invalid number: expected digit")
+      parse_error("invalid number")
     end
     -- Leading zero check: if first digit is '0', next char must be '.' or 'e'/'E' or end of number
     if s:sub(pos, pos) == '0' then
@@ -802,7 +899,7 @@ json.parse = __rt.function_("(string)->record", function(s, file, line, column)
       if pos <= len then
         local nc = s:sub(pos, pos)
         if nc:match('[0-9]') then
-          parse_error("invalid number: leading zero not allowed")
+          parse_error("leading zero")
         end
       end
     else
@@ -812,7 +909,7 @@ json.parse = __rt.function_("(string)->record", function(s, file, line, column)
     if pos <= len and s:sub(pos, pos) == '.' then
       pos = pos + 1
       if pos > len or not s:sub(pos, pos):match('[0-9]') then
-        parse_error("invalid number: expected digit after decimal point")
+        parse_error("invalid number")
       end
       while pos <= len and s:sub(pos, pos):match('[0-9]') do pos = pos + 1 end
     end
@@ -822,7 +919,7 @@ json.parse = __rt.function_("(string)->record", function(s, file, line, column)
         pos = pos + 1
       end
       if pos > len or not s:sub(pos, pos):match('[0-9]') then
-        parse_error("invalid number: expected digit in exponent")
+        parse_error("invalid number")
       end
       while pos <= len and s:sub(pos, pos):match('[0-9]') do pos = pos + 1 end
     end
@@ -841,26 +938,135 @@ json.parse = __rt.function_("(string)->record", function(s, file, line, column)
   local result = parse_value()
   skip_ws()
   if pos <= len then
-    parse_error("unexpected trailing characters after JSON value")
+    parse_error("trailing content")
   end
-  -- The declared (string)->table exit (ISSUE-0824): the scanner's own
-  -- arms fired above, so a grammar-valid document whose root is the
-  -- language-null sentinel, an array, or a scalar reports the shared
-  -- table-admission tuple with that carrier's own actual token — the
-  -- emitted chunk's table cell and the JS runtime's checkTable publish
-  -- the identical fields. Only an object root is the table return.
-  if result == __rt.__NULL then
-    error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "table" }, "E8001",
-      "expected table", file, line, column, "table", "null"))
+  return result
+end
+
+-- Internal target-directed reconstruction. Plans are supplied by the defining
+-- artifact; no global class registry or constructor/default hook is consulted.
+function json.decode(text, target, plans, file, line, column)
+  plans = plans or {}
+  assert(type(plans)=="table", "JSON decoding malformed plan map")
+  local descriptor = assert(__rt.parse_canonical_descriptor(target), "JSON target descriptor")
+  local schemas, pending, seen = {}, {descriptor}, {}
+  local function plan_of(name)
+    if name == "Error" then return {
+      {name="code", descriptor="string", optional=false},
+      {name="message", descriptor="string", optional=false}} end
+    return assert(rawget(plans, name), "JSON decoding target has no exact class plan: " .. name)
   end
-  if top_kind == "array" then
-    error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "table" }, "E8001",
-      "expected table", file, line, column, "table", "array"))
+  while #pending > 0 do
+    local d = table.remove(pending)
+    if d.kind == "function" or (d.kind == "primitive" and d.name == "void") then
+      error("JSON decoding target contains a function or void type", 0)
+    elseif d.kind == "nullable" then pending[#pending+1] = d.inner
+    elseif d.kind == "array" then pending[#pending+1] = d.element
+    elseif d.kind == "class" and not seen[d.name] then
+      seen[d.name] = true
+      local fields, names = {}, {}
+      local plan = plan_of(d.name)
+      assert(type(plan)=="table", "JSON decoding malformed class plan")
+      local count = 0
+      for key in next, plan do
+        assert(type(key)=="number" and key>=1 and key%1==0,
+          "JSON decoding malformed class plan")
+        count = count + 1
+      end
+      for i=1,count do
+        local field = rawget(plan,i)
+        assert(type(field)=="table", "JSON decoding malformed class plan")
+        local name, optional, descriptorText = rawget(field,"name"),
+          rawget(field,"optional"), rawget(field,"descriptor")
+        assert(type(name)=="string" and __rt.utf8_valid(name) and type(optional)=="boolean"
+          and not names[name], "JSON decoding malformed class plan")
+        names[name] = true
+        local child = assert(__rt.parse_canonical_descriptor(descriptorText), "JSON field descriptor")
+        fields[#fields+1] = {name=name, descriptor=child, optional=optional}
+        pending[#pending+1] = child
+      end
+      schemas[d.name] = {fields=fields, names=names}
+    end
   end
-  -- A top-level scalar (a string, a number, or a boolean) is not the
-  -- declared table return either: the documented wrapper exit is enforced
-  -- by the same admission every caller-side table cell runs.
-  return __rt.check_table(result, file, line, column)
-end)
+  local raw = json.scan(text, file, line, column)
+  local function mismatch(d, v, missing)
+    if d.kind == "nullable" then d = d.inner end
+    local expected = d.kind == "array" and "array" or d.kind == "class" and "class" or d.name
+    if expected == "record" then expected = "table" end
+    local actual = missing and "undefined" or v == __rt.__NULL and "null"
+      or type(v)=="table" and rawget(v,__K.a) and "array" or type(v)
+    error(__rt._armErr("TYPED_BOUNDARY_KIND", {kind=expected=="class" and "class instance" or expected},
+      "E8001", "expected " .. (expected=="class" and "class instance" or expected),
+      file, line, column, expected, actual), 0)
+  end
+  local unknown = __rt.parse_canonical_descriptor("unknown")
+  local stack = {{raw=raw, descriptor=descriptor}}
+  local completed
+  while #stack > 0 do
+    local frame = stack[#stack]
+    if not frame.open then
+      frame.open = true
+      local d, value = frame.descriptor, frame.raw
+      if frame.missing then mismatch(d, value, true) end
+      if d.kind == "nullable" then
+        if value == __rt.__NULL and d.admitsNull then frame.value=__rt.__NULL
+        else d=d.inner end
+      end
+      if frame.value == nil then
+        if d.kind == "class" then
+          if type(value)~="table" or not rawget(value,__K.t) then mismatch(d,value) end
+          local schema = schemas[d.name]
+          for _, key in ipairs(value[__K.order]) do
+            if not schema.names[key] then
+              error(__rt._armErr("CLASS_EXTRA_FIELD", {field=key,classId=d.name}, "E8007",
+                "extra field '"..key.."' in class '"..d.name.."'", file,line,column), 0)
+            end
+          end
+          frame.class = d.name
+          frame.value = {[__K.kind]="class", [__K.classname]=d.name, [__K.classOrder]={}, [__K.classPlan]={}}
+          for i,field in ipairs(schema.fields) do frame.value[__K.classPlan][i]={
+            name=field.name,descriptor=field.descriptor.text,optional=field.optional} end
+          frame.children = {}
+          for _, field in ipairs(schema.fields) do
+            frame.value[__K.classOrder][#frame.value[__K.classOrder]+1]=field.name
+            local present = value[__K.keys][field.name] == true
+            if present or not field.optional then frame.children[#frame.children+1]={
+              key=field.name, raw=value[field.name], descriptor=field.descriptor, missing=not present} end
+          end
+        elseif type(value)=="table" and rawget(value,__K.a)
+            and (d.kind=="array" or d.name=="unknown") then
+          local child = d.kind=="array" and d.element or unknown
+          frame.value = {[__K.a]=true, [__K.n]=value[__K.n], [__K.elementDescriptor]=child.text}
+          frame.children = {}
+          for i=1,value[__K.n] do frame.children[i]={key=i,raw=value[i],descriptor=child} end
+        elseif type(value)=="table" and rawget(value,__K.t)
+            and (d.name=="unknown" or d.name=="record") then
+          frame.value = {[__K.t]=true, [__K.keys]={}, [__K.order]={}}
+          frame.children = {}
+          for _,key in ipairs(value[__K.order]) do
+            frame.value[__K.keys][key]=true
+            frame.value[__K.order][#frame.value[__K.order]+1]=key
+            frame.children[#frame.children+1]={key=key,raw=value[key],descriptor=unknown}
+          end
+        elseif d.name=="unknown" or (d.name=="null" and value==__rt.__NULL)
+            or ((d.name=="number" or d.name=="string" or d.name=="boolean") and type(value)==d.name) then
+          frame.value=value
+        else mismatch(d,value) end
+      end
+      frame.index=1
+    end
+    if frame.children and frame.index<=#frame.children then
+      local child=frame.children[frame.index]
+      frame.index=frame.index+1
+      stack[#stack+1]=child
+    else
+      completed=frame.value
+      if frame.class=="Error" then completed=__rt.error_value(completed.code,completed.message) end
+      stack[#stack]=nil
+      if #stack>0 then stack[#stack].value[frame.key]=completed end
+    end
+  end
+  return completed
+end
 
 return json

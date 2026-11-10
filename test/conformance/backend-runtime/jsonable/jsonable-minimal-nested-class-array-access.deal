@@ -1,23 +1,17 @@
-// @spec: Classes — @jsonable minimal nested class array access
-// @description: Minimal control for local @jsonable nested class array field access after fromJson
+// @spec: Standard library builtins — JSON decoding
+// @description: Local nested class array values retain nominal identity and support chained field reads after reconstruction.
 // @expected: runtime-ok
-// @features: jsonable, arrays, chained-access
+// @features: json, arrays, chained-access
 
-// @jsonable
 export class Child { value: number; }
-
-// @jsonable
 export class Parent { children: Child[]; }
 
 export function test_jsonable_minimal_nested_class_array_access(): null {
-  let p: Parent | null = Parent$fromJson("{\"children\":[{\"value\":5}]}");
-  if (p !== null) {
-    if (p.children[0].value !== 5) { throw { code: "TEST_FAIL", message: "minimal nested array access failed" }; }
-    return null;
+  let p: Parent = JSON.parse("{\"children\":[{\"value\":5}]}");
+  if (p.children[0].value !== 5 || !(p.children[0] instanceof Child)) {
+    throw {code: "TEST_FAIL", message: "minimal nested class array access failed"};
   }
-  throw { code: "TEST_FAIL", message: "fromJson failed" };
-}
-
-export function main(): null {
   return null;
 }
+
+export function main(): null { return null; }

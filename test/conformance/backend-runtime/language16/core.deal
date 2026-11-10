@@ -3,21 +3,17 @@
 // @expected: runtime-ok
 // @features: unknown, nullish, assertions, async, json
 
-import * as json from "std/json";
+
 import * as strings from "std/string";
 import * as tables from "std/table";
 class Box { value?: string; }
 class CallbackBox { callback: (n: number, unused: number) => number; }
 class JsonNode { first: boolean; next?: unknown; tail: string | null; }
-// @jsonable
 export class JsonBox { omitted: undefined; value: string | undefined; entries: (string | undefined)[]; }
-// @jsonable
 export class DecodedBox { value: string | undefined; optional?: string | undefined; }
-// @jsonable
 export class DecodedArrays { numbers: number[]; nested: string[][]; nullish: (number | null | undefined)[]; }
-// @jsonable
 export class RecordBox { data: Record<string, unknown>; }
-function parseAdapted(f: (text: string, extra: number) => Record<string, unknown>): Record<string, unknown> {
+function lengthAdapted(f: (text: string, extra: number) => number): number {
   return f("{\"n\":42}", 99);
 }
 function tick(): void { return; }
@@ -54,25 +50,25 @@ export function main(): null {
   fall();
   let node: JsonNode = {tail: null, first: true};
   let nodeUnknown: unknown = node;
-  if ((json.stringify(nodeUnknown) as string) !== "{\"first\":true,\"tail\":null}") { throw {code: "FAIL", message: "class JSON declaration order"}; }
+  if ((JSON.stringify(nodeUnknown) as string) !== "{\"first\":true,\"tail\":null}") { throw {code: "FAIL", message: "class JSON declaration order"}; }
   node.next = node;
   let classCycle: boolean = false;
-  try { json.stringify(nodeUnknown); } catch (e) { if (e instanceof Error) { classCycle = e.code === "E8001"; } }
+  try { JSON.stringify(nodeUnknown); } catch (e) { if (e instanceof Error) { classCycle = e.code === "E8001"; } }
   if (!classCycle) { throw {code: "FAIL", message: "class JSON cycle"}; }
   delete node.next;
-  if ((json.stringify(nodeUnknown) as string) !== "{\"first\":true,\"tail\":null}") { throw {code: "FAIL", message: "class JSON deletion"}; }
+  if ((JSON.stringify(nodeUnknown) as string) !== "{\"first\":true,\"tail\":null}") { throw {code: "FAIL", message: "class JSON deletion"}; }
   let sharedNodes: Record<string, unknown> = {a: node, b: node};
-  if ((json.stringify(sharedNodes) as string) !== "{\"a\":{\"first\":true,\"tail\":null},\"b\":{\"first\":true,\"tail\":null}}") { throw {code: "FAIL", message: "class JSON shared DAG"}; }
+  if ((JSON.stringify(sharedNodes) as string) !== "{\"a\":{\"first\":true,\"tail\":null},\"b\":{\"first\":true,\"tail\":null}}") { throw {code: "FAIL", message: "class JSON shared DAG"}; }
   let deepNode: JsonNode = node;
   let depth: number = 0;
   while (depth < 600) {
     deepNode = {tail: null, first: true, next: deepNode};
     depth = depth + 1;
   }
-  if (strings.split(json.stringify(deepNode) as string, "\"first\":true").length !== 602) { throw {code: "FAIL", message: "deep class JSON frames"}; }
+  if (strings.split(JSON.stringify(deepNode) as string, "\"first\":true").length !== 602) { throw {code: "FAIL", message: "deep class JSON frames"}; }
   let error: Error = {message: "m", code: "C"};
   try { throw error; } catch (e) {
-    if ((json.stringify(e) as string) !== "{\"code\":\"C\",\"message\":\"m\"}") { throw {code: "FAIL", message: "Error JSON declared fields"}; }
+    if ((JSON.stringify(e) as string) !== "{\"code\":\"C\",\"message\":\"m\"}") { throw {code: "FAIL", message: "Error JSON declared fields"}; }
   }
   let narrow: (n: number) => number = function(n: number): number { return n; };
   let wide: (n: number, unused: number) => number = function(n: number, unused: number): number { return n + unused; };
@@ -108,18 +104,16 @@ export function main(): null {
   if (recordOriginal(27) !== 27) { throw {code: "FAIL", message: "record member assignment RHS type"}; }
   let recordIndexOriginal = (record["callback"] = narrow);
   if (recordIndexOriginal(28) !== 28) { throw {code: "FAIL", message: "record index assignment RHS type"}; }
-  let parsedAdapted = parseAdapted(json.parse);
-  if ((parsedAdapted.n as number) !== 42) { throw {code: "FAIL", message: "stdlib record adapter return"}; }
-  let parseWide: (text: string, extra: number) => Record<string, unknown> = json.parse;
-  if ((parseWide("{\"n\":43}", 99).n as number) !== 43) { throw {code: "FAIL", message: "stdlib record adapter callee"}; }
+  let adaptedLength = lengthAdapted(strings.length);
+  if (adaptedLength !== 8) { throw {code: "FAIL", message: "stdlib adapter return"}; }
+  let lengthWide: (text: string, extra: number) => number = strings.length;
+  if (lengthWide("{\"n\":43}", 99) !== 8) { throw {code: "FAIL", message: "stdlib adapter callee"}; }
   let recordBox: RecordBox = { data: record };
   if (recordBox.data !== record) { throw {code: "FAIL", message: "Record field identity"}; }
-  let decodedRecord = RecordBox$fromJson("{\"data\":{\"n\":42}}");
-  if (decodedRecord !== null) {
-    if ((decodedRecord.data.n as number) !== 42) { throw {code: "FAIL", message: "Record field decode"}; }
-    let roundtrip = RecordBox$fromJson(RecordBox$toJson(decodedRecord));
-    if (roundtrip === null) { throw {code: "FAIL", message: "Record field roundtrip"}; }
-  } else { throw {code: "FAIL", message: "Record field decode rejected"}; }
+  let decodedRecord: RecordBox = JSON.parse("{\"data\":{\"n\":42}}");
+  if ((decodedRecord.data.n as number) !== 42) { throw {code: "FAIL", message: "Record field decode"}; }
+  let roundtrip: RecordBox = JSON.parse(JSON.stringify(decodedRecord) as string);
+  if ((roundtrip.data.n as number) !== 42 || roundtrip === decodedRecord) { throw {code: "FAIL", message: "Record field fresh roundtrip"}; }
   let value: number = record.n as number;
   if (value !== 42) { throw {code: "FAIL", message: "assertion"}; }
   let key: string = "absent";
@@ -164,52 +158,55 @@ export function main(): null {
   ordered["10"] = true;
   ordered["2"] = false;
   ordered["01"] = null;
-  let orderJson: string = json.stringify(ordered) as string;
+  let orderJson: string = JSON.stringify(ordered) as string;
   if (orderJson !== "{\"2\":false,\"10\":true,\"last\":true,\"01\":null}") { throw {code: "FAIL", message: "JSON own key order"}; }
-  let encoded = json.stringify({first: undefined, n: 1 / 0, z: -0, last: 2.5});
+  let encoded = JSON.stringify({first: undefined, n: 1 / 0, z: -0, last: 2.5});
   if ((encoded as string) !== "{\"n\":null,\"z\":0,\"last\":2.5}") { throw {code: "FAIL", message: "JSON omit nonfinite zero"}; }
-  let top = json.stringify(undefined);
+  let top = JSON.stringify(undefined);
   if (top !== undefined) { throw {code: "FAIL", message: "JSON top undefined"}; }
   let fn: () => void = function(): void {};
-  let functionTop = json.stringify(fn);
+  let functionTop = JSON.stringify(fn);
   if (functionTop !== undefined) { throw {code: "FAIL", message: "JSON top function"}; }
-  let functionObject = json.stringify({skip: fn, keep: true});
+  let functionObject = JSON.stringify({skip: fn, keep: true});
   if ((functionObject as string) !== "{\"keep\":true}") { throw {code: "FAIL", message: "JSON object function"}; }
   let entries: unknown[] = [undefined, fn, 0 / 0];
-  let arrayText = json.stringify(entries);
+  let arrayText = JSON.stringify(entries);
   if ((arrayText as string) !== "[null,null,null]") { throw {code: "FAIL", message: "JSON array undefined function nonfinite"}; }
   let shared: Record<string, unknown> = {value: true};
   let sharedGraph: Record<string, unknown> = {left: shared, right: shared};
-  let sharedJson = json.stringify(sharedGraph) as string;
+  let sharedJson = JSON.stringify(sharedGraph) as string;
   if (sharedJson !== "{\"left\":{\"value\":true},\"right\":{\"value\":true}}") { throw {code: "FAIL", message: "shared JSON children are not cycles"}; }
   let cycle: Record<string, unknown> = {};
   cycle.self = cycle;
   let cycleRejected: boolean = false;
-  try { json.stringify(cycle); }
+  try { JSON.stringify(cycle); }
   catch (e) { if (e instanceof Error) { cycleRejected = true; } }
   if (!cycleRejected) { throw {code: "FAIL", message: "JSON cycle"}; }
   let duplicatesRejected: boolean = false;
-  try { json.parse("{\"nested\":{\"a\":1,\"\\u0061\":2}}"); }
+  try { JSON.parse("{\"nested\":{\"a\":1,\"\\u0061\":2}}"); }
   catch (e) { if (e instanceof Error) { duplicatesRejected = true; } }
   if (!duplicatesRejected) { throw {code: "FAIL", message: "duplicate decoded JSON keys"}; }
   let jsonBox: JsonBox = {omitted: undefined, value: undefined, entries: [undefined, "ok"]};
-  let boxJson: string = JsonBox$toJson(jsonBox);
+  let boxJson: string = JSON.stringify(jsonBox) as string;
   if (boxJson !== "{\"entries\":[null,\"ok\"]}") { throw {code: "FAIL", message: "generated JSON undefined"}; }
-  let decoded: DecodedBox | null = DecodedBox$fromJson("{\"value\":\"ok\"}");
-  if (decoded === null) { throw {code: "FAIL", message: "generated decode undefined union"}; }
-  let rejected: DecodedBox | null = DecodedBox$fromJson("{}");
-  if (rejected !== null) { throw {code: "FAIL", message: "required undefined presence"}; }
-  let nullRejected: DecodedBox | null = DecodedBox$fromJson("{\"value\":null}");
-  if (nullRejected !== null) { throw {code: "FAIL", message: "undefined union rejects null"}; }
-  let decodedArrays = DecodedArrays$fromJson("{\"numbers\":[],\"nested\":[[]],\"nullish\":[null,2]}");
-  if (decodedArrays === null) { throw {code: "FAIL", message: "decoded arrays"}; }
-  let arrayBox = decodedArrays as DecodedArrays;
+  let decoded: DecodedBox = JSON.parse("{\"value\":\"ok\"}");
+  if ((decoded.value as string) !== "ok") { throw {code: "FAIL", message: "decode undefined union"}; }
+  let rejected: boolean = false;
+  try { let missing: DecodedBox = JSON.parse("{}"); }
+  catch (e) { rejected = (e as Error).code === "E8001"; }
+  if (!rejected) { throw {code: "FAIL", message: "required undefined presence"}; }
+  let nullRejected: boolean = false;
+  try { let invalid: DecodedBox = JSON.parse("{\"value\":null}"); }
+  catch (e) { nullRejected = (e as Error).code === "E8001"; }
+  if (!nullRejected) { throw {code: "FAIL", message: "undefined union rejects null"}; }
+  let decodedArrays: DecodedArrays = JSON.parse("{\"numbers\":[],\"nested\":[[]],\"nullish\":[null,2]}");
+  let arrayBox = decodedArrays;
   let dynamicFunctionBox: RecordBox = {data: {callback: fn}};
-  if (RecordBox$toJson(dynamicFunctionBox) !== "{\"data\":{}}") { throw {code: "FAIL", message: "generated Record function omission"}; }
+  if ((JSON.stringify(dynamicFunctionBox) as string) !== "{\"data\":{}}") { throw {code: "FAIL", message: "generated Record function omission"}; }
   let dynamicUndefinedBox: RecordBox = {data: {absent: undefined}};
-  if (RecordBox$toJson(dynamicUndefinedBox) !== "{\"data\":{}}") { throw {code: "FAIL", message: "generated Record undefined omission"}; }
+  if ((JSON.stringify(dynamicUndefinedBox) as string) !== "{\"data\":{}}") { throw {code: "FAIL", message: "generated Record undefined omission"}; }
   let nonfiniteArrays: DecodedArrays = {numbers: [1 / 0, 0 / 0, -1 / 0], nested: [], nullish: []};
-  if (DecodedArrays$toJson(nonfiniteArrays) !== "{\"numbers\":[null,null,null],\"nested\":[],\"nullish\":[]}") {
+  if ((JSON.stringify(nonfiniteArrays) as string) !== "{\"numbers\":[null,null,null],\"nested\":[],\"nullish\":[]}") {
     throw {code: "FAIL", message: "generated declared nonfinite number array"};
   }
   let decodedNumbers: unknown = arrayBox.numbers;
@@ -270,7 +267,7 @@ export function main(): null {
   try { let mismatch = callableUnknown as (n: number, m: number) => number; }
   catch (e) { if (e instanceof Error) { if (e.code === "E8001") { if (e.message === "expected function") { signatureRejected = true; } } } }
   if (!signatureRejected) { throw {code: "FAIL", message: "assertion signature failure contract"}; }
-  let badElements: Record<string, unknown> = json.parse("{\"items\":[\"bad\"]}");
+  let badElements: Record<string, unknown> = JSON.parse("{\"items\":[\"bad\"]}");
   let elementAssertionRejected: boolean = false;
   try { let invalidElements = badElements.items as number[]; }
   catch (e) { if (e instanceof Error) { if (e.code === "E8001") { if (e.message === "expected array") { elementAssertionRejected = true; } } } }

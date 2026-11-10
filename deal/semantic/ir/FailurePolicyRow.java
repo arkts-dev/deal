@@ -22,8 +22,7 @@ import java.util.Objects;
  *   <li>{@code code} — the row's fixed DEAL-visible error code, or
  *       {@code null} exactly when the parent table pins no fixed
  *       DEAL-visible code ({@code NO_DEAL_FAILURE} propagates a
- *       child/operand failure, {@code JSON_FROM_NULL} returns language
- *       null, {@code THROW_TRANSFER} preserves the supplied Error, and
+ *       child/operand failure, {@code THROW_TRANSFER} preserves the supplied Error, and
  *       {@code INFRASTRUCTURE_ONLY} is not a DEAL error).</li>
  *   <li>{@code templates} — every exact visible-error message template
  *       the row pins, primary projection first, in the parent's order;

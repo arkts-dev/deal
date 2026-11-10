@@ -1,9 +1,9 @@
-// @spec: Classes — @jsonable toJson
-// @description: @jsonable toJson serializes an instance to a JSON string
+// @spec: Standard library builtins — JSON
+// @description: JSON.stringify serializes a class instance for contextual reconstruction
 // @expected: runtime-ok
 // @features: jsonable, toJson
 
-// @jsonable
+
 export class User {
   name: string;
   age: number;
@@ -11,9 +11,9 @@ export class User {
 
 export function test_toJson(): null {
   let u: User = { name: "Bob", age: 25 };
-  let s: string = User$toJson(u);
+  let s: string = JSON.stringify(u) as string;
   // Roundtrip: parse the JSON back and verify values
-  let u2: User | null = User$fromJson(s);
+  let u2: User | null = JSON.parse(s);
   if (u2 !== null) {
     if (u2.name !== "Bob") {
       throw { code: "TEST_FAIL", message: "toJson roundtrip name mismatch" };

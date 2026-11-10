@@ -4,7 +4,7 @@
 // @features: functions, arity-extension, classes, stdlib
 
 import * as output from "std/console";
-import * as json from "std/json";
+import * as strings from "std/string";
 import * as lib from "./arity-extension-boundaries-lib";
 
 class NeverBuilt {
@@ -40,7 +40,7 @@ function pickPairAdaptedFirst(n: number): (x: number, y: number) => number {
   return exactPair;
 }
 
-function needParse(f: (text: string, extra: number) => Record<string, unknown>): Record<string, unknown> {
+function needLength(f: (text: string, extra: number) => number): number {
   return f("{}", 9);
 }
 
@@ -59,11 +59,11 @@ export function main(): null {
   check(importedDefault.pair(4, 5) === 4,
     "a cross-module default class field adapts one-to-two");
 
-  let parsed: Record<string, unknown> = needParse(json.parse);
-  check((json.stringify(parsed) as string) === "{}",
+  let length: number = needLength(strings.length);
+  check(length === 2,
     "a cataloged stdlib callable adapts at a longer parameter position");
-  let parseWide: (text: string, extra: number) => Record<string, unknown> = json.parse;
-  check((json.stringify(parseWide("{}", 9)) as string) === "{}",
+  let lengthWide: (text: string, extra: number) => number = strings.length;
+  check(lengthWide("{}", 9) === 2,
     "an adapter over a cataloged stdlib callable invokes its row");
 
   output.log("OK");

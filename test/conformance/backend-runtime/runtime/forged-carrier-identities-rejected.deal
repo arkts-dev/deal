@@ -3,14 +3,14 @@
 // @expected: runtime-ok
 // @features: tables, classes, arrays, functions, runtime-errors, v1.4
 
-import * as json from "std/json";
+
 
 class Item {
   label: string;
 }
 
 function needTable(t: Record<string, unknown>): string {
-  return json.stringify(t) as string;
+  return JSON.stringify(t) as string;
 }
 
 export function test_forged_carrier_identities(): null {

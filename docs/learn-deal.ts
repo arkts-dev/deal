@@ -4,7 +4,6 @@
 
 import * as math from "std/math";
 import * as strings from "std/string";
-import * as json from "std/json";
 
 // Values and control flow: strict types; boolean conditions; semicolons.
 function values(): number {
@@ -124,14 +123,18 @@ function records(): User {
 class Point { x: number; y: number; }
 class Vector { x: number; y: number; }
 
-// @jsonable directly precedes an exported class. Generated helpers are
-// Settings$fromJson(string): Settings | null and Settings$toJson(Settings): string.
-// @jsonable
+// An annotated destination supplies the JSON reconstruction schema.
+// Required fields must be present; optional absence stays absent.
 export class Settings { name: string; note?: string | null; }
-// Parsing rejects duplicate/extra keys and missing required fields.
-// Missing optionals remain absent. Serialization omits absent fields,
-// preserves null, rejects cycles, substitutes null for declared numeric
-// nonfinite values, and emits either zero sign as 0. JSON numeric tokens round to binary64; parsing preserves -0.
+function decodeSettings(text: string): Settings {
+  return JSON.parse(text); // fresh nominal instance; errors throw Error.
+}
+// JSON.parse accepts any root and rejects duplicate decoded keys. Unknown
+// targets produce ordinary Records/unknown arrays; assertions only check,
+// never supply reconstruction schemas. Recursive classes are valid; reachable
+// function fields reject statically, including optional fields. Extra keys
+// reject before declaration-ordered field decoding. Numbers round to binary64
+// and preserve -0; no defaults or hooks execute.
 
 // Encoding is import-free. It returns undefined for a function/undefined root,
 // omits those object members, substitutes null in arrays and for nonfinite

@@ -27,14 +27,14 @@ public final class ModuleIdentityResolver {
     }
 
     /**
-     * The six spec-listed stdlib module names, in pinned order (the
+     * The five spec-listed stdlib module names, in pinned order (the
      * authoritative filter of
      * {@link StdlibModuleResolver#SPEC_STDLIB_MODULES}, bare names). The
-     * six pinned declaration files under a resolved stdlib surface are
+     * five pinned declaration files under a resolved stdlib surface are
      * exactly {@code <surface>/<name>.d.deal} for these names.
      */
     public static final List<String> SPEC_STDLIB_MODULE_NAMES = List.of(
-        "console", "string", "table", "json", "math", "time");
+        "console", "string", "table", "math", "time");
 
     // =========================================================================
     // The classification result
@@ -207,7 +207,7 @@ public final class ModuleIdentityResolver {
 
     /**
      * The stdlib predicate (D6 (1)): the source path equals the canonical
-     * (fully symlink-resolved) path of one of the six spec-listed stdlib
+     * (fully symlink-resolved) path of one of the five spec-listed stdlib
      * declaration files under the pinned surface. ProjectLocator
      * publishes those canonical paths in
      * {@code ProjectContext.stdlibDeclarationFiles()} (pinned module

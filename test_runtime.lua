@@ -930,10 +930,10 @@ test("deep copy: __NULL preserved by identity", function()
   assert(a.val == __rt.__NULL)
 end)
 
-test("deep copy: __MISSING preserved by identity", function()
-  -- __MISSING entries are removed after overlay, but we test that deep_copy preserves identity
-  local copy = __rt._deep_copy({a = __rt.__MISSING})
-  assert(copy.a == __rt.__MISSING)
+test("construction removes missing optional values without changing the sentinel", function()
+  local missing = __rt.__MISSING
+  local instance = __rt.class_plan_("C", {field("a", "number", true)}, {a = missing})
+  assert(not __rt.has(instance, "a") and instance.a == nil and __rt.__MISSING == missing)
 end)
 
 test("deep copy: nested Records are independent", function()
@@ -944,163 +944,159 @@ test("deep copy: nested Records are independent", function()
   assert(b.data.x.y == 1)
 end)
 
--- ==================== json_from_plan tests (runtime page D4) ====================
-
-local function int_plan()
-  return {
-    { name = "id", descriptor = "number", optional = false, evaluator = function() return 0 end },
-    { name = "name", descriptor = "string", optional = false, evaluator = function() return "anon" end },
-    { name = "nick", descriptor = "string", optional = true },
-  }
+-- ==================== Contextual JSON reconstruction ====================
+local json = require("deal.json")
+local model = "@runtime/Model"
+local function model_plan()
+  return {field("id", "number"), field("name", "string"), field("nick", "string", true)}
+end
+local function decode_model(text, plan)
+  return json.decode(text, model, {[model]=plan}, "f.deal", 1, 1)
+end
+local function rejects_model(text, plan, code)
+  local destination = {unchanged=true}
+  local original = destination
+  local ok, err = pcall(function() destination = decode_model(text, plan) end)
+  assert(not ok and destination == original and original.unchanged)
+  if code then assert(type(err)=="table" and err.code==code and err.file=="f.deal"
+    and err.line==1 and err.column==1) end
+  return err
 end
 
-test("json_from_plan decodes required fields and preserves absent optionals",  function()
-  local calls = 0
-  local plan = {
-    { name = "id", descriptor = "number", optional = false, evaluator = function() calls = calls + 1 return 7 end },
-    { name = "name", descriptor = "string", optional = false, evaluator = function() return "anon" end },
-    { name = "nick", descriptor = "string", optional = true },
-  }
-  local u = __rt.json_from_plan("@mod/User", plan, { id = 42, name = "anon" }, "f.deal", 1, 1)
-  assert(u ~= nil)
-  assert(u.id == 42)
-  assert(u.name == "anon")
-  assert(u.nick == nil)
-  assert(u[__K.kind] == "class")
-  assert(u[__K.classname] == "@mod/User")
-  assert(calls == 0)
+test("contextual decode preserves required values and absent optionals", function()
+  local u = decode_model('{"id":42,"name":"anon"}', model_plan())
+  assert(u.id==42 and u.name=="anon" and u.nick==nil)
+  assert(u[__K.kind]=="class" and u[__K.classname]==model)
+  assert(json.encode(u)== '{"id":42,"name":"anon"}')
 end)
 
-test("json_from_plan provided-value failure returns nil and runs no defaults", function()
-  local calls = 0
-  local plan = {
-    { name = "id", descriptor = "number", optional = false, evaluator = function() calls = calls + 1 return 7 end },
-    { name = "name", descriptor = "string", optional = false, evaluator = function() return "anon" end },
-  }
-  local u = __rt.json_from_plan("C", plan, { id = "bad" }, "f.deal", 1, 1)
-  assert(u == nil)
-  assert(calls == 0)
+test("contextual provided-value failure throws without evaluating hooks", function()
+  local calls=0
+  local plan=model_plan()
+  plan[1].evaluator=function() calls=calls+1; error("must not run") end
+  rejects_model('{"id":"bad","name":"anon"}',plan,"E8001")
+  assert(calls==0)
 end)
 
-test("json_from_plan extra keys return nil", function()
-  local u = __rt.json_from_plan("C", int_plan(), { id = 1, extra = true }, "f.deal", 1, 1)
-  assert(u == nil)
+test("contextual extras reject before missing fields", function()
+  rejects_model('{"id":1,"extra":true}',model_plan(),"E8007")
 end)
 
-test("json_from_plan non-table parsed input returns nil", function()
-  local plan = int_plan()
-  assert(__rt.json_from_plan("C", plan, 42, "f.deal", 1, 1) == nil)
-  assert(__rt.json_from_plan("C", plan, "x", "f.deal", 1, 1) == nil)
-  assert(__rt.json_from_plan("C", plan, true, "f.deal", 1, 1) == nil)
-  assert(__rt.json_from_plan("C", plan, nil, "f.deal", 1, 1) == nil)
+test("contextual class rejects every scalar root", function()
+  for _, text in ipairs({'42','"x"','true','false'}) do
+    rejects_model(text,model_plan(),"E8001")
+  end
 end)
 
-test("json_from_plan parsed __NULL returns nil", function()
-  assert(__rt.json_from_plan("C", int_plan(), __rt.__NULL, "f.deal", 1, 1) == nil)
+test("contextual class rejects a null root", function()
+  rejects_model('null',model_plan(),"E8001")
 end)
 
-test("json_from_plan non-empty array-shaped input returns nil", function()
-  assert(__rt.json_from_plan("C", int_plan(), { 1, 2 }, "f.deal", 1, 1) == nil)
+test("contextual class rejects nonempty array root", function()
+  rejects_model('[1,2]',model_plan(),"E8001")
 end)
 
-test("json_from_plan empty object requires all nonoptional fields", function()
-  assert(__rt.json_from_plan("C", int_plan(), {}, "f.deal", 1, 1) == nil)
-  local u = __rt.json_from_plan("C", int_plan(), {id = 0, name = "anon"}, "f.deal", 1, 1)
-  assert(u ~= nil and u.id == 0 and u.name == "anon" and u.nick == nil)
+test("empty object requires all nonoptional fields", function()
+  rejects_model('{}',model_plan(),"E8001")
+  local u=decode_model('{"id":0,"name":"anon"}',model_plan())
+  assert(u.id==0 and u.name=="anon" and u.nick==nil)
 end)
 
-test("json_from_plan decoded empty array carrier returns nil (no []/{} collapse)", function()
-  -- A decoded array carrier records the private array/order marks, so the
-  -- class gate never reads it as an empty object document.
-  local empty_array = { [__K.a] = true, [__K.n] = 0 }
-  assert(__rt.json_from_plan("C", int_plan(), empty_array, "f.deal", 1, 1) == nil)
-  local decoded_empty_array = { [__K.t] = true, [__K.a] = true, [__K.n] = 0 }
-  assert(__rt.json_from_plan("C", int_plan(), decoded_empty_array, "f.deal", 1, 1) == nil)
+test("empty array never collapses to an object document", function()
+  rejects_model('[]',model_plan(),"E8001")
+  rejects_model('[]',{},"E8001")
+  assert(decode_model('{}',{})[__K.classname]==model)
 end)
 
-test("json_from_plan evaluator failure returns nil", function()
-  local plan = {
-    { name = "id", descriptor = "number", optional = false,
-      evaluator = function() error(__rt._err("E8004", "boom", "inner.deal", 2, 2, nil, nil)) end },
-  }
-  local u = __rt.json_from_plan("C", plan, {}, "f.deal", 1, 1)
-  assert(u == nil)
+test("omitted required field never invokes a throwing evaluator", function()
+  local plan={field("id","number")}
+  plan[1].evaluator=function() error("must not run") end
+  rejects_model('{}',plan,"E8001")
 end)
 
-test("json_from_plan evaluator result failing final validation returns nil", function()
-  local plan = {
-    { name = "id", descriptor = "number", optional = false, evaluator = function() return "bad" end },
-  }
-  local u = __rt.json_from_plan("C", plan, {}, "f.deal", 1, 1)
-  assert(u == nil)
+test("omitted required field never consults evaluator results", function()
+  local plan={field("id","number")}
+  plan[1].evaluator=function() return "bad" end
+  rejects_model('{}',plan,"E8001")
 end)
 
-test("json_from_plan provided __NULL on nullable field is present null", function()
-  local plan = {
-    { name = "v", descriptor = "?string", optional = true },
-  }
-  local u = __rt.json_from_plan("C", plan, { v = __rt.__NULL }, "f.deal", 1, 1)
-  assert(u ~= nil)
-  assert(u.v == __rt.__NULL)
+test("optional nullable field preserves present null", function()
+  local u=decode_model('{"v":null}',{field("v","?string",true)})
+  assert(u.v==__rt.__NULL and __rt.has(u,"v"))
 end)
 
-test("json_from_plan provided __NULL on non-nullable field returns nil", function()
-  local plan = {
-    { name = "v", descriptor = "string", optional = false, evaluator = function() return "" end },
-  }
-  assert(__rt.json_from_plan("C", plan, { v = __rt.__NULL }, "f.deal", 1, 1) == nil)
+test("nonnull field rejects present null", function()
+  rejects_model('{"v":null}',{field("v","string")},"E8001")
 end)
 
-test("json_from_plan admits binary64 values beyond signed32", function()
-  local plan = {
-    { name = "x", descriptor = "number", optional = false, evaluator = function() return 0 end },
-  }
-  assert(__rt.json_from_plan("C", plan, { x = 2147483648 }, "f.deal", 1, 1).x == 2147483648)
+test("contextual number admits binary64 beyond signed32", function()
+  assert(decode_model('{"x":2147483648}',{field("x","number")}).x==2147483648)
 end)
 
-test("json_from_plan number fields preserve negative zero", function()
-  local plan = {
-    { name = "x", descriptor = "number", optional = false, evaluator = function() return 0 end },
-  }
-  local u = __rt.json_from_plan("C", plan, { x = -0.0 }, "f.deal", 1, 1)
-  assert(u ~= nil and u.x == 0 and 1 / u.x == -math.huge)
+test("contextual number preserves negative zero", function()
+  local u=decode_model('{"x":-0}',{field("x","number")})
+  assert(u.x==0 and 1/u.x==-math.huge)
 end)
 
-test("json_from_plan rejects legacy dialect descriptors through the canonical matcher", function()
-  local plan = {
-    { name = "xs", descriptor = "number[]", optional = false, evaluator = function() return { 1 } end },
-  }
-  assert(__rt.json_from_plan("C", plan, {}, "f.deal", 1, 1) == nil)
+test("contextual schema rejects noncanonical dialect descriptors", function()
+  rejects_model('{}',{field("xs","number[]")})
 end)
 
-test("json_from_plan array fields validate element-wise", function()
-  local plan = {
-    { name = "xs", descriptor = "[number]", optional = false, evaluator = function() return { 1, 2 } end },
-  }
-  local u = __rt.json_from_plan("C", plan, { xs = { 1, 2 } }, "f.deal", 1, 1)
-  assert(u ~= nil and u.xs[1] == 1 and u.xs[2] == 2)
-  assert(__rt.json_from_plan("C", plan, { xs = { 1, "x" } }, "f.deal", 1, 1) == nil)
+test("contextual array checks every reached element", function()
+  local plan={field("xs","[number]")}
+  local u=decode_model('{"xs":[1,2]}',plan)
+  assert(u.xs[1]==1 and u.xs[2]==2)
+  rejects_model('{"xs":[1,"x"]}',plan,"E8001")
 end)
 
-test("json_from_plan supplied arrays are independently decoded per attempt", function()
-  local plan = {
-    { name = "items", descriptor = "[number]", optional = false, evaluator = function() return { 1 } end },
-  }
-  local a = __rt.json_from_plan("C", plan, {items = {1}}, "f.deal", 1, 1)
-  local b = __rt.json_from_plan("C", plan, {items = {1}}, "f.deal", 1, 1)
-  assert(a ~= nil and b ~= nil and a.items ~= b.items)
-  a.items[1] = 99
-  assert(b.items[1] == 1)
+test("contextual attempts reconstruct independent arrays", function()
+  local plan={field("items","[number]")}
+  local a=decode_model('{"items":[1]}',plan)
+  local b=decode_model('{"items":[1]}',plan)
+  assert(a~=b and a.items~=b.items)
+  a.items[1]=99
+  assert(b.items[1]==1)
 end)
 
-test("json_from_plan malformed plan returns nil and never throws", function()
-  assert(__rt.json_from_plan("C", "not-a-table", {}, "f.deal", 1, 1) == nil)
-  assert(__rt.json_from_plan("C", { "x" }, {}, "f.deal", 1, 1) == nil)
-  assert(__rt.json_from_plan("C", { { name = 1, descriptor = "number", optional = false } }, {}, "f.deal", 1, 1) == nil)
-  assert(__rt.json_from_plan("C", {
-    { name = "x", descriptor = "number", optional = false },
-    { name = "x", descriptor = "number", optional = false },
-  }, {}, "f.deal", 1, 1) == nil)
+test("malformed contextual plans fail closed without publication", function()
+  for _, plan in ipairs({"not-a-table",{"x"},{{name=1,descriptor="number",optional=false}},
+    {field("x","number"),field("x","number")}}) do
+    rejects_model('{}',plan)
+  end
+end)
+
+test("construction plans reject sparse and nonstructural entries before publication", function()
+  for _, mutate in ipairs({
+    function(p) p[3]=field("hidden","number") end,
+    function(p) p.extra=field("hidden","number") end,
+    function(p) p[0]=field("hidden","number") end,
+    function(p) p[1].optional="false" end,
+    function(p) p[1].descriptor="[number" end}) do
+    local plan={field("value","number")}
+    mutate(plan)
+    local destination, provided = {}, {value=1}
+    local alias=destination
+    local ok,err=pcall(function()
+      destination=__rt.class_plan_("@probe/Model",plan,provided,"plan.deal",3,7)
+    end)
+    assert(not ok and err.code=="E8001" and err.file=="plan.deal" and err.line==3 and err.column==7)
+    assert(destination==alias and provided.value==1 and provided[__K.kind]==nil)
+    local repaired=__rt.class_plan_("@probe/Model",{field("value","number")},provided)
+    assert(repaired.value==1 and provided.value==1)
+  end
+end)
+test("construction plans never consult metadata hooks and retain independent own facts", function()
+  local hooks=0
+  local mt={__index=function() hooks=hooks+1; error("metadata hook") end,
+    __pairs=function() hooks=hooks+1; error("metadata hook") end}
+  local plan=setmetatable({setmetatable(field("value","number"),mt)},mt)
+  local a=__rt.class_plan_("@probe/Model",plan,{value=1})
+  assert(a.value==1 and hooks==0)
+  plan[1].descriptor="string"
+  assert(a[__K.classPlan][1].descriptor=="number")
+  plan[1].optional=nil
+  local ok,err=pcall(__rt.class_plan_,"@probe/Model",plan,{value=1})
+  assert(not ok and err.code=="E8001" and hooks==0)
 end)
 
 -- ==================== export_class tests ====================
@@ -1314,15 +1310,15 @@ test("check_type rejects the superseded builtin Error aliases", function()
   end
 end)
 
--- ==================== _deep_copy edge cases ====================
+-- ==================== Construction retains supplied identities ====================
 
-test("deep copy preserves function wrappers by identity", function()
+test("construction preserves function wrappers by identity", function()
   local w = __rt.function_("(number)->number", function(x) return x end)
   local a = __rt.class_plan_("C", {field("fn", "(number)->number")}, {fn = w})
   assert(a.fn == w)
 end)
 
-test("deep copy preserves class instances by identity", function()
+test("construction preserves class instances by identity", function()
   local inner = __rt.class_plan_("@m/Inner", {field("x", "number")}, {x = 1})
   local a = __rt.class_plan_("C", {field("child", "@m/Inner")}, {child = inner})
   assert(a.child == inner)
@@ -1528,36 +1524,39 @@ test("check_type with complex nullable descriptor works", function()
   assert(r == arr)
 end)
 
--- ==================== _deep_copy additional tests ====================
+-- ==================== Contextual reconstruction freshness ====================
 
-test("deep copy preserves number values", function()
-  local copy = __rt._deep_copy(42)
+test("contextual reconstruction preserves number values", function()
+  local copy = json.decode('42', 'number')
   assert(copy == 42)
 end)
 
-test("deep copy preserves string values", function()
-  local copy = __rt._deep_copy("hello")
+test("contextual reconstruction preserves string values", function()
+  local copy = json.decode('"hello"', 'string')
   assert(copy == "hello")
 end)
 
-test("deep copy preserves boolean values", function()
-  local copy = __rt._deep_copy(true)
+test("contextual reconstruction preserves boolean values", function()
+  local copy = json.decode('true', 'boolean')
   assert(copy == true)
 end)
 
-test("deep copy preserves nil", function()
-  local copy = __rt._deep_copy(nil)
-  assert(copy == nil)
+test("contextual reconstruction preserves explicit null identity", function()
+  local copy = json.decode('null', '?number')
+  assert(copy == __rt.__NULL)
 end)
 
-test("deep copy handles mixed tables", function()
-  local orig = { a = 1, b = "hi", c = { nested = true }, d = __rt.__NULL }
-  local copy = __rt._deep_copy(orig)
+test("contextual reconstruction creates independent mixed Records", function()
+  local text = '{"a":1,"b":"hi","c":{"nested":true},"d":null}'
+  local orig = json.decode(text, 'record')
+  local copy = json.decode(text, 'record')
   assert(copy.a == 1)
   assert(copy.b == "hi")
   assert(copy.c.nested == true)
   assert(copy.d == __rt.__NULL)
-  assert(copy.c ~= orig.c)  -- nested table was copied, not shared
+  assert(copy ~= orig and copy.c ~= orig.c)
+  copy.c.nested = false
+  assert(orig.c.nested == true)
 end)
 
 -- ==================== class_ edge cases ====================

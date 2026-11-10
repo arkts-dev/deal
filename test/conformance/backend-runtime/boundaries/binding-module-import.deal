@@ -2,6 +2,6 @@
 // @description: binding-module-import
 // @expected: compile-error E3017
 // @features: boundary-validation
-import * as console from "std/console";
+import * as output from "std/console";
 
-export function main():null{console.log=function(x:string):void{};return null;}
+export function main():null{output.log=function(x:string):void{};return null;}

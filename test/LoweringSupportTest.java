@@ -1034,6 +1034,27 @@ public class LoweringSupportTest {
                     "a bare identifier write target records no IDENTIFIER read row");
             }
 
+            CompiledFixture presenceOnly = compileFixture(
+                tmp.resolve("presence-only"), Map.of(
+                    "main.deal", "import * as model from \"./model\";export function main():null{return null;}",
+                    "model.deal", """
+                    export class Item { value?: number; }
+                    export function present(item: Item): boolean {
+                      return Object.hasOwn(item, "value");
+                    }
+                    """), "main.deal");
+            check(presenceOnly.ok(), "a class presence-only module compiles: "
+                + presenceOnly.orchestrator().diagnostics());
+            SemanticRequirementManifest presenceManifest =
+                manifestOf(presenceOnly.manifests(), "model");
+            check(presenceManifest != null, "the class presence-only module produces a manifest");
+            if (presenceManifest != null) {
+                check(presenceManifest.constructCoverage().containsKey(ConstructKind.HAS),
+                    "class presence records HAS");
+                check(!presenceManifest.constructCoverage().containsKey(ConstructKind.SCALAR_LITERAL),
+                    "the embedded class field name is not a scalar operand");
+            }
+
             RequirementManifestResult readBack = compileAndCompute(
                 tmp.resolve("read-back"), Map.of(
                     "main.deal", """

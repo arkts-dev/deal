@@ -204,7 +204,7 @@ public final class IrGoldenTest {
         }
 
         // Parse
-        Parser parser = new Parser(lex.tokens(), filename, lex.directiveEvents());
+        Parser parser = new Parser(lex.tokens(), filename);
         ParseResult parseResult = parser.parse();
         if (parseResult.hasErrors()) {
             return new IrDumpResult(null, "parse errors: " + parseResult.diagnostics());
@@ -446,11 +446,6 @@ public final class IrGoldenTest {
                 fn("keys", list(tableType()), arrayType(strType()))
             ));
 
-            map.put("std/json", module(
-                fn("parse", list(strType()), tableType()),
-                fn("stringify", list(Type.Unknown.INSTANCE), Types.optionalRead(strType()))
-            ));
-
             map.put("std/math", module(
                 fn("floor", list(numType()), numType()),
                 fn("ceil", list(numType()), numType()),
@@ -522,7 +517,7 @@ public final class IrGoldenTest {
                 if (lex.hasErrors())
                     throw new ModuleNotFoundException("Lex errors in " + filename);
 
-                Parser parser = new Parser(lex.tokens(), filename, lex.directiveEvents());
+                Parser parser = new Parser(lex.tokens(), filename);
                 ParseResult parseResult = parser.parse();
                 if (parseResult.hasErrors())
                     throw new ModuleNotFoundException("Parse errors in " + filename);

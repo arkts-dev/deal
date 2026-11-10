@@ -1,0 +1,150 @@
+// @spec: Standard library builtins — JSON decoding
+// @description: Contextual reconstruction, presence, ordering, typed storage, assertion isolation and rollback.
+// @expected: runtime-ok
+// @features: stdlib, json, classes, arrays
+class Node { value:number; next?:Node; }
+class Required { payload:unknown; maybe:number|undefined; }
+class Ordered { first:Node; later:number; }
+class Envelope { item:Node; values:(boolean|null)[]; }
+class OptionalArray { items?:number[]; key?:string; index?:number; }
+function verify(ok:boolean):void {
+  if (!ok) { throw {code:"TEST",message:"JSON reconstruction"}; }
+}
+function returned():Node { return (JSON.parse(`{"value":7}`)); }
+function consume(node:Node):number { return node.value; }
+export function main():null {
+  let node:Node=JSON.parse(`{"next":{"value":5},"value":4}`);
+  verify(node.value===4 && node.next!==undefined && (node.next as Node).value===5);
+  verify(!Object.hasOwn(node.next as Node,"next"));
+  let keys=Object.keys(node);verify(keys.length===2 && keys[0]==="value" && keys[1]==="next");
+  verify(consume(JSON.parse(`{"value":6}`))===6 && returned().value===7);
+  node=(JSON.parse(`{"value":8}`));
+  verify(node.value===8 && !Object.hasOwn(node,"next"));
+  let chosen:Node=true ? JSON.parse(`{"value":9}`) : JSON.parse("bad");
+  verify(chosen.value===9);
+  let envelope:Envelope={item:JSON.parse(`{"value":10}`),values:JSON.parse("[false,null,true]")};
+  verify(envelope.item.value===10 && (envelope.values[0] as boolean)===false && envelope.values[1]===null && (envelope.values[2] as boolean)===true);
+  let nodes:Node[]=[JSON.parse(`{"value":11}`)];
+  nodes[0]=JSON.parse(`{"value":12}`);
+  envelope.item=JSON.parse(`{"value":13}`);
+  verify(nodes[0].value===12 && envelope.item.value===13);
+  let numbers:number[][]=JSON.parse("[[1,-0],[],[1e400,1e-4000]]");
+  verify(1/numbers[0][1]===-1/0 && numbers[2][0]===1/0 && numbers[2][1]===0);
+  numbers[1][numbers[1].length]=3; verify((numbers[1].pop() as number)===3);
+  let bools:boolean[]=JSON.parse("[false,true]");
+  verify((bools.pop() as boolean)===true && (bools.pop() as boolean)===false);
+  let nulls:(null|undefined)[]=JSON.parse("[null,null]");
+  verify(nulls.pop()===null && nulls.length===1);
+  let texts:string[]=JSON.parse(`["\\ud800","\\u0000"]`);
+  verify(texts[0]==="\ud800" && texts[1]==="\u0000");
+  let untyped:unknown=JSON.parse(`{"$kind":"class","$classname":"Error","__proto__":1,"nested":[null,false,2]}`);
+  let record=untyped as Record<string,unknown>;
+  verify((record["$kind"] as string)==="class" && (record["__proto__"] as number)===1);
+  verify((record.nested as unknown[]).length===3);
+  verify(JSON.parse("null")===null && (JSON.parse("false") as boolean)===false && (JSON.parse("2") as number)===2);
+  let err:Error=JSON.parse(`{"message":"decoded","code":"JSON"}`);
+  keys=Object.keys(err);verify(err.code==="JSON" && err.message==="decoded" && keys.length===2 && keys[0]==="code" && keys[1]==="message");
+  let binaryError:Error=JSON.parse(`{"code":"A\\u0000B","message":"C\\u0000D"}`);
+  verify(binaryError.code==="A\u0000B" && binaryError.message==="C\u0000D");
+  verify((JSON.stringify(binaryError) as string)===`{"code":"A\\u0000B","message":"C\\u0000D"}`);
+  let loneKeyRejected=false;
+  try { let bad:Node=JSON.parse(`{"value":1,"x\\ud800y":2}`); } catch(e) {
+    verify((e as Error).code==="E8007" && (e as Error).message.startsWith("extra field 'x\ud800y' in class '"));
+    loneKeyRejected=true;
+  }
+  verify(loneKeyRejected);
+  // Diagnostic parameters are opaque text, never another template pass.
+  let extraDocuments:string[]=[`{"{actual}":1}`,`{"a'b":1}`,`{"":1}`];
+  let extraKeys:string[]=["{actual}","a'b",""];
+  let extraCount=0;
+  let extraIndex=0;
+  for(let document of extraDocuments) {
+    try { let bad:Node=JSON.parse(document); } catch(e) {
+      verify((e as Error).code==="E8007"
+        && (e as Error).message.startsWith("extra field '"+extraKeys[extraIndex]+"' in class '"));
+      extraCount=extraCount+1;
+    }
+    extraIndex=extraIndex+1;
+  }
+  verify(extraCount===3);
+  let thrown=false;try { throw err; } catch(e) { verify((e as Error)===err); thrown=true; } verify(thrown);
+  let caught=0;
+  try { node=JSON.parse(`{"value":"bad","extra":1}`); } catch(e) {
+    verify((e as Error).code==="E8007"); caught=caught+1;
+  }
+  verify(node.value===8);
+  try { let bad:Node=JSON.parse(`{"value":1,"x\\u0000y":2}`); } catch(e) {
+    let message=(e as Error).message;
+    verify(message.startsWith("extra field 'x\u0000y' in class '"));
+    caught=caught+1;
+  }
+  try { let bad:Ordered=JSON.parse(`{"first":{"value":"bad"}}`); } catch(e) {
+    verify((e as Error).message==="expected number"); caught=caught+1;
+  }
+  try { let bad:Required=JSON.parse(`{"maybe":1}`); } catch(e) {
+    verify((e as Error).message==="expected unknown"); caught=caught+1;
+  }
+  try { let bad:Required=JSON.parse(`{"payload":null}`); } catch(e) {
+    verify((e as Error).message==="expected number"); caught=caught+1;
+  }
+  try { let bad:Node=JSON.parse(`{"value":1}`) as Node; } catch(e) {
+    verify((e as Error).code==="E8001"); caught=caught+1;
+  }
+  try { let bad:Record<string,unknown>=JSON.parse("[]"); } catch(e) {
+    verify((e as Error).message==="expected table"); caught=caught+1;
+  }
+  try { let bad:number[]=JSON.parse(`[1,"bad",3]`); } catch(e) {
+    verify((e as Error).message==="expected number"); caught=caught+1;
+  }
+  try { JSON.parse(`{"a":1,"\\u0061":2}`); } catch(e) { caught=caught+1; }
+  try { JSON.parse(`{"x":{"a":1,"a":2}}`); } catch(e) { caught=caught+1; }
+  try { JSON.parse("1 2"); } catch(e) { caught=caught+1; }
+  verify(caught===11);
+  let count=0;let text=():string=>{count=count+1;return `{"value":20}`;};
+  let once:Node=JSON.parse(text());verify(count===1 && once.value===20);
+  let retained=once;
+  try { once=JSON.parse("bad"); } catch(e) { count=count+1; }
+  verify(once===retained && count===2);
+  // Repeated keys in distinct objects remain legal; enough distinct keys
+  // exercise invocation-local key storage growth and escaped/NUL spellings.
+  let many:Record<string,unknown>=JSON.parse(`{"":0,"a":1,"b":2,"c":3,"d":4,"e":5,"f":6,"g":7,"h":8,"i":9,"j":10,"k":11,"l":12,"m":13,"n":14,"o":15,"p":16,"x\\u0000y":17,"nested":{"a":18,"x\\u0000y":19}}`);
+  verify((many[""] as number)===0 && (many.p as number)===16 && (many["x\u0000y"] as number)===17);
+  let nested=many.nested as Record<string,unknown>;
+  verify((nested.a as number)===18 && (nested["x\u0000y"] as number)===19);
+  let duplicate=false;
+  try { JSON.parse(`{"x\\u0000y":1,"x\\u0000y":2}`); } catch(e) { duplicate=true; }
+  verify(duplicate);
+  let fresh:Record<string,unknown>=JSON.parse(`{"a":21,"":22}`);
+  verify((fresh.a as number)===21 && (fresh[""] as number)===22);
+  // Each parse rebuilds every typed descendant, not just the root shell.
+  let first:Envelope=JSON.parse(`{"item":{"value":1,"next":{"value":2}},"values":[false,null]}`);
+  let second:Envelope=JSON.parse(`{"item":{"value":1,"next":{"value":2}},"values":[false,null]}`);
+  verify(first!==second && first.item!==second.item && first.item.next!==second.item.next && first.values!==second.values);
+  (first.item.next as Node).value=30;first.values[0]=true;
+  verify((second.item.next as Node).value===2 && (second.values[0] as boolean)===false);
+  let optional:OptionalArray=JSON.parse(`{"items":[1,2],"key":"selected","index":0}`);
+  (optional.items as number[])[optional.index as number]=3;
+  verify((optional.items as number[])[0]===3);
+  let keyed:Record<string,unknown>={};
+  keyed[optional.key as string]=5;
+  verify((keyed.selected as number)===5);
+  delete keyed[optional.key as string];
+  verify(!Object.hasOwn(keyed,"selected"));
+  delete (first.item.next as Node).next;
+  verify(!Object.hasOwn(first.item.next as Node,"next"));
+  let absent:OptionalArray=JSON.parse("{}");
+  let readFailure=false;
+  try { (absent.items as number[])[0]=4; } catch(e) {
+    verify((e as Error).code==="E8001");readFailure=true;
+  }
+  verify(readFailure && !Object.hasOwn(absent,"items"));
+  // Syntax scanning completes before target reconstruction, including
+  // duplicate keys in a later field after an earlier target mismatch.
+  let syntaxFirst=false;
+  try { let bad:Node=JSON.parse(`{"value":"bad","extra":{"x":1,"x":2}}`); } catch(e) {
+    verify((e as Error).code==="E8001" && (e as Error).message.startsWith("JSON parse error at position "));
+    syntaxFirst=true;
+  }
+  verify(syntaxFirst);
+  return null;
+}

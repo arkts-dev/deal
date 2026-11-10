@@ -1,18 +1,20 @@
-// @spec: Classes — JSON serialization (@jsonable)
-// @description: Imported generated C$toJson/C$fromJson helpers are callable through the module namespace and roundtrip (v1.2 defect snippet 36)
+// @spec: Standard library builtins — JSON
+// @description: Ordinary exported JSON functions remain callable through module namespaces and captured values.
 // @expected: runtime-ok
-// @features: jsonable, modules, helpers, cross-module, v1.2
+// @features: json, modules, functions, cross-module
 
 import * as models from "./jsonable_helper_lib";
 
 export function test_imported_helpers(): null {
   let a: models.Model = {name: ""};
-  let text: string = models.Model$toJson(a);
-  let b: models.Model | null = models.Model$fromJson(text);
-  if (b === null) { throw { code: "TEST_FAIL", message: "imported JSON helpers" }; }
+  let encode: (value: models.Model) => string = models.encode;
+  let decode: (text: string) => models.Model = models.decode;
+  let text: string = encode(a);
+  let b: models.Model = decode(text);
+  if (b.name !== "" || !(b instanceof models.Model) || b === a || encode !== models.encode || decode !== models.decode) {
+    throw {code: "TEST_FAIL", message: "imported JSON function identity or reconstruction"};
+  }
   return null;
 }
 
-export function main(): null {
-  return null;
-}
+export function main(): null { return null; }

@@ -10,9 +10,8 @@ import deal.ast.StatementNode;
  * The shared top-level declaration lookups of the module layer (the
  * planner, recorder, serializer, declaration analyzer, and
  * orchestrator's common walk): a statement's direct-or-exported class/
- * function declaration, the top-level declaration named by a string,
- * and the class behind a synthetic {@code C$fromJson}/{@code C$toJson}
- * export name. Package-local; no resolution, typing, or identity
+ * function declaration and the top-level declaration named by a string.
+ * Package-local; no resolution, typing, or identity
  * policy lives here.
  */
 final class AstDeclarations {
@@ -72,23 +71,6 @@ final class AstDeclarations {
         for (StatementNode stmt : program.statements()) {
             ClassDeclaration cd = classDeclarationOf(stmt);
             if (cd != null && cd.name().equals(name)) {
-                return cd;
-            }
-        }
-        return null;
-    }
-
-    /**
-     * The class whose synthetic {@code C$fromJson}/{@code C$toJson}
-     * export carries the given name, or null.
-     */
-    static ClassDeclaration jsonableClassForSynthetic(
-            ProgramNode program, String name) {
-        for (StatementNode stmt : program.statements()) {
-            ClassDeclaration cd = classDeclarationOf(stmt);
-            if (cd != null && cd.isJsonable()
-                    && (name.equals(cd.name() + "$fromJson")
-                        || name.equals(cd.name() + "$toJson"))) {
                 return cd;
             }
         }

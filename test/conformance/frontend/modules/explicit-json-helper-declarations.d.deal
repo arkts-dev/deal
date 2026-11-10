@@ -1,6 +1,6 @@
 // @spec: Modules, declarations, standard library, and host ABI
-// @description: A declaration file may explicitly declare the generated C$fromJson/C$toJson helper signatures (v1.2 defect snippet 51)
-// @expected: compile-ok
+// @description: Declaration-file function identifiers cannot contain $; helper-like spellings receive no exemption
+// @expected: compile-error E2008
 // @features: declarations, jsonable, v1.2
 
 export class Model { n: number; }

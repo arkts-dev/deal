@@ -45,7 +45,7 @@ public final class FailureProjections {
         /** A raw host-facing function. */
         HOST_FUNCTION,
         /**
-         * A DEAL function-shaped carrier at the {@code std/json} rejection
+         * A DEAL function-shaped carrier at the builtin stringify rejection
          * arm's pinned member (the corpus pins {@code function} for a DEAL
          * function value; the host arms keep the table spelling).
          */
@@ -178,7 +178,7 @@ public final class FailureProjections {
     }
 
     /**
-     * The {@code std/json} rejection arm's render
+     * The builtin stringify rejection arm's render
      * ({@code JSON_STRINGIFY_UNSUPPORTED}): the arm's own pinned expected
      * text and the carrier-kind projection of the failing value as its
      * actual field (P2 item 2 with the arm's two pinned members). One

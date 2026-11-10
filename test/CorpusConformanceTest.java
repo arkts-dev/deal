@@ -785,7 +785,7 @@ public class CorpusConformanceTest {
             all.addAll(lex.diagnostics());
             if (lex.hasErrors()) return all;
 
-            Parser parser = new Parser(lex.tokens(), filename, lex.directiveEvents());
+            Parser parser = new Parser(lex.tokens(), filename);
             ParseResult parseResult = parser.parse();
             all.addAll(parseResult.diagnostics());
             if (parseResult.hasErrors()) return all;
@@ -927,7 +927,7 @@ public class CorpusConformanceTest {
                 String source = sourceSnapshot(file).stripped();
                 LexResult lex = new Lexer(source, file.toString()).tokenize();
                 if (lex.hasErrors()) return symbols;
-                Parser parser = new Parser(lex.tokens(), file.toString(), lex.directiveEvents());
+                Parser parser = new Parser(lex.tokens(), file.toString());
                 ParseResult parseResult = parser.parse();
                 if (parseResult.hasErrors()) return symbols;
                 String dotted = modulePathOf(file);
@@ -1027,7 +1027,7 @@ public class CorpusConformanceTest {
                 return lex.diagnostics();
             }
 
-            Parser parser = new Parser(lex.tokens(), filename, lex.directiveEvents());
+            Parser parser = new Parser(lex.tokens(), filename);
             ParseResult parseResult = parser.parse();
             if (parseResult.hasErrors()) {
                 return parseResult.diagnostics();

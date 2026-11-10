@@ -71,14 +71,14 @@ public final class StdlibFunctionCatalog {
         DescriptorService.describe(new Type.Array(Type.String.INSTANCE));
 
     // =========================================================================
-    // The closed 21-row table (D1 order + the K7 std.time row, verbatim)
+    // Shared algorithm signatures; JSON selectors are internal, not module exports.
     // =========================================================================
 
     /**
-     * The closed 21 entries in the pinned declaration order: the D1 rows
-     * in order, then the K7 {@code std.time}/{@code nowMillis} row as the
-     * sole {@code std.time} group. Immutable ({@code List.of}); an added,
-     * removed, or renamed row fails the class-load closed-set guard below.
+     * The closed algorithm signatures in declaration order. The JSON rows
+     * support internal semantic execution only: contextual parsing has its own
+     * operation, and stringify is a direct-call builtin. Neither is a module
+     * export or a callable value.
      */
     private static final List<Entry> ENTRIES = List.of(
         // std.console
@@ -106,7 +106,7 @@ public final class StdlibFunctionCatalog {
         // std.table
         new Entry(StdlibFunctionId.TABLE_KEYS, "std.table", "keys",
             List.of(TABLE), STRING_ARRAY),
-        // std.json
+        // Internal JSON algorithms: never exposed through module lookup.
         new Entry(StdlibFunctionId.JSON_PARSE, "std.json", "parse",
             List.of(STRING), TABLE),
         new Entry(StdlibFunctionId.JSON_STRINGIFY, "std.json", "stringify",
@@ -125,24 +125,26 @@ public final class StdlibFunctionCatalog {
             List.of(), NUMBER)
     );
 
-    /**
-     * The lookup index keyed by resolved module path, then export name —
-     * built once at class load from the closed {@link #ENTRIES} table.
-     * Immutable.
-     */
+    /** The ordinary callable subset of the closed algorithm signatures. */
+    private static final List<Entry> CALLABLE_ENTRIES = ENTRIES.stream()
+        .filter(entry -> entry.function() != StdlibFunctionId.JSON_PARSE
+            && entry.function() != StdlibFunctionId.JSON_STRINGIFY).toList();
+    /** Immutable lookup of callable exports only, keyed by module then name. */
     private static final Map<String, Map<String, Entry>> BY_MODULE = index();
 
     private static Map<String, Map<String, Entry>> index() {
         Map<String, Map<String, Entry>> byModule = new LinkedHashMap<>();
         Set<StdlibFunctionId> functions = EnumSet.noneOf(StdlibFunctionId.class);
         for (Entry entry : ENTRIES) {
-            Map<String, Entry> module = byModule.computeIfAbsent(entry.modulePath(),
-                ignored -> new LinkedHashMap<>());
-            if (module.putIfAbsent(entry.exportName(), entry) != null) {
-                throw new IllegalStateException(
-                    "duplicate stdlib catalog row for " + entry.modulePath() + "."
-                        + entry.exportName() + " (producer defect: the closed table has "
-                        + "exactly one entry per (module path, export name))");
+            if (CALLABLE_ENTRIES.contains(entry)) {
+                Map<String, Entry> module = byModule.computeIfAbsent(entry.modulePath(),
+                    ignored -> new LinkedHashMap<>());
+                if (module.putIfAbsent(entry.exportName(), entry) != null) {
+                    throw new IllegalStateException(
+                        "duplicate stdlib catalog row for " + entry.modulePath() + "."
+                            + entry.exportName() + " (producer defect: the closed table has "
+                            + "exactly one entry per (module path, export name))");
+                }
             }
             if (!functions.add(entry.function())) {
                 throw new IllegalStateException(
@@ -160,8 +162,9 @@ public final class StdlibFunctionCatalog {
         if (!functions.equals(EnumSet.allOf(StdlibFunctionId.class))) {
             throw new IllegalStateException(
                 "the stdlib catalog does not cover the closed StdlibFunctionId set "
-                    + "(producer defect: exactly the 21 ids, one entry each)");
+                    + "(producer defect: exactly one signature per algorithm id)");
         }
+        byModule.replaceAll((module, exports) -> Map.copyOf(exports));
         return Map.copyOf(byModule);
     }
 
@@ -170,15 +173,21 @@ public final class StdlibFunctionCatalog {
     // =========================================================================
 
     /**
-     * The closed entry table in the pinned declaration order (21 rows).
+     * All internal algorithm signatures in declaration order. This is not a
+     * module export surface; use {@link #callableEntries()} for that purpose.
      *
      */
     public static List<Entry> entries() {
         return ENTRIES;
     }
 
+    /** Only ordinary stdlib functions may populate imported namespaces. */
+    public static List<Entry> callableEntries() {
+        return CALLABLE_ENTRIES;
+    }
+
     /**
-     * The pure catalog lookup: the entry for {@code (resolved stdlib
+     * The pure callable catalog lookup: the entry for {@code (resolved stdlib
      * module path, export name)}, or {@code Optional.empty()} — "not a
      * stdlib call" — when the module or member is absent. Never an
      * error, never a state change; null inputs are absent inputs. An

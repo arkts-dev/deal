@@ -1,9 +1,9 @@
-// @spec: Classes — @jsonable toJson
-// @description: @jsonable toJson raises E8001 for a cyclic table datum (the spec's finite-acyclic JSON-shape requirement)
+// @spec: Standard library builtins — JSON encoding
+// @description: JSON.stringify raises E8001 for a class containing a cyclic Record
 // @expected: runtime-error E8001
 // @features: jsonable, toJson, table, cycle
 
-// @jsonable
+
 export class Wrapper {
   data: Record<string, unknown>;
 }
@@ -11,7 +11,7 @@ export class Wrapper {
 export function test_jsonable_tojson_cyclic_table(): string {
   let w: Wrapper = { data: {} };
   w.data.self = w.data;
-  return Wrapper$toJson(w);
+  return JSON.stringify(w) as string;
 }
 
 export function main(): null {

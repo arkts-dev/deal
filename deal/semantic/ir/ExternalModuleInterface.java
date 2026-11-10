@@ -16,8 +16,7 @@ import java.util.Objects;
  *
  * <p>STDLIB/HOST declaration entries are derived per the pinned
  * declaration-entry rule: exports in declaration order from the
- * declaration AST's export declarations plus the {@code @jsonable}
- * synthetic exports where the export map carries them; imports from the
+ * declaration AST's explicit export declarations; imports from the
  * orchestrator's resolved imports (each a {@link ResolvedImport});
  * classes from exported class declarations with the derived
  * route-independent {@code constructionEntry}. The parent-pinned

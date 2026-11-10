@@ -1,14 +1,14 @@
-// @spec: Standard library declarations — std/json.d.deal
-// @description: json.stringify rejects a path-local container re-entry through the closed cycle arm; a shared acyclic child is duplicated, never rejected (v1.4)
+// @spec: Standard library builtins — JSON encoding
+// @description: JSON.stringify rejects a path-local container cycle; shared acyclic children remain legal
 // @expected: runtime-error E8001
 // @features: stdlib, json, cycle, v1.4
 
-import * as json from "std/json";
+
 
 export function test_json_stringify_cycle(): string {
   let t: Record<string, unknown> = {};
   t.self = t;
-  return json.stringify(t) as string;
+  return JSON.stringify(t) as string;
 }
 
 export function main(): null {

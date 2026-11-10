@@ -76,12 +76,11 @@
 #define DEAL_ARM_ID_HOST_LOAD_INVALID_METADATA     21u
 #define DEAL_ARM_ID_CLASS_EXTRA_FIELD              22u
 #define DEAL_ARM_ID_JSON_PARSE_ERROR               23u
-#define DEAL_ARM_ID_JSON_TO_WALK                   24u
-#define DEAL_ARM_ID_JSON_STRINGIFY_UNSUPPORTED     25u
-#define DEAL_ARM_ID_JSON_TO_WALK_CYCLE             26u
+#define DEAL_ARM_ID_JSON_STRINGIFY_UNSUPPORTED     24u
+#define DEAL_ARM_ID_JSON_TO_WALK_CYCLE             25u
 
 /* The number of arms the compiled closed repertoire declares. */
-#define DEAL_ARM_REPERTOIRE_COUNT 27U
+#define DEAL_ARM_REPERTOIRE_COUNT 26U
 
 /* The two closed render scopes. */
 #define DEAL_ARM_SCOPE_TOP_LEVEL 0U
@@ -156,6 +155,19 @@ deal_error *deal_error_materialize(uint32_t arm_id,
                                    size_t parameter_count, const char *expected,
                                    const char *actual, const deal_origin *origin,
                                    deal_error *cause);
+
+/* Length-delimited UTF-8/WTF-8 parameters preserve embedded NUL and lone
+ * units. Names and optional descriptor metadata remain ABI C strings. */
+typedef struct {
+    const char *name;
+    const char *value;
+    size_t length;
+} deal_arm_text_parameter;
+
+deal_error *deal_error_materialize_text(uint32_t arm_id,
+    const deal_arm_text_parameter *parameters, size_t parameter_count,
+    const char *expected, const char *actual, const deal_origin *origin,
+    deal_error *cause);
 
 /* The canonical floating-point text of one numeric actual (the runtime spells
  * its failing value): Java `Double.toHexString` parity, so `NaN`, both
@@ -249,7 +261,7 @@ deal_error *deal_error_create(const char *code, const char *message,
 /*
  * The builtin Error instance of one DEAL class-literal construction (C3/R2):
  * `code` and `message` are the supplied class fields of the builtin Error
- * layout, each a scalar-valid DEAL string copied into the record's own
+ * layout, each a UTF-16 DEAL string copied losslessly into the record's own
  * platform-owned text, and the origin is stored unchanged. The
  * innermost-first frame snapshot is taken at this call. A null argument is an
  * invariant fault (a construction without its required fields never reaches
@@ -265,6 +277,13 @@ void deal_error_raise(deal_error *error, const deal_origin *origin);
  * record carries no such text: a read of the builtin instance's own field. */
 deal_string *deal_error_code_value(deal_error *error);
 deal_string *deal_error_message_value(deal_error *error);
+
+/* Borrowed lossless text without allocation; NULL denotes absent text.
+ * A live check validates the full span before constructing a DEAL string. */
+const char *deal_error_code_bytes(deal_error *error, size_t *length);
+const char *deal_error_message_bytes(deal_error *error, size_t *length);
+/* The optional cause's code; NULL and zero length when no cause is recorded. */
+const char *deal_error_cause_code_bytes(deal_error *error, size_t *length);
 
 /*
  * The `code` and `message` class fields of a field write on the builtin
@@ -300,8 +319,9 @@ void deal_error_set_cause(deal_error *error, deal_error *cause);
  * group exactly when the Error carries an origin; the optional expected,
  * actual and cause fields exactly when present; `frames` as the canonical
  * decimal frame count; the cause as the cause Error's code; minimal RFC 8259
- * escaping with raw UTF-8 non-ASCII and `\u00XX` for the other control
- * characters; no inter-token whitespace. The bytes are platform memory,
+ * escaping with raw scalar UTF-8 non-ASCII, `\u00XX` for the other control
+ * characters and `\uXXXX` for lone UTF-16 units; embedded NUL never truncates
+ * language text. No inter-token whitespace. The bytes are platform memory,
  * NUL-terminated, and released with deal_error_snapshot_release.
  */
 char *deal_error_snapshot(const deal_error *error);

@@ -335,24 +335,6 @@ public final class NameResolver {
             checkPropertyName(cf.name(), cf.span());
         }
 
-        // D6: Add synthetic C$fromJson and C$toJson function symbols for @jsonable classes.
-        // These are added programmatically and never pass through the user-identifier
-        // $ prohibition check (checkNoDollar is not called for these names).
-        if (cd.isJsonable()) {
-            Type clsType = classTypeFor(cd.name(), modulePath);
-
-            Type.Func fromJsonType = new Type.Func(
-                List.of(Type.String.INSTANCE),
-                Types.nullable(clsType));
-            root.define(cd.name() + "$fromJson",
-                new Symbol.FunctionSymbol(cd.name() + "$fromJson", fromJsonType));
-
-            Type.Func toJsonType = new Type.Func(
-                List.of(clsType),
-                Type.String.INSTANCE);
-            root.define(cd.name() + "$toJson",
-                new Symbol.FunctionSymbol(cd.name() + "$toJson", toJsonType));
-        }
     }
 
     private void hoistFunctionDeclarations(ProgramNode program) {
@@ -369,15 +351,8 @@ public final class NameResolver {
     private void hoistFunction(FunctionDeclaration fd) {
         String name = fd.name();
 
-        // Check for $ in function name (E2008). A declaration file may
-        // explicitly declare the generated @jsonable helper signatures
-        // (spec §Declaration-file format: "Declaration files may
-        // explicitly declare compatible C$fromJson and C$toJson
-        // functions") — the reserved sigil is legitimate exactly there
-        // (ISSUE-0717 defect snippet 51).
-        if (!(isDeclarationFile() && isJsonHelperFunctionName(name))) {
-            checkNoDollar(name, fd.span());
-        }
+        // Declaration files obey the same user-identifier rules as source modules.
+        checkNoDollar(name, fd.span());
 
         if (root.containsLocally(name)) {
             if (shadowsImport(name, fd.span())) {
@@ -832,39 +807,6 @@ public final class NameResolver {
         }
     }
 
-    /** Whether this module is a {@code .d.deal} declaration file. */
-    private boolean isDeclarationFile() {
-        return modulePath != null && modulePath.endsWith(".d.deal");
-    }
-
-    /**
-     * Whether one declared function name is the generated
-     * {@code C$fromJson}/{@code C$toJson} helper form of a declaration
-     * file (a plain identifier class part plus the reserved helper
-     * suffix).
-     */
-    private static boolean isJsonHelperFunctionName(String name) {
-        int sigil = name.lastIndexOf('$');
-        if (sigil <= 0 || sigil == name.length() - 1) {
-            return false;
-        }
-        String suffix = name.substring(sigil + 1);
-        if (!suffix.equals("fromJson") && !suffix.equals("toJson")) {
-            return false;
-        }
-        char first = name.charAt(0);
-        if (!Character.isLetter(first) && first != '_') {
-            return false;
-        }
-        for (int i = 1; i < sigil; i++) {
-            char c = name.charAt(i);
-            if (!Character.isLetterOrDigit(c) && c != '_') {
-                return false;
-            }
-        }
-        return true;
-    }
-
     // =======================================================================
     // Type resolution from TypeNode
     // =======================================================================
@@ -1127,59 +1069,6 @@ public final class NameResolver {
             case ArrayType at -> classSymbolInScope(scope, at.elementType());
             default -> null;
         };
-    }
-
-    /**
-     * Checks whether a function is exported from a given module.
-     *
-     * <p>For same-module queries ({@code modulePath} is null, empty, or
-     * equals {@code this.modulePath}), the root symbol table is checked
-     * directly.  For cross-module queries, the module resolver is used
-     * to check the target module's export map.
-     *
-     * <p>This is used by the type checker ({@link TypeChecker}) to
-     * validate that a class type used as a jsonable field has the
-     * required {@code C$fromJson} / {@code C$toJson} exports.
-     *
-     */
-    public boolean isFunctionExportedFromModule(String modulePath, String functionName) {
-        if (modulePath == null || modulePath.isEmpty()
-                || modulePath.equals(this.modulePath)) {
-            // Same-module: check the root symbol table directly
-            return root.resolve(functionName) != null;
-        }
-        try {
-            Map<String, Type> exports = moduleResolver.resolveModule(
-                modulePath, this.modulePath, new HashSet<>());
-            return exports.containsKey(functionName);
-        } catch (ModuleResolver.ModuleNotFoundException e) {
-            return false;
-        }
-    }
-
-    /**
-     * Identity-keyed variant of
-     * {@link #isFunctionExportedFromModule(String, String)} for a
-     * class type's declaring module: same-module identities check the
-     * root symbol table; foreign identities route through the module
-     * resolver's identity-keyed export lookup.
-     */
-    public boolean isFunctionExportedFromModule(
-            CanonicalModuleIdentity declaringModule, String functionName) {
-        CanonicalModuleIdentity mine = moduleIdentity();
-        if (mine != null && declaringModule.equals(mine)
-                && root.resolve(functionName) != null) {
-            return true;
-        }
-        // The identity names the declaring file, so only a harness-shared
-        // identity reaches here: keep routing to the module resolver (the
-        // declaring file's exports).
-        try {
-            return moduleResolver.isFunctionExportedFromModule(
-                declaringModule, functionName, this.modulePath);
-        } catch (ModuleResolver.ModuleNotFoundException e) {
-            return false;
-        }
     }
 
     // =======================================================================

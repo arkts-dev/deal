@@ -16,6 +16,10 @@ import deal.semantic.SemanticLowerer;
 import deal.semantic.SemanticOracle;
 import deal.semantic.SemanticRuntimeModel;
 import deal.semantic.ir.ActualKind;
+import deal.semantic.ir.AnchorId;
+import deal.semantic.ir.SourceOrigin;
+import deal.semantic.ir.SourceOriginKind;
+import deal.semantic.ir.SourceSpan;
 import deal.semantic.ir.BoundaryContext;
 import deal.semantic.ir.BoundaryExecutor;
 import deal.semantic.ir.BoundaryFailure;
@@ -129,6 +133,7 @@ public class FailureArmAuthorityTest {
         testHostSignaturePlaceholderParity();
         testHostInnerReasonDescriptorValidation();
         testEmittedParameterContract();
+        testStringifyDeclaredFields();
         testWalkArmThreeConsumerDrive();
         testDeclaredArraySharedReferenceControl();
         testAbsentOriginFailsClosed();
@@ -140,6 +145,7 @@ public class FailureArmAuthorityTest {
         testMovedElementCell();
         testDecodedArrayPresentNullCell();
         testRuntimeCarrierProjection();
+        testRuntimeCarriedStringifyPlan();
         testRuntimeNullSentinelAtWalk();
         testRuntimeMissingSentinelAtWalk();
         System.out.println();
@@ -244,7 +250,7 @@ public class FailureArmAuthorityTest {
             "the completion variant maps every numeric carrier to number");
         check(FailureProjections.carrierKindToken(
                 FailureProjections.CarrierKind.DEAL_FUNCTION).equals("function"),
-            "the carrier-kind projection carries the std/json function token");
+            "the carrier-kind projection carries the JSON function token");
         check(FailureProjections.carrierKindToken(
                 FailureProjections.CarrierKind.ABSENT).equals("nil")
                 && FailureProjections.carrierKindToken(
@@ -303,26 +309,22 @@ public class FailureArmAuthorityTest {
                 markedArms(markedProjection)),
             "a hand-built arm whose projection binding is SIBLING_OWNED fails the "
                 + "completeness check closed");
-        FailureArm markedOrigin = new FailureArm(FailureArmId.JSON_TO_WALK,
-            FailurePolicyId.JSON_TO_ERROR, 0, "value at {fieldPath} is not JSON "
-                + "serializable: {actual}", List.of("fieldPath", "actual"),
-            Map.of("fieldPath", FailureArm.ParameterSource.FIELD_PATH, "actual",
-                FailureArm.ParameterSource.TYPED_BOUNDARY_ACTUAL),
-            FailureArm.ExpectedSource.NONE, null,
-            FailureArm.ActualProjection.TYPED_BOUNDARY,
+        FailureArm markedOrigin = new FailureArm(FailureArmId.JSON_STRINGIFY_UNSUPPORTED,
+            FailurePolicyId.JSON_TO_ERROR, 0, "unsupported type for JSON encoding: {actual}",
+            List.of("actual"), Map.of("actual", FailureArm.ParameterSource.CARRIER_KIND_ACTUAL),
+            FailureArm.ExpectedSource.PINNED_TEXT, "string, number, boolean, or table",
+            FailureArm.ActualProjection.CARRIER_KIND,
             FailureArm.OriginConvention.SIBLING_OWNED, FailureArm.RenderScope.TOP_LEVEL,
             null);
         expectIllegalState(() -> FailureContractRegistry.checkArmConsistency(
                 FailureContractRegistry.rows(), markedArms(markedOrigin)),
             "a hand-built arm whose origin convention is SIBLING_OWNED fails the "
                 + "completeness check closed");
-        FailureArm markedSource = new FailureArm(FailureArmId.JSON_TO_WALK,
-            FailurePolicyId.JSON_TO_ERROR, 0, "value at {fieldPath} is not JSON "
-                + "serializable: {actual}", List.of("fieldPath", "actual"),
-            Map.of("fieldPath", FailureArm.ParameterSource.FIELD_PATH, "actual",
-                FailureArm.ParameterSource.SIBLING_OWNED_ACTUAL),
-            FailureArm.ExpectedSource.NONE, null,
-            FailureArm.ActualProjection.TYPED_BOUNDARY,
+        FailureArm markedSource = new FailureArm(FailureArmId.JSON_STRINGIFY_UNSUPPORTED,
+            FailurePolicyId.JSON_TO_ERROR, 0, "unsupported type for JSON encoding: {actual}",
+            List.of("actual"), Map.of("actual", FailureArm.ParameterSource.SIBLING_OWNED_ACTUAL),
+            FailureArm.ExpectedSource.PINNED_TEXT, "string, number, boolean, or table",
+            FailureArm.ActualProjection.CARRIER_KIND,
             FailureArm.OriginConvention.CALL_EXPRESSION, FailureArm.RenderScope.TOP_LEVEL,
             null);
         expectIllegalState(() -> FailureContractRegistry.checkArmConsistency(
@@ -351,6 +353,60 @@ public class FailureArmAuthorityTest {
 
     private static HostDeclarationSurface emptySurface() {
         return new HostDeclarationSurface(Map.of());
+    }
+
+    static void testStringifyDeclaredFields() throws Exception {
+        String body = """
+            local K=__dealCarrierKeys
+            local leafId, ownerId="@serialization/Leaf", "@serialization/Owner"
+            __factories.__boundaryPlans[leafId]={{name="value",descriptor="number",required=true}}
+            __factories.__boundaryPlans[ownerId]={
+              {name="name",descriptor="string",required=true},
+              {name="child",descriptor=leafId,required=true},
+              {name="items",descriptor="array(number)",required=true},
+              {name="note",descriptor="undefinedable(string)",required=false},
+              {name="required",descriptor="undefinedable(string)",required=true}}
+            __factories.__jsonClassOrder[leafId]={"value"}
+            __factories.__jsonClassOrder[ownerId]={"name","child","items","note","required"}
+            local leaf={[K.c]=true,[K.id]=leafId,[K.f]={value=7},[K.p]={value=true}}
+            local items={[K.a]=true,[K.n]=2,[K.elementDescriptor]="number",1,2}
+            local fields={name="kept",child=leaf,items=items,required=__UNDEFINED}
+            local presence={name=true,child=true,items=true,required=true}
+            local owner={[K.c]=true,[K.id]=ownerId,[K.f]=fields,[K.p]=presence}
+            __bcheck(ownerId,"ref",owner)
+            local function encode(value)
+              return __stdlib("STDLIB_CALL","JSON_STRINGIFY","audit","-","-","audit.deal:9:3",value)
+            end
+            local expected='{"name":"kept","child":{"value":7},"items":[1,2]}'
+            assert(encode(owner)==expected)
+            local function rejects(code)
+              local ok,e=pcall(encode,owner)
+              assert(not ok and e.code==code, tostring(e))
+              assert(e.o=="audit.deal:9:3",tostring(e.o))
+              if code=="E8003" then assert(e.cause and e.cause.code=="E8001" and e.cause.o==e.o) end
+            end
+            fields.name=42; rejects("E8001"); fields.name="kept"
+            fields.note=false; presence.note=true; rejects("E8001")
+            fields.note=__UNDEFINED; assert(encode(owner)==expected)
+            presence.required=nil; rejects("E8001"); presence.required=true
+            leaf[K.f].value="bad"; rejects("E8001"); leaf[K.f].value=7
+            fields.child={[K.c]=true,[K.id]="@serialization/Sibling"}
+            rejects("E8001"); fields.child=leaf
+            items[2]="bad"; rejects("E8003"); items[2]=2
+            assert(fields.child==leaf and fields.items==items and encode(owner)==expected)
+            -- The earlier cycle must beat the invalid later declaration.
+            __factories.__boundaryPlans[ownerId][1].descriptor="unknown"
+            fields.name=owner; fields.child=false
+            local ok,e=pcall(encode,owner)
+            assert(not ok and e.code=="E8001" and e.m=="cyclic value cannot be encoded as JSON",tostring(e.m))
+            fields.name="kept"; fields.child=leaf
+            __factories.__boundaryPlans[ownerId][1].descriptor="string"
+            assert(encode(owner)==expected)
+            print("stringify-boundaries|OK|")
+            """;
+        List<String> rows = runProbe(emittedArmsChunk(), "arms", body, "stringify-boundaries", 1);
+        checkEq("stringify-boundaries|OK|", rows.get(0),
+            "builtin stringify validates current declared positions with operation origins and repair");
     }
 
     /** The production chunk of the arm-only project (the emitted prelude). */
@@ -1538,8 +1594,8 @@ public class FailureArmAuthorityTest {
 
     /**
      * Stages the deployed runtime beside the artifact. String helpers and
-     * runtime-produced carriers load {@code deal/runtime.lua} exactly as
-     * deployed chunks do.
+     * runtime-produced carriers load {@code deal/runtime.lua} and the shared
+     * scanner loads {@code deal/json.lua}, exactly as deployed chunks do.
      */
     private static List<String> runProbe(String chunk, String modulePath, String body,
                                          String probeName, int minRows, boolean bindRuntime)
@@ -1550,6 +1606,7 @@ public class FailureArmAuthorityTest {
                 Path runtimeTarget = workspace.resolve("deal").resolve("runtime.lua");
                 Files.createDirectories(runtimeTarget.getParent());
                 Files.copy(Path.of("deal", "runtime.lua"), runtimeTarget);
+                Files.copy(Path.of("deal", "json.lua"), workspace.resolve("deal/json.lua"));
             }
             Path artifact = workspace.resolve(modulePath + ".lua");
             Files.writeString(artifact, chunk, StandardCharsets.UTF_8);
@@ -1962,7 +2019,7 @@ public class FailureArmAuthorityTest {
     }
 
     // =========================================================================
-    // 10. The std/json rejection arm: the carrier-kind cells
+    // 10. Generic JSON encoding: omission, substitution and unsupported carriers
     // =========================================================================
 
     /**
@@ -1976,7 +2033,7 @@ public class FailureArmAuthorityTest {
      * expected field is the arm's own pinned text on every consumer.
      */
     static void testStdJsonArmDrive() throws Exception {
-        System.out.println("-- the std/json rejection arm: the carrier-kind cells --");
+        System.out.println("-- generic JSON encoding and unsupported carriers --");
         String span = FailureContractRegistry.arm(
             FailureArmId.JSON_STRINGIFY_UNSUPPORTED).origin().name();
         String expectedText = FailureContractRegistry.arm(
@@ -2063,7 +2120,7 @@ public class FailureArmAuthorityTest {
             "the Oracle and Lua agree on nonfinite substitution");
     }
 
-    /** One oracle std/json rejection assertion (the arm's tuple per carrier). */
+    /** One Oracle generic-encoding assertion (the arm's tuple for unsupported carriers). */
     private static Tuple checkStdJsonOracle(deal.semantic.ir.SourceOrigin origin,
                                             deal.semantic.SharedStdlibSemantics.Value value,
                                             String span, String expected, String actual,
@@ -2098,7 +2155,7 @@ public class FailureArmAuthorityTest {
         return tuple;
     }
 
-    /** One JVM std/json rejection assertion through the shared stdlib dispatch. */
+    /** One JVM generic-encoding assertion through the internal operation dispatch. */
     private static Tuple checkStdJsonJvm(deal.codegen.jvm.JvmRuntime.Table table,
                                          String span, String expected, String actual,
                                          String note) {
@@ -2148,7 +2205,7 @@ public class FailureArmAuthorityTest {
     // =========================================================================
 
     /** Sqrt publishes NaN; JSON parse failures retain their closed arm tuple. */
-    static void testStdlibResultsAndFailureArms() {
+    static void testStdlibResultsAndFailureArms() throws Exception {
         System.out.println("-- JVM stdlib results and closed failure arms --");
         String origin = "arm-battery.deal:1:1";
         Object sqrt = deal.codegen.jvm.JvmRuntime.stdlib("STDLIB_CALL", "MATH_SQRT",
@@ -2158,8 +2215,54 @@ public class FailureArmAuthorityTest {
         checkJvmArm(FailureArmId.JSON_PARSE_ERROR,
             Map.of("oneBasedByteOffset", "2", "reason", "unexpected end of input"),
             null, null, origin, "the JSON parse cell",
-            () -> deal.codegen.jvm.JvmRuntime.stdlib("STDLIB_CALL", "JSON_PARSE",
-                "op", "digest", "parent", origin, new Object[] {"{"}));
+            () -> deal.codegen.jvm.JvmJson.decode("{", "unknown",
+                new SourceOrigin("arm-battery.deal",
+                    new SourceSpan("arm-battery.deal", 1, 1, 1, 1),
+                    SourceOriginKind.USER, new AnchorId(1), null), origin, Map.of()));
+
+        // Independent pins for the shared scanner's grammar, decoded-key
+        // equality and first-bad UTF-8 byte. Both consumers render their own
+        // closed authority; no expected text is copied from either parser.
+        record ParseCase(String text, int offset, String reason) { }
+        var cases = List.of(
+            new ParseCase("tru", 4, "unexpected end of input"),
+            new ParseCase("trX", 3, "unexpected character"),
+            new ParseCase("{\"a\" 1}", 6, "missing colon"),
+            new ParseCase("{\"a\":1", 7, "unterminated object"),
+            new ParseCase("[1", 3, "unterminated array"),
+            new ParseCase("[1 2]", 4, "missing comma"),
+            new ParseCase("[1,]", 4, "unexpected character"),
+            new ParseCase("{\"a\":1,}", 8, "missing key"),
+            new ParseCase("01", 2, "leading zero"),
+            new ParseCase("1e+", 4, "invalid number"),
+            new ParseCase("\"\\u12G4\"", 6, "invalid escape"),
+            new ParseCase("\"\\u12", 6, "invalid escape"),
+            new ParseCase("\"abc\\", 6, "unterminated string"),
+            new ParseCase("true false", 6, "trailing content"),
+            new ParseCase("{\"é\":1,\"é\":2}", 9, "duplicate key"));
+        StringBuilder body = new StringBuilder();
+        for (int i = 0; i < cases.size(); i++) {
+            ParseCase fixture = cases.get(i);
+            checkJvmArm(FailureArmId.JSON_PARSE_ERROR,
+                Map.of("oneBasedByteOffset", Integer.toString(fixture.offset()),
+                    "reason", fixture.reason()), null, null, origin,
+                "the contextual JSON scanner case " + i,
+                () -> deal.codegen.jvm.JvmJson.decode(fixture.text(), "unknown",
+                    new SourceOrigin("arm-battery.deal",
+                        new SourceSpan("arm-battery.deal", 1, 1, 1, 1),
+                        SourceOriginKind.USER, new AnchorId(1), null), origin, Map.of()));
+            body.append("do local ok,value=pcall(__stdlib,\"JSON_PARSE\",\"JSON_PARSE\",\"op\",\"digest\",\"parent\",")
+                .append(luaString(origin)).append(',').append(luaString(fixture.text()))
+                .append("); row(\"parse-").append(i).append("\",ok,value) end\n");
+        }
+        List<String> rows = runPreludeProbe(body.toString(), "json-scanner-arms", cases.size());
+        checkEq(cases.size(), rows.size(), "every scanner failure is observed exactly once");
+        for (int i = 0; i < cases.size(); i++) {
+            ParseCase fixture = cases.get(i);
+            checkEq("parse-" + i + "|E8001|nil|nil|JSON parse error at position "
+                + fixture.offset() + ": " + fixture.reason(), rows.get(i),
+                "the emitted scanner case " + i + " renders its exact closed tuple");
+        }
     }
 
     /**
@@ -2465,21 +2568,19 @@ public class FailureArmAuthorityTest {
      */
     static void testTypedBoundaryClassSpellingNegatives() throws Exception {
         System.out.println("-- the superseded class: spelling fails closed --");
-        expectDefect(() -> FailureContractRegistry.render(FailureArmId.JSON_TO_WALK,
-            Map.of("fieldPath", "x", "actual", "class:arm/walk/Walk"), null,
-            "class:arm/walk/Walk", null),
+        expectDefect(() -> FailureContractRegistry.render(FailureArmId.TYPED_BOUNDARY_KIND,
+            Map.of("kind", "class instance"), "class", "class:arm/walk/Walk", null),
             "the superseded class:<ClassId> spelling fails closed");
-        checkEq("Error", deal.codegen.jvm.JvmRuntime.arm(FailureArmId.JSON_TO_WALK,
-                Map.of("fieldPath", "", "actual", "Error"), WALK_SPAN, null,
-                "Error").actual,
+        checkEq("Error", deal.codegen.jvm.JvmRuntime.arm(FailureArmId.TYPED_BOUNDARY_KIND,
+                Map.of("kind", "class instance"), WALK_SPAN, "class", "Error").actual,
             "the JVM arm render keeps the carried canonical atom (the control)");
         // The serialized Lua renderer, under real luajit.
         renderProbes("class-spelling-probe",
-            armProbe("class-spelling", "\"JSON_TO_WALK\", {fieldPath = \"x\", actual = \"class:arm/walk/Walk\"}, \"-\", nil, \"class:arm/walk/Walk\"", "false|"),
-            armProbe("class-nonatom", "\"JSON_TO_WALK\", {fieldPath = \"x\", actual = \"class:not-a-canonical-atom\"}, \"-\", nil, \"class:not-a-canonical-atom\"", "false|"),
-            armProbe("class-empty", "\"JSON_TO_WALK\", {fieldPath = \"x\", actual = \"class:\"}, \"-\", nil, \"class:\"", "false|"),
-            armProbe("class-superseded-alias", "\"JSON_TO_WALK\", {fieldPath = \"x\", actual = \"@$builtin/Error\"}, \"-\", nil, \"@$builtin/Error\"", "false|"),
-            new RenderProbe("arm", "atom-control", "\"JSON_TO_WALK\", {fieldPath = \"\", actual = \"Error\"}, \"-\", nil, \"Error\"", "true|Error", "value.a"));
+            armProbe("class-spelling", "\"TYPED_BOUNDARY_KIND\", {kind = \"class instance\"}, \"-\", \"class\", \"class:arm/walk/Walk\"", "false|"),
+            armProbe("class-nonatom", "\"TYPED_BOUNDARY_KIND\", {kind = \"class instance\"}, \"-\", \"class\", \"class:not-a-canonical-atom\"", "false|"),
+            armProbe("class-empty", "\"TYPED_BOUNDARY_KIND\", {kind = \"class instance\"}, \"-\", \"class\", \"class:\"", "false|"),
+            armProbe("class-superseded-alias", "\"TYPED_BOUNDARY_KIND\", {kind = \"class instance\"}, \"-\", \"class\", \"@$builtin/Error\"", "false|"),
+            new RenderProbe("arm", "atom-control", "\"TYPED_BOUNDARY_KIND\", {kind = \"class instance\"}, \"-\", \"class\", \"Error\"", "true|Error", "value.a"));
     }
 
     // =========================================================================
@@ -2495,8 +2596,7 @@ public class FailureArmAuthorityTest {
      * producer defect on every tuple-producing renderer: the registry's
      * arm render, the JVM arm render (routed through the registry), and the
      * serialized Lua arm renderer. The matching pairs stay green as the
-     * controls, and the independent parameter data (the walk's literal
-     * {@code fieldPath}) stays untouched.
+     * controls, and independent literal extra-field key data stays untouched.
      */
     static void testFieldParameterBindingNegatives() throws Exception {
         System.out.println("-- the declared field/parameter binding fails closed --");
@@ -2515,9 +2615,9 @@ public class FailureArmAuthorityTest {
                         + " operand fails closed");
             }
         }
-        expectDefect(() -> FailureContractRegistry.render(FailureArmId.JSON_TO_WALK,
-            Map.of("fieldPath", "data.k", "actual", "function"), null, "number", null),
-            "the walk arm's contradictory actual parameter and field fail closed");
+        expectDefect(() -> FailureContractRegistry.render(FailureArmId.JSON_STRINGIFY_UNSUPPORTED,
+            Map.of("actual", "function"), "string, number, boolean, or table", "number", null),
+            "the encoding arm's contradictory actual parameter and field fail closed");
         // The remaining bound families run through the same check: the
         // completion refinement, the async shape, and the no-value host
         // return.
@@ -2532,26 +2632,23 @@ public class FailureArmAuthorityTest {
             FailureArmId.HOST_SYNC_RETURN_NOTHING, Map.of("expected", "number"),
             "string", "nothing", null),
             "the no-value host return's contradictory expected fails closed");
-        // The independent parameter data stays untouched: the walk's literal
-        // fieldPath (even a spelling that names a placeholder) never binds
-        // to the actual field.
-        checkEq("value at {actual} is not JSON serializable: function",
-            FailureContractRegistry.render(FailureArmId.JSON_TO_WALK,
-                Map.of("fieldPath", "{actual}", "actual", "function"), null,
-                "function", null).message(),
-            "the walk arm's fieldPath parameter stays independent of the bound "
-                + "actual (the control)");
+        // Opaque key data is substituted once, never scanned as a template.
+        checkEq("extra field '{actual}' in class '@corpus/a/A'",
+            FailureContractRegistry.render(FailureArmId.CLASS_EXTRA_FIELD,
+                Map.of("field", "{actual}", "classId", "@corpus/a/A"), null,
+                null, null).message(),
+            "the extra-field key stays independent of template placeholders (the control)");
         // The serialized Lua arm renderer, under real luajit: the six
         // contradictory pairs fail closed and the matching pairs render.
         renderProbes("field-binding-probe",
-            armProbe("walk-actual", "\"JSON_TO_WALK\", {fieldPath = \"data.k\", actual = \"function\"}, \"-\", nil, \"number\"", "false|"),
+            armProbe("encoding-actual", "\"JSON_STRINGIFY_UNSUPPORTED\", {actual = \"function\"}, \"-\", \"string, number, boolean, or table\", \"number\"", "false|"),
             armProbe("stdjson-actual", "\"JSON_STRINGIFY_UNSUPPORTED\", {actual = \"function\"}, \"-\", \"string, number, boolean, or table\", \"boolean\"", "false|"),
             armProbe("identity-expected", "\"CLASS_IDENTITY\", {expected = \"@corpus/a/A\", actual = \"@corpus/b/B\"}, \"-\", \"@corpus/c/C\", \"@corpus/b/B\"", "false|"),
             armProbe("identity-actual", "\"CLASS_IDENTITY\", {expected = \"@corpus/a/A\", actual = \"@corpus/b/B\"}, \"-\", \"@corpus/a/A\", \"@corpus/c/C\"", "false|"),
             armProbe("signature-expected", "\"FUNCTION_SIGNATURE_MISMATCH\", {expected = \"(number)->number\", actual = \"(number)->string\"}, \"-\", \"(string)->boolean\", \"(number)->string\"", "false|"),
             armProbe("signature-actual", "\"FUNCTION_SIGNATURE_MISMATCH\", {expected = \"(number)->number\", actual = \"(number)->string\"}, \"-\", \"(number)->number\", \"(number)->number\"", "false|"),
-            new RenderProbe("arm", "walk-control", "\"JSON_TO_WALK\", {fieldPath = \"data.k\", actual = \"function\"}, \"-\", nil, \"function\"",
-                "true|E8001|function|value at data.k is not JSON serializable: function", "value.code .. '|' .. value.a .. '|' .. value.m"),
+            new RenderProbe("arm", "encoding-control", "\"JSON_STRINGIFY_UNSUPPORTED\", {actual = \"function\"}, \"-\", \"string, number, boolean, or table\", \"function\"",
+                "true|E8001|function|unsupported type for JSON encoding: function", "value.code .. '|' .. value.a .. '|' .. value.m"),
             new RenderProbe("arm", "signature-control", "\"FUNCTION_SIGNATURE_MISMATCH\", {expected = \"(number)->number\", actual = \"(number)->string\"}, \"-\", \"(number)->number\", \"(number)->string\"",
                 "true|E8010|function signature mismatch: expected (number)->number, got (number)->string", "value.code .. '|' .. value.m"));
     }
@@ -2599,7 +2696,7 @@ public class FailureArmAuthorityTest {
                 Map.of()),
             "the inner render of the surrogate arm stays green (the control)");
         checkEq("cyclic value cannot be encoded as JSON", FailureContractRegistry.renderAtTemplate(
-                FailurePolicyId.JSON_TO_ERROR, 2, null, null, Map.of(), null).message(),
+                FailurePolicyId.JSON_TO_ERROR, 1, null, null, Map.of(), null).message(),
             "a row-addressed TOP_LEVEL render stays green (the control)");
 
         expectDefect(() -> FailureContractRegistry.render(
@@ -3114,8 +3211,8 @@ public class FailureArmAuthorityTest {
             print("extra-parameter|" .. tostring(ok))
             ok = pcall(__arm, "TYPED_BOUNDARY_KIND", {}, "-", "number", "string")
             print("missing-parameter|" .. tostring(ok))
-            ok = pcall(__renderTemplate, "JSON_TO_WALK",
-              {fieldPath = "a", actual = "table", extra = "x"})
+            ok = pcall(__renderTemplate, "JSON_STRINGIFY_UNSUPPORTED",
+              {actual = "table", extra = "x"})
             print("walk-extra-parameter|" .. tostring(ok))
             ok = pcall(__renderTemplate, "HOST_STRING_INVALID_UTF8", {})
             print("parameterless-control|" .. tostring(ok))
@@ -3193,17 +3290,10 @@ public class FailureArmAuthorityTest {
     }
 
     /** One drive case: the same failing value on the three consumers. */
-    private record WalkCase(String label, String arm, String fieldPath, String actual,
+    private record WalkCase(String label, boolean cycle, String fieldPath, String actual,
                             deal.semantic.ir.ClassOpsExecutor.Value oracleValue,
                             String luaRoot,
                             deal.codegen.jvm.JvmRuntime.ClassInstance jvmRoot) {
-
-        /** The arm's own instantiated message for this case. */
-        String message() {
-            return FailureArmId.JSON_TO_WALK_CYCLE.name().equals(arm)
-                ? "cyclic value cannot be encoded as JSON"
-                : "value at " + fieldPath + " is not JSON serializable: " + actual;
-        }
     }
 
     /** The walk drive's cases: the admission positions every named consumer fails. */
@@ -3211,7 +3301,7 @@ public class FailureArmAuthorityTest {
         List<WalkCase> cases = new ArrayList<>();
         // A fractional value at an int-typed declared field: number by the
         // value's own variant, never the declared int text.
-        cases.add(walkCase("wrong-kind-number-field", "JSON_TO_WALK", "age", "boolean",
+        cases.add(walkCase("wrong-kind-number-field", false, "age", "boolean",
             Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Bool(true),
                 "ratio", new ClassOpsExecutor.Value.Number(0.5),
                 "data", walkEmptyTable(), "tags", walkIntArray(1)),
@@ -3220,7 +3310,7 @@ public class FailureArmAuthorityTest {
             Map.of("name", "n", "age", true, "ratio", 0.5, "data",
                 new deal.codegen.jvm.JvmRuntime.Table(), "tags", jvmIntArray(1L))));
         // A nonfinite declared number-array element encodes as null.
-        cases.add(walkCase("array-element-nonfinite", "JSON_TO_WALK", "tags[1]", "number",
+        cases.add(walkCase("array-element-nonfinite", false, "tags[1]", "number",
             Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Number(1),
                 "ratio", new ClassOpsExecutor.Value.Number(0.5),
                 "data", walkEmptyTable(),
@@ -3231,7 +3321,7 @@ public class FailureArmAuthorityTest {
                 new deal.codegen.jvm.JvmRuntime.Table(), "tags",
                 jvmNumberArray(1L, Double.POSITIVE_INFINITY))));
         // A nonfinite declared number field encodes as null.
-        cases.add(walkCase("nonfinite-number-field", "JSON_TO_WALK", "ratio", "number",
+        cases.add(walkCase("nonfinite-number-field", false, "ratio", "number",
             Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Number(1),
                 "ratio", new ClassOpsExecutor.Value.Number(Double.NaN),
                 "data", walkEmptyTable(), "tags", walkIntArray(1)),
@@ -3240,7 +3330,7 @@ public class FailureArmAuthorityTest {
             Map.of("name", "n", "age", 1L, "ratio", Double.NaN, "data",
                 new deal.codegen.jvm.JvmRuntime.Table(), "tags", jvmIntArray(1L))));
         // A table value at a string-typed declared field: its closed kind.
-        cases.add(walkCase("wrong-kind-at-string-field", "JSON_TO_WALK", "name", "table",
+        cases.add(walkCase("wrong-kind-at-string-field", false, "name", "table",
             Map.of("name", walkEmptyTable(), "age", new ClassOpsExecutor.Value.Number(1),
                 "ratio", new ClassOpsExecutor.Value.Number(0.5),
                 "data", walkEmptyTable(), "tags", walkIntArray(1)),
@@ -3250,7 +3340,7 @@ public class FailureArmAuthorityTest {
                 "ratio", 0.5, "data", new deal.codegen.jvm.JvmRuntime.Table(), "tags",
                 jvmIntArray(1L))));
         // An absent required value: the typed-boundary undefined token.
-        cases.add(walkCase("missing-required-field", "JSON_TO_WALK", "age", "undefined",
+        cases.add(walkCase("missing-required-field", false, "age", "undefined",
             Map.of("name", walkString("n"), "ratio", new ClassOpsExecutor.Value.Number(0.5),
                 "data", walkEmptyTable(), "tags", walkIntArray(1)),
             Map.of("name", luaString("n"), "ratio", "0.5",
@@ -3258,7 +3348,7 @@ public class FailureArmAuthorityTest {
             Map.of("name", "n", "ratio", 0.5, "data",
                 new deal.codegen.jvm.JvmRuntime.Table(), "tags", jvmIntArray(1L))));
         // A present null on a non-nullable field: the null token.
-        cases.add(walkCase("present-null-non-nullable", "JSON_TO_WALK", "name", "null",
+        cases.add(walkCase("present-null-non-nullable", false, "name", "null",
             Map.of("name", ClassOpsExecutor.Value.Null.INSTANCE,
                 "age", new ClassOpsExecutor.Value.Number(1),
                 "ratio", new ClassOpsExecutor.Value.Number(0.5),
@@ -3267,7 +3357,7 @@ public class FailureArmAuthorityTest {
                 "data", LUA_TABLE_CARRIER, "tags", "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 1}"),
             walkNullField("name")));
         // An invalid Unicode scalar sequence: invalid-unicode.
-        cases.add(walkCase("lone-unit-string-field", "JSON_TO_WALK", "name",
+        cases.add(walkCase("lone-unit-string-field", false, "name",
             "invalid-unicode",
             Map.of("name", walkString("\uD800"), "age", new ClassOpsExecutor.Value.Number(1),
                 "ratio", new ClassOpsExecutor.Value.Number(0.5),
@@ -3280,7 +3370,7 @@ public class FailureArmAuthorityTest {
         // export-surface entry and host-crossing carrier shape) at a failing
         // declared field: the closed function token on every consumer, never
         // the table spelling.
-        cases.add(walkCase("function-wrapper-at-string-field", "JSON_TO_WALK",
+        cases.add(walkCase("function-wrapper-at-string-field", false,
             "name", "function",
             Map.of("name", walkFunction(), "age", new ClassOpsExecutor.Value.Number(1),
                 "ratio", new ClassOpsExecutor.Value.Number(0.5),
@@ -3294,7 +3384,7 @@ public class FailureArmAuthorityTest {
         // The remaining declared-descriptor kind mismatches (V2's
         // per-descriptor set): each position fails with the failing value's
         // own closed kind on every consumer.
-        cases.add(walkCase("boolean-at-number-field", "JSON_TO_WALK", "age", "boolean",
+        cases.add(walkCase("boolean-at-number-field", false, "age", "boolean",
             Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Bool(true),
                 "ratio", new ClassOpsExecutor.Value.Number(0.5),
                 "data", walkEmptyTable(), "tags", walkIntArray(1)),
@@ -3302,7 +3392,7 @@ public class FailureArmAuthorityTest {
                 "data", LUA_TABLE_CARRIER, "tags", "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 1}"),
             Map.of("name", "n", "age", Boolean.TRUE, "ratio", 0.5, "data",
                 new deal.codegen.jvm.JvmRuntime.Table(), "tags", jvmIntArray(1L))));
-        cases.add(walkCase("string-at-number-field", "JSON_TO_WALK", "ratio", "string",
+        cases.add(walkCase("string-at-number-field", false, "ratio", "string",
             Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Number(1),
                 "ratio", walkString("x"),
                 "data", walkEmptyTable(), "tags", walkIntArray(1)),
@@ -3310,7 +3400,7 @@ public class FailureArmAuthorityTest {
                 "data", LUA_TABLE_CARRIER, "tags", "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 1}"),
             Map.of("name", "n", "age", 1L, "ratio", "x", "data",
                 new deal.codegen.jvm.JvmRuntime.Table(), "tags", jvmIntArray(1L))));
-        cases.add(walkCase("string-at-table-field", "JSON_TO_WALK", "data", "string",
+        cases.add(walkCase("string-at-table-field", false, "data", "string",
             Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Number(1),
                 "ratio", new ClassOpsExecutor.Value.Number(0.5),
                 "data", walkString("x"), "tags", walkIntArray(1)),
@@ -3318,7 +3408,7 @@ public class FailureArmAuthorityTest {
                 "data", luaString("x"), "tags", "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 1}"),
             Map.of("name", "n", "age", 1L, "ratio", 0.5, "data", "x", "tags",
                 jvmIntArray(1L))));
-        cases.add(walkCase("table-at-array-field", "JSON_TO_WALK", "tags", "table",
+        cases.add(walkCase("table-at-array-field", false, "tags", "table",
             Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Number(1),
                 "ratio", new ClassOpsExecutor.Value.Number(0.5),
                 "data", walkEmptyTable(), "tags", walkEmptyTable()),
@@ -3327,7 +3417,7 @@ public class FailureArmAuthorityTest {
             Map.of("name", "n", "age", 1L, "ratio", 0.5, "data",
                 new deal.codegen.jvm.JvmRuntime.Table(), "tags",
                 new deal.codegen.jvm.JvmRuntime.Table())));
-        cases.add(walkCase("number-at-nullable-string-field", "JSON_TO_WALK", "note", "number",
+        cases.add(walkCase("number-at-nullable-string-field", false, "note", "number",
             Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Number(1),
                 "ratio", new ClassOpsExecutor.Value.Number(0.5),
                 "data", walkEmptyTable(), "tags", walkIntArray(1),
@@ -3339,7 +3429,7 @@ public class FailureArmAuthorityTest {
                 new deal.codegen.jvm.JvmRuntime.Table(), "tags", jvmIntArray(1L),
                 "note", 5L)));
         // Lone units are data in declared string fields and nested records.
-        cases.add(walkCase("lone-high-in-table-content", "JSON_TO_WALK", "data.k",
+        cases.add(walkCase("lone-high-in-table-content", false, "data.k",
             "string",
             Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Number(1),
                 "ratio", new ClassOpsExecutor.Value.Number(0.5),
@@ -3349,7 +3439,7 @@ public class FailureArmAuthorityTest {
                 "tags", "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 1}"),
             Map.of("name", "n", "age", 1L, "ratio", 0.5, "data",
                 jvmUnitTable("\uD800"), "tags", jvmIntArray(1L))));
-        cases.add(walkCase("lone-low-in-table-content", "JSON_TO_WALK", "data.k",
+        cases.add(walkCase("lone-low-in-table-content", false, "data.k",
             "string",
             Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Number(1),
                 "ratio", new ClassOpsExecutor.Value.Number(0.5),
@@ -3363,14 +3453,14 @@ public class FailureArmAuthorityTest {
         // failure publishes the value's carried canonical class atom
         // (Error — ClassId.ERROR.text()), never the superseded
         // class:@builtin/Error or v1.2 @/Error spellings.
-        cases.add(new WalkCase("error-carrier-at-root", "JSON_TO_WALK", "", "Error",
+        cases.add(new WalkCase("error-carrier-at-root", false, "", "Error",
             new ClassOpsExecutor.Value.Class(deal.semantic.ir.ClassId.ERROR,
                 List.of(new ClassOpsExecutor.FieldState.Present(walkString("E8001")),
                     new ClassOpsExecutor.FieldState.Present(walkString("x")))),
             "{[__dealCarrierKeys.d] = true, code = \"E8001\", m = \"x\"}",
             new deal.codegen.jvm.JvmRuntime.ErrorValue("E8001", "x")));
         // A path-local table re-entry: the cycle arm, no expected/actual.
-        cases.add(walkCase("cyclic-table-field", "JSON_TO_WALK_CYCLE", null, null,
+        cases.add(walkCase("cyclic-table-field", true, null, null,
             Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Number(1),
                 "ratio", new ClassOpsExecutor.Value.Number(0.5),
                 "data", walkCyclicTable(), "tags", walkIntArray(1)),
@@ -3382,7 +3472,7 @@ public class FailureArmAuthorityTest {
         // it already entered (data -> array -> table -> the same array), so
         // the cycle is detected at the array container and the cycle arm is
         // selected — the second cycle needle site, on every consumer.
-        cases.add(walkCase("cyclic-array-container", "JSON_TO_WALK_CYCLE", null, null,
+        cases.add(walkCase("cyclic-array-container", true, null, null,
             Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Number(1),
                 "ratio", new ClassOpsExecutor.Value.Number(0.5),
                 "data", walkCyclicArrayViaTables(), "tags", walkIntArray(1)),
@@ -3396,7 +3486,7 @@ public class FailureArmAuthorityTest {
         // every consumer. Without the declared-array needle the oracle
         // descends the element descriptor and publishes a walk failure at
         // the deeper table-descriptor position instead of the cycle arm.
-        cases.add(walkCase("declared-array-self-reentry", "JSON_TO_WALK_CYCLE", null,
+        cases.add(walkCase("declared-array-self-reentry", true, null,
             null,
             Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Number(1),
                 "ratio", new ClassOpsExecutor.Value.Number(0.5),
@@ -3414,7 +3504,7 @@ public class FailureArmAuthorityTest {
         // inside the table-subtree seam — the seam continues the class
         // walk's path-local identity set, so the cycle is selected at that
         // re-entry on every consumer.
-        cases.add(walkCase("declared-array-table-mixed-reentry", "JSON_TO_WALK_CYCLE",
+        cases.add(walkCase("declared-array-table-mixed-reentry", true,
             null, null,
             Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Number(1),
                 "ratio", new ClassOpsExecutor.Value.Number(0.5),
@@ -3433,7 +3523,7 @@ public class FailureArmAuthorityTest {
         // arm at the earlier position (the oracle's adapter returns the
         // selected failure before the E8 seam is ever consulted, so the
         // cycle behind it is never traversed).
-        cases.add(walkCase("omitted-function-before-table-cycle", "JSON_TO_WALK_CYCLE", null,
+        cases.add(walkCase("omitted-function-before-table-cycle", true, null,
             null,
             Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Number(1),
                 "ratio", new ClassOpsExecutor.Value.Number(0.5),
@@ -3446,7 +3536,7 @@ public class FailureArmAuthorityTest {
         // a mixed table/array path: 'mix' holds an array whose element is
         // the containing table again, so the re-entry needle is the table
         // entered before the array.
-        cases.add(walkCase("omitted-function-before-mixed-cycle", "JSON_TO_WALK_CYCLE", null,
+        cases.add(walkCase("omitted-function-before-mixed-cycle", true, null,
             null,
             Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Number(1),
                 "ratio", new ClassOpsExecutor.Value.Number(0.5),
@@ -3460,7 +3550,7 @@ public class FailureArmAuthorityTest {
         // the needle's own closed marker still selects the cycle arm (the
         // selection is the walk's first failure, never the presence of an
         // unsupported value anywhere in the subtree).
-        cases.add(walkCase("cycle-before-unsupported-value", "JSON_TO_WALK_CYCLE", null,
+        cases.add(walkCase("cycle-before-unsupported-value", true, null,
             null,
             Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Number(1),
                 "ratio", new ClassOpsExecutor.Value.Number(0.5),
@@ -3471,12 +3561,12 @@ public class FailureArmAuthorityTest {
                 "data", jvmCyclicTableThenFunction(), "tags", jvmIntArray(1L))));
         // A table-content carrier under a key containing braces or the
         // literal spelling of a placeholder: docs/spec-v1.6.md
-        // §Writing table fields permits arbitrary string keys, so the walk's fieldPath carries the key
+        // Arbitrary Record keys remain opaque data while typed field validation selects its own arm.
         // verbatim and the arm's parameter substitution must publish it
         // byte-for-byte on every consumer — never a producer defect, never
         // a placeholder reinterpretation.
         for (String key : BRACE_KEYS) {
-            cases.add(walkCase("brace-key-" + key, "JSON_TO_WALK", key, "number",
+            cases.add(walkCase("brace-key-" + key, false, key, "number",
                 Map.of("name", walkString("n"),
                     "age", new ClassOpsExecutor.Value.Number(1),
                     "ratio", new ClassOpsExecutor.Value.Number(0.5),
@@ -3507,26 +3597,18 @@ public class FailureArmAuthorityTest {
         System.out.println("-- the walk arm's three-consumer drive --");
         List<WalkCase> cases = walkCases();
         String lua = emittedWalkChunk();
-        check(lua.contains("__eT = __arm(__jarmT, __jcparT, __callOrigin(\""
-                + WALK_SPAN + "\"), nil, __jfactT)"),
-            "the production Lua walk call site renders its selected arm at the call origin");
-        check(!lua.contains("__failExpr(\"E8001\", __renderTemplate(\"JSON_TO_WALK\""),
-            "the production Lua walk call site composes no independent message");
+        check(lua.contains("\"JSON_STRINGIFY\"") && lua.contains("__stdlib("),
+            "the production Lua call site executes the builtin stringify operation");
+        check(!lua.contains("__jsonToClassOp(\"" + WALK_ID.text()),
+            "the production Lua call site does not execute a retired class helper");
         String jvm = deal.codegen.jvm.JvmSemanticEmitter.emitProductionProject(
             walkProject(), walkTables(), Map.of(new deal.semantic.ir.ModuleId("arm-walk"),
                 new deal.semantic.ir.ClassFactoryRegistry(Map.of())),
             "ArmWalk", emptySurface()).source();
-        check(jvm.contains("JvmRuntime.arm(deal.semantic.ir.FailureArmId.JSON_TO_WALK, "
-                + "java.util.Map.of(\"fieldPath\", projection.fieldPath, \"actual\", "
-                + "projection.actual), JvmRuntime.callOrigin(\"" + WALK_SPAN
-                + "\"), null, projection.actual)"),
-            "the production JVM walk catch site binds the projection and call origin");
-        check(jvm.contains("JvmRuntime.arm(deal.semantic.ir.FailureArmId.JSON_TO_WALK_CYCLE, "
-                + "java.util.Map.of(), JvmRuntime.callOrigin(\"" + WALK_SPAN
-                + "\"), null, null)"),
-            "the production JVM cycle catch site binds no parameters or tuple fields");
-        check(!jvm.contains("value at \" + projection.fieldPath"),
-            "the production JVM walk catch site composes no independent message");
+        check(jvm.contains("JSON_STRINGIFY") && jvm.contains("JvmRuntime.stdlibInvoke("),
+            "the production JVM call site executes builtin stringify");
+        check(!jvm.contains("JvmJson.toClass("),
+            "the production JVM call site does not execute a retired class helper");
 
         // The oracle leg (the class walk with a supplied call origin = the
         // executing op's own SourceOrigin) and the emitted Lua leg.
@@ -3539,18 +3621,12 @@ public class FailureArmAuthorityTest {
         checkEq(WALK_SPAN, opOriginText,
             "the drive's op carries the pinned origin span");
         List<String> luaRows = runWalkProbe(cases);
-        deal.codegen.jvm.JvmJson.Plan plan = walkPlan();
         Tuple firstOracle = null;
         for (int i = 0; i < cases.size(); i++) {
             WalkCase drive = cases.get(i);
             // The oracle leg: the class walk driven with the executing op's
             // own origin.
-            Map<deal.semantic.ir.ValueId, ClassOpsExecutor.Value> values = new LinkedHashMap<>();
-            values.put(((deal.semantic.ir.KindPayload.JsonToClassPayload) op.payload())
-                .classValue(), drive.oracleValue());
-            ClassOpsExecutor.Outcome<ClassOpsExecutor.Value> outcome =
-                ClassOpsExecutor.executeJsonToClass(op, values, layouts,
-                    deal.semantic.JsonClassAlgorithmAdapter.stringifier(), opOrigin);
+            var outcome = stringifyWalk(drive.oracleValue(), layouts, opOrigin);
             String encoded = switch (drive.label()) {
                 case "array-element-nonfinite" ->
                     "{\"name\":\"n\",\"age\":1,\"ratio\":0.5,\"data\":{},\"tags\":[1,null]}";
@@ -3562,12 +3638,13 @@ public class FailureArmAuthorityTest {
                     "{\"name\":\"n\",\"age\":1,\"ratio\":0.5,\"data\":{\"k\":\"\\ud800\"},\"tags\":[1]}";
                 case "lone-low-in-table-content" ->
                     "{\"name\":\"n\",\"age\":1,\"ratio\":0.5,\"data\":{\"k\":\"\\udc00\"},\"tags\":[1]}";
+                case "error-carrier-at-root" -> "{\"code\":\"E8001\",\"message\":\"x\"}";
                 default -> null;
             };
             if (encoded != null) {
-                String oracleText = outcome instanceof ClassOpsExecutor.Outcome.Success<
-                        ClassOpsExecutor.Value> success
-                        && success.value() instanceof ClassOpsExecutor.Value.String text
+                String oracleText = outcome instanceof deal.semantic.SharedStdlibSemantics.Outcome.Success<
+                        deal.semantic.SharedStdlibSemantics.Value> success
+                        && success.value() instanceof deal.semantic.SharedStdlibSemantics.Value.String text
                         && text.scalar() instanceof deal.semantic.ir.UnicodeScalars.Valid valid
                     ? valid.carrier() : "unexpected failure";
                 checkEq(jsonStructure(encoded), jsonStructure(oracleText),
@@ -3578,36 +3655,26 @@ public class FailureArmAuthorityTest {
                 checkEq(jsonStructure(encoded), jsonStructure(luaRows.get(i).substring(prefix.length())),
                     drive.label() + ": real Lua JSON value encoding");
                 checkEq(jsonStructure(encoded), jsonStructure(
-                    deal.codegen.jvm.JvmJson.toClass(plan, drive.jvmRoot())),
+                    stringifyWalkJvm(drive.jvmRoot())),
                     drive.label() + ": JVM JSON value encoding");
                 continue;
             }
-            check(outcome instanceof ClassOpsExecutor.Outcome.Failure<
-                    ClassOpsExecutor.Value> failure,
-                drive.label() + ": the oracle's class walk fails the value");
-            if (!(outcome instanceof ClassOpsExecutor.Outcome.Failure<
-                    ClassOpsExecutor.Value> failure)) {
+            check(outcome instanceof deal.semantic.SharedStdlibSemantics.Outcome.Failure<?>,
+                drive.label() + ": builtin stringify rejects the reached position");
+            if (!(outcome instanceof deal.semantic.SharedStdlibSemantics.Outcome.Failure<
+                    deal.semantic.SharedStdlibSemantics.Value> failure)) {
                 continue;
             }
             BoundaryFailure rendered = failure.failure().failure();
             Tuple oracle = tupleOf(rendered, failure.failure().origin().sourceId() + ":"
                 + failure.failure().origin().span().startLine() + ":"
                 + failure.failure().origin().span().startColumn());
-            checkEq(new Tuple("E8001", drive.message(), WALK_SPAN,
-                    null, drive.actual()), oracle,
-                drive.label() + ": the oracle renders the bound walk arm's tuple");
+            checkEq(tupleOf(stringifyWalkFailure(drive), WALK_SPAN), oracle,
+                drive.label() + ": builtin stringify renders the reached boundary/cycle arm");
             checkEq(failure.failure().origin(), opOrigin,
                 drive.label() + ": the class walk renders the operand it was given");
-            // The fieldPath metadata is the walk's literal position: a table
-            // key reaches it byte-for-byte (the cycle arm carries no position).
-            if (drive.fieldPath() == null) {
-                checkEq(Map.of(), rendered.metadata(), drive.label()
-                    + ": the cycle arm carries no position metadata");
-            } else {
-                checkEq(drive.fieldPath(), rendered.metadata().get("fieldPath"),
-                    drive.label() + ": the walk's fieldPath metadata is the literal "
-                        + "position (" + drive.fieldPath() + ")");
-            }
+            checkEq(Map.of(), rendered.metadata(), drive.label()
+                + ": typed/cycle arms do not publish retired helper paths");
 
             // The emitted Lua leg, under real luajit. The tuple's origin is
             // the row's own rendered origin (never a test constant), so an
@@ -3622,23 +3689,15 @@ public class FailureArmAuthorityTest {
 
             // The emitted JVM leg (the shared walk machinery the artifact
             // links), rendered exactly like the emitted catch site.
-            deal.codegen.jvm.JvmJson.Projection projection = null;
+            deal.codegen.jvm.JvmRuntime.DealError jvmError = null;
             try {
-                deal.codegen.jvm.JvmJson.toClass(plan, drive.jvmRoot());
-            } catch (deal.codegen.jvm.JvmJson.Projection caught) {
-                projection = caught;
+                stringifyWalkJvm(drive.jvmRoot());
+            } catch (deal.codegen.jvm.JvmRuntime.DealError caught) {
+                jvmError = caught;
             }
-            check(projection != null,
-                drive.label() + ": the JVM walk machinery fails the value");
-            if (projection == null) {
-                continue;
-            }
-            deal.codegen.jvm.JvmRuntime.DealError jvmError = projection.cycle
-                ? deal.codegen.jvm.JvmRuntime.arm(FailureArmId.JSON_TO_WALK_CYCLE,
-                    Map.of(), WALK_SPAN, null, null)
-                : deal.codegen.jvm.JvmRuntime.arm(FailureArmId.JSON_TO_WALK,
-                    Map.of("fieldPath", projection.fieldPath, "actual",
-                        projection.actual), WALK_SPAN, null, projection.actual);
+            check(jvmError != null,
+                drive.label() + ": JVM builtin stringify rejects the value");
+            if (jvmError == null) continue;
             // The JVM leg's origin is the rendered DealError's own origin
             // (never a test constant).
             checkEq(null, firstDifferingField(oracle, new Tuple(jvmError.code,
@@ -3648,13 +3707,8 @@ public class FailureArmAuthorityTest {
             checkEq(WALK_SPAN, jvmError.origin,
                 drive.label() + ": the JVM arm render carries the origin operand the "
                     + "catch site carries");
-            checkEq(drive.arm().equals("JSON_TO_WALK_CYCLE"), projection.cycle,
-                drive.label() + ": the JVM walk selects the same closed arm");
-            if (drive.fieldPath() != null) {
-                checkEq(drive.fieldPath(), projection.fieldPath, drive.label()
-                    + ": the JVM walk's projection path is the literal position ("
-                    + drive.fieldPath() + ")");
-            }
+            checkEq(rendered.code().name(), jvmError.code,
+                drive.label() + ": JVM selects the same closed failure code");
             if (i == 0) {
                 firstOracle = oracle;
             }
@@ -3670,11 +3724,11 @@ public class FailureArmAuthorityTest {
                 withOrigin(luaRows.get(0), "consumer-anchor.deal:1:1"))),
             "a substituted emitted Lua origin is reported by field name span");
         WalkCase firstCase = cases.get(0);
+        BoundaryFailure firstFailure = stringifyWalkFailure(firstCase);
         deal.codegen.jvm.JvmRuntime.DealError substitutedOrigin =
-            deal.codegen.jvm.JvmRuntime.arm(FailureArmId.JSON_TO_WALK,
-                Map.of("fieldPath", firstCase.fieldPath(), "actual",
-                    firstCase.actual()), "consumer-anchor.deal:1:1", null,
-                firstCase.actual());
+            deal.codegen.jvm.JvmRuntime.arm(FailureArmId.TYPED_BOUNDARY_KIND,
+                Map.of("kind", "number"), "consumer-anchor.deal:1:1",
+                firstFailure.expected(), firstFailure.actual());
         checkEq("span", firstDifferingField(firstOracle, new Tuple(
                 substitutedOrigin.code, substitutedOrigin.msg, substitutedOrigin.origin,
                 substitutedOrigin.expected, substitutedOrigin.actual)),
@@ -3701,8 +3755,8 @@ public class FailureArmAuthorityTest {
      */
     static void testDeclaredArraySharedReferenceControl() throws Exception {
         System.out.println("-- the declared-array needle's shared-reference control --");
-        String expectedText = "{\"name\":\"n\",\"age\":1.0,\"ratio\":0.5,"
-            + "\"data\":{},\"tags\":[1.0],\"grid\":[[],[]]}";
+        String expectedText = "{\"name\":\"n\",\"age\":1,\"ratio\":0.5,"
+            + "\"data\":{},\"tags\":[1],\"grid\":[[],[]]}";
 
         // The oracle leg: the production adapter's class walk with the
         // executing op's own origin.
@@ -3714,15 +3768,11 @@ public class FailureArmAuthorityTest {
         oracleFields.put("data", walkEmptyTable());
         oracleFields.put("tags", walkIntArray(1));
         oracleFields.put("grid", walkRepeatedInnerArray());
-        ClassOpsExecutor.Outcome<ClassOpsExecutor.Value> outcome =
-            ClassOpsExecutor.executeJsonToClass(op,
-                Map.of(((KindPayload.JsonToClassPayload) op.payload()).classValue(),
-                    walkOracleInstance(oracleFields)),
-                Map.of(WALK_ID, walkLayout()),
-                deal.semantic.JsonClassAlgorithmAdapter.stringifier(), op.origin());
-        check(outcome instanceof ClassOpsExecutor.Outcome.Success<
-                ClassOpsExecutor.Value> success
-                && success.value() instanceof ClassOpsExecutor.Value.String text
+        var outcome = stringifyWalk(walkOracleInstance(oracleFields),
+            Map.of(WALK_ID, walkLayout()), op.origin());
+        check(outcome instanceof deal.semantic.SharedStdlibSemantics.Outcome.Success<
+                deal.semantic.SharedStdlibSemantics.Value> success
+                && success.value() instanceof deal.semantic.SharedStdlibSemantics.Value.String text
                 && text.scalar() instanceof deal.semantic.ir.UnicodeScalars.Valid valid
                 && valid.carrier().equals(expectedText),
             "the oracle's declared-array walk admits the shared noncyclic inner array "
@@ -3735,7 +3785,7 @@ public class FailureArmAuthorityTest {
                 "name", luaString("n"), "age", "1", "ratio", "0.5",
                 "data", LUA_TABLE_CARRIER, "tags", "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 1}",
                 "grid", "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 2, sharedInner, sharedInner}")) + "\n"
-            + "local ok, text = __jsonToClassOp(" + quote(WALK_ID.text()) + ", root)\n"
+            + "local ok, text = pcall(__stdlib, \"STDLIB_CALL\", \"JSON_STRINGIFY\", \"walk\", \"-\", \"-\", " + quote(WALK_SPAN) + ", root)\n"
             + "if ok then print(\"shared-array-ref|OK|\" .. text)\n"
             + "else print(\"shared-array-ref|FAIL|\") end\n";
         List<String> rows = runProbe(emittedWalkChunk(), "arm-walk", body,
@@ -3745,7 +3795,7 @@ public class FailureArmAuthorityTest {
                 + "sibling elements and serializes " + expectedText);
 
         // The emitted JVM leg (the shared walk machinery the artifact links).
-        String jvmText = deal.codegen.jvm.JvmJson.toClass(walkPlan(),
+        String jvmText = stringifyWalkJvm(
             walkJvmInstance(Map.of(
                 "name", "n", "age", 1L, "ratio", 0.5, "data",
                 new deal.codegen.jvm.JvmRuntime.Table(), "tags", jvmIntArray(1L),
@@ -3777,8 +3827,8 @@ public class FailureArmAuthorityTest {
             + "target renderers --");
         // The JVM target's rendering boundary (the emitted catch site's own
         // call), on both walk arms.
-        expectDefect(() -> deal.codegen.jvm.JvmRuntime.arm(FailureArmId.JSON_TO_WALK,
-            Map.of("fieldPath", "data.k", "actual", "function"), null, null,
+        expectDefect(() -> deal.codegen.jvm.JvmRuntime.arm(FailureArmId.JSON_STRINGIFY_UNSUPPORTED,
+            Map.of("actual", "function"), null, "string, number, boolean, or table",
             "function"),
             "the JVM walk-arm render rejects an absent origin operand");
         expectDefect(() -> deal.codegen.jvm.JvmRuntime.arm(
@@ -3787,12 +3837,12 @@ public class FailureArmAuthorityTest {
         // The supplied operand stays green on both arms (the controls), and
         // the rendered tuple carries it.
         deal.codegen.jvm.JvmRuntime.DealError jvmWalk =
-            deal.codegen.jvm.JvmRuntime.arm(FailureArmId.JSON_TO_WALK,
-                Map.of("fieldPath", "data.k", "actual", "function"), WALK_SPAN, null,
+            deal.codegen.jvm.JvmRuntime.arm(FailureArmId.JSON_STRINGIFY_UNSUPPORTED,
+                Map.of("actual", "function"), WALK_SPAN, "string, number, boolean, or table",
                 "function");
         checkEq(WALK_SPAN, jvmWalk.origin,
             "the JVM walk-arm render carries the supplied origin operand");
-        checkEq("value at data.k is not JSON serializable: function", jvmWalk.msg,
+        checkEq("unsupported type for JSON encoding: function", jvmWalk.msg,
             "the JVM walk-arm render keeps the arm's own message with its origin");
         deal.codegen.jvm.JvmRuntime.DealError jvmCycle =
             deal.codegen.jvm.JvmRuntime.arm(FailureArmId.JSON_TO_WALK_CYCLE, Map.of(),
@@ -3804,13 +3854,13 @@ public class FailureArmAuthorityTest {
 
         // The emitted Lua target's rendering boundary, under real luajit.
         List<String> rows = runPreludeProbe("""
-            local ok = pcall(__arm, "JSON_TO_WALK",
-              {fieldPath = "data.k", actual = "function"}, nil, nil, "function")
+            local ok = pcall(__arm, "JSON_STRINGIFY_UNSUPPORTED",
+              {actual = "function"}, nil, "string, number, boolean, or table", "function")
             print("walk-absent-origin|" .. tostring(ok))
             ok = pcall(__arm, "JSON_TO_WALK_CYCLE", nil, nil, nil, nil)
             print("cycle-absent-origin|" .. tostring(ok))
-            ok, value = pcall(__arm, "JSON_TO_WALK",
-              {fieldPath = "data.k", actual = "function"}, %s, nil, "function")
+            ok, value = pcall(__arm, "JSON_STRINGIFY_UNSUPPORTED",
+              {actual = "function"}, %s, "string, number, boolean, or table", "function")
             print("walk-origin-control|" .. tostring(ok) .. "|"
               .. (ok and (value.o .. "|" .. value.m) or tostring(value)))
             ok, value = pcall(__arm, "JSON_TO_WALK_CYCLE", nil, %s, nil, nil)
@@ -3825,7 +3875,7 @@ public class FailureArmAuthorityTest {
             "the emitted prelude's cycle-arm render fails closed when the render "
                 + "carries no origin operand");
         checkEq("walk-origin-control|true|" + WALK_SPAN
-                + "|value at data.k is not JSON serializable: function", rows.get(2),
+                + "|unsupported type for JSON encoding: function", rows.get(2),
             "the emitted prelude's walk-arm render carries the supplied origin "
                 + "operand");
         checkEq("cycle-origin-control|true|" + WALK_SPAN
@@ -3836,14 +3886,10 @@ public class FailureArmAuthorityTest {
         // The oracle's class walk keeps its landed rejection of an absent
         // call origin (the third consumer of the same contract).
         deal.semantic.ir.SemanticOp op = walkJsonOp();
-        Map<deal.semantic.ir.ValueId, ClassOpsExecutor.Value> values =
-            new LinkedHashMap<>();
-        values.put(((KindPayload.JsonToClassPayload) op.payload()).classValue(),
-            new ClassOpsExecutor.Value.Class(WALK_ID, List.of()));
         boolean oracleRejected = false;
         try {
-            ClassOpsExecutor.executeJsonToClass(op, values, Map.of(WALK_ID, walkLayout()),
-                deal.semantic.JsonClassAlgorithmAdapter.stringifier(), null);
+            stringifyWalk(new ClassOpsExecutor.Value.Class(WALK_ID, List.of()),
+                Map.of(WALK_ID, walkLayout()), null);
         } catch (NullPointerException expected) {
             oracleRejected = true;
         }
@@ -3853,17 +3899,11 @@ public class FailureArmAuthorityTest {
     }
 
     /**
-     * The present-null admission of the emitted Lua walk (ISSUE-0698's
-     * production realization of the @jsonable family): the walk normalizes
-     * the carrier's {@code __NULL} sentinel to the language null and the
-     * declared descriptor decides — a nullable position admits it and
-     * serializes JSON null (the corpus fixtures' pinned three-state
-     * roundtrip: {@code jsonable-optional-nullable} and the sibling
-     * roundtrip fixtures execute runtime-ok on both real toolchains), while
-     * a non-nullable position keeps the closed typed-boundary "null"
-     * projection (the walk-cases drive's {@code present-null-non-nullable}
-     * row). The oracle and the JVM walk publish the same JSON null at this
-     * position, so the three consumers agree on the corrected admission.
+     * Builtin stringify normalizes the Lua carrier's {@code __NULL}
+     * sentinel to language null. The declared descriptor decides: nullable
+     * fields encode JSON null, while non-nullable fields reject with the
+     * typed-boundary "null" projection. Execute the same declared positions
+     * in the Oracle, emitted Lua and JVM, independently of absent optionals.
      */
     static void testPresentNullAdmission() throws Exception {
         System.out.println("-- the present-null admission of the emitted walk --");
@@ -3888,13 +3928,13 @@ public class FailureArmAuthorityTest {
         jvmFields.put("data", new deal.codegen.jvm.JvmRuntime.Table());
         jvmFields.put("tags", jvmIntArray(1L));
         jvmFields.put("note", null);
-        String expectedText = "{\"name\":\"n\",\"age\":1.0,\"ratio\":0.5,"
-            + "\"data\":{},\"tags\":[1.0],\"note\":null}";
+        String expectedText = "{\"name\":\"n\",\"age\":1,\"ratio\":0.5,"
+            + "\"data\":{},\"tags\":[1],\"note\":null}";
 
         // The emitted Lua leg under real luajit: the walk admits the
         // present null on the nullable field and serializes JSON null.
         String body = "local root = " + walkLuaRoot(luaFields) + "\n"
-            + "local ok, text = __jsonToClassOp(\"" + WALK_ID.text() + "\", root)\n"
+            + "local ok, text = pcall(__stdlib, \"STDLIB_CALL\", \"JSON_STRINGIFY\", \"walk\", \"-\", \"-\", " + quote(WALK_SPAN) + ", root)\n"
             + "if ok then print(\"present-null-nullable|OK|\" .. text)\n"
             + "else print(\"present-null-nullable|FAIL|\") end\n";
         List<String> rows = runProbe(emittedWalkChunk(), "arm-walk", body,
@@ -3906,21 +3946,16 @@ public class FailureArmAuthorityTest {
         // The oracle and the JVM walk publish the same JSON null at this
         // position (the three-consumer agreement on the corrected admission).
         deal.semantic.ir.SemanticOp op = walkJsonOp();
-        ClassOpsExecutor.Outcome<ClassOpsExecutor.Value> oracleOutcome =
-            ClassOpsExecutor.executeJsonToClass(op,
-                Map.of(((KindPayload.JsonToClassPayload) op.payload()).classValue(),
-                    walkOracleInstance(oracleFields)),
-                Map.of(WALK_ID, walkLayout()),
-                deal.semantic.JsonClassAlgorithmAdapter.stringifier(), op.origin());
-        check(oracleOutcome instanceof ClassOpsExecutor.Outcome.Success<
-                ClassOpsExecutor.Value> success
-                && success.value() instanceof ClassOpsExecutor.Value.String text
+        var oracleOutcome = stringifyWalk(walkOracleInstance(oracleFields),
+            Map.of(WALK_ID, walkLayout()), op.origin());
+        check(oracleOutcome instanceof deal.semantic.SharedStdlibSemantics.Outcome.Success<
+                deal.semantic.SharedStdlibSemantics.Value> success
+                && success.value() instanceof deal.semantic.SharedStdlibSemantics.Value.String text
                 && text.scalar() instanceof deal.semantic.ir.UnicodeScalars.Valid valid
                 && valid.carrier().equals(expectedText),
             "the oracle's landed check set admits the present null on the nullable "
                 + "field and serializes JSON null; got " + oracleOutcome);
-        String jvmText = deal.codegen.jvm.JvmJson.toClass(walkPlan(),
-            walkJvmInstance(jvmFields));
+        String jvmText = stringifyWalkJvm(walkJvmInstance(jvmFields));
         checkEq(expectedText, jvmText,
             "the JVM walk's landed check set admits the present null on the nullable "
                 + "field and serializes JSON null");
@@ -3952,16 +3987,13 @@ public class FailureArmAuthorityTest {
         nonfiniteIntField.put("ratio", new ClassOpsExecutor.Value.Number(0.5));
         nonfiniteIntField.put("data", walkEmptyTable());
         nonfiniteIntField.put("tags", walkIntArray(1));
-        ClassOpsExecutor.Outcome<ClassOpsExecutor.Value> nonfiniteOutcome =
-            ClassOpsExecutor.executeJsonToClass(op,
-                Map.of(((deal.semantic.ir.KindPayload.JsonToClassPayload) op.payload())
-                    .classValue(), walkOracleInstance(op, nonfiniteIntField)), layouts,
-                deal.semantic.JsonClassAlgorithmAdapter.stringifier(), callOrigin);
-        check(nonfiniteOutcome instanceof ClassOpsExecutor.Outcome.Success<
-                ClassOpsExecutor.Value> success
-                && success.value() instanceof ClassOpsExecutor.Value.String text
+        var nonfiniteOutcome = stringifyWalk(walkOracleInstance(nonfiniteIntField),
+            layouts, callOrigin);
+        check(nonfiniteOutcome instanceof deal.semantic.SharedStdlibSemantics.Outcome.Success<
+                deal.semantic.SharedStdlibSemantics.Value> success
+                && success.value() instanceof deal.semantic.SharedStdlibSemantics.Value.String text
                 && text.scalar() instanceof deal.semantic.ir.UnicodeScalars.Valid valid
-                && valid.carrier().equals("{\"name\":\"n\",\"age\":null,\"ratio\":0.5,\"data\":{},\"tags\":[1.0]}"),
+                && valid.carrier().equals("{\"name\":\"n\",\"age\":null,\"ratio\":0.5,\"data\":{},\"tags\":[1]}"),
             "nonfinite declared number encodes as null; got " + nonfiniteOutcome);
 
         Map<String, ClassOpsExecutor.Value> fractionalElement = new LinkedHashMap<>();
@@ -4057,23 +4089,26 @@ public class FailureArmAuthorityTest {
             deal.semantic.ir.SourceOrigin callOrigin, String callOriginText,
             String label, Map<String, ClassOpsExecutor.Value> fields, String fieldPath,
             String token) {
-        Map<deal.semantic.ir.ValueId, ClassOpsExecutor.Value> values =
-            new LinkedHashMap<>();
-        values.put(((deal.semantic.ir.KindPayload.JsonToClassPayload) op.payload())
-            .classValue(), walkOracleInstance(op, fields));
-        ClassOpsExecutor.Outcome<ClassOpsExecutor.Value> outcome =
-            ClassOpsExecutor.executeJsonToClass(op, values, layouts,
-                deal.semantic.JsonClassAlgorithmAdapter.stringifier(), callOrigin);
-        check(outcome instanceof ClassOpsExecutor.Outcome.Failure<
-                ClassOpsExecutor.Value> failure,
+        var outcome = stringifyWalk(walkOracleInstance(layouts.get(WALK_ID), fields),
+            layouts, callOrigin);
+        check(outcome instanceof deal.semantic.SharedStdlibSemantics.Outcome.Failure<
+                deal.semantic.SharedStdlibSemantics.Value> failure,
             label + ": the oracle's class walk fails the value");
-        if (!(outcome instanceof ClassOpsExecutor.Outcome.Failure<
-                ClassOpsExecutor.Value> failure)) {
+        if (!(outcome instanceof deal.semantic.SharedStdlibSemantics.Outcome.Failure<
+                deal.semantic.SharedStdlibSemantics.Value> failure)) {
             return;
         }
-        checkEq(new Tuple("E8001",
-                "value at " + fieldPath + " is not JSON serializable: " + token,
-                callOriginText, null, token),
+        String fieldName = fieldPath.contains("[") ? fieldPath.substring(0, fieldPath.indexOf('[')) : fieldPath;
+        RuntimeDescriptor descriptor = layouts.get(WALK_ID).fields().stream()
+            .filter(f -> f.name().equals(fieldName)).findFirst().orElseThrow().descriptor();
+        BoundaryFailure expected;
+        if (fieldPath.contains("[")) {
+            RuntimeDescriptor element = ((RuntimeDescriptor.Array) descriptor).element();
+            BoundaryFailure leaf = deal.semantic.ir.FailureProjections.kindFailure(element.canonicalSpecText(), token);
+            expected = FailureContractRegistry.render(FailureArmId.ARRAY_ELEMENT_KIND,
+                Map.of("oneBasedIndex", "1"), element.canonicalSpecText(), token, leaf);
+        } else expected = deal.semantic.ir.FailureProjections.kindFailure(descriptor.canonicalSpecText(), token);
+        checkEq(tupleOf(expected, callOriginText),
             tupleOf(failure.failure().failure(), callOriginText),
             label + ": the oracle renders the walk arm's tuple with the failing "
                 + "value's own " + token + " token, never the declared descriptor "
@@ -4090,16 +4125,11 @@ public class FailureArmAuthorityTest {
             Map<deal.semantic.ir.ClassId, deal.semantic.ir.ClassLayout> layouts,
             deal.semantic.ir.SourceOrigin callOrigin, String label,
             Map<String, ClassOpsExecutor.Value> fields, String expectedJson) {
-        Map<deal.semantic.ir.ValueId, ClassOpsExecutor.Value> values =
-            new LinkedHashMap<>();
-        values.put(((deal.semantic.ir.KindPayload.JsonToClassPayload) op.payload())
-            .classValue(), walkOracleInstance(op, fields));
-        ClassOpsExecutor.Outcome<ClassOpsExecutor.Value> outcome =
-            ClassOpsExecutor.executeJsonToClass(op, values, layouts,
-                deal.semantic.JsonClassAlgorithmAdapter.stringifier(), callOrigin);
-        check(outcome instanceof ClassOpsExecutor.Outcome.Success<
-                ClassOpsExecutor.Value> success
-                && success.value() instanceof ClassOpsExecutor.Value.String text
+        var outcome = stringifyWalk(walkOracleInstance(layouts.get(WALK_ID), fields),
+            layouts, callOrigin);
+        check(outcome instanceof deal.semantic.SharedStdlibSemantics.Outcome.Success<
+                deal.semantic.SharedStdlibSemantics.Value> success
+                && success.value() instanceof deal.semantic.SharedStdlibSemantics.Value.String text
                 && text.scalar() instanceof deal.semantic.ir.UnicodeScalars.Valid valid
                 && valid.carrier().equals(expectedJson),
             label + ": the descriptor's own kind at its position is admitted and "
@@ -4107,12 +4137,12 @@ public class FailureArmAuthorityTest {
     }
 
     /** A one-field drive case of the walk's three-consumer comparison. */
-    private static WalkCase walkCase(String label, String arm, String fieldPath,
+    private static WalkCase walkCase(String label, boolean cycle, String fieldPath,
                                      String actual,
                                      Map<String, ClassOpsExecutor.Value> oracleFields,
                                      Map<String, String> luaFields,
                                      Map<String, Object> jvmFields) {
-        return new WalkCase(label, arm, fieldPath, actual,
+        return new WalkCase(label, cycle, fieldPath, actual,
             walkOracleInstance(oracleFields), walkLuaRoot(luaFields),
             walkJvmInstance(jvmFields));
     }
@@ -4134,15 +4164,6 @@ public class FailureArmAuthorityTest {
                 : new ClassOpsExecutor.FieldState.Present(value));
         }
         return new ClassOpsExecutor.Value.Class(WALK_ID, List.copyOf(states));
-    }
-
-    /** One oracle walk instance of the op's payload layout (declaration order). */
-    private static ClassOpsExecutor.Value walkOracleInstance(
-            deal.semantic.ir.SemanticOp op,
-            Map<String, ClassOpsExecutor.Value> fields) {
-        return walkOracleInstance(
-            ((deal.semantic.ir.KindPayload.JsonToClassPayload) op.payload()).layout(),
-            fields);
     }
 
     /** One emitted-Lua walk instance of the drive's layout (the carrier shape). */
@@ -4432,32 +4453,92 @@ public class FailureArmAuthorityTest {
 
     private static final String LUA_TABLE_CARRIER = "{[__dealCarrierKeys.t] = true, [__dealCarrierKeys.keys] = {}}";
 
-    /** The JVM walk plan of the drive's layout. */
-    private static deal.codegen.jvm.JvmJson.Plan walkPlan() {
-        var fields = new ArrayList<>(List.of(
-                new deal.codegen.jvm.JvmJson.Field("name", "string", false, "string"),
-                new deal.codegen.jvm.JvmJson.Field("age", "number", false, "number"),
-                new deal.codegen.jvm.JvmJson.Field("ratio", "number", false, "number"),
-                new deal.codegen.jvm.JvmJson.Field("data", "table", false, "table"),
-                new deal.codegen.jvm.JvmJson.Field("tags", "array(number)", false, "number"),
-                new deal.codegen.jvm.JvmJson.Field("note", "nullable:string", true,
-                    "string"),
-                new deal.codegen.jvm.JvmJson.Field("grid", "array(array(table))", true,
-                    "table"),
-                new deal.codegen.jvm.JvmJson.Field("matrix", "array(table)", true,
-                    "table")
-            ));
-        for (String key : BRACE_KEYS) fields.add(new deal.codegen.jvm.JvmJson.Field(
-            key, "string", true, "string"));
-        return new deal.codegen.jvm.JvmJson.Plan(WALK_ID.text(),
-            fields.toArray(deal.codegen.jvm.JvmJson.Field[]::new), null);
+    /** Live adapters retain backing identities before visiting any descendants. */
+    private static deal.semantic.SharedStdlibSemantics.Outcome<deal.semantic.SharedStdlibSemantics.Value>
+            stringifyWalk(ClassOpsExecutor.Value root,
+                Map<deal.semantic.ir.ClassId, deal.semantic.ir.ClassLayout> layouts,
+                deal.semantic.ir.SourceOrigin origin) {
+        return deal.semantic.SharedStdlibSemantics.jsonStringify(origin,
+            stringifyWalkValue(root, layouts, new java.util.IdentityHashMap<>()));
     }
 
-    /**
-     * The emitted Lua probe's rows (one row per drive case): the walk's own
-     * {@code __jsonToClassOp} result rendered through the prelude's arm
-     * renderer at the op's origin.
-     */
+    private static deal.semantic.SharedStdlibSemantics.Value stringifyWalkValue(
+            ClassOpsExecutor.Value value,
+            Map<deal.semantic.ir.ClassId, deal.semantic.ir.ClassLayout> layouts,
+            java.util.IdentityHashMap<Object, deal.semantic.SharedStdlibSemantics.Value> views) {
+        Object identity = switch (value) {
+            case ClassOpsExecutor.Value.Table table -> table.table();
+            case ClassOpsExecutor.Value.Array array -> array.array();
+            default -> value;
+        };
+        var existing = views.get(identity);
+        if (existing != null) return existing;
+        deal.semantic.SharedStdlibSemantics.Value result = switch (value) {
+            case ClassOpsExecutor.Value.Null ignored -> deal.semantic.SharedStdlibSemantics.Value.Null.INSTANCE;
+            case ClassOpsExecutor.Value.Undefined ignored -> deal.semantic.SharedStdlibSemantics.Value.Undefined.INSTANCE;
+            case ClassOpsExecutor.Value.Missing ignored -> new deal.semantic.SharedStdlibSemantics.Value.Other(ActualKind.MISSING, null);
+            case ClassOpsExecutor.Value.Bool bool -> new deal.semantic.SharedStdlibSemantics.Value.Bool(bool.value());
+            case ClassOpsExecutor.Value.Number number -> new deal.semantic.SharedStdlibSemantics.Value.Number(number.value());
+            case ClassOpsExecutor.Value.String string -> new deal.semantic.SharedStdlibSemantics.Value.String(string.scalar());
+            case ClassOpsExecutor.Value.Function function -> new deal.semantic.SharedStdlibSemantics.Value.Other(
+                ActualKind.FUNCTION, null, BoundaryValueView.ofFunction(function.signature()));
+            case ClassOpsExecutor.Value.Array array -> new deal.semantic.SharedStdlibSemantics.Value.Array(
+                deal.semantic.ir.SemanticArray.live(array.array()::size,
+                    i -> stringifyWalkValue(array.array().elementAt(i), layouts, views)),
+                array.elementDescriptor());
+            case ClassOpsExecutor.Value.Table table -> new deal.semantic.SharedStdlibSemantics.Value.Table(
+                deal.semantic.ir.SemanticTable.live(table.table()::keys, key -> {
+                    var slot = table.table().get(key);
+                    return slot instanceof deal.semantic.ir.SemanticTable.Lookup.Present<ClassOpsExecutor.Value> present
+                        ? new deal.semantic.ir.SemanticTable.Lookup.Present<>(stringifyWalkValue(present.value(), layouts, views))
+                        : new deal.semantic.ir.SemanticTable.Lookup.Missing<>();
+                }));
+            case ClassOpsExecutor.Value.Class instance -> {
+                var layout = instance.classId().equals(deal.semantic.ir.ClassId.ERROR)
+                    ? deal.semantic.ir.ClassLayout.BUILTIN_ERROR : layouts.get(instance.classId());
+                if (layout == null) throw new AssertionError("No exact test layout for " + instance.classId());
+                yield new deal.semantic.SharedStdlibSemantics.Value.Table(
+                    deal.semantic.ir.SemanticTable.live(
+                        () -> layout.fields().stream().map(f -> f.name()).toList(), key -> {
+                            int index = layout.fields().stream().map(f -> f.name()).toList().indexOf(key);
+                            return index < instance.fields().size()
+                                && instance.fields().get(index) instanceof ClassOpsExecutor.FieldState.Present present
+                                ? new deal.semantic.ir.SemanticTable.Lookup.Present<>(stringifyWalkValue(present.value(), layouts, views))
+                                : new deal.semantic.ir.SemanticTable.Lookup.Missing<>();
+                        }), layout);
+            }
+        };
+        views.put(identity, result);
+        return result;
+    }
+
+    private static String walkRuntimeDescriptor(RuntimeDescriptor descriptor) {
+        return switch (descriptor) {
+            case RuntimeDescriptor.Array array -> "array(" + walkRuntimeDescriptor(array.element()) + ")";
+            case RuntimeDescriptor.Nullable nullable ->
+                (nullable.admitsNull() ? (nullable.admitsUndefined() ? "nullableundefinedable" : "nullable")
+                    : "undefinedable") + "(" + walkRuntimeDescriptor(nullable.inner()) + ")";
+            case RuntimeDescriptor.Table ignored -> "record";
+            default -> descriptor.canonicalSpecText();
+        };
+    }
+
+    private static String stringifyWalkJvm(Object root) {
+        return (String) deal.codegen.jvm.JvmRuntime.stdlib("STDLIB_CALL", "JSON_STRINGIFY",
+            "walk", "-", "-", WALK_SPAN, new Object[] {root});
+    }
+
+    private static BoundaryFailure stringifyWalkFailure(WalkCase drive) {
+        if (drive.cycle())
+            return FailureContractRegistry.render(FailureArmId.JSON_TO_WALK_CYCLE, Map.of(), null, null, null);
+        if (drive.label().equals("missing-required-field"))
+            return deal.semantic.ir.FailureProjections.kindFailure(WALK_ID.text(), WALK_ID.text());
+        RuntimeDescriptor descriptor = walkLayout().fields().stream()
+            .filter(f -> f.name().equals(drive.fieldPath())).findFirst().orElseThrow().descriptor();
+        return deal.semantic.ir.FailureProjections.kindFailure(descriptor.canonicalSpecText(), drive.actual());
+    }
+
+    /** Compare JSON values independently of textual number spelling and key order. */
     private static Object jsonStructure(String text) {
         var parsed = deal.semantic.SharedStdlibSemantics.jsonParse(
             new deal.semantic.ir.SourceOrigin("probe.deal",
@@ -4523,19 +4604,19 @@ public class FailureArmAuthorityTest {
         // first.
         body.append("local fnCycTable = {[__dealCarrierKeys.t] = true, [__dealCarrierKeys.keys] = {bad = true, "
             + "self = true}}\n");
-        body.append("fnCycTable.bad = function() end\n");
+        body.append("fnCycTable.bad = {[__dealCarrierKeys.fn] = true, f = function() end, sig = \"()->number\"}\n");
         body.append("fnCycTable.self = fnCycTable\n");
         // The same shape with the cycle behind the failure closed through a
         // mixed table/array path.
         body.append("local fnMixTable = {[__dealCarrierKeys.t] = true, [__dealCarrierKeys.keys] = {bad = true, "
             + "mix = true}}\n");
-        body.append("fnMixTable.bad = function() end\n");
+        body.append("fnMixTable.bad = {[__dealCarrierKeys.fn] = true, f = function() end, sig = \"()->number\"}\n");
         body.append("fnMixTable.mix = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, fnMixTable}\n");
         // The cycle-first control over the same graph shape.
         body.append("local cycFirstTable = {[__dealCarrierKeys.t] = true, [__dealCarrierKeys.keys] = {self = true, "
             + "zbad = true}}\n");
         body.append("cycFirstTable.self = cycFirstTable\n");
-        body.append("cycFirstTable.zbad = function() end\n");
+        body.append("cycFirstTable.zbad = {[__dealCarrierKeys.fn] = true, f = function() end, sig = \"()->number\"}\n");
         body.append("local cases = {\n");
         for (WalkCase drive : cases) {
             body.append("  {label = ").append(quote(drive.label())).append(", root = ")
@@ -4544,11 +4625,10 @@ public class FailureArmAuthorityTest {
         body.append("}\n");
         body.append("for i = 1, #cases do\n");
         body.append("  local c = cases[i]\n");
-        body.append("  local ok, text, arm, params, actual = "
-            + "__jsonToClassOp(\"").append(WALK_ID.text()).append("\", c.root)\n");
-        body.append("  if ok then print(c.label .. \"|OK|\" .. text) else\n");
-        body.append("  local value = __arm(arm, params, \"")
-            .append(WALK_SPAN).append("\", nil, actual)\n");
+        body.append("  local ok, value = pcall(__stdlib, \"STDLIB_CALL\", "
+            + "\"JSON_STRINGIFY\", \"walk\", \"-\", \"-\", \"")
+            .append(WALK_SPAN).append("\", c.root)\n");
+        body.append("  if ok then print(c.label .. \"|OK|\" .. value) else\n");
         body.append("  print(c.label .. \"|\" .. value.code .. \"|\" .. "
             + "(value.e == nil and \"\" or value.e) .. \"|\" .. "
             + "(value.a == nil and \"\" or value.a) .. \"|\" .. value.m .. \"|\" .. "
@@ -4581,6 +4661,22 @@ public class FailureArmAuthorityTest {
         }
 
         @Override
+        public List<String> fieldNames() {
+            return layout().fields().stream().map(f -> f.name()).toList();
+        }
+
+        private deal.semantic.ir.ClassLayout layout() {
+            return classId.equals(FOREIGN_ID.text()) ? foreignLayout() : walkLayout();
+        }
+
+        @Override
+        public List<deal.codegen.jvm.JvmRuntime.ClassField> boundaryFields() {
+            return layout().fields().stream().map(f ->
+                new deal.codegen.jvm.JvmRuntime.ClassField(f.name(),
+                    walkRuntimeDescriptor(f.descriptor()), f.required())).toList();
+        }
+
+        @Override
         public boolean isPresent(String field) {
             return present.contains(field);
         }
@@ -4602,7 +4698,7 @@ public class FailureArmAuthorityTest {
         }
     }
 
-    /** The JSON_TO_CLASS op of the walk drive (the generated body's op shape). */
+    /** Builtin JSON.stringify over the drive's live nominal operand. */
     private static deal.semantic.ir.SemanticOp walkJsonOp() {
         return walkJsonOp(new deal.semantic.ir.OpId(
                 new deal.semantic.ir.ModuleId("arm-walk"), 3),
@@ -4635,25 +4731,29 @@ public class FailureArmAuthorityTest {
         deal.semantic.ir.SourceOrigin origin = new deal.semantic.ir.SourceOrigin(
             "arm-walk.deal", span, deal.semantic.ir.SourceOriginKind.SYNTHETIC,
             new deal.semantic.ir.AnchorId(0), null);
-        KindPayload.JsonToClassPayload payload =
-            new KindPayload.JsonToClassPayload(classValue, layout);
-        deal.semantic.ir.OpResultType resultType = RuntimeDescriptor.String.INSTANCE;
+        KindPayload.StdlibCallPayload payload = new KindPayload.StdlibCallPayload(
+            deal.semantic.ir.StdlibFunctionId.JSON_STRINGIFY, List.of(classValue),
+            deal.semantic.ir.SemanticCapability.STDLIB_SEMANTICS);
+        deal.semantic.ir.OpResultType resultType = new RuntimeDescriptor.Nullable(
+            RuntimeDescriptor.String.INSTANCE, false, true);
         deal.semantic.ir.OperationContractSnapshot contract =
             new deal.semantic.ir.OperationContractSnapshot(
                 deal.semantic.ir.OperationContractSnapshot.VERSION,
-                deal.semantic.ir.SemanticOpKind.JSON_TO_CLASS, resultType,
-                List.of(new RuntimeDescriptor.Class(WALK_ID)), null, payload,
+                deal.semantic.ir.SemanticOpKind.STDLIB_CALL, resultType,
+                List.of(new RuntimeDescriptor.Class(layout.classId())),
+                deal.semantic.ir.StdlibFunctionId.JSON_STRINGIFY, payload,
                 FailurePolicyId.JSON_TO_ERROR, List.of(), "placeholder");
         contract = new deal.semantic.ir.OperationContractSnapshot(
             deal.semantic.ir.OperationContractSnapshot.VERSION,
-            deal.semantic.ir.SemanticOpKind.JSON_TO_CLASS, resultType,
-            List.of(new RuntimeDescriptor.Class(WALK_ID)), null, payload,
+            deal.semantic.ir.SemanticOpKind.STDLIB_CALL, resultType,
+            List.of(new RuntimeDescriptor.Class(layout.classId())),
+            deal.semantic.ir.StdlibFunctionId.JSON_STRINGIFY, payload,
             FailurePolicyId.JSON_TO_ERROR, List.of(),
             deal.semantic.ir.ContractSnapshotCanonicalizer.digest(contract));
         return new deal.semantic.ir.SemanticOp(opId,
-            deal.semantic.ir.SemanticOpKind.JSON_TO_CLASS, origin,
+            deal.semantic.ir.SemanticOpKind.STDLIB_CALL, origin,
             result, resultType, List.of(classValue),
-            List.of(new RuntimeDescriptor.Class(WALK_ID)), payload,
+            List.of(new RuntimeDescriptor.Class(layout.classId())), payload,
             FailurePolicyId.JSON_TO_ERROR, contract);
     }
 
@@ -4792,14 +4892,22 @@ public class FailureArmAuthorityTest {
                   row("element", ok, value)
                 end
                 do
+                  local raw = __stdlib("JSON_PARSE", "JSON_PARSE", "op", "digest",
+                    "parent", "decoded-null.deal:5:11", "[null]")
+                  local parsed = __jsonDecodeTarget(raw, "unknown", "decoded-null.deal:5:11",
+                    {}, __jsonRuntimeDescriptor, "op", "digest", "parent")
+                  assert(parsed[__dealCarrierKeys.n] == 1 and parsed[1] == __NULL,
+                    "real contextual parsing retains a present null")
                   local ok, value = pcall(__bcheck, "array(number)", "array",
-                    {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.da] = true, [__dealCarrierKeys.n] = 1, [1] = __NULL})
+                    {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = parsed[1]})
                   row("present-null", ok, value)
+                  parsed[1] = nil
                   ok, value = pcall(__bcheck, "array(number)", "array",
-                    {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.da] = true, [__dealCarrierKeys.n] = 1})
+                    {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = parsed[1]})
                   row("deleted-slot", ok, value)
-                  ok, value = pcall(__bcheck, "array(null)", "array",
-                    {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.da] = true, [__dealCarrierKeys.n] = 1, [1] = __NULL})
+                  local nulls = __jsonDecodeTarget(raw, "array(null)", "decoded-null.deal:5:11",
+                    {}, __jsonRuntimeDescriptor, "op", "digest", "parent")
+                  ok, value = pcall(__bcheck, "array(null)", "array", nulls)
                   row("null-admission", ok, value)
                 end
                 """, "array-boundary-probe", 4);
@@ -4851,12 +4959,12 @@ public class FailureArmAuthorityTest {
     }
 
     /**
-     * The std/json producer's present null versus the deleted slot
-     * (ISSUE-0753): the JSON reader stores the null element unchanged, so
+     * Contextual JSON parsing's present null versus the deleted slot:
+     * the JSON reader stores the null element unchanged, so
      * the array descriptor check projects the language-null carrier's own
      * {@code null} token on the oracle, the JVM runtime, and the emitted
      * Lua prelude alike, while only an absent/deleted slot projects
-     * {@code nil}; the {@code array(null)} descriptor admits the present
+     * {@code undefined}; the {@code array(null)} descriptor admits the present
      * null. The runtime-level renders keep the arm's own origin operand
      * (the emitting boundary site attaches the op origin), unchanged by
      * the projection.
@@ -4893,12 +5001,14 @@ public class FailureArmAuthorityTest {
             "the oracle admits the present null at the array(null) descriptor: "
                 + oracleAdmitted);
 
-        // The JVM leg over the std/json producer's own decoded array
-        // ({"values":[null]} checked as int[]).
+        // The JVM leg over a real contextual Record decode containing an
+        // unknown-descriptor array. Assertion checks cannot retarget its storage.
         deal.codegen.jvm.JvmRuntime.Table decoded =
-            (deal.codegen.jvm.JvmRuntime.Table) deal.codegen.jvm.JvmRuntime.stdlib(
-                "STDLIB_CALL", "JSON_PARSE", "op", "digest", "parent", origin,
-                new Object[] {"{\"values\":[null]}"});
+            (deal.codegen.jvm.JvmRuntime.Table) deal.codegen.jvm.JvmJson.decode(
+                "{\"values\":[null]}", "record",
+                new SourceOrigin("decoded-null.deal",
+                    new SourceSpan("decoded-null.deal", 5, 11, 5, 11),
+                    SourceOriginKind.USER, new AnchorId(1), null), origin, Map.of());
         deal.codegen.jvm.JvmRuntime.Array parsedValues =
             (deal.codegen.jvm.JvmRuntime.Array) decoded.read("values");
         checkEq("unknown", parsedValues.elementDescriptor,
@@ -4940,7 +5050,7 @@ public class FailureArmAuthorityTest {
                 + "the null token");
         checkEq("deleted-slot|E8003|number|undefined|array element 1 type mismatch",
             rows.get(1), "the emitted prelude projects the deleted slot as the "
-                + "nil token");
+                + "undefined token");
         checkEq("null-admission|OK|", rows.get(2),
             "the emitted prelude admits the present null at the array(null) "
                 + "descriptor");
@@ -4969,6 +5079,107 @@ public class FailureArmAuthorityTest {
      * walk's own; the class carrier's tuple is additionally asserted
      * identical on the oracle's class walk and the JVM walk machinery.
      */
+    static void testRuntimeCarriedStringifyPlan() throws Exception {
+        String body = """
+            local rt = require("deal.runtime")
+            local id = "@host/runtime/OwnPlan"
+            local plan = {
+              {name="value",descriptor="number",optional=false},
+              {name="rows",descriptor="?[?@host/runtime/OwnPlan]",optional=true},
+              {name="note",descriptor="!string",optional=true},
+              {name="fn",descriptor="(number,string)->number",optional=true},
+              {name="jobs",descriptor="?[!async(number,string)->number]",optional=true}}
+            local child = rt.class_plan_(id, plan, {value=7})
+            local owner = rt.class_plan_(id, plan, {value=1})
+            -- A conflicting chunk-local registration must never replace the
+            -- defining runtime instance's private exact plan.
+            __factories.__boundaryPlans[id] = {{name="wrong",descriptor="string",required=true}}
+            local function encode(value)
+              return __stdlib("STDLIB_CALL","JSON_STRINGIFY","runtime-plan","-","-","runtime-plan.deal:4:6",value)
+            end
+            assert(encode(owner)=='{"value":1}')
+            owner.rows={[__dealCarrierKeys.a]=true,[__dealCarrierKeys.n]=2,[1]=child,[2]=__NULL}
+            owner.note=__UNDEFINED
+            owner.fn={[__dealCarrierKeys.fn]=function() return 1 end,
+              [__dealCarrierKeys.csig]="(number,string)->number",
+              [__dealCarrierKeys.sig]="function(number,string;number)"}
+            assert(encode(owner)=='{"value":1,"rows":[{"value":7},null]}')
+            local callable=owner.fn
+            callable[__dealCarrierKeys.csig]="async(number,string)->number"
+            local ok,e=pcall(encode,owner)
+            assert(not ok and e.code=="E8010" and e.e=="(number,string)->number"
+              and e.a=="async(number,string)->number" and e.o=="runtime-plan.deal:4:6",
+              "signature rejection: "..tostring(ok).." "..tostring(type(e)=="table" and e.code).." "
+                ..tostring(type(e)=="table" and e.e).." "..tostring(type(e)=="table" and e.a).." "
+                ..tostring(type(e)=="table" and e.o))
+            callable[__dealCarrierKeys.csig]="(number,string)->number"
+            callable[__dealCarrierKeys.fn]=true
+            ok,e=pcall(encode,owner)
+            assert(not ok and e.code=="E8001" and e.m=="expected function",
+              "payload rejection: "..tostring(ok).." "..tostring(type(e)=="table" and e.code).." "
+                ..tostring(type(e)=="table" and e.m))
+            callable[__dealCarrierKeys.fn]=function() error("stringify invoked function") end
+            assert(encode(owner)=='{"value":1,"rows":[{"value":7},null]}')
+            local job={[__dealCarrierKeys.fn]=function() error("stringify invoked async function") end,
+              [__dealCarrierKeys.csig]="async(number,string)->number",
+              [__dealCarrierKeys.sig]="function(number,string;number)"}
+            owner.jobs={[__dealCarrierKeys.a]=true,[__dealCarrierKeys.n]=2,[1]=job,[2]=__UNDEFINED}
+            assert(encode(owner)=='{"value":1,"rows":[{"value":7},null],"jobs":[null,null]}')
+            job[__dealCarrierKeys.csig]="(number,string)->number"
+            ok,e=pcall(encode,owner)
+            assert(not ok and e.code=="E8003" and e.e=="!async(number,string)->number"
+              and e.a=="function" and e.cause.code=="E8010"
+              and e.cause.e=="async(number,string)->number" and e.cause.a=="(number,string)->number"
+              and e.o=="runtime-plan.deal:4:6" and e.cause.o==e.o)
+            job[__dealCarrierKeys.csig]="async(number,string)->number"
+            assert(encode(owner)=='{"value":1,"rows":[{"value":7},null],"jobs":[null,null]}')
+            owner.jobs=nil
+            child.value=false
+            ok,e=pcall(encode,owner)
+            assert(not ok and e.code=="E8003" and e.e=="?@host/runtime/OwnPlan"
+              and e.a==id and e.cause.code=="E8001" and e.cause.m=="expected number")
+            assert(e.o=="runtime-plan.deal:4:6" and e.cause.o==e.o)
+            child.value=7
+            owner.rows[2]=child
+            assert(encode(owner)=='{"value":1,"rows":[{"value":7},{"value":7}]}')
+            owner.rows[1]=owner
+            ok,e=pcall(encode,owner)
+            assert(not ok and e.m=="cyclic value cannot be encoded as JSON" and e.cause==nil)
+            owner.rows[1]=child
+            owner.rows=__NULL
+            assert(encode(owner)=='{"value":1,"rows":null}')
+            local carried=owner[__dealCarrierKeys.classPlan]
+            local first=carried[1]
+            carried[1]=nil
+            ok,e=pcall(encode,owner)
+            assert(not ok and e=="JSON class field plan/order mismatch")
+            carried[1]=first
+            carried[2]=first
+            ok,e=pcall(encode,owner)
+            assert(not ok and e=="JSON class field plan/order mismatch")
+            carried[2]={name="rows",descriptor="?[?@host/runtime/OwnPlan]",optional=true}
+            carried[6]={name="extra",descriptor="number",optional=true}
+            ok,e=pcall(encode,owner)
+            assert(not ok and e=="JSON class field plan/order mismatch")
+            carried[6]=nil
+            local hooks=0
+            setmetatable(carried,{__index=function() hooks=hooks+1; error("plan hook") end})
+            setmetatable(first,{__index=function() hooks=hooks+1; error("field hook") end})
+            assert(encode(owner)=='{"value":1,"rows":null}' and hooks==0)
+            first.descriptor="not-a-descriptor"
+            ok,e=pcall(encode,owner)
+            assert(not ok and e=="JSON class field has no canonical descriptor" and hooks==0)
+            first.descriptor="number"
+            assert(encode(owner)=='{"value":1,"rows":null}')
+            print("runtime-carried-plan|OK")
+            """;
+        List<String> rows = runProbe(emittedWalkChunk(), "arm-walk", body,
+            "runtime-carried-plan", 1, true);
+        checkEq(List.of("runtime-carried-plan|OK"), rows,
+            "emitted stringify consumes exact runtime-carried plans, validates live descendants,"
+                + " preserves original leaf/origins and rejects malformed plans without hooks");
+    }
+
     static void testRuntimeCarrierProjection() throws Exception {
         System.out.println("-- the landed runtime carriers on the emitted walk --");
         String foreign = FOREIGN_ID.text();
@@ -4981,43 +5192,36 @@ public class FailureArmAuthorityTest {
             + "data = " + LUA_TABLE_CARRIER + ", tags = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, "
             + "[1] = 1}}}},\n"
             + "  {label = \"runtime-class-root\", root = rt.class_plan_(" + quote(foreign)
-            + ", {}, {})},\n"
+            + ", {{name=\"x\",descriptor=\"number\",optional=false}}, {x=1})},\n"
             + "}\n"
             + "for i = 1, #carriers do\n"
             + "  local c = carriers[i]\n"
-            + "  local ok, text, arm, params, actual = __jsonToClassOp("
-            + quote(WALK_ID.text()) + ", c.root)\n"
-            + "  if ok then print(c.label .. \"|OK|\") return end\n"
-            + "  local value = __arm(arm, params, " + quote(WALK_SPAN)
-            + ", nil, actual)\n"
+            + "  local ok, value = pcall(__stdlib, \"STDLIB_CALL\", \"JSON_STRINGIFY\", \"walk\", \"-\", \"-\", "
+            + quote(WALK_SPAN) + ", c.root)\n"
+            + "  if ok then print(c.label .. \"|OK|\" .. value) else\n"
             + "  print(c.label .. \"|\" .. value.code .. \"|\" .. "
             + "(value.e == nil and \"\" or value.e) .. \"|\" .. "
             + "(value.a == nil and \"\" or value.a) .. \"|\" .. value.m .. \"|\" .. "
             + "tostring(value.o))\n"
-            + "end\n";
+            + "  end\nend\n";
         List<String> rows = runProbe(emittedWalkChunk(), "arm-walk", body,
             "walk-runtime-carriers", 2, true);
 
         Tuple asyncTuple = walkLuaTuple(rows.get(0));
-        checkEq(new Tuple("E8001",
-                "value at name is not JSON serializable: async-operation", WALK_SPAN,
-                null, "async-operation"), asyncTuple,
+        checkEq(new Tuple("E8001", "expected string", WALK_SPAN,
+                "string", "async-operation"), asyncTuple,
             "the emitted walk projects the runtime async handle as async-operation at "
                 + "the failing declared field");
 
-        Tuple classTuple = walkLuaTuple(rows.get(1));
-        checkEq(new Tuple("E8001",
-                "value at  is not JSON serializable: " + foreign, WALK_SPAN, null,
-                foreign), classTuple,
-            "the emitted walk projects the runtime class representation as its carried "
-                + "canonical class atom");
+        checkEq("runtime-class-root|OK|{\"x\":1}", rows.get(1),
+            "builtin stringify accepts a foreign class root with its own exact plan");
 
         // The oracle's typed-boundary projection publishes the same async
-        // token for the same walk position (the JSON_TO_FIELD cell's check).
+        // token for the same reached declared position's ordinary typed check.
         Tuple oracleAsync = tupleOf(oracleFailure(BoundaryExecutor.check(
-            FailurePolicyId.JSON_TO_ERROR, RuntimeDescriptor.String.INSTANCE,
+            FailurePolicyId.TYPE_DESCRIPTOR, RuntimeDescriptor.String.INSTANCE,
             BoundaryValueView.of(ActualKind.ASYNC_OPERATION),
-            BoundaryContext.jsonField("name")), "the JSON_TO_FIELD async carrier"),
+            BoundaryContext.none()), "the stringify typed async carrier"),
             WALK_SPAN);
         checkEq(null, firstDifferingField(asyncTuple, oracleAsync),
             "the oracle's typed-boundary projection publishes the emitted walk's "
@@ -5027,47 +5231,17 @@ public class FailureArmAuthorityTest {
         // walk over a foreign carried atom and the JVM walk machinery over
         // the same identity.
         deal.semantic.ir.SemanticOp op = walkJsonOp();
-        Map<deal.semantic.ir.ValueId, ClassOpsExecutor.Value> values =
-            new LinkedHashMap<>();
-        values.put(((KindPayload.JsonToClassPayload) op.payload()).classValue(),
-            new ClassOpsExecutor.Value.Class(FOREIGN_ID, List.of()));
-        ClassOpsExecutor.Outcome<ClassOpsExecutor.Value> outcome =
-            ClassOpsExecutor.executeJsonToClass(op, values,
-                Map.of(WALK_ID, walkLayout()),
-                deal.semantic.JsonClassAlgorithmAdapter.stringifier(), op.origin());
-        check(outcome instanceof ClassOpsExecutor.Outcome.Failure<
-                ClassOpsExecutor.Value> failure,
-            "the oracle's class walk fails the foreign class carrier");
-        if (outcome instanceof ClassOpsExecutor.Outcome.Failure<
-                ClassOpsExecutor.Value> failure) {
-            Tuple oracleClass = tupleOf(failure.failure().failure(), WALK_SPAN);
-            checkEq(null, firstDifferingField(classTuple, oracleClass),
-                "the oracle's class walk publishes the emitted walk's identical class "
-                    + "tuple");
-            checkEq(op.origin(), failure.failure().origin(),
-                "the oracle's class walk renders the operand it was given");
-        }
-        deal.codegen.jvm.JvmJson.Projection projection = null;
-        try {
-            deal.codegen.jvm.JvmJson.toClass(walkPlan(),
-                new WalkInstance(foreign, Map.of()));
-        } catch (deal.codegen.jvm.JvmJson.Projection caught) {
-            projection = caught;
-        }
-        check(projection != null,
-            "the JVM walk machinery fails the foreign class carrier");
-        if (projection != null) {
-            deal.codegen.jvm.JvmRuntime.DealError jvmError = projection.cycle
-                ? deal.codegen.jvm.JvmRuntime.arm(FailureArmId.JSON_TO_WALK_CYCLE,
-                    Map.of(), WALK_SPAN, null, null)
-                : deal.codegen.jvm.JvmRuntime.arm(FailureArmId.JSON_TO_WALK,
-                    Map.of("fieldPath", projection.fieldPath, "actual",
-                        projection.actual), WALK_SPAN, null, projection.actual);
-            checkEq(null, firstDifferingField(classTuple, new Tuple(jvmError.code,
-                    jvmError.msg, jvmError.origin, jvmError.expected, jvmError.actual)),
-                "the JVM walk machinery publishes the emitted walk's identical class "
-                    + "tuple");
-        }
+        var foreignValue = new ClassOpsExecutor.Value.Class(FOREIGN_ID,
+            List.of(new ClassOpsExecutor.FieldState.Present(new ClassOpsExecutor.Value.Number(1))));
+        var outcome = stringifyWalk(foreignValue, Map.of(FOREIGN_ID, foreignLayout()), op.origin());
+        check(outcome instanceof deal.semantic.SharedStdlibSemantics.Outcome.Success<
+                deal.semantic.SharedStdlibSemantics.Value> success
+                && success.value() instanceof deal.semantic.SharedStdlibSemantics.Value.String text
+                && text.scalar() instanceof deal.semantic.ir.UnicodeScalars.Valid valid
+                && valid.carrier().equals("{\"x\":1}"),
+            "Shared builtin stringify uses the foreign root's own declaration plan");
+        checkEq("{\"x\":1}", stringifyWalkJvm(new WalkInstance(foreign, Map.of("x", 1.0))),
+            "JVM builtin stringify uses the foreign root's own declaration plan");
     }
 
     // =========================================================================
@@ -5129,13 +5303,11 @@ public class FailureArmAuthorityTest {
             + "}\n"
             + "for i = 1, #cases do\n"
             + "  local c = cases[i]\n"
-            + "  local ok, text, arm, params, actual = __jsonToClassOp("
-            + quote(WALK_ID.text()) + ", c.root)\n"
+            + "  local ok, value = pcall(__stdlib, \"STDLIB_CALL\", \"JSON_STRINGIFY\", \"walk\", \"-\", \"-\", "
+            + quote(WALK_SPAN) + ", c.root)\n"
             + "  if ok then\n"
-            + "    print(c.label .. \"|OK|\" .. text .. \"|\")\n"
+            + "    print(c.label .. \"|OK|\" .. value .. \"|\")\n"
             + "  else\n"
-            + "    local value = __arm(arm, params, " + quote(WALK_SPAN)
-            + ", nil, actual)\n"
             + "    print(c.label .. \"|\" .. value.code .. \"|\" .. "
             + "(value.e == nil and \"\" or value.e) .. \"|\" .. "
             + "(value.a == nil and \"\" or value.a) .. \"|\" .. value.m .. \"|\" .. "
@@ -5150,17 +5322,17 @@ public class FailureArmAuthorityTest {
             "the host-binding chunk's null sentinel is the deployed runtime's "
                 + "object (ISSUE-0814)");
         checkEq("host-returned-table-null-entry|OK|"
-                + "{\"name\":\"n\",\"age\":1.0,\"ratio\":0.5,\"data\":{\"k\":null},"
-                + "\"tags\":[1.0]}|", rows.get(2),
+                + "{\"name\":\"n\",\"age\":1,\"ratio\":0.5,\"data\":{\"k\":null},"
+                + "\"tags\":[1]}|", rows.get(2),
             "the one runtime null in a host-returned table entry is the JSON-shaped "
                 + "null leaf and spells null");
         checkEq("plain-table-entry-control|OK|"
-                + "{\"name\":\"n\",\"age\":1.0,\"ratio\":0.5,\"data\":{\"k\":{}},"
-                + "\"tags\":[1.0]}|", rows.get(3),
+                + "{\"name\":\"n\",\"age\":1,\"ratio\":0.5,\"data\":{\"k\":{}},"
+                + "\"tags\":[1]}|", rows.get(3),
             "the plain-table control at the same content position is the JSON-shaped "
                 + "empty object and serializes as an empty object");
         checkEq(new Tuple("E8001",
-                "value at name is not JSON serializable: null", WALK_SPAN, null,
+                "expected string", WALK_SPAN, "string",
                 "null"), walkLuaTuple(rows.get(4)),
             "the runtime null at a runtime class instance's declared field renders "
                 + "null in the message and the actual field");
@@ -5219,13 +5391,11 @@ public class FailureArmAuthorityTest {
             + "}\n"
             + "for i = 1, #cases do\n"
             + "  local c = cases[i]\n"
-            + "  local ok, text, arm, params, actual = __jsonToClassOp("
-            + quote(WALK_ID.text()) + ", c.root)\n"
+            + "  local ok, value = pcall(__stdlib, \"STDLIB_CALL\", \"JSON_STRINGIFY\", \"walk\", \"-\", \"-\", "
+            + quote(WALK_SPAN) + ", c.root)\n"
             + "  if ok then\n"
-            + "    print(c.label .. \"|OK|\")\n"
+            + "    print(c.label .. \"|OK|\" .. value)\n"
             + "  else\n"
-            + "    local value = __arm(arm, params, " + quote(WALK_SPAN)
-            + ", nil, actual)\n"
             + "    print(c.label .. \"|\" .. value.code .. \"|\" .. "
             + "(value.e == nil and \"\" or value.e) .. \"|\" .. "
             + "(value.a == nil and \"\" or value.a) .. \"|\" .. value.m .. \"|\" .. "
@@ -5237,17 +5407,15 @@ public class FailureArmAuthorityTest {
         checkEq("runtime-missing-binding|OK|", rows.get(0),
             "the emitted chunk's own binding is the deployed runtime's absent-marker "
                 + "sentinel");
-        checkEq(new Tuple("E8001",
-                "value at data.k is not JSON serializable: undefined", WALK_SPAN, null,
-                "undefined"), walkLuaTuple(rows.get(1)),
-            "the runtime absent marker in a host-returned table entry renders undefined in "
-                + "the message and the actual field");
-        checkEq("plain-table-entry-control|OK|", rows.get(2),
+        checkEq("host-returned-table-missing-entry|OK|"
+                + "{\"name\":\"n\",\"age\":1,\"ratio\":0.5,\"data\":{},\"tags\":[1]}", rows.get(1),
+            "a runtime absent marker in Record content is omitted");
+        checkEq("plain-table-entry-control|OK|"
+                + "{\"name\":\"n\",\"age\":1,\"ratio\":0.5,\"data\":{\"k\":{}},\"tags\":[1]}", rows.get(2),
             "the plain-table control at the same content position is the JSON-shaped "
                 + "empty object and completes the walk");
-        checkEq(new Tuple("E8001",
-                "value at name is not JSON serializable: undefined", WALK_SPAN, null,
-                "undefined"), walkLuaTuple(rows.get(3)),
+        checkEq(new Tuple("E8001", "expected class instance", WALK_SPAN, "class",
+                WALK_ID.text()), walkLuaTuple(rows.get(3)),
             "the runtime absent marker at a runtime class instance's declared field "
                 + "renders undefined in the message and the actual field");
     }
@@ -5258,10 +5426,6 @@ public class FailureArmAuthorityTest {
 
     private record DispatchCase(String label, String fieldPath, String actual,
                                 DispatchUnit unit) {
-
-        String message() {
-            return "value at " + fieldPath + " is not JSON serializable: " + actual;
-        }
     }
 
     /** One built dispatch unit: the project, its table, and the walk op's origin. */
@@ -5346,8 +5510,8 @@ public class FailureArmAuthorityTest {
             }
         }
 
-        // (3) A produced instance of another class: the walk's own root
-        // identity check selects the walk arm with the carried atom.
+        // (3) A produced instance of another class: builtin stringify uses
+        // the carried identity's own plan, not the unrelated Walk layout.
         {
             DispatchIds ids = new DispatchIds();
             Map<String, DispatchValue> present = new LinkedHashMap<>();
@@ -5357,42 +5521,50 @@ public class FailureArmAuthorityTest {
                 Map.of(WALK_ID, walkLayout(), FOREIGN_ID, foreignLayout())));
         }
 
+        Map<String, String> expectedJson = Map.of(
+            "dispatch-nonfinite-number-field",
+                "{\"name\":\"n\",\"age\":1,\"ratio\":null,\"data\":{},\"tags\":[]}",
+            "dispatch-foreign-class-root", "{\"x\":1}");
+        checkEq(expectedJson.keySet(), cases.stream().map(DispatchCase::label)
+            .collect(java.util.stream.Collectors.toSet()),
+            "every successful dispatch subject has an independent encoded-value pin");
         for (DispatchCase drive : cases) {
             deal.semantic.SemanticRuntimeModel.ConsumerRun run =
                 deal.semantic.SemanticOracle.executeProjectInits(
                     drive.unit().project(), drive.unit().tables(), Map.of(), null);
-            if (drive.label().equals("dispatch-nonfinite-number-field")) {
-                check(run.terminal() instanceof deal.semantic.SemanticRuntimeModel.Terminal.Success,
-                    "the Oracle dispatch admits nonfinite declared-number JSON encoding: "
-                        + run.terminal());
-                continue;
-            }
-            check(run.terminal() instanceof deal.semantic.SemanticRuntimeModel.Terminal
-                    .DealFailure,
-                drive.label() + ": the oracle dispatch terminates with the walk's DEAL "
-                    + "failure; got " + run.terminal());
-            if (!(run.terminal() instanceof deal.semantic.SemanticRuntimeModel.Terminal
-                    .DealFailure failure)) {
-                continue;
-            }
-            deal.semantic.SemanticRuntimeModel.ErrorSnapshot error = failure.error();
-            Tuple dispatch = new Tuple(error.code(), error.message(), error.origin(),
-                error.expected(), error.actual());
-            Tuple reference = new Tuple("E8001", drive.message(), WALK_SPAN, null,
-                drive.actual());
-            checkEq(null, firstDifferingField(reference, dispatch),
-                drive.label() + ": the oracle dispatch renders the bound walk arm's "
-                    + "tuple at the executing op's own SourceOrigin");
+            check(run.terminal() instanceof deal.semantic.SemanticRuntimeModel.Terminal.Success,
+                drive.label() + ": builtin encoding admits nonfinite declared numbers and "
+                    + "nominal roots with their own plans: " + run.terminal());
             String walkOriginText = drive.unit().walkOrigin().sourceId() + ":"
                 + drive.unit().walkOrigin().span().startLine() + ":"
                 + drive.unit().walkOrigin().span().startColumn();
             checkEq(WALK_SPAN, walkOriginText,
-                drive.label() + ": the executing JSON_TO_CLASS op carries the pinned "
+                drive.label() + ": the executing builtin stringify op carries the pinned "
                     + "span");
-            checkEq(walkOriginText, dispatch.span(),
-                drive.label() + ": the dispatch supplies the executing op's own "
-                    + "SourceOrigin to the walk");
-
+            var json = drive.unit().project().modules().values().stream()
+                .flatMap(unit -> unit.ops().stream())
+                .filter(op -> op.payload() instanceof KindPayload.StdlibCallPayload call
+                    && call.function() == deal.semantic.ir.StdlibFunctionId.JSON_STRINGIFY)
+                .toList();
+            checkEq(1, json.size(), drive.label() + ": one executing stringify operation");
+            if (json.size() != 1) continue;
+            var op = json.getFirst();
+            var events = run.trace().stream().filter(event -> event.op().equals(op.opId())).toList();
+            checkEq(List.of(deal.semantic.SemanticRuntimeModel.Phase.START,
+                    deal.semantic.SemanticRuntimeModel.Phase.SUCCESS),
+                events.stream().map(deal.semantic.SemanticRuntimeModel.TraceEvent::phase).toList(),
+                drive.label() + ": exactly one START and successful completion");
+            checkEq(List.of(), run.effects(), drive.label() + ": encoding invokes no effects");
+            for (var event : events) {
+                checkEq(op.contract().canonicalDigest(), event.contractDigest(),
+                    drive.label() + ": trace uses the executing operation's contract");
+                checkEq(null, event.error(), drive.label() + ": no invented failure");
+                if (event.phase() == deal.semantic.SemanticRuntimeModel.Phase.SUCCESS) {
+                    checkEq("str:" + deal.semantic.SemanticRuntimeModel.escapeString(
+                            expectedJson.get(drive.label())), event.output(),
+                        drive.label() + ": exact encoding preserves fields, nonfinite substitution and own plan");
+                }
+            }
         }
     }
 
@@ -5405,7 +5577,7 @@ public class FailureArmAuthorityTest {
      * The oracle-dispatch leg's cycle remediation (the runtime-to-executor
      * container boundary): the oracle heap's containers cross into the
      * closed executor view identity-preserving and current, so a lowered
-     * {@code JSON_TO_CLASS} op over a cyclic heap renders the bound walk
+     * builtin stringify op over a cyclic heap renders the bound walk
      * family through the authority — the cycle arm for a path-local
      * re-entry, and the walk arm at the first failing position when an
      * unsupported value precedes the cycle. Every case builds the graph
@@ -5499,11 +5671,9 @@ public class FailureArmAuthorityTest {
                 "JSON_TO_WALK_CYCLE", null, null);
         }
 
-        // (5) The cycle-first control over the same graph shape: the re-entry
-        // under 'self' precedes the unsupported carrier under 'zbad', so the
-        // needle's own closed marker still selects the cycle arm (the
-        // selection is the walk's first failure, never the presence of an
-        // unsupported value anywhere in the subtree).
+        // (5) The reverse-order control over the same graph shape: the cycle
+        // under 'self' rejects before the supported class under 'zbad' is read.
+        // Together with (4), both insertion orders must reach the cycle arm.
         {
             DispatchIds ids = new DispatchIds();
             deal.semantic.ir.ValueId table = ids.value();
@@ -5516,7 +5686,7 @@ public class FailureArmAuthorityTest {
             ops.addAll(construction.ops());
             ops.add(dispatchMemberWrite(ids, table, "self", table));
             ops.add(dispatchMemberWrite(ids, table, "zbad", foreign.instance()));
-            checkDispatchCycleTuple("dispatch-cycle-before-unsupported-value",
+            checkDispatchCycleTuple("dispatch-cycle-before-supported-class",
                 dispatchUnit(ids, ops, construction.instance(),
                     Map.of(WALK_ID, walkLayout(), FOREIGN_ID, foreignLayout())),
                 "JSON_TO_WALK_CYCLE", null, null);
@@ -5638,15 +5808,35 @@ public class FailureArmAuthorityTest {
             return;
         }
         deal.semantic.SemanticRuntimeModel.ErrorSnapshot error = failure.error();
-        String expectedMessage = "JSON_TO_WALK_CYCLE".equals(arm)
-            ? "cyclic value cannot be encoded as JSON"
-            : "value at " + fieldPath + " is not JSON serializable: " + actual;
-        checkEq(new Tuple("E8001", expectedMessage, WALK_SPAN,
-                null, "JSON_TO_WALK_CYCLE".equals(arm) ? null : actual),
+        checkEq(new Tuple("E8001", "cyclic value cannot be encoded as JSON", WALK_SPAN,
+                null, null),
             new Tuple(error.code(), error.message(), error.origin(),
                 error.expected(), error.actual()),
             label + ": the oracle dispatch renders the bound walk arm's tuple at the "
                 + "executing op's own SourceOrigin");
+        checkEq(null, error.cause(), label + ": cycle has no fabricated typed cause");
+        checkEq(List.of(), error.frames(), label + ": module init invents no function frame");
+        checkEq(List.of(), run.effects(), label + ": serialization invokes no effects");
+        var json = unit.project().modules().values().stream()
+            .flatMap(module -> module.ops().stream())
+            .filter(op -> op.payload() instanceof KindPayload.StdlibCallPayload call
+                && call.function() == deal.semantic.ir.StdlibFunctionId.JSON_STRINGIFY).toList();
+        checkEq(1, json.size(), label + ": one stringify subject");
+        if (json.size() != 1) return;
+        var op = json.getFirst();
+        var events = run.trace().stream().filter(event -> event.op().equals(op.opId())).toList();
+        checkEq(List.of(deal.semantic.SemanticRuntimeModel.Phase.START,
+                deal.semantic.SemanticRuntimeModel.Phase.FAILURE),
+            events.stream().map(deal.semantic.SemanticRuntimeModel.TraceEvent::phase).toList(),
+            label + ": exactly one START and failing completion");
+        for (var event : events) {
+            checkEq(op.contract().canonicalDigest(), event.contractDigest(),
+                label + ": trace contract belongs to the executing stringify op");
+            if (event.phase() == deal.semantic.SemanticRuntimeModel.Phase.FAILURE) {
+                checkEq(error, event.error(), label + ": trace retains the complete terminal error");
+                checkEq(null, event.output(), label + ": no partial encoding is published");
+            }
+        }
     }
 
     /** One dispatch construction with its producer ops and the walk op. */
@@ -5827,7 +6017,7 @@ public class FailureArmAuthorityTest {
 
     /**
      * The dispatch project of one construction: the produced ops, the
-     * JSON_TO_CLASS op over the construction's result, and the module-init
+     * builtin stringify op over the construction's result, and the module-init
      * table that runs them in order.
      */
     private static DispatchUnit dispatchUnit(DispatchIds ids,

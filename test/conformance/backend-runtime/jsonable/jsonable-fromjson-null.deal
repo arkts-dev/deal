@@ -1,21 +1,20 @@
-// @spec: Classes — @jsonable fromJson returns null
-// @description: @jsonable fromJson returns null on malformed JSON input
+// @spec: Standard library builtins — JSON decoding
+// @description: Malformed JSON throws a syntax error without publishing a class or changing the destination.
 // @expected: runtime-ok
-// @features: jsonable, fromJson, error-handling
+// @features: json, classes, error-handling
 
-// @jsonable
-export class Item {
-  name: string;
-}
+export class Item { name: string; }
 
 export function test_fromJson_null(): null {
-  let result: Item | null = Item$fromJson("not valid json");
-  if (result !== null) {
-    throw { code: "TEST_FAIL", message: "fromJson should return null for malformed JSON" };
+  let original: Item = {name: "original"};
+  let result = original;
+  let rejected = false;
+  try { result = JSON.parse("not valid json"); }
+  catch (e) { let error = e as Error; rejected = error.code === "E8001" && error.message.startsWith("JSON parse error at position "); }
+  if (!rejected || result !== original || result.name !== "original") {
+    throw {code: "TEST_FAIL", message: "malformed JSON changed destination"};
   }
   return null;
 }
 
-export function main(): null {
-  return null;
-}
+export function main(): null { return null; }

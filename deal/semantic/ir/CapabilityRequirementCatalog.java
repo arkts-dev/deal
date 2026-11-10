@@ -23,7 +23,7 @@ import java.util.Objects;
  *   <li>{@code BINDINGS} → {@code {BINDING_ALLOC, BINDING_INIT, BINDING_LOAD, BINDING_STORE, RECURSIVE_GROUP_INIT, CLOSURE_NEW}}</li>
  *   <li>{@code CALLS} → {@code {CALL, CALLBACK_INVOKE, EXTERNAL_ENTRY, ASYNC_START, AWAIT, RETURN, ENTRY_INVOKE, FUNCTION_ADAPT}}</li>
  *   <li>{@code STDLIB_SEMANTICS} → {@code {STDLIB_CALL}}</li>
- *   <li>{@code CLASSES} → {@code {CLASS_NEW, CLASS_FACTORY, FIELD_READ, FIELD_WRITE, FIELD_DELETE, JSON_FROM_CLASS, JSON_TO_CLASS}}</li>
+ *   <li>{@code CLASSES} → {@code {CLASS_NEW, CLASS_FACTORY, FIELD_READ, FIELD_WRITE, FIELD_DELETE}}</li>
  *   <li>{@code MODULES} → {@code {MODULE_INIT, MODULE_IMPORT, EXPORT_READ, EXPORT_PUBLISH}}</li>
  * </ul>
  *
@@ -112,16 +112,15 @@ public final class CapabilityRequirementCatalog {
             RequiredOperation.of("FUNCTION_ADAPT", SemanticOpKind.FUNCTION_ADAPT)));
 
         catalog.put(SemanticCapability.STDLIB_SEMANTICS, List.of(
-            RequiredOperation.of("STDLIB_CALL", SemanticOpKind.STDLIB_CALL)));
+            RequiredOperation.of("STDLIB_CALL", SemanticOpKind.STDLIB_CALL),
+            RequiredOperation.of("JSON_PARSE", SemanticOpKind.JSON_PARSE)));
 
         catalog.put(SemanticCapability.CLASSES, List.of(
             RequiredOperation.of("CLASS_NEW", SemanticOpKind.CLASS_NEW),
             RequiredOperation.of("CLASS_FACTORY", SemanticOpKind.CLASS_FACTORY),
             RequiredOperation.of("FIELD_READ", SemanticOpKind.FIELD_READ),
             RequiredOperation.of("FIELD_WRITE", SemanticOpKind.FIELD_WRITE),
-            RequiredOperation.of("FIELD_DELETE", SemanticOpKind.FIELD_DELETE),
-            RequiredOperation.of("JSON_FROM_CLASS", SemanticOpKind.JSON_FROM_CLASS),
-            RequiredOperation.of("JSON_TO_CLASS", SemanticOpKind.JSON_TO_CLASS)));
+            RequiredOperation.of("FIELD_DELETE", SemanticOpKind.FIELD_DELETE)));
 
         catalog.put(SemanticCapability.MODULES, List.of(
             RequiredOperation.of("MODULE_INIT", SemanticOpKind.MODULE_INIT),

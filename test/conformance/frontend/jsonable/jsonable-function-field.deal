@@ -1,6 +1,6 @@
-// @spec: Classes — @jsonable field restrictions
-// @description: @jsonable classes reject function-typed fields
-// @expected: compile-error E4007
+// @spec: Classes — Field types
+// @description: Function fields are legal declarations; comment contents impose no schema restrictions
+// @expected: compile-ok
 // @features: jsonable, diagnostics
 
 // @jsonable

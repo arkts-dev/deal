@@ -1,13 +1,13 @@
-// @spec: Classes — JSON serialization (@jsonable)
-// @description: Generated Record content preserves lone UTF-16 units, omission, substitution and ordering; cycles fail encoding.
+// @spec: Standard library builtins — JSON encoding
+// @description: Class Record content preserves lone UTF-16 units, omission, substitution and ordering; cycles fail encoding.
 // @expected: runtime-ok
 // @features: classes, jsonable, toJson, tables, host-abi, v1.6
 
 import * as host from "host/jsonabletable";
-import * as json from "std/json";
+
 
 function equivalent(text: string, expected: string): boolean {
-  return json.stringify(json.parse(text)) === json.stringify(json.parse(expected));
+  return JSON.stringify(JSON.parse(text)) === JSON.stringify(JSON.parse(expected));
 }
 
 function check(condition: boolean, message: string): null {
@@ -23,7 +23,7 @@ function check(condition: boolean, message: string): null {
 function closedOutcome(w: TableField): string {
   let outcome: string = "no-failure";
   try {
-    outcome = "OK:" + TableField$toJson(w);
+    outcome = "OK:" + (JSON.stringify(w) as string);
   } catch (e) {
     let error: Error = e as Error;
     outcome = error.code + "|" + error.message;
@@ -31,30 +31,28 @@ function closedOutcome(w: TableField): string {
   return outcome;
 }
 
-// @jsonable
 export class TableField {
   data: Record<string, unknown>;
 }
 
-// @jsonable
 export class TableElements {
   rows: Record<string, unknown>[];
 }
 
 export function test_host_table_field(): null {
   let w: TableField = { data: host.makeTable() };
-  let text: string = TableField$toJson(w);
+  let text: string = JSON.stringify(w) as string;
   check(equivalent(text, "{\"data\":{\"a\":1}}"), "the host table field spells " + text);
   return null;
 }
 
 export function test_host_table_nested_content(): null {
   let carrier: TableField = { data: { inner: host.makeTable() } };
-  let carrierText: string = TableField$toJson(carrier);
+  let carrierText: string = JSON.stringify(carrier) as string;
   check(equivalent(carrierText, "{\"data\":{\"inner\":{\"a\":1}}}"),
     "the plain host table nested in a table carrier spells " + carrierText);
   let nested: TableField = { data: host.makeNested() };
-  let nestedText: string = TableField$toJson(nested);
+  let nestedText: string = JSON.stringify(nested) as string;
   check(equivalent(nestedText, "{\"data\":{\"inner\":{\"a\":1},\"xs\":[10,20]}}"),
     "the host table's nested object and array members spell " + nestedText);
   return null;
@@ -62,7 +60,7 @@ export function test_host_table_nested_content(): null {
 
 export function test_host_table_array_elements(): null {
   let w: TableElements = { rows: [host.makeTable(), host.makeNested()] };
-  let text: string = TableElements$toJson(w);
+  let text: string = JSON.stringify(w) as string;
   check(equivalent(text, "{\"rows\":[{\"a\":1},{\"inner\":{\"a\":1},\"xs\":[10,20]}]}"),
     "a table[] element holding a host table spells " + text);
   return null;
@@ -70,7 +68,7 @@ export function test_host_table_array_elements(): null {
 
 export function test_host_parsed_table_field(): null {
   let w: TableField = { data: host.makeParsed() };
-  let text: string = TableField$toJson(w);
+  let text: string = JSON.stringify(w) as string;
   check(equivalent(text, "{\"data\":{\"v\":0.1,\"w\":1.0E17}}"),
     "the host std/json object at a table field spells " + text);
   return null;
@@ -78,7 +76,7 @@ export function test_host_parsed_table_field(): null {
 
 export function test_host_parsed_table_element(): null {
   let w: TableElements = { rows: [host.makeParsed()] };
-  let text: string = TableElements$toJson(w);
+  let text: string = JSON.stringify(w) as string;
   check(equivalent(text, "{\"rows\":[{\"v\":0.1,\"w\":1.0E17}]}"),
     "a table[] element holding the host std/json object spells " + text);
   return null;
@@ -101,7 +99,7 @@ export function test_host_table_non_finite(): null {
     "a nested non-finite leaf becomes JSON null: "
       + closedOutcome(nested));
   let elements: TableField = { data: host.makeInfiniteElements() };
-  check(equivalent(TableField$toJson(elements), "{\"data\":{\"xs\":[null,2]}}"),
+  check(equivalent(JSON.stringify(elements) as string, "{\"data\":{\"xs\":[null,2]}}"),
     "a non-finite array element becomes JSON null: "
       + closedOutcome(elements));
   return null;
@@ -109,14 +107,14 @@ export function test_host_table_non_finite(): null {
 
 export function test_host_table_invalid_key(): null {
   let root: TableField = {data:host.makeBadKey()};
-  let rootDecoded=json.parse(TableField$toJson(root)).data as Record<string,unknown>;
+  let rootDecoded=(JSON.parse(JSON.stringify(root) as string) as Record<string,unknown>).data as Record<string,unknown>;
   check((rootDecoded[`\uD800`] as number)===1,"lone root key survives generated JSON");
   let nested: TableField = {data:host.makeNestedBadKey()};
-  let nestedDecoded=json.parse(TableField$toJson(nested)).data as Record<string,unknown>;
+  let nestedDecoded=(JSON.parse(JSON.stringify(nested) as string) as Record<string,unknown>).data as Record<string,unknown>;
   let inner=nestedDecoded.inner as Record<string,unknown>;
   check((inner[`\uD800`] as number)===1,"lone nested key survives generated JSON");
   let leaf: TableField = {data:host.makeBadString()};
-  let leafDecoded=json.parse(TableField$toJson(leaf)).data as Record<string,unknown>;
+  let leafDecoded=(JSON.parse(JSON.stringify(leaf) as string) as Record<string,unknown>).data as Record<string,unknown>;
   check((leafDecoded.a as string)===`\uD800`,"lone nested string survives generated JSON");
   return null;
 }
@@ -125,7 +123,7 @@ export function test_host_table_cycle(): null {
   let w: TableField = { data: host.makeCycle() };
   let closed: boolean = false;
   try {
-    let text: string = TableField$toJson(w);
+    let text: string = JSON.stringify(w) as string;
     check(text === "", "a cyclic host table must not serialize");
   } catch (e) {
     let error: Error = e as Error;

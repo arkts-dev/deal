@@ -367,35 +367,33 @@ public final class IntrinsicShadowingProductionTest {
     }
 
     /**
-     * True iff the artifact carries the shadowed call's own dispatch origin
-     * (the current-value call the position's binding owns) at that
-     * position: the LuaJIT and JVM chunks record the call origin, and the
-     * JavaScript renderer passes the same origin to the carrier call.
+     * Locate the shadowed call's dispatch at its own source-mapped group.
+     * LuaJIT/JVM body calls need no ambient caller-origin stack: failures
+     * use the failing operation's origin. JavaScript passes coordinates
+     * directly to the carrier call.
      */
     private static boolean carriesCallOrigin(String backend, String artifact,
             int line, int column) {
         String origin = originText(backend, line, column);
+        boolean ownGroup = false;
         for (String text : artifact.split("\n", -1)) {
+            if (!backend.equals("js")) {
+                String trimmed = text.stripLeading();
+                String marker = backend.equals("luajit") ? "-- " : "// ";
+                if (trimmed.startsWith(marker) && trimmed.matches(".*:[0-9]+:[0-9]+")) {
+                    ownGroup = trimmed.endsWith(":" + line + ":" + column);
+                } else if (ownGroup && (backend.equals("luajit")
+                        ? text.contains("pcall(") : text.contains(".fn.invoke("))) {
+                    return true;
+                }
+                continue;
+            }
             if (!text.contains(origin)) {
                 continue;
             }
-            switch (backend) {
-                case "luajit" -> {
-                    if (text.contains("__callOrigins")) {
-                        return true;
-                    }
-                }
-                case "jvm" -> {
-                    if (text.contains("JvmRuntime.callOrigins")) {
-                        return true;
-                    }
-                }
-                default -> {
-                    for (String marker : JS_CALL_MARKERS) {
-                        if (text.contains(marker)) {
-                            return true;
-                        }
-                    }
+            for (String marker : JS_CALL_MARKERS) {
+                if (text.contains(marker)) {
+                    return true;
                 }
             }
         }
@@ -447,6 +445,8 @@ public final class IntrinsicShadowingProductionTest {
 
     private static void inspectArtifact(ArtifactExpectation expectation,
             String backend, String artifact) {
+        check(!artifact.contains("__callOrigins") && !artifact.contains("JvmRuntime.callOrigins"),
+            backend + ": artifact contains no obsolete caller-origin stack");
         List<String> emissions = conversionEmissions(backend, artifact);
         checkEq(expectation.conversions(), emissions.size(), backend
             + ": the " + expectation.fixture() + " artifact carries exactly "
@@ -481,7 +481,7 @@ public final class IntrinsicShadowingProductionTest {
             check(carriesCallOrigin(backend, artifact, call.line(), call.column()),
                 backend + ": the shadowed call '" + call.message() + "' at "
                 + call.line() + ":" + call.column()
-                + " dispatches through its own call origin");
+                + " dispatches at its own source-mapped call");
         }
     }
 

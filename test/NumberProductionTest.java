@@ -7,9 +7,9 @@ import java.util.List;
 /** Sole-number arithmetic and integral-position contracts through the public compiler. */
 public final class NumberProductionTest {
     private static final String SOURCE = """
-        import * as console from "std/console";
+        import * as output from "std/console";
         import * as text from "std/string";
-        import * as json from "std/json";
+
         function ensure(ok: boolean): null {
           if (!ok) { throw {code: "TEST_FAIL", message: "number contract"}; }
           return null;
@@ -51,7 +51,7 @@ public final class NumberProductionTest {
           }
           ensure(text.substring("a😀b", inf, 1) === "😀b");
           ensure(text.substring("a😀b", 0, inf) === "a😀b");
-          let parsed: Record<string, unknown> = json.parse("{\\\"a\\\":9007199254740993,\\\"z\\\":-0,\\\"b\\\":2147483647.00000001}");
+          let parsed: Record<string, unknown> = JSON.parse("{\\\"a\\\":9007199254740993,\\\"z\\\":-0,\\\"b\\\":2147483647.00000001}");
           let rounded: number = parsed.a as number;
           let zero: number = parsed.z as number;
           let near: number = parsed.b as number;
@@ -59,12 +59,12 @@ public final class NumberProductionTest {
           if (!(1 / zero < 0)) { throw {code: "JSON_ZERO", message: "negative zero"}; }
           if (near !== 2147483647) { throw {code: "JSON_NEAR", message: "near integer"}; }
           let zeroObject: Record<string, unknown> = {z: -0};
-          if ((json.stringify(zeroObject) as string) !== "{\\\"z\\\":0}") { throw {code: "JSON_ENCODE_ZERO", message: "zero encoding"}; }
+          if ((JSON.stringify(zeroObject) as string) !== "{\\\"z\\\":0}") { throw {code: "JSON_ENCODE_ZERO", message: "zero encoding"}; }
           let int: (x: number) => number = function(x: number): number { return x + 10; };
           let number: (x: number) => number = function(x: number): number { return x + 20; };
           ensure(int(1) === 11);
           ensure(number(2) === 22);
-          console.log("number-ok");
+          output.log("number-ok");
           return null;
         }
         """;

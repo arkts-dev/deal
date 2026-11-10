@@ -58,8 +58,7 @@ import java.util.Set;
  *
  * <p><b>Pinned fact sources (F2).</b> Implementation entries render from
  * checked facts: exports = the module's Phase-3-corrected resolved export
- * map in its insertion order (declaration order, then the
- * {@code @jsonable} synthetic exports), each {@link Type} value rendered
+ * map in declaration order, each {@link Type} value rendered
  * through {@link CanonicalTypeText#render(Type)}; classes = one
  * {@link ClassInterface} per exported class from the module's checked
  * {@code ClassSymbol} records. STDLIB/HOST declaration entries render from
@@ -68,8 +67,7 @@ import java.util.Set;
  * {@code ExportDeclaration} statements via the pinned
  * {@code TypeNode → CanonicalTypeText} grammar (function exports as the
  * full sync/async function form, class exports as
- * {@code @<moduleId>/<ClassName>}) plus the {@code @jsonable} synthetic
- * exports where the export map carries them; imports in source order
+ * {@code @<moduleId>/<ClassName>}); imports in source order
  * resolved through the orchestrator's resolution facts
  * ({@code resolveImportPath} plus the externals maps, supplied as
  * {@link ModuleFact.ImportFact} records); classes from exported class
@@ -330,10 +328,8 @@ public final class CheckedProjectBuilder {
 
     /**
      * Implementation-entry exports: the module's Phase-3-corrected
-     * resolved export map in its insertion order (source export-declaration
-     * order, then the {@code @jsonable} synthetic exports the same pass
-     * appends), each rendered through the checked-{@link Type} rendering
-     * of {@link CanonicalTypeText}.
+     * resolved export map in source export-declaration order, each rendered
+     * through the checked-{@link Type} rendering of {@link CanonicalTypeText}.
      */
     private static List<ExportInterface> buildImplementationExports(ModuleFact fact) {
         List<ExportInterface> exports = new ArrayList<>(fact.exports().size());
@@ -423,11 +419,7 @@ public final class CheckedProjectBuilder {
      * grammar — a function export as the full sync/async function form
      * from {@code fd.params()}, {@code fd.returnType()},
      * {@code fd.isAsync()}; a class export as
-     * {@code @<moduleId>/<ClassName>} — plus the {@code @jsonable}
-     * synthetic exports exactly where the module's export map carries
-     * them (an exported {@code @jsonable} class appends
-     * {@code C$fromJson: (string) => C | null} and
-     * {@code C$toJson: (C) => string} after the declared exports).
+     * {@code @<moduleId>/<ClassName>}. Only explicit declarations export names.
      */
     private static List<ExportInterface> buildDeclarationExports(ModuleFact fact,
                                                                  CanonicalTypeText.Context context) {
@@ -449,22 +441,6 @@ public final class CheckedProjectBuilder {
                 case ClassDeclaration cd -> exports.add(new ExportInterface(cd.name(),
                     "@" + fact.moduleId().path() + "/" + cd.name()));
                 default -> { }
-            }
-        }
-        for (StatementNode stmt : fact.ast().statements()) {
-            if (stmt instanceof ExportDeclaration ed
-                    && ed.declaration() instanceof ClassDeclaration cd
-                    && cd.isJsonable()) {
-                String fromJson = cd.name() + "$fromJson";
-                String toJson = cd.name() + "$toJson";
-                if (fact.exports().containsKey(fromJson)) {
-                    exports.add(new ExportInterface(fromJson,
-                        CanonicalTypeText.render(fact.exports().get(fromJson))));
-                }
-                if (fact.exports().containsKey(toJson)) {
-                    exports.add(new ExportInterface(toJson,
-                        CanonicalTypeText.render(fact.exports().get(toJson))));
-                }
             }
         }
         return exports;

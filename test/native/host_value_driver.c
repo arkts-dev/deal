@@ -482,10 +482,21 @@ static deal_host_result function_surface_case(const deal_value *args,
         deal_string *key = deal_text_new("unread", 6u);
         deal_root_scope_hold(key);
         deal_container_table_write(json_record, key, &nondata[kind]);
+        /* A host-retained reference slot must preserve the same private
+         * presentation as datum storage, never infer signed function/Record
+         * authority from its persistent descriptor. */
+        deal_array *json_references = deal_container_array_new_typed(
+            DEAL_LAYOUT_ELEMENT_REFERENCE,
+            deal_descriptor_reference(deal_descriptor_intern(
+                kind == 0u ? "(number)->number" : "record")), 0u);
+        deal_root_scope_hold(json_references);
+        void *json_reference = nondata[kind].reference;
+        deal_container_array_append(json_references, &json_reference);
         deal_data positions[] = {nondata[kind],
             deal_data_of_reference(DEAL_DATA_ARRAY, json_array),
-            deal_data_of_reference(DEAL_DATA_TABLE, json_record)};
-        for (size_t position = 0u; position < 3u; position++) {
+            deal_data_of_reference(DEAL_DATA_TABLE, json_record),
+            deal_data_of_reference(DEAL_DATA_ARRAY, json_references)};
+        for (size_t position = 0u; position < 4u; position++) {
             deal_outcome_data encoded = deal_json_stringify(positions[position], &probe_origin);
             const char *code = NULL, *actual = NULL, *expected = NULL, *message = NULL;
             if (encoded.error == NULL || !deal_error_code(encoded.error, &code)
@@ -501,6 +512,16 @@ static deal_host_result function_surface_case(const deal_value *args,
                 return fail("JSON must reject private nondata before omission or traversal");
             }
         }
+        if (*(void *const *)deal_container_array_element(json_references, 0u)
+                != nondata[kind].reference)
+            return fail("JSON rejection preserves private reference storage");
+        void *null_reference = (void *)deal_null_singleton;
+        deal_container_array_store(json_references, 0u, &null_reference);
+        deal_outcome_data reference_retry = deal_json_stringify(positions[3], &probe_origin);
+        if (reference_retry.error != NULL || reference_retry.value.tag != DEAL_DATA_STRING
+                || deal_text_byte_length(reference_retry.value.reference) != 6u
+                || memcmp(deal_text_bytes(reference_retry.value.reference), "[null]", 6u) != 0)
+            return fail("JSON repaired private reference array must encode on the same identity");
         deal_data repaired = deal_data_of_number(7.0);
         deal_container_array_store(json_array, 0u, &repaired);
         deal_container_table_write(json_record, key, &repaired);

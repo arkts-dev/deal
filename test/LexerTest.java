@@ -197,8 +197,8 @@ public class LexerTest {
         testBlockCommentNoNesting();
         testLineCommentColumnAtEOF();
         testInTokenizesAsIdentifier();
-        testDirectiveComments();
-        testDealVersionDirectives();
+        testCommentContents();
+        testVersionCommentContents();
         testScalarOffsets();
         testDiagnosticRanges();
         testUnsupportedStringEscapes();
@@ -1227,8 +1227,8 @@ public class LexerTest {
         assertToken(tokens.get(0), TokenType.IDENTIFIER, "in", 1, 1);
     }
 
-    static void testDirectiveComments() {
-        System.out.println("-- Directive Events --");
+    static void testCommentContents() {
+        System.out.println("-- Comment Contents Are Whitespace --");
 
         // --- @jsonable before export class: one event, anchored at EXPORT ---
         LexResult r = tokenize("// @jsonable\nexport class C {}");
@@ -1248,36 +1248,8 @@ public class LexerTest {
                 + exportToken.scalarLength());
         check(exportToken.type() == TokenType.EXPORT,
             "@jsonable before export: first token is EXPORT, got " + exportToken.type());
-        check(r.directiveEvents().size() == 1,
-            "one event, got " + r.directiveEvents().size());
-        if (r.directiveEvents().size() == 1) {
-            CompilerDirective e = r.directiveEvents().get(0);
-            check(e.eventIndex() == 0, "eventIndex 0");
-            check(e.name() == DirectiveName.JSONABLE,
-                "name JSONABLE, got " + e.name());
-            check(e.rawArgument().equals(""), "raw argument empty");
-            check(e.trimmedArgument().equals(""), "trimmed argument empty");
-            check(e.precedingNonCommentTokenCount() == 0,
-                "preceding count 0, got " + e.precedingNonCommentTokenCount());
-            check(e.declarationAnchorTokenIndex() != null
-                    && e.declarationAnchorTokenIndex() == 0,
-                "anchor = emitted EXPORT index 0, got "
-                    + e.declarationAnchorTokenIndex());
-            check(e.sourceRange().origin() == RangeOrigin.SOURCE,
-                "sourceRange SOURCE");
-            check(e.sourceRange().startScalarOffset() == 0
-                    && e.sourceRange().endScalarOffset() == 12
-                    && e.sourceRange().scalarLength() == 12,
-                "sourceRange offsets (0,12) — the complete comment, got ("
-                    + e.sourceRange().startScalarOffset() + ","
-                    + e.sourceRange().endScalarOffset() + ")");
-            check(e.nameRange().startScalarOffset() == 4
-                    && e.nameRange().endScalarOffset() == 12
-                    && e.nameRange().scalarLength() == 8,
-                "nameRange offsets (5,13) — 'jsonable' after '// @', got ("
-                    + e.nameRange().startScalarOffset() + ","
-                    + e.nameRange().endScalarOffset() + ")");
-        }
+        check(r.tokens().getFirst().startScalarOffset() == 13, "comment retains following source offset");
+        assertTokenOffsetsMatchCursorWalk("// @jsonable\nexport class C {}", r);
 
         // --- @jsonable followed by blank line: the run survives whitespace ---
         r = tokenize("// @jsonable\n\nexport class D {}");
@@ -1286,16 +1258,8 @@ public class LexerTest {
         Token expToken2 = tokens.get(0);
         check(expToken2.type() == TokenType.EXPORT,
             "@jsonable + blank line: first token is EXPORT, got " + expToken2.type());
-        check(r.directiveEvents().size() == 1, "one event after blank line");
-        if (!r.directiveEvents().isEmpty()) {
-            CompilerDirective e = r.directiveEvents().get(0);
-            check(e.declarationAnchorTokenIndex() != null
-                    && e.declarationAnchorTokenIndex() == 0,
-                "blank-line run anchors at the EXPORT token");
-            check(e.precedingNonCommentTokenCount() == 0
-                    && e.declarationAnchorTokenIndex() == e.precedingNonCommentTokenCount(),
-                "anchor == precedingNonCommentTokenCount invariant");
-        }
+        check(r.tokens().getFirst().startScalarOffset() == 14, "blank line retains following source offset");
+        assertToken(expToken2, TokenType.EXPORT, "export", 3, 1);
 
         // --- Ordinary comment produces no event and breaks the run ---
         r = tokenize("// @jsonable\n// some comment\nlet x = 1;");
@@ -1304,13 +1268,8 @@ public class LexerTest {
         Token letToken = tokens.get(0);
         check(letToken.type() == TokenType.LET,
             "ordinary comment: first token is LET, got " + letToken.type());
-        check(r.directiveEvents().size() == 1,
-            "one event (the jsonable), got " + r.directiveEvents().size());
-        if (!r.directiveEvents().isEmpty()) {
-            CompilerDirective e = r.directiveEvents().get(0);
-            check(e.declarationAnchorTokenIndex() == null,
-                "ordinary comment breaks the run without anchoring");
-        }
+        check(r.tokens().getFirst().line() == 3, "mixed comments retain following source line");
+        assertToken(letToken, TokenType.LET, "let", 3, 1);
 
         // --- @jsonable with no space after // ---
         r = tokenize("//@jsonable\nexport class E {}");
@@ -1319,9 +1278,7 @@ public class LexerTest {
         Token expNoSpace = tokens.get(0);
         check(expNoSpace.type() == TokenType.EXPORT,
             "@jsonable no space: first token is EXPORT");
-        check(r.directiveEvents().size() == 1
-                && r.directiveEvents().get(0).name() == DirectiveName.JSONABLE,
-            "@jsonable no space: one jsonable event");
+        check(r.tokens().getFirst().startScalarOffset() == 12, "no-space comment retains following source offset");
 
         // --- Multiple @jsonable comment lines accumulate in one run ---
         r = tokenize("// @jsonable\n// @jsonable\nexport class F {}");
@@ -1330,14 +1287,8 @@ public class LexerTest {
         Token expDouble = tokens.get(0);
         check(expDouble.type() == TokenType.EXPORT,
             "double @jsonable: first token is EXPORT");
-        check(r.directiveEvents().size() == 2,
-            "double @jsonable: 2 events, got " + r.directiveEvents().size());
-        for (CompilerDirective e : r.directiveEvents()) {
-            check(e.name() == DirectiveName.JSONABLE
-                    && e.declarationAnchorTokenIndex() != null
-                    && e.declarationAnchorTokenIndex() == 0,
-                "both events anchor at the EXPORT token (index 0)");
-        }
+        check(r.tokens().getFirst().startScalarOffset() == 26, "repeated comments retain following source offset");
+        assertToken(expDouble, TokenType.EXPORT, "export", 3, 1);
 
         // --- @jsonable at end of file: EOF retains the event unanchored ---
         r = tokenize("// @jsonable");
@@ -1347,15 +1298,8 @@ public class LexerTest {
             "@jsonable at EOF: only EOF token, got " + tokens.size());
         check(tokens.get(0).type() == TokenType.EOF,
             "@jsonable at EOF: token is EOF");
-        check(r.directiveEvents().size() == 1,
-            "@jsonable at EOF: one event retained");
-        if (!r.directiveEvents().isEmpty()) {
-            CompilerDirective e = r.directiveEvents().get(0);
-            check(e.declarationAnchorTokenIndex() == null,
-                "EOF retains the event unanchored (D3)");
-            check(e.precedingNonCommentTokenCount() == 0,
-                "preceding count stays 0");
-        }
+        check(r.tokens().getLast().startScalarOffset() == 12, "trailing comment retains EOF offset");
+        assertToken(tokens.getFirst(), TokenType.EOF, "", 1, 13);
 
         // --- @jsonable with leading whitespace on comment line ---
         r = tokenize("//   @jsonable  \nexport class G {}");
@@ -1364,10 +1308,7 @@ public class LexerTest {
         Token expWS = tokens.get(0);
         check(expWS.type() == TokenType.EXPORT,
             "@jsonable extra ws: first token is EXPORT");
-        check(r.directiveEvents().size() == 1
-                && r.directiveEvents().get(0).name() == DirectiveName.JSONABLE
-                && r.directiveEvents().get(0).declarationAnchorTokenIndex() != null,
-            "EXPORT token anchored with @jsonable and extra whitespace");
+        check(r.tokens().getFirst().startScalarOffset() == 17, "horizontal comment whitespace retains source offset");
 
         // --- @jsonable before non-export keyword anchors at CLASS ---
         r = tokenize("// @jsonable\nclass C {}");
@@ -1376,10 +1317,7 @@ public class LexerTest {
         Token classToken = tokens.get(0);
         check(classToken.type() == TokenType.CLASS,
             "@jsonable before standalone class: first token is CLASS");
-        check(r.directiveEvents().size() == 1
-                && r.directiveEvents().get(0).declarationAnchorTokenIndex() != null
-                && r.directiveEvents().get(0).declarationAnchorTokenIndex() == 0,
-            "event anchors at the CLASS token (index 0)");
+        check(r.tokens().getFirst().startScalarOffset() == 13, "class comment retains source offset");
 
         // --- @jsonable does not leak to subsequent tokens ---
         r = tokenize("// @jsonable\nlet x = 1;\nlet y = 2;");
@@ -1387,13 +1325,8 @@ public class LexerTest {
         Token firstLet = tokens.get(0);
         check(firstLet.type() == TokenType.LET && firstLet.lexeme().equals("let"),
             "first non-comment is LET");
-        check(r.directiveEvents().size() == 1,
-            "one event, got " + r.directiveEvents().size());
-        if (!r.directiveEvents().isEmpty()) {
-            check(r.directiveEvents().get(0).declarationAnchorTokenIndex() != null
-                    && r.directiveEvents().get(0).declarationAnchorTokenIndex() == 0,
-                "event anchors at the first LET (index 0) only");
-        }
+        check(r.tokens().getFirst().startScalarOffset() == 13, "comment retains first binding offset");
+        assertToken(tokens.get(5), TokenType.LET, "let", 3, 1);
 
         // --- The anchor-before-clear-before-emission invariant (D3) ---
         // Three events in one run; the next non-comment token is LET at
@@ -1401,41 +1334,22 @@ public class LexerTest {
         // non-comment token).
         r = tokenize("// @jsonable\n// @jsonable\n// @jsonable\nlet x = 1;");
         assertNoDiagnostics(r.diagnostics(), "three-marker run");
-        check(r.directiveEvents().size() == 3,
-            "three events, got " + r.directiveEvents().size());
-        for (CompilerDirective e : r.directiveEvents()) {
-            check(e.precedingNonCommentTokenCount() == 0,
-                "preceding count 0 for every event of the run");
-            check(e.declarationAnchorTokenIndex() != null
-                    && e.declarationAnchorTokenIndex() == 0,
-                "anchor == emitted token index 0 == preceding count");
-        }
+        check(r.tokens().getFirst().startScalarOffset() == 39, "three comments retain source offset");
+        assertToken(r.tokens().getFirst(), TokenType.LET, "let", 4, 1);
 
         // --- Broken C run: @c-struct broken by @extern-c never attaches ---
         r = tokenize("// @c-struct\n// @extern-c\nclass A { x: number = 0; }");
-        assertDiagnosticCode(r.diagnostics(), "E1044", "removed C directives reject");
-        check(r.directiveEvents().size() == 2,
-            "two events (c-struct + extern-c), got " + r.directiveEvents().size());
-        for (CompilerDirective e : r.directiveEvents()) {
-            check(e.declarationAnchorTokenIndex() == null,
-                "broken C run never attaches (D3)");
-        }
+        assertNoDiagnostics(r.diagnostics(), "C-like comments are whitespace");
+        check(r.tokens().getFirst().line() == 3, "C-like comments retain source line");
+        assertToken(r.tokens().getFirst(), TokenType.CLASS, "class", 3, 1);
 
         // --- Broken C run by an unknown directive ---
         r = tokenize("// @c-struct\n// @nope\nclass A { x: number = 0; }");
-        assertDiagnosticCode(r.diagnostics(), "E1044",
-            "unknown directive emits E1044 in the lexer");
-        check(r.directiveEvents().size() == 2,
-            "two events (c-struct + unknown), got " + r.directiveEvents().size());
-        for (CompilerDirective e : r.directiveEvents()) {
-            check(e.declarationAnchorTokenIndex() == null,
-                "unknown directive breaks the C run without anchoring");
-        }
-        CompilerDirective unknown = r.directiveEvents().get(1);
-        check(unknown.name() == null
-                && unknown.rawArgument().equals("")
-                && unknown.trimmedArgument().equals(""),
-            "unknown event has null name and empty arguments");
+        assertNoDiagnostics(r.diagnostics(), "unrecognized comments are whitespace");
+        check(r.tokens().getFirst().line() == 3, "unrecognized comments retain source line");
+        assertToken(r.tokens().getFirst(), TokenType.CLASS, "class", 3, 1);
+        check(r.tokens().getFirst().type() == TokenType.CLASS,
+            "unrecognized comments leave the class token intact");
 
         // --- @jsonable between other comments: the ordinary comment breaks ---
         r = tokenize("// @jsonable\n// another comment\n// @jsonable\nexport class H {}");
@@ -1444,55 +1358,34 @@ public class LexerTest {
         Token expBetween = tokens.get(0);
         check(expBetween.type() == TokenType.EXPORT,
             "@jsonable with intervening comment: first token is EXPORT");
-        check(r.directiveEvents().size() == 2,
-            "two events, got " + r.directiveEvents().size());
-        check(r.directiveEvents().get(0).declarationAnchorTokenIndex() == null,
-            "the intervening ordinary comment breaks the first run (no anchoring)");
-        check(r.directiveEvents().get(1).declarationAnchorTokenIndex() != null
-                && r.directiveEvents().get(1).declarationAnchorTokenIndex() == 0,
-            "the second run anchors at the EXPORT token");
+        check(r.tokens().getFirst().line() == 4, "interleaved comments retain source line");
+        check(expBetween.line() == 4 && expBetween.column() == 1,
+            "interleaved comments preserve the following token position");
     }
 
     // =========================================================================
-    // @deal-version directive event tests (DEAL v1.4 file directives)
+    // Version-like comments are ordinary whitespace
     // =========================================================================
 
-    static void testDealVersionDirectives() {
-        System.out.println("-- @deal-version Directive Event Tests --");
+    static void testVersionCommentContents() {
+        System.out.println("-- Version-Like Comment Contents --");
 
         LexResult r;
         for (String term : new String[]{"\n", "\r\n", "\r", ""}) {
             r = tokenize("// @deal-version 1.4" + term);
-            check(r.diagnostics().stream().anyMatch(d -> d.code().equals("E1044")),
-                "removed file version directive is unknown under every terminator");
-            check(r.directiveEvents().get(0).name() == null,
-                "removed directive never receives a known name");
-            check(r.directiveEvents().get(0).declarationAnchorTokenIndex() == null,
-                "removed directive never attaches");
+            assertNoDiagnostics(r.diagnostics(), "version comment under every terminator");
+            check(r.tokens().getLast().startScalarOffset() == ("// @deal-version 1.4" + term).length(), "version comment retains EOF offset");
+            check(r.tokens().size() == 1, "version comment leaves only EOF");
         }
 
         // --- @jsonablex / @jsonable:foo / @jsonable-foo / @jsonable foo ---
-        // (D2): jsonable plus a forbidden argument — the lexer emits no
-        // diagnostic; the parser's argument sweep owns E1045.
+        // Spelling and argument text never select compiler behavior.
         for (String form : new String[]{"@jsonablex", "@jsonable:foo",
                 "@jsonable-foo", "@jsonable foo"}) {
-            String arg = form.substring("@jsonable".length());
             r = tokenize("// " + form + "\nexport class C {}");
-            assertNoDiagnostics(r.diagnostics(),
-                form + ": lexer emits no diagnostics (E1045 is parser-owned)");
-            check(r.directiveEvents().size() == 1,
-                form + ": one event, got " + r.directiveEvents().size());
-            if (!r.directiveEvents().isEmpty()) {
-                CompilerDirective e = r.directiveEvents().get(0);
-                check(e.name() == DirectiveName.JSONABLE,
-                    form + ": name jsonable, got " + e.name());
-                check(e.rawArgument().equals(arg),
-                    form + ": raw argument '" + arg + "', got '"
-                        + e.rawArgument() + "'");
-                check(e.trimmedArgument().equals(arg.trim()),
-                    form + ": trimmed argument, got '"
-                        + e.trimmedArgument() + "'");
-            }
+            assertNoDiagnostics(r.diagnostics(), form + ": comment contents are whitespace");
+            check(r.tokens().getFirst().startScalarOffset() == form.length() + 4, form + ": source offset retained");
+            assertToken(r.tokens().getFirst(), TokenType.EXPORT, "export", 2, 1);
         }
     }
 
@@ -1584,9 +1477,8 @@ public class LexerTest {
 
     // =========================================================================
     // Diagnostic range tests (T3): the exact D5 mapping for
-    // E1001/E1002/E1003/E1004 and the E1044 recovered-name range with its
-    // complete-comment note (fixed-name-directive-events D6), including
-    // Unicode and CRLF fixtures.
+    // E1001/E1002/E1003/E1004 and real errors following arbitrary comments,
+    // including Unicode and CRLF fixtures.
     // =========================================================================
 
     static void testDiagnosticRanges() {
@@ -1628,52 +1520,29 @@ public class LexerTest {
         check(d != null, "E1003 present at EOF");
         assertRange(d, "test.deal", 1, 1, 1, 7, 0, 6, "E1003 at EOF");
 
-        // E1044 unknown directive: the recovered name range
-        // (fixed-name-directive-events D2/D6). "// @nope" — 'nope' runs
-        // from scalar offset 5 through 9; the complete comment is the
-        // note's secondary range.
-        LexResult r2 = tokenize("// @nope");
-        CompilerDiagnostic d2 = findDiag(r2, "E1044");
-        check(d2 != null, "E1044 present for unknown directive");
-        assertRange(d2, "test.deal", 1, 5, 1, 9, 4, 8,
-            "E1044 recovered name range");
-        check(d2.notes().size() == 1 && d2.notes().get(0).range() != null,
-            "E1044 carries the complete-comment note");
-        if (d2.notes().size() == 1 && d2.notes().get(0).range() != null) {
-            DiagnosticRange note = d2.notes().get(0).range();
-            check(note.startScalarOffset() == 0
-                    && note.endScalarOffset() == 8
-                    && note.scalarLength() == 8,
-                "E1044 note = complete comment (0,8), got ("
-                    + note.startScalarOffset() + "," + note.endScalarOffset() + ")");
+        // Arbitrary comment contents never diagnose. A real invalid token
+        // after the comment retains its original UTF-16 range and no notes.
+        for (String comment : List.of("// @nope", "// @!-x", "// @", "// @🌍")) {
+            LexResult onlyComment = tokenize(comment);
+            assertNoDiagnostics(onlyComment.diagnostics(), "comment at EOF: " + comment);
+            Token end = onlyComment.tokens().getFirst();
+            check(end.type() == TokenType.EOF && end.startScalarOffset() == comment.length()
+                && end.column() == comment.length() + 1, "comment EOF coordinates");
+            for (String ending : List.of("\n", "\r", "\r\n")) {
+                LexResult afterComment = tokenize(comment + ending + "@");
+                check(afterComment.diagnostics().size() == 1, "only the source token diagnoses");
+                CompilerDiagnostic invalid = findDiag(afterComment, "E1001");
+                assertRange(invalid, "test.deal", 2, 1, 2, 2,
+                    comment.length() + ending.length(), comment.length() + ending.length() + 1,
+                    "real diagnostic after comment");
+                check(invalid.notes().isEmpty(), "comments add no diagnostic notes");
+            }
         }
+        LexResult crlfComment = tokenize("let x = 1;\r\n// @nope\r\nlet y = 2;");
+        assertNoDiagnostics(crlfComment.diagnostics(), "comment between CRLF declarations");
+        assertToken(crlfComment.tokens().get(5), TokenType.LET, "let", 3, 1);
 
-        // E1044 punctuation form: "// @!-x" — '@' plus the adjacent run.
-        LexResult r3 = tokenize("// @!-x");
-        CompilerDiagnostic d3 = findDiag(r3, "E1044");
-        check(d3 != null, "E1044 present for punctuation form");
-        assertRange(d3, "test.deal", 1, 4, 1, 8, 3, 7,
-            "E1044 @+adjacent-run range");
-
-        // E1044 empty form: "// @" — just '@' (offset 3..4).
-        LexResult r4 = tokenize("// @");
-        CompilerDiagnostic d4 = findDiag(r4, "E1044");
-        check(d4 != null, "E1044 present for empty form");
-        assertRange(d4, "test.deal", 1, 4, 1, 5, 3, 4,
-            "E1044 bare '@' range");
-
-        // E1044 with CRLF terminator: the complete-comment note ends at
-        // the '\r' (the terminator's first scalar); CRLF counts two
-        // scalars.
-        LexResult r5 = tokenize("let x = 1;\r\n// @nope\r\nlet y = 2;");
-        CompilerDiagnostic d5 = findDiag(r5, "E1044");
-        check(d5 != null, "E1044 present in CRLF fixture");
-        assertRange(d5, "test.deal", 2, 5, 2, 9, 16, 20,
-            "E1044 CRLF recovered name range");
-
-        // Trailing directive comment: the EOF token keeps its final cursor
-        // position offsets; the event stays in directiveEvents as an
-        // unanchored record (D1/D3).
+        // A trailing comment is whitespace; EOF keeps the final cursor position.
         LexResult r6 = tokenize("let x = 1;\n// @jsonable");
         assertNoDiagnostics(r6.diagnostics(), "trailing @jsonable fixture");
         List<Token> tokens = r6.tokens();
@@ -1685,15 +1554,8 @@ public class LexerTest {
         check(eof.startScalarOffset() == 23 && eof.scalarLength() == 0,
             "trailing directive: EOF offset 23, zero scalar length, got "
                 + eof.startScalarOffset() + "/" + eof.scalarLength());
-        check(r6.directiveEvents().size() == 1,
-            "trailing directive: one unanchored event retained");
-        if (!r6.directiveEvents().isEmpty()) {
-            CompilerDirective trailing = r6.directiveEvents().get(0);
-            check(trailing.name() == DirectiveName.JSONABLE
-                    && trailing.declarationAnchorTokenIndex() == null
-                    && trailing.precedingNonCommentTokenCount() == 5,
-                "trailing event unanchored with preceding count 5");
-        }
+        check(r6.tokens().getLast().type() == TokenType.EOF, "trailing comment retains EOF");
+        assertTokenOffsetsMatchCursorWalk("let x = 1;\n// @jsonable", r6);
 
     }
 

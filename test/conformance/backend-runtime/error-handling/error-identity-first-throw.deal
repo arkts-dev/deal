@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: error-handling, throw, catch, classes, async
 
-import * as console from "std/console";
+
 
 // A parameter crossing and a return crossing of one Error value: the
 // callee mutates the received instance and returns the identical one.

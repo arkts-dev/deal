@@ -100,7 +100,7 @@ public final class CompilationOrchestrator {
      * the entry file via {@link SourceModuleResolver#resolveEntryFile} —
      * resolves through its pinned rules (importer-relative first,
      * externals declaration authority, configured roots then the pinned
-     * stdlib surface, the 6-module filter, file-keyed E2009; no CWD
+     * stdlib surface, the five-module filter, file-keyed E2009; no CWD
      * module fallback), and every successfully resolved source receives
      * one private {@link SourceModuleLocation}.
      */
@@ -397,7 +397,7 @@ public final class CompilationOrchestrator {
      * spelling); the externals declarations map becomes
      * {@link ExternalEntry} records with normalized declaration paths;
      * the stdlib surface is probed (stdlib-directory hint first, then the
-     * entry directory, then the process CWD) and the six spec-listed
+     * entry directory, then the process CWD) and the five spec-listed
      * declaration files under the surface are canonicalized; the output
      * is classified from the given output root; and the private
      * deployment identity is a deterministic synthetic value over the
@@ -815,8 +815,7 @@ public final class CompilationOrchestrator {
             // Phase-0 parsing uses the sole v1.6 grammar and binary64
             // literal admission. The lexer's directive events reach the
             // same declaration-binding path as every production parse.
-            Parser parser = new Parser(lex.tokens(), sourcePath,
-                lex.directiveEvents());
+            Parser parser = new Parser(lex.tokens(), sourcePath);
             ParseResult parseResult = parser.parse();
             diagnostics.addAll(parseResult.diagnostics());
             if (parseResult.hasErrors()) {
@@ -877,7 +876,7 @@ public final class CompilationOrchestrator {
             // Process imports for discovery through the T6 resolver's
             // pinned rules (importer-relative first, externals authority,
             // configured roots then the pinned stdlib surface, the
-            // 6-module filter, file-keyed E2009; no CWD fallback). A
+            // five-module filter, file-keyed E2009; no CWD fallback). A
             // failed resolution merges its E2003/E2009 at the import
             // span and fails the compile; a resolved source queues its
             // lexical path and publishes its location once.
@@ -951,8 +950,8 @@ public final class CompilationOrchestrator {
     /**
      * The stdlib module stem ({@code console}...{@code time}) of a
      * {@code BuiltinModule} source: derived from the canonical resolved
-     * file's stem, restricted to the six pinned names (a partial
-     * surface — e.g. a test-only surface holding a subset of the six
+     * file's stem, restricted to the five pinned names (a partial
+     * surface — e.g. a test-only surface holding a subset of the five
      * files — keeps the stem-to-name mapping exact; a positional list
      * index would misname partial surfaces).
      */
@@ -1699,7 +1698,14 @@ public final class CompilationOrchestrator {
 
         for (String sourcePath : order) {
             ModuleInfo info = modules.get(sourcePath);
-            if (info.isDeclarationFile) continue;
+            if (info.isDeclarationFile) {
+                // Declarations have no implementation body to check, but their
+                // identifiers obey the same rules as implementation sources.
+                NameResolver declarations = resolver.declarationResolver(info);
+                diagnostics.addAll(declarations.diagnostics());
+                if (hasNameErrors(declarations.diagnostics())) hasErrors = true;
+                continue;
+            }
 
             long modStart = System.currentTimeMillis();
 
@@ -1739,34 +1745,6 @@ public final class CompilationOrchestrator {
                 }
             }
 
-            // D6: Append synthetic C$fromJson and C$toJson exports for @jsonable
-            // classes.  These are added after the symbol-table-based correction
-            // so that synthetic entries are present in the final export map
-            // consumed by downstream modules.
-            for (StatementNode stmt : info.rawAst.statements()) {
-                if (stmt instanceof ExportDeclaration exp
-                        && exp.declaration() instanceof ClassDeclaration cd
-                        && cd.isJsonable()) {
-                    Symbol clsSym = symTable.resolve(cd.name());
-                    if (clsSym instanceof Symbol.ClassSymbol cs) {
-                        Type clsType = Types.classType(cs.name(), cs.identity(),
-                            Types.providerModule(cs.modulePath()));
-
-                        // C$fromJson: (string) -> C | null
-                        Type.Func fromJsonType = new Type.Func(
-                            List.of(Type.String.INSTANCE),
-                            Types.nullable(clsType));
-                        correctedExports.put(cd.name() + "$fromJson", fromJsonType);
-
-                        // C$toJson: (C) -> string
-                        Type.Func toJsonType = new Type.Func(
-                            List.of(clsType),
-                            Type.String.INSTANCE);
-                        correctedExports.put(cd.name() + "$toJson", toJsonType);
-                    }
-                }
-            }
-
             info.exports = correctedExports;
 
             List<CompilerDiagnostic> nameDiags = nr.diagnostics();
@@ -1778,9 +1756,14 @@ public final class CompilationOrchestrator {
                 continue;
             }
 
+            int resolvedDiagnosticCount = nameDiags.size();
             CheckResult result = TypeChecker.check(info.modulePath, symTable,
                 nr, info.rawAst);
             info.checkResult = result;
+            List<CompilerDiagnostic> annotationDiags = nr.diagnostics()
+                .subList(resolvedDiagnosticCount, nr.diagnostics().size());
+            diagnostics.addAll(annotationDiags);
+            if (hasNameErrors(annotationDiags)) hasErrors = true;
             diagnostics.addAll(result.diagnostics());
             if (result.hasErrors()) {
                 hasErrors = true;
@@ -2498,26 +2481,6 @@ public final class CompilationOrchestrator {
                 continue;
             }
             return null;
-        }
-
-        @Override
-        public boolean isFunctionExportedFromModule(
-                CanonicalModuleIdentity declaringModule,
-                String functionName, String importingModule)
-                throws ModuleNotFoundException {
-            // v1.2 identity carriage: route on the module-identity
-            // classification; the declaring module's exports map answers
-            // the jsonable synthetic-export queries.
-            for (ModuleInfo info : modules.values()) {
-                CanonicalModuleIdentity identity =
-                    classifyModuleIdentity(info);
-                if (identity != null && identity.equals(declaringModule)
-                        && info.exports != null
-                        && info.exports.containsKey(functionName)) {
-                    return true;
-                }
-            }
-            return false;
         }
 
         /**

@@ -1,3 +1,0 @@
-// DEAL Standard Library: std/json (declaration)
-export function stringify(value: unknown): string | undefined;
-export function parse(text: string): Record<string, unknown>;

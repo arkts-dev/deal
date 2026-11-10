@@ -1,11 +1,10 @@
-// @spec: Classes — @jsonable toJson
-// @description: @jsonable toJson serializes a finite 600-level table chain (no fixed depth cap) and duplicates a shared acyclic child (an alias is not a cycle) (v1.4)
+// @spec: Standard library builtins — JSON encoding
+// @description: JSON.stringify serializes a finite 600-level Record chain and duplicates a shared acyclic child
 // @expected: runtime-ok
 // @features: jsonable, toJson, deep, alias, v1.4
 
-import * as json from "std/json";
 
-// @jsonable
+
 export class Holder {
   data: Record<string, unknown>;
 }
@@ -21,8 +20,8 @@ export function test_tojson_deep_and_alias(): null {
   let shared: Record<string, unknown> = { v: 1 };
   h.data.aliasA = shared;
   h.data.aliasB = shared;
-  let text: string = Holder$toJson(h);
-  let decoded: Record<string, unknown> = json.parse(text);
+  let text: string = JSON.stringify(h) as string;
+  let decoded: Record<string, unknown> = JSON.parse(text);
   let data: Record<string, unknown> = decoded.data as Record<string, unknown>;
   let aliasA: Record<string, unknown> = data.aliasA as Record<string, unknown>;
   let aliasB: Record<string, unknown> = data.aliasB as Record<string, unknown>;

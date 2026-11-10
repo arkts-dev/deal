@@ -2,9 +2,7 @@
   "version": 1,
   "mode": "compile-error",
   "diagnostic": {
-    "code": "E3003",
-    "line": 6,
-    "column": 37,
-    "message": "Cannot access field 'length' on type string"
+    "code": "E3017",
+    "message": "Length is read-only"
   }
 }

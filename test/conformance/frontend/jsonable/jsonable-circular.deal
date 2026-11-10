@@ -1,6 +1,6 @@
-// @spec: Classes — @jsonable circular dependency
-// @description: Circular same-module @jsonable dependency is rejected with E4008
-// @expected: compile-error E4008
+// @spec: Classes — Recursive field types
+// @description: Mutually recursive class declarations are legal regardless of comment contents
+// @expected: compile-ok
 // @features: jsonable, type-checking
 
 // @jsonable

@@ -1,12 +1,12 @@
-// @spec: Standard library declarations — std/json
-// @description: std/json can be imported
+// @spec: Standard library builtins — JSON decoding
+// @description: JSON.parse takes a contextual Record target from a function return
 // @expected: compile-ok
 // @features: stdlib, json
 
-import * as json from "std/json";
+
 
 export function test_json_parse(s: string): Record<string, unknown> {
-  return json.parse(s);
+  return JSON.parse(s);
 }
 
 export function main(): null { return null; }

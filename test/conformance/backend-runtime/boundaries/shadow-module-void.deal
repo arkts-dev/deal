@@ -2,6 +2,6 @@
 // @description: shadow-module-void
 // @expected: runtime-ok
 // @features: boundary-validation
-import * as console from "std/console";
+import * as printer from "std/console";
 function f(f:number):void{}
-export function main():null{f(1);console.log("OK");return null;}
+export function main():null{f(1);printer.log("OK");return null;}

@@ -86,8 +86,8 @@ public class JsBackendTest {
             Path host = root.resolve("host");
             Files.createDirectories(host);
             Files.writeString(host.resolve("probe.d.deal"), "export function f(v:unknown[]):void;");
-            String imports = "import * as console from \"std/console\";"
-                + "import * as host from \"host/probe\";import * as json from \"std/json\";";
+            String imports = "import * as output from \"std/console\";"
+                + "import * as host from \"host/probe\";";
             String[] mutations = {
                 "Object.defineProperty(v,\"0\",{value:9,writable:true,enumerable:true,configurable:true});",
                 "if(Object.getOwnPropertyDescriptor(v,\"length\").value===v.length)console.log(\"COHERENT\");else throw Error(\"inconsistent length\");"
@@ -95,10 +95,10 @@ public class JsBackendTest {
             for (boolean parsed : List.of(false, true)) {
                 for (int operation = 0; operation < mutations.length; operation++) {
                     String array = parsed
-                        ? "let r=json.parse(\"{\\\"a\\\":[1,2]}\");let a=r.a as unknown[];"
+                        ? "let r:Record<string,unknown>=JSON.parse(\"{\\\"a\\\":[1,2]}\");let a=r.a as unknown[];"
                         : "let a:unknown[]=[1,2];";
                     String assertion = operation == 1 ? ""
-                        : "if((a[0] as number)!==9){throw {code:\"TEST\",message:\"stale projection\"};}console.log(\"LIVE\");";
+                        : "if((a[0] as number)!==9){throw {code:\"TEST\",message:\"stale projection\"};}output.log(\"LIVE\");";
                     Files.writeString(host.resolve("probe.js"), "module.exports={f:v=>{" + mutations[operation] + "}};");
                     CompositionProductionTest.execute(imports + "export function main():null{" + array
                         + "host.f(a);" + assertion + "return null;}",
@@ -131,16 +131,44 @@ public class JsBackendTest {
                   Object.defineProperty(a,"length",{value:1,writable:true,enumerable:false,configurable:false});
                 }};
                 """);
-            CompositionProductionTest.execute(imports + """
-                export function main():null {
-                    let r=json.parse("{\\"a\\":[1,2]}");
-                    let a=r.a as unknown[];
+            for (boolean parsed : List.of(false, true)) {
+                String array = parsed
+                    ? "let r:Record<string,unknown>=JSON.parse(\"{\\\"a\\\":[1,2]}\");let a=r.a as unknown[];"
+                    : "let a:unknown[]=[1,2];";
+                CompositionProductionTest.execute(imports + "export function main():null{" + array + """
+                    let alias:unknown[]=a;
                     host.f(a);
-                    if(a.length!==1 || (a[0] as number)!==9){throw {code:"TEST",message:"retry lost live storage"};}
-                    console.log("LIVE");return null;
+                    if(a!==alias || alias.length!==1 || (alias[0] as number)!==9){throw {code:"TEST",message:"retry lost live storage"};}
+                    output.log("LIVE");return null;
                 }
-                """, "LIVE\n", root.resolve("reject-repair-retry"), host, List.of(Backend.JS));
-            check(true, "native JS rejected reflection preserves live storage and permits retry");
+                """, "LIVE\n", root.resolve("reject-repair-retry-" + parsed), host, List.of(Backend.JS));
+                check(true, "native JS rejected reflection preserves live storage and permits retry: parsed=" + parsed);
+            }
+            Files.writeString(host.resolve("probe.js"), """
+                module.exports={f:a=>{
+                  const child=Object.getOwnPropertyDescriptor(a,"0").value;
+                  if(child!==a[0] || child!==a[1])throw Error("nested projection lost identity");
+                  for(const reject of [()=>Object.freeze(child),()=>Object.defineProperty(child,"length",{value:0,writable:false})]){
+                    let caught=false;try{reject();}catch(e){if(!(e instanceof TypeError))throw e;caught=true;}
+                    if(!caught || child.length!==2 || child[0]!==1)throw Error("nested reflection mutated storage");
+                  }
+                  child[0]=9;
+                  a[1]=child;
+                  if(a[0]!==a[1])throw Error("replacement lost original storage");
+                }};
+                """);
+            for (boolean parsed : List.of(false, true)) {
+                String arrays = parsed
+                    ? "let a:unknown[]=JSON.parse(\"[[1,2]]\");let child:unknown[]=a[0] as unknown[];a[a.length]=child;"
+                    : "let child:unknown[]=[1,2];let a:unknown[]=[child,child];";
+                CompositionProductionTest.execute(imports + "export function main():null{" + arrays + """
+                    host.f(a);
+                    if((a[0] as unknown[])!==child || (a[1] as unknown[])!==child || (child[0] as number)!==9){throw {code:"TEST",message:"nested alias lost storage"};}
+                    output.log("LIVE");return null;
+                }
+                """, "LIVE\n", root.resolve("nested-reflection-" + parsed), host, List.of(Backend.JS));
+                check(true, "nested native JS descriptors preserve projected aliases: parsed=" + parsed);
+            }
         } finally { CompositionProductionTest.remove(root); }
     }
 
@@ -324,8 +352,7 @@ public class JsBackendTest {
             return new Frontend(null, null, errors);
         }
 
-        Parser parser = new Parser(lex.tokens(), filename,
-            lex.directiveEvents());
+        Parser parser = new Parser(lex.tokens(), filename);
         ParseResult parseResult = parser.parse();
         addErrors(errors, parseResult.diagnostics());
         if (parseResult.hasErrors()) {
@@ -1649,7 +1676,7 @@ public class JsBackendTest {
         System.out.println("-- Module shape: root module --");
 
         JsEmission res = generate("""
-            import * as console from "std/console";
+            import * as output from "std/console";
             function helper(x: number): number { return x; }
             export function test(): number { return helper(1); }
             """, "shape-root", "main", Map.of(), false);
@@ -1914,22 +1941,22 @@ public class JsBackendTest {
     /**
      * JSONable emission pins (js-v12-jsonable-completion D1-D2): the
      * two exported wrappers plus the hidden C$fields descriptor export
-     * in the pinned shapes — canonical wrapper signatures over the
-     * canonical identity, the walker calls with the per-construction
-     * defaults thunk, declaration-order descriptor entries with one
-     * role per key, and the export assignments under the raw $-sigil
-     * keys.
+     * in the pinned shapes: ordinary wrapper signatures, exact contextual
+     * target and origin, direct runtime encoding, and declaration-order
+     * required/optional schemas without generated callable helpers.
      */
     private static void testJsonableEmissionPins() {
-        System.out.println("-- Jsonable emission: C$fromJson/C$toJson wrappers and the hidden C$fields export --");
+        System.out.println("-- Contextual JSON emission: exact schemas, target and runtime operations --");
 
         JsEmission res = generate("""
-            // @jsonable
+
             export class U {
               name: string;
               nick?: string | null;
               age: number;
             }
+            export function decode(text:string):U { return JSON.parse(text); }
+            export function encode(value:U):string { return JSON.stringify(value) as string; }
             export function test(): number { return 1; }
             """, "jsonable-pins");
         check(res != null && !res.hasErrors(), "jsonable codegen clean: "
@@ -1937,46 +1964,40 @@ public class JsBackendTest {
         if (res == null || res.hasErrors()) return;
 
         String js = res.source();
-        check(js.contains("$rt.publishModule(\"Main\", \"U$fromJson\","),
-            "the generated C$fromJson wrapper is published under its raw key");
-        check(js.contains("$rt.publishModule(\"Main\", \"U$toJson\","),
-            "the generated C$toJson wrapper is published under its raw key");
-        check(js.contains("$rt.publishModule(\"Main\", \"U$fields\", $fU);"),
-            "the hidden C$fields descriptor export is emitted");
-        check(js.contains("$rt.function(\"(string)->?@Main/Main.deal/U\""),
-            "U$fromJson carries the canonical (string)->?@Main/Main.deal/U signature");
-        check(js.contains("$rt.jsonFromJson(\"@Main/Main.deal/U\", $fU,")
-                && js.contains("\"jstest-jsonable-pins.deal\", 2, 8)"),
-            "the fromJson walker call carries the identity, C$fields, and the "
-                + "recorded call span");
+        check(!js.contains("$rt.publishModule(\"Main\", \"U$fromJson\","),
+            "contextual parse needs no generated source-callable decoder");
+        check(!js.contains("$rt.publishModule(\"Main\", \"U$toJson\","),
+            "builtin stringify needs no generated source-callable encoder");
+        check(js.contains("$rt.registerClassPlan(\"@Main/Main.deal/U\", $pU)"),
+            "the exact nominal schema is registered independently of source helpers");
+        check(js.contains("$rt.function(\"(string)->@Main/Main.deal/U\""),
+            "the ordinary declared decode wrapper has its nonnullable target signature");
+        check(js.contains("$rt.jsonDecode(")
+                && js.contains(", \"@Main/Main.deal/U\", \"jstest-jsonable-pins.deal\", 7, 48)"),
+            "the contextual runtime operation carries the exact target and parse origin: " + js);
         check(js.contains("$rt.function(\"(@Main/Main.deal/U)->string\""),
-            "U$toJson carries the canonical (@Main/Main.deal/U)->string signature");
-        check(js.contains("$rt.jsonToJson(\"@Main/Main.deal/U\", "),
-            "the toJson walker call carries the identity backstop");
-        check(js.contains("{ name: \"name\", jtype: \"string\", optional: false, "
-                + "nullable: false, undefinedable: false }")
-                && js.contains("{ name: \"nick\", jtype: \"string\", "
-                + "optional: true, nullable: true, undefinedable: false }")
-                && js.contains("{ name: \"age\", jtype: \"number\", optional: false, "
-                + "nullable: false, undefinedable: false }"),
-            "U$fields is the declaration-order descriptor array with one "
-                + "role per key (name/jtype/optional/nullable/undefinedable)");
+            "the ordinary encode wrapper retains its nominal input signature");
+        check(js.contains("$rt.jsonStringifyText(") && !js.contains("$require(\"./std/json\")"),
+            "builtin encoding invokes the runtime algorithm without a callable module");
+        check(js.contains("[{ name: \"name\", descriptor: \"string\", optional: false }, "
+                + "{ name: \"nick\", descriptor: \"?string\", optional: true }, "
+                + "{ name: \"age\", descriptor: \"number\", optional: false }]"),
+            "the schema retains declaration order, required fields and optional nullable permission");
         check(!js.contains("hasDefault") && !js.contains("evaluator:"),
             "the structural field metadata has no initializer hook");
     }
 
     /**
-     * The @jsonable roundtrip through the real node binary
-     * (js-v12-jsonable-completion): toJson → fromJson → toJson
-     * preserves every field value, the three-state optional field
-     * omits MISSING and keeps present null, and the top-level gate/
-     * extra-key rejections return the DEAL null.
+     * Contextual JSON roundtrips preserve nominal identity and fresh storage,
+     * field values and optional absence versus present null. Extra keys reject
+     * before missing fields, scalar roots reject, and failed assignments leave
+     * the original destination and its fields unchanged.
      */
     private static void testJsonableRoundTripNode() {
-        System.out.println("-- Node: @jsonable C$fromJson/C$toJson roundtrip --");
+        System.out.println("-- Node: contextual JSON nominal roundtrip and rollback --");
         try {
             NodeResult run = runDealNode("""
-                // @jsonable
+
                 export class U {
                   name: string;
                   nick?: string | null;
@@ -1984,27 +2005,37 @@ public class JsBackendTest {
                 }
                 export function test(): number {
                   let u: U = { name: "Ada", nick: null, age: 36 };
-                  let json: string = U$toJson(u);
-                  let v: U | null = U$fromJson(json);
+                  let json: string = JSON.stringify(u) as string;
+                  let v: U | null = JSON.parse(json);
+                  if (!(v instanceof U)) { return 0; }
+                  if ((v as U) === u) { return 0; }
                   if (v !== null) {
                     if (v.name !== "Ada" || v.nick !== null || v.age !== 36) { return 0; }
-                    let round: string = U$toJson(v);
-                    let w: U | null = U$fromJson(round);
+                    let round: string = JSON.stringify(v) as string;
+                    let w: U | null = JSON.parse(round);
+                    if (!(w instanceof U)) { return 0; }
+                    if ((w as U) === v) { return 0; }
                     if (w !== null) {
                       if (w.nick !== null || w.age !== 36) { return 0; }
                     } else { return 0; }
                   } else { return 0; }
                   let missing: U = { name: "A", age: 0 };
-                  let j1: string = U$toJson(missing);
+                  let j1: string = JSON.stringify(missing) as string;
                   if (j1 !== "{\\"name\\":\\"A\\",\\"age\\":0}") { return 0; }
-                  let m2: U | null = U$fromJson(j1);
+                  let m2: U | null = JSON.parse(j1);
                   if (m2 !== null) {
                     if (Object.hasOwn(m2, "nick")) { return 0; }
                   } else { return 0; }
-                  let extra: U | null = U$fromJson("{\\"name\\":\\"Ada\\",\\"extra\\":1}");
-                  if (extra !== null) { return 0; }
-                  let scalar: U | null = U$fromJson("42");
-                  if (scalar !== null) { return 0; }
+                  let extra: U = u;
+                  let extraCaught:boolean = false;
+                  try { extra = JSON.parse("{\\"name\\":\\"Ada\\",\\"extra\\":1}"); }
+                  catch(e) { extraCaught = (e as Error).code === "E8007"; }
+                  if (!extraCaught || extra !== u || u.name !== "Ada" || u.age !== 36) { return 0; }
+                  let scalar: U = u;
+                  let scalarCaught:boolean = false;
+                  try { scalar = JSON.parse("42"); }
+                  catch(e) { scalarCaught = (e as Error).code === "E8001"; }
+                  if (!scalarCaught || scalar !== u || u.nick !== null) { return 0; }
                   return 1;
                 }
                 """, "jsonable-roundtrip");
@@ -2017,22 +2048,18 @@ public class JsBackendTest {
     }
 
     /**
-     * Orchestrator-level cross-module @jsonable pins
-     * (js-v12-jsonable-completion D1): a cross-module class-typed field
-     * carries the imported module's {@code Lib.C$fields} export, a
-     * cross-module array-of-class field carries the same reference in
-     * its element entry, and the emitted project roundtrips and reads
-     * cross-module class-field arrays through the real node binary
-     * (the common-semantic-lowering checked-fact regression: an index
-     * into a cross-module class-field array carries its checked type).
+     * Orchestrator-level contextual schemas retain exact imported nominal
+     * descriptors for fields and array elements. The emitted project executes
+     * a fresh roundtrip, checks descendant alias separation and reads the
+     * reconstructed cross-module class-field array through Node.
      */
     private static void testOrchestratorJsonableCrossModule() throws Exception {
-        System.out.println("-- Orchestrator: cross-module @jsonable fields references and roundtrip --");
+        System.out.println("-- Orchestrator: cross-module contextual schemas and fresh roundtrip --");
 
         writeFile("xjson_proj/deal.json",
             "{\"languageVersion\": \"1.6\", \"backend\": \"js\"}");
         writeFile("xjson_proj/src/lib_a.deal", """
-            // @jsonable
+
             export class Inner {
               v: number;
             }
@@ -2043,7 +2070,7 @@ public class JsBackendTest {
         writeFile("xjson_proj/src/lib_b.deal", """
             import * as A from "./lib_a";
 
-            // @jsonable
+
             export class Wrap {
               inner: A.Inner;
               children: A.Inner[];
@@ -2054,18 +2081,20 @@ public class JsBackendTest {
             """);
         writeFile("xjson_proj/src/xjson_main.deal", """
             import * as B from "./lib_b";
-            import * as console from "std/console";
+            import * as output from "std/console";
             export function main(): null {
               let w: B.Wrap = B.make(7);
-              let json: string = B.Wrap$toJson(w);
-              let w2: B.Wrap | null = B.Wrap$fromJson(json);
+              let json: string = JSON.stringify(w) as string;
+              let w2: B.Wrap | null = JSON.parse(json);
               if (w2 === null) {
-                console.log("xmod-jsonable-null");
+                output.log("xmod-jsonable-null");
                 return null;
               } else {
-                if (w2.inner.v !== 7) { console.log("xmod-jsonable-inner-mismatch"); return null; }
-                if (w2.children[0].v !== 8) { console.log("xmod-jsonable-array-mismatch"); return null; }
-                console.log("xmod-jsonable-ok");
+                if ((w2 as B.Wrap) === w || w2.inner === w.inner || w2.children === w.children
+                    || w2.children[0] === w.children[0]) { output.log("xmod-jsonable-alias-mismatch"); return null; }
+                if (w2.inner.v !== 7) { output.log("xmod-jsonable-inner-mismatch"); return null; }
+                if (w2.children[0].v !== 8) { output.log("xmod-jsonable-array-mismatch"); return null; }
+                output.log("xmod-jsonable-ok");
                 return null;
               }
             }
@@ -2093,15 +2122,11 @@ public class JsBackendTest {
         check(Files.exists(libB), "orchestrator wrote lib_b.js");
         if (Files.exists(libB)) {
             String js = Files.readString(libB);
-            check(js.contains("\"Inner$fields\"")
-                    && js.contains("$rt.readModule(\"lib_a\", \"Inner$fields\")"),
-                "the cross-module class-typed field references the imported "
-                    + "module's published Inner$fields entry");
-            check(js.contains("element: { jtype: \"class\", className: \"@Main/Main.deal/Inner\"")
-                    || js.contains("element: { jtype: \"class\", "
-                        + "className: \"@"),
-                "the cross-module array-of-class element entry carries the "
-                    + "canonical class identity text");
+            check(js.contains("{ name: \"inner\", descriptor: \"@src/lib_a.deal/Inner\", optional: false }")
+                    && js.contains("$rt.registerClassPlan(\"@src/lib_b.deal/Wrap\", $pWrap)"),
+                "the contextual Wrap schema registers its exact defining-module child descriptor: " + js);
+            check(js.contains("{ name: \"children\", descriptor: \"[@src/lib_a.deal/Inner]\", optional: false }"),
+                "the contextual class-array schema preserves the exact imported element identity: " + js);
         }
 
         ProcessBuilder node = new ProcessBuilder("node", "xjson_main.js");
@@ -2736,11 +2761,7 @@ public class JsBackendTest {
     // =========================================================================
 
     private static void testUnsupportedConstructsRejected() {
-        System.out.println("-- Unsupported constructs → E1044 --");
-
-        String externDetailText = "JavaScript backend: @extern-c imports "
-            + "are not supported (FFI_UNSUPPORTED_BACKEND, "
-            + "ISSUE-0169 skeleton)";
+        System.out.println("-- Comment spellings have no host-import semantics --");
 
         CompiledProject externCompiled = compileProjectWithExternals(
             Map.of("Main.deal", """
@@ -2752,16 +2773,10 @@ public class JsBackendTest {
 
                 export function ping(): number;
                 """));
-        check(!externCompiled.success(), "@extern-c import rejected");
-        check(externCompiled.diagnostics().stream().anyMatch(d ->
-                "E1044".equals(d.code())
-                    && "error".equals(d.severity())
-                    && "Unrecognized compiler directive".equals(d.message())
-                    && d.range().startLine() == 1),
-            "@extern-c rejection is E1044 with the exact current detail "
-                + "text at the import statement: " + externCompiled.diagnostics());
-        check(!externCompiled.artifacts().containsKey("Main.js"),
-            "the rejected extern-C compile publishes no artifact");
+        check(externCompiled.success(), "@extern-c is ignored: " + externCompiled.diagnostics());
+        check(externCompiled.diagnostics().isEmpty(), "ignored comment emits no diagnostic");
+        check(externCompiled.artifacts().containsKey("Main.js"),
+            "ordinary host import publishes its entry artifact");
 
         Frontend unknownType = compileFrontend(
             "export function test(): null { let b: bytes = null; return null; }",
@@ -5022,22 +5037,22 @@ public class JsBackendTest {
     }
 
     private static void testStdJsonRoundTrips() throws Exception {
-        System.out.println("-- Node: std/json round-trips --");
+        System.out.println("-- Node: builtin JSON round-trips --");
 
         NodeResult run = runDealNode("""
-            import * as json from "std/json";
+
             class User {
               name: string;
               nick?: string | null;
             }
             export function test(): number {
-              // The declared (string)->table exit rejects a top-level JSON
+              // Contextual Record reconstruction rejects a top-level JSON
               // array and null with the shared boundary outcome (the decoded
               // array is the array carrier, the decoded null is language
               // null); neither is admitted as a table.
               let arrayOutcome: string = "";
               try {
-                let arr: Record<string, unknown> = json.parse("[1,2]");
+                let arr: Record<string, unknown> = JSON.parse("[1,2]");
                 arrayOutcome = "accepted";
               } catch (e) {
                 arrayOutcome = (e as Error).code + ":" + (e as Error).message;
@@ -5045,23 +5060,22 @@ public class JsBackendTest {
               if (arrayOutcome !== "E8001:expected table") { return 0; }
               let nullOutcome: string = "";
               try {
-                let n: Record<string, unknown> = json.parse("null");
+                let n: Record<string, unknown> = JSON.parse("null");
                 nullOutcome = "accepted";
               } catch (e) {
                 nullOutcome = (e as Error).code + ":" + (e as Error).message;
               }
               if (nullOutcome !== "E8001:expected table") { return 0; }
               let p: Record<string, unknown> = { __proto__: "x" };
-              let ps: string = json.stringify(p) as string;
+              let ps: string = JSON.stringify(p) as string;
               if (ps !== "{\\"__proto__\\":\\"x\\"}") { return 0; }
-              let pr: Record<string, unknown> = json.parse(ps);
-              let prs: string = json.stringify(pr) as string;
+              let pr: Record<string, unknown> = JSON.parse(ps);
+              let prs: string = JSON.stringify(pr) as string;
               if (prs !== "{\\"__proto__\\":\\"x\\"}") { return 0; }
               let u: User = { name: "Ada" };
               let g: Record<string, unknown> = { u: u };
-              // Generic stringify includes nominal public fields; this is
-              // distinct from generated @jsonable dynamic Record walkers.
-              let gs: string = json.stringify(g) as string;
+              // Generic stringify includes nominal public fields inside Records.
+              let gs: string = JSON.stringify(g) as string;
               if (gs !== "{\\"u\\":{\\"name\\":\\"Ada\\"}}") { return 0; }
               return 1;
             }
@@ -5070,20 +5084,20 @@ public class JsBackendTest {
             "parse of a top-level array/null rejects with the shared "
                 + "E8001/expected-table outcome, a __proto__-keyed table "
                 + "round-trips and a class instance inside table content is "
-                + "rejected by the closed unsupported-type arm: " + run.output());
+                + "encoded with its declared public fields: " + run.output());
 
         // The exact JS-lane tuple for both decode carriers, captured from
         // the emitted artifact's thrown error (the production JS emission
         // under node; the raw catch preserves the expected/actual fields
         // the source-level Error projects as code/message only).
         NodeResult tuple = runArtifactScript(checkedEmission(prepareJs("""
-            import * as json from "std/json";
+
             export function test_array(): null {
-              let t: Record<string, unknown> = json.parse("[1,2]");
+              let t: Record<string, unknown> = JSON.parse("[1,2]");
               return null;
             }
             export function test_null(): null {
-              let t: Record<string, unknown> = json.parse("null");
+              let t: Record<string, unknown> = JSON.parse("null");
               return null;
             }
             """, "json-table-boundary")), """
@@ -5109,13 +5123,10 @@ public class JsBackendTest {
     }
 
     /**
-     * The array-element arm's reference-kind projection (the decoded-array
-     * mark, B3) through the production JS lane: the
-     * nested array fixture shape — a decoded
-     * JSON array crossing the recursive {@code [[table]]} descriptor —
-     * reports the reference value model's {@code table} element token,
-     * never the {@code array} token its table-descriptor projection
-     * carries. The direct suite pins the runtime surface; this pin
+     * The array-element arm's language-kind projection through the production
+     * JS lane: a reconstructed JSON array crossing the recursive
+     * {@code [[record]]} descriptor reports {@code array}, independently of
+     * its host representation. The direct suite pins the runtime surface; this pin
      * executes the emitted artifact through the deployed runtime.
      */
     private static void testJsonDecodedArrayElementKindNode() throws Exception {
@@ -5123,10 +5134,10 @@ public class JsBackendTest {
             + " projection --");
 
         JsEmission res = checkedEmission(prepareJs("""
-            import * as json from "std/json";
+
 
             export function decoded(): Record<string, unknown> {
-              return json.parse("{\\"values\\":[[\\"x\\"],[\\"y\\"]]}");
+              return JSON.parse("{\\"values\\":[[\\"x\\"],[\\"y\\"]]}");
             }
             export function create(): Record<string, unknown> {
               let slots: Record<string, unknown>[][] = [[]];
@@ -5154,9 +5165,9 @@ public class JsBackendTest {
             "}",
             ""));
         check(result.exitCode() == 0 && result.output().equals(
-                "ELEMENT: E8003|array element 1 type mismatch|[record]|table"),
+                "ELEMENT: E8003|array element 1 type mismatch|[record]|array"),
             "the emitted artifact reports the failing decoded-array element"
-                + " as the reference `table` kind (the fixture's pinned"
+                + " as the language `array` kind (the fixture's pinned"
                 + " tuple): " + result.output());
     }
 
@@ -5179,13 +5190,13 @@ public class JsBackendTest {
             + " through the production artifact --");
 
         NodeResult run = runDealNode("""
-            import * as json from "std/json";
+
             function equivalent(text: string, expected: string): boolean {
-              return json.stringify(json.parse(text)) === json.stringify(json.parse(expected));
+              return JSON.stringify(JSON.parse(text)) === JSON.stringify(JSON.parse(expected));
             }
 
             export function test(): number {
-              let t: Record<string, unknown> = json.parse("{\\"items\\":[[1,2],[3,4]]}");
+              let t: Record<string, unknown> = JSON.parse("{\\"items\\":[[1,2],[3,4]]}");
               let xs: unknown[] = t.items as unknown[];
               let first: unknown[] = xs[0] as unknown[];
               let alias: unknown[] = xs[0] as unknown[];
@@ -5196,8 +5207,8 @@ public class JsBackendTest {
               first[1] = 9;
               if ((alias[1] as number) !== 9) { return 0; }
               if (((xs[0] as unknown[])[1] as number) !== 9) { return 0; }
-              if (!equivalent(json.stringify(t) as string, "{\\"items\\":[[1,9],[3,4]]}")) { return 0; }
-              let emptyT: Record<string, unknown> = json.parse("{\\"items\\":[]}");
+              if (!equivalent(JSON.stringify(t) as string, "{\\"items\\":[[1,9],[3,4]]}")) { return 0; }
+              let emptyT: Record<string, unknown> = JSON.parse("{\\"items\\":[]}");
               let empty: unknown[] = emptyT.items as unknown[];
               if (empty.length !== 0) { return 0; }
               xs[0] = xs[1];
@@ -5242,12 +5253,12 @@ public class JsBackendTest {
             + " decoded JSON array --");
 
         NodeResult run = runDealNode("""
-            import * as json from "std/json";
+
             function equivalent(text: string, expected: string): boolean {
-              return json.stringify(json.parse(text)) === json.stringify(json.parse(expected));
+              return JSON.stringify(JSON.parse(text)) === JSON.stringify(JSON.parse(expected));
             }
 
-            // @jsonable
+
             export class Box {
               nums: number[];
               tags: string[][];
@@ -5256,55 +5267,56 @@ public class JsBackendTest {
               nmaybe: (number|null)[];
               nnested: number[][];
             }
+            function decodeBox(text:string):Box { return JSON.parse(text); }
 
             export function test(): number {
-              let t: Record<string, unknown> = json.parse("{\\"values\\":[1,2]}");
+              let t: Record<string, unknown> = JSON.parse("{\\"values\\":[1,2]}");
               let b: Box = {nums: [], tags: [], maybe: [], ns: [], nmaybe: [], nnested: []};
-              b.nums = (Box$fromJson("{\\"nums\\":[1,2],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}") as Box).nums;
-              if (!equivalent(Box$toJson(b), "{\\"nums\\":[1,2],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
-              let n: Record<string, unknown> = json.parse("{\\"values\\":[[\\"a\\"],[\\"b\\",\\"c\\"]]}");
+              b.nums = (decodeBox("{\\"nums\\":[1,2],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}") as Box).nums;
+              if (!equivalent(JSON.stringify(b) as string, "{\\"nums\\":[1,2],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
+              let n: Record<string, unknown> = JSON.parse("{\\"values\\":[[\\"a\\"],[\\"b\\",\\"c\\"]]}");
               let c: Box = {nums: [], tags: [], maybe: [], ns: [], nmaybe: [], nnested: []};
-              c.tags = (Box$fromJson("{\\"nums\\":[],\\"tags\\":[[\\"a\\"],[\\"b\\",\\"c\\"]],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}") as Box).tags;
-              if (!equivalent(Box$toJson(c), "{\\"nums\\":[],\\"tags\\":[[\\"a\\"],[\\"b\\",\\"c\\"]],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
+              c.tags = (decodeBox("{\\"nums\\":[],\\"tags\\":[[\\"a\\"],[\\"b\\",\\"c\\"]],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}") as Box).tags;
+              if (!equivalent(JSON.stringify(c) as string, "{\\"nums\\":[],\\"tags\\":[[\\"a\\"],[\\"b\\",\\"c\\"]],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
               let alias: number[] = b.nums;
               alias[0] = 7;
-              if (!equivalent(Box$toJson(b), "{\\"nums\\":[7,2],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
-              let empty: Record<string, unknown> = json.parse("{\\"values\\":[]}");
+              if (!equivalent(JSON.stringify(b) as string, "{\\"nums\\":[7,2],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
+              let empty: Record<string, unknown> = JSON.parse("{\\"values\\":[]}");
               let e: Box = {nums: [], tags: [], maybe: [], ns: [], nmaybe: [], nnested: []};
-              e.nums = (Box$fromJson("{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}") as Box).nums;
-              if (!equivalent(Box$toJson(e), "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
-              let mixed: Record<string, unknown> = json.parse("{\\"values\\":[1,null]}");
+              e.nums = (decodeBox("{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}") as Box).nums;
+              if (!equivalent(JSON.stringify(e) as string, "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
+              let mixed: Record<string, unknown> = JSON.parse("{\\"values\\":[1,null]}");
               let m: Box = {nums: [], tags: [], maybe: [], ns: [], nmaybe: [], nnested: []};
-              m.maybe = (Box$fromJson("{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[1,null],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}") as Box).maybe;
-              if (!equivalent(Box$toJson(m), "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[1,null],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
+              m.maybe = (decodeBox("{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[1,null],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}") as Box).maybe;
+              if (!equivalent(JSON.stringify(m) as string, "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[1,null],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
               // A decoded array's number slots keep the graph's own
               // classification: 1, 1.0 and -0.0 are number-classified and
               // spell as integers, 1.5 keeps the number spelling.
-              let numv: Record<string, unknown> = json.parse("{\\"values\\":[1,1.0,10]}");
+              let numv: Record<string, unknown> = JSON.parse("{\\"values\\":[1,1.0,10]}");
               let nb: Box = {nums: [], tags: [], maybe: [], ns: [], nmaybe: [], nnested: []};
-              nb.ns = (Box$fromJson("{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[1,1.0,10],\\"nmaybe\\":[],\\"nnested\\":[]}") as Box).ns;
-              if (!equivalent(Box$toJson(nb), "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[1,1,10],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
-              let nfrac: Record<string, unknown> = json.parse("{\\"values\\":[1.5,-0.0]}");
+              nb.ns = (decodeBox("{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[1,1.0,10],\\"nmaybe\\":[],\\"nnested\\":[]}") as Box).ns;
+              if (!equivalent(JSON.stringify(nb) as string, "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[1,1,10],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
+              let nfrac: Record<string, unknown> = JSON.parse("{\\"values\\":[1.5,-0.0]}");
               let fb: Box = {nums: [], tags: [], maybe: [], ns: [], nmaybe: [], nnested: []};
-              fb.ns = (Box$fromJson("{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[1.5,-0.0],\\"nmaybe\\":[],\\"nnested\\":[]}") as Box).ns;
-              if (!equivalent(Box$toJson(fb), "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[1.5,0],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
-              let nnull: Record<string, unknown> = json.parse("{\\"values\\":[1,null,2]}");
+              fb.ns = (decodeBox("{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[1.5,-0.0],\\"nmaybe\\":[],\\"nnested\\":[]}") as Box).ns;
+              if (!equivalent(JSON.stringify(fb) as string, "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[1.5,0],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
+              let nnull: Record<string, unknown> = JSON.parse("{\\"values\\":[1,null,2]}");
               let nm: Box = {nums: [], tags: [], maybe: [], ns: [], nmaybe: [], nnested: []};
-              nm.nmaybe = (Box$fromJson("{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[1,null,2],\\"nnested\\":[]}") as Box).nmaybe;
-              if (!equivalent(Box$toJson(nm), "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[1,null,2],\\"nnested\\":[]}")) { return 0; }
-              let nnest: Record<string, unknown> = json.parse("{\\"values\\":[[1],[2,3]]}");
+              nm.nmaybe = (decodeBox("{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[1,null,2],\\"nnested\\":[]}") as Box).nmaybe;
+              if (!equivalent(JSON.stringify(nm) as string, "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[1,null,2],\\"nnested\\":[]}")) { return 0; }
+              let nnest: Record<string, unknown> = JSON.parse("{\\"values\\":[[1],[2,3]]}");
               let nn: Box = {nums: [], tags: [], maybe: [], ns: [], nmaybe: [], nnested: []};
-              nn.nnested = (Box$fromJson("{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[[1],[2,3]]}") as Box).nnested;
-              if (!equivalent(Box$toJson(nn), "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[[1],[2,3]]}")) { return 0; }
+              nn.nnested = (decodeBox("{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[[1],[2,3]]}") as Box).nnested;
+              if (!equivalent(JSON.stringify(nn) as string, "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[[1],[2,3]]}")) { return 0; }
               // A decoded slot carrying the number variant is a number in
               // the shared classification even when its double is
               // integral, so the number row fails exactly like the other
               // lanes instead of re-rendering it as an number.
-              let nv: Record<string, unknown> = json.parse("{\\"values\\":[2147483647.00000001]}");
+              let nv: Record<string, unknown> = JSON.parse("{\\"values\\":[2147483647.00000001]}");
               let vb: Box = {nums: [], tags: [], maybe: [], ns: [], nmaybe: [], nnested: []};
-              vb.nums = (Box$fromJson("{\\"nums\\":[2147483647.00000001],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}") as Box).nums;
+              vb.nums = (decodeBox("{\\"nums\\":[2147483647.00000001],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}") as Box).nums;
               let intnum: string = "";
-              try { intnum = Box$toJson(vb); }
+              try { intnum = JSON.stringify(vb) as string; }
               catch (e) { intnum = (e as Error).code + "|" + (e as Error).message; }
               if (!equivalent(intnum, "{\\"nums\\":[2147483647],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
               return 1;
@@ -5353,31 +5365,31 @@ public class JsBackendTest {
             + " committed write, the element read and the deleted slot --");
 
         NodeResult run = runDealNode("""
-            import * as json from "std/json";
+
             function equivalent(text: string, expected: string): boolean {
-              return json.stringify(json.parse(text)) === json.stringify(json.parse(expected));
+              return JSON.stringify(JSON.parse(text)) === JSON.stringify(JSON.parse(expected));
             }
 
-            // @jsonable
+
             export class WBox {
               nums: number[];
             }
 
-            // @jsonable
+
             export class IBox {
               n: number;
             }
 
-            // @jsonable
+
             export class NBox {
               n: number;
             }
-            // @jsonable
+
             export class NumericArrays {
               values?: number[]; a?: number[]; b?: number[]; ys?: number[];
             }
             function declaredArrays(text: string): Record<string, unknown> {
-              let decoded = NumericArrays$fromJson(text) as NumericArrays;
+              let decoded: NumericArrays = JSON.parse(text);
               let result: Record<string, unknown> = {};
               if (Object.hasOwn(decoded, "values")) { result.values = decoded.values as number[]; }
               if (Object.hasOwn(decoded, "a")) { result.a = decoded.a as number[]; }
@@ -5395,24 +5407,24 @@ public class JsBackendTest {
               b.nums = t1.values as number[];
               let alias: number[] = b.nums;
               alias[0] = 7;
-              if (!equivalent(WBox$toJson(b), "{\\"nums\\":[7]}")) { return 0; }
+              if (!equivalent(JSON.stringify(b) as string, "{\\"nums\\":[7]}")) { return 0; }
               let t2: Record<string, unknown> = declaredArrays("{\\"values\\":[2147483647.00000001]}");
               let xs2: number[] = t2.values as number[];
               xs2[0] = 7;
-              if (!equivalent(json.stringify(t2) as string, "{\\"values\\":[7]}")) { return 0; }
+              if (!equivalent(JSON.stringify(t2) as string, "{\\"values\\":[7]}")) { return 0; }
               // A number-typed write sets the mark, so the slot spells the
               // canonical decimal text.
               let t3: Record<string, unknown> = declaredArrays("{\\"values\\":[1]}");
               let xs3: number[] = t3.values as number[];
               xs3[0] = 1e21;
-              if (!equivalent(json.stringify(t3) as string, "{\\"values\\":[1.0E21]}")) { return 0; }
+              if (!equivalent(JSON.stringify(t3) as string, "{\\"values\\":[1.0E21]}")) { return 0; }
               // Delete then rewrite: the cleared mark never survives the
               // rewrite.
               let t3b: Record<string, unknown> = declaredArrays("{\\"values\\":[1]}");
               let nsb: number[] = t3b.values as number[];
               nsb[0] = 0;
               nsb[0] = 1e21;
-              if (!equivalent(json.stringify(t3b) as string, "{\\"values\\":[1.0E21]}")) { return 0; }
+              if (!equivalent(JSON.stringify(t3b) as string, "{\\"values\\":[1.0E21]}")) { return 0; }
               // A delete whose checked index is a read-side variant
               // carrier: an index equal to the length is the guarded
               // no-op (the carrier's numeric value, not the object, is
@@ -5423,7 +5435,7 @@ public class JsBackendTest {
               let xsB: number[] = t3c.b as number[];
               xsA[xsB[0] - 1] = 2;
               if (xsA.length !== 2) { return 0; }
-              if (!equivalent(json.stringify(t3c) as string, "{\\"a\\":[1,2],\\"b\\":[2.0]}")) { return 0; }
+              if (!equivalent(JSON.stringify(t3c) as string, "{\\"a\\":[1,2],\\"b\\":[2.0]}")) { return 0; }
               let t3d: Record<string, unknown> = declaredArrays("{\\"a\\":[1,2,3],\\"b\\":[1.0000000000000000001]}");
               let xsC: number[] = t3d.a as number[];
               let xsD: number[] = t3d.b as number[];
@@ -5431,7 +5443,7 @@ public class JsBackendTest {
               if (xsC.length !== 3) { return 0; }
               if (xsC[1] !== 9) { return 0; }
               let dnil: string = "";
-              try { dnil = json.stringify(t3d) as string; } catch (e) { dnil = (e as Error).code + "|" + (e as Error).message; }
+              try { dnil = JSON.stringify(t3d) as string; } catch (e) { dnil = (e as Error).code + "|" + (e as Error).message; }
               if (!equivalent(dnil, "{\\"a\\":[1,9,3],\\"b\\":[1]}")) { return 0; }
 
               // (2) The element read materializes the slot's own variant at
@@ -5441,13 +5453,13 @@ public class JsBackendTest {
               let ib: IBox = {n: 0};
               ib.n = xs4[0];
               let r1: string = "";
-              try { r1 = IBox$toJson(ib); } catch (e) { r1 = (e as Error).code + "|" + (e as Error).message; }
+              try { r1 = JSON.stringify(ib) as string; } catch (e) { r1 = (e as Error).code + "|" + (e as Error).message; }
               if (!equivalent(r1, "{\\"n\\":2147483647}")) { return 0; }
               let t5: Record<string, unknown> = declaredArrays("{\\"values\\":[1]}");
               let xs5: number[] = t5.values as number[];
               let nb: NBox = {n: 0};
               nb.n = xs5[0];
-              if (!equivalent(NBox$toJson(nb), "{\\"n\\":1}")) { return 0; }
+              if (!equivalent(JSON.stringify(nb) as string, "{\\"n\\":1}")) { return 0; }
               // The materialized variant still compares and computes by
               // value (the carriers unwrap at every numeric consumer: the
               // strict-equality emit, the native number operators, the number
@@ -5483,7 +5495,7 @@ public class JsBackendTest {
               negZero[0] = -0.0;
               let zn: number = (negZero[0]);
               negZero[0] = zn;
-              if (1 / zn >= 0 || (json.stringify(tz) as string) !== "{\\"ys\\":[0]}") { return 0; }
+              if (1 / zn >= 0 || (JSON.stringify(tz) as string) !== "{\\"ys\\":[0]}") { return 0; }
 
               // (3) A deleted slot is the internal missing value: both
               // encode walks raise the closed nil failure; a genuinely
@@ -5492,7 +5504,7 @@ public class JsBackendTest {
               let xs6: number[] = t6.values as number[];
               xs6[0] = 0;
               let d1: string = "";
-              try { d1 = json.stringify(t6) as string; } catch (e) { d1 = (e as Error).code + "|" + (e as Error).message; }
+              try { d1 = JSON.stringify(t6) as string; } catch (e) { d1 = (e as Error).code + "|" + (e as Error).message; }
               if (!equivalent(d1, "{\\"values\\":[0,2]}")) { return 0; }
               let t7: Record<string, unknown> = declaredArrays("{\\"values\\":[1,2]}");
               let db: WBox = {nums: []};
@@ -5500,15 +5512,15 @@ public class JsBackendTest {
               let ys: number[] = db.nums;
               ys[0] = 0;
               let d2: string = "";
-              try { d2 = WBox$toJson(db); } catch (e) { d2 = (e as Error).code + "|" + (e as Error).message; }
+              try { d2 = JSON.stringify(db) as string; } catch (e) { d2 = (e as Error).code + "|" + (e as Error).message; }
               if (!equivalent(d2, "{\\"nums\\":[0,2]}")) { return 0; }
               let zs: number[] = [1,2];
               zs[0] = 0;
               let d3: string = "";
-              try { d3 = json.stringify({xs: zs}) as string; } catch (e) { d3 = (e as Error).code + "|" + (e as Error).message; }
+              try { d3 = JSON.stringify({xs: zs}) as string; } catch (e) { d3 = (e as Error).code + "|" + (e as Error).message; }
               if (!equivalent(d3, "{\\"xs\\":[0,2]}")) { return 0; }
-              let t8: Record<string, unknown> = json.parse("{\\"values\\":[1,null,2]}");
-              if (!equivalent(json.stringify(t8) as string, "{\\"values\\":[1,null,2]}")) { return 0; }
+              let t8: Record<string, unknown> = JSON.parse("{\\"values\\":[1,null,2]}");
+              if (!equivalent(JSON.stringify(t8) as string, "{\\"values\\":[1,null,2]}")) { return 0; }
               return 1;
             }
             """, "json-decoded-array-variant");
@@ -5557,12 +5569,12 @@ public class JsBackendTest {
             export function echo(x: number): Promise<number>;
             """);
         writeFile("carrier_proj/src/main.deal", """
-            import * as json from "std/json";
+
             import * as h from "host/probe";
-            // @jsonable
+
             export class NumericHostData { xs?: number[]; ys?: (number | null)[]; }
             function hostData(text: string): Record<string, unknown> {
-              let value = NumericHostData$fromJson(text) as NumericHostData;
+              let value: NumericHostData = JSON.parse(text);
               let result: Record<string, unknown> = {};
               if (Object.hasOwn(value, "xs")) { result.xs = value.xs as number[]; }
               if (Object.hasOwn(value, "ys")) { result.ys = value.ys as (number | null)[]; }
@@ -5739,34 +5751,35 @@ public class JsBackendTest {
             export function describe(s: ServerConfig): string;
             """);
         writeFile("hostparam_proj/src/main.deal", """
-            import * as json from "std/json";
+
             import * as host from "host/rest_join";
             import * as cfg from "host/cfg";
-            // @jsonable
+
             export class HostArrays { items?: string[]; nums?: (number | null)[]; ms?: number[]; tags?: string[]; }
+            function decodeArrays(text:string):HostArrays { return JSON.parse(text); }
 
             export function main(): null { return null; }
 
             export function run(): string {
-              let t: Record<string, unknown> = json.parse("{\\"items\\":[\\"a\\",\\"b\\"]}");
-              let xs: string[] = (HostArrays$fromJson("{\\"items\\":[\\"a\\",\\"b\\"]}") as HostArrays).items as string[];
+              let t: Record<string, unknown> = JSON.parse("{\\"items\\":[\\"a\\",\\"b\\"]}");
+              let xs: string[] = (decodeArrays("{\\"items\\":[\\"a\\",\\"b\\"]}") as HostArrays).items as string[];
               let joined: string = host.join("-", xs);
               let shape: string = host.shape(xs);
               let empty: string[] = [];
               let joinedEmpty: string = host.join("+", empty);
 
-              let u: Record<string, unknown> = json.parse("{\\"nums\\":[1,null,3]}");
-              let ns: (number | null)[] = (HostArrays$fromJson("{\\"nums\\":[1,null,3]}") as HostArrays).nums as (number | null)[];
+              let u: Record<string, unknown> = JSON.parse("{\\"nums\\":[1,null,3]}");
+              let ns: (number | null)[] = (decodeArrays("{\\"nums\\":[1,null,3]}") as HostArrays).nums as (number | null)[];
               let observed: string = host.observe(ns, ns);
 
-              let v: Record<string, unknown> = json.parse("{\\"ms\\":[1e17,1.5]}");
-              let ms: number[] = (HostArrays$fromJson("{\\"ms\\":[1e17,1.5]}") as HostArrays).ms as number[];
+              let v: Record<string, unknown> = JSON.parse("{\\"ms\\":[1e17,1.5]}");
+              let ms: number[] = (decodeArrays("{\\"ms\\":[1e17,1.5]}") as HostArrays).ms as number[];
               let echoed: number[] = host.echoNumbers(ms);
               let box: Record<string, unknown> = { xs: echoed };
-              let variants: string = json.stringify(box) as string;
+              let variants: string = JSON.stringify(box) as string;
 
-              let w: Record<string, unknown> = json.parse("{\\"tags\\":[\\"x\\",\\"y\\"]}");
-              let tags: string[] = (HostArrays$fromJson("{\\"tags\\":[\\"x\\",\\"y\\"]}") as HostArrays).tags as string[];
+              let w: Record<string, unknown> = JSON.parse("{\\"tags\\":[\\"x\\",\\"y\\"]}");
+              let tags: string[] = (decodeArrays("{\\"tags\\":[\\"x\\",\\"y\\"]}") as HostArrays).tags as string[];
               let sc: cfg.ServerConfig = { port: 7, endpoint: { path: "/p" },
                 tags: tags, note: null };
               let field: string = cfg.describe(sc);
@@ -5946,9 +5959,9 @@ public class JsBackendTest {
              "moduleRoots": ["src"], "output": "out"}
             """);
         writeFile("completion_proj/src/main.deal", """
-            import * as json from "std/json";
 
-            // @jsonable
+
+
             export class C {
               n: number;
             }
@@ -5956,17 +5969,18 @@ public class JsBackendTest {
             export function main(): null { return null; }
 
             export async function decoded(): Promise<Record<string, unknown>> {
-              return json.parse("{\\"n\\":1e17,\\"i\\":2,\\"xs\\":[1.5,1],\\"z\\":null}");
+              return JSON.parse("{\\"n\\":1e17,\\"i\\":2,\\"xs\\":[1.5,1],\\"z\\":null}");
             }
 
-            // @jsonable
+
             export class CompletionArrays { xs: (number | null)[]; }
             export async function nullable(): Promise<(number | null)[]> {
-              return (CompletionArrays$fromJson("{\\"xs\\":[1,null]}") as CompletionArrays).xs;
+              let decoded: CompletionArrays = JSON.parse("{\\"xs\\":[1,null]}");
+              return decoded.xs;
             }
 
             export async function box(): Promise<C> {
-              let t: Record<string, unknown> = json.parse("{\\"xs\\":[1]}");
+              let t: Record<string, unknown> = JSON.parse("{\\"xs\\":[1]}");
               let xs: unknown[] = t.xs as unknown[];
               let c: C = {n: 0};
               c.n = xs[0] as number;
@@ -5974,7 +5988,7 @@ public class JsBackendTest {
             }
 
             export async function aliased(): Promise<Record<string, unknown>> {
-              let t: Record<string, unknown> = json.parse("{\\"xs\\":[1.5]}");
+              let t: Record<string, unknown> = JSON.parse("{\\"xs\\":[1.5]}");
               let xs: unknown[] = t.xs as unknown[];
               return { a: xs, b: xs };
             }
@@ -6046,7 +6060,7 @@ public class JsBackendTest {
             "    $out.push(\"boxType=\" + typeof $b.n + \":\" + ($b.n === 1));",
             "    $out.push(\"boxTags=\" + ($b.$kind === \"class\"",
             "      && $b.$classname === $entry.C.$classname));",
-            "    $out.push(\"boxWalk=\" + $entry.C$toJson.$f($b, \"runner.js\", 1, 1));",
+            "    $out.push(\"boxWalk=\" + $rt.jsonStringifyText($b, [], \"runner.js\", 1, 1));",
             "    $out.push(\"boxCheck=\" + ($rt.checkType($entry.C.$classname, $b) === $b));",
             "    $out.push(\"boxCarrier=\" + $hasCarrier($b));",
             "  }",
@@ -6066,8 +6080,8 @@ public class JsBackendTest {
             tmpDir.resolve("completion_proj/out").toAbsolutePath(),
             "completion_runner.js");
         check(run.exitCode() == 0 && run.output().equals(String.join("\n",
-                "decoded={\"n\":1.0E17,\"i\":2.0,\"xs\":[1.5,1.0],\"z\":null}",
-                "decodedArray=true",
+                "decoded={\"n\":100000000000000000,\"i\":2,\"xs\":[1.5,1],\"z\":null}",
+                "decodedArray=false",
                 "decodedNull=null",
                 "decodedNullTable=false",
                 "decodedInt=2",
@@ -6079,7 +6093,7 @@ public class JsBackendTest {
                 "nullableCheck=true",
                 "boxType=number:true",
                 "boxTags=true",
-                "boxWalk={\"n\":1.0}",
+                "boxWalk={\"n\":1}",
                 "boxCheck=true",
                 "boxCarrier=false",
                 "alias=true",
@@ -6093,13 +6107,13 @@ public class JsBackendTest {
     }
 
     private static void testJsonStoredFunctionE8001() throws Exception {
-        System.out.println("-- Node: std/json stringify of a stored function → E8001 --");
+        System.out.println("-- Node: builtin stringify omits a stored function --");
 
         NodeResult run = runDealNode("""
-            import * as json from "std/json";
+
             export function test(): string {
               let t: Record<string, unknown> = { f: function(): number { return 1; } };
-              return json.stringify(t) as string;
+              return JSON.stringify(t) as string;
             }
             """, "json-function");
         check(run.exitCode() == 0 && run.output().equals("{}"),
@@ -6108,83 +6122,77 @@ public class JsBackendTest {
     }
 
     private static void testJsonableRuntimeWalkers() throws Exception {
-        System.out.println("-- Node: @jsonable runtime walkers (jsonFromJson/jsonToJson) --");
+        System.out.println("-- Node: contextual runtime reconstruction and generic encoding --");
 
-        // Direct $rt-surface probes of the pinned walker contract
-        // (js-v12-jsonable-completion D2-D5): the top-level object gate
-        // (the empty array included, at the root and at a nested class
-        // value), extra-key rejection, the three-state roundtrip,
-        // the int-range E8004 null collapse, the provided-value
-        // failure/zero-defaults phase order, and the toJson E8001 arms.
+        // Execute strict schema reconstruction, required/optional presence,
+        // extras-before-fields order, freshness, rollback and ordinary nominal
+        // validation independently of emitted wrapper text.
         NodeResult run = runRuntimeProbe("jsonable-walkers", """
             "use strict";
             const $rt = require("./deal/runtime");
             let $fail = "";
-            const $f = (n, j, o, x, e) => {
-              const $e = { name: n, jtype: j, optional: !!o, nullable: !!x };
-              if (e !== undefined) {
-                if (e.element !== undefined) $e.element = e.element;
-                if (e.className !== undefined) $e.className = e.className;
-                if (e.fields !== undefined) $e.fields = e.fields;
+            const $fields = [
+              {name:"name",descriptor:"string",optional:false},
+              {name:"nick",descriptor:"?string",optional:true},
+              {name:"age",descriptor:"number",optional:false}];
+            $rt.registerClassPlan("@m/U", $fields);
+            $rt.registerClassPlan("@m/P", [{name:"child",descriptor:"@m/U",optional:false}]);
+            const $decode = (text, target = "@m/U") => $rt.jsonDecode(text, target, "p.js", 7, 3);
+            const $encode = value => $rt.jsonStringifyText(value, [], "p.js", 7, 3);
+            const $original = $decode('{"name":"original","age":7}');
+            const $reject = (text, code, label, target = "@m/U", expected) => {
+              let destination = $original, caught = false;
+              try { destination = $decode(text, target); }
+              catch(e) {
+                caught = e.$dealCode === code && e.file === "p.js" && e.line === 7 && e.column === 3
+                  && (expected === undefined || e.expected === expected);
               }
-              return $e;
+              if (!caught || destination !== $original || $original.name !== "original" || $original.age !== 7)
+                throw new Error(label + ": wrong rejection or rollback");
             };
-            const $fields = [$f("name", "string", false, false),
-              $f("nick", "string", true, true), $f("age", "number", false, false)];
-            const $thunk = () => ({ name: "", nick: $rt.MISSING, age: 0 });
-            // Top-level gate: scalars, null, and any array — the empty
-            // array included — are null; {} decodes to the defaulted
-            // instance.
-            if ($rt.jsonFromJson("@m/U", $fields, "42", "p.js", 1, 1) !== null) $fail = "scalar";
-            if ($rt.jsonFromJson("@m/U", $fields, "null", "p.js", 1, 1) !== null) $fail = "null-doc";
-            if ($rt.jsonFromJson("@m/U", $fields, "[1,2]", "p.js", 1, 1) !== null) $fail = "array-doc";
-            if ($rt.jsonFromJson("@m/U", $fields, "[]", "p.js", 1, 1) !== null) $fail = "empty-array-doc";
-            if ($rt.jsonFromJson("@m/U", $fields, "{}", "p.js", 1, 1) !== null) $fail = "missing-required";
-            const $o = $rt.jsonFromJson("@m/U", $fields, '{"name":"","age":0}', "p.js", 1, 1);
-            if ($o === null) throw new Error("complete-object-null");
+            $reject("42", "E8001", "scalar");
+            $reject("null", "E8001", "null-doc");
+            $reject("[1,2]", "E8001", "array-doc");
+            $reject("[]", "E8001", "empty-array-doc");
+            $reject("{}", "E8001", "missing-required", "@m/U", "string");
+            const $o = $decode('{"name":"","age":0}');
             if ($o.$kind !== "class" || $o.$classname !== "@m/U") $fail = "tags";
-            if ($rt.jsonToJson("@m/U", $o, $fields, "p.js", 1, 1)
-                !== '{"name":"","age":0}') $fail = "empty-object-text:" + $rt.jsonToJson("@m/U", $o, $fields, "p.js", 1, 1);
-            // A nested class value accepts only a JSON object: [] is a
-            // validation failure returning the DEAL null.
-            const $nestedFields = [$f("child", "class", false, false,
-              { className: "@m/U", fields: $fields })];
-            if ($rt.jsonFromJson("@m/P", $nestedFields, '{"child":[]}', "p.js", 1, 1) !== null) $fail = "nested-empty-array";
-            // Extra-key rejection, before any defaults run.
-            if ($rt.jsonFromJson("@m/U", $fields, '{"name":"Ada","age":0,"extra":1}', "p.js", 1, 1) !== null) $fail = "extra-key";
-            // Three-state: missing omitted, present-null kept, value kept.
-            const $m = $rt.jsonFromJson("@m/U", $fields, '{"name":"A","age":1}', "p.js", 1, 1);
-            if ($m === null || $m.nick !== $rt.MISSING) $fail = "three-missing";
-            if ($rt.jsonToJson("@m/U", $m, $fields, "p.js", 1, 1) !== '{"name":"A","age":1.0}') $fail = "three-omit";
-            const $n = $rt.jsonFromJson("@m/U", $fields, '{"name":"B","nick":null,"age":2}', "p.js", 1, 1);
-            if ($n === null || $n.nick !== null) $fail = "three-null";
-            if ($rt.jsonToJson("@m/U", $n, $fields, "p.js", 1, 1) !== '{"name":"B","nick":null,"age":2.0}') $fail = "three-null-text";
-            // Binary64 magnitudes beyond signed32 remain admitted field values.
-            const $large = $rt.jsonFromJson("@m/U", $fields, '{"name":"","age":9007199254740992}', "p.js", 1, 1);
-            if ($large === null || $large.age !== 9007199254740992) $fail = "number-value";
-            // Provided-value failure runs no defaults (counting thunk).
+            if ($encode($o) !== '{"name":"","age":0}') $fail = "empty-object-text";
+            $reject('{"child":[]}', "E8001", "nested-empty-array", "@m/P");
+            $reject('{"name":"Ada","age":0,"extra":1}', "E8007", "extra-key");
+            $reject('{"name":42,"extra":1}', "E8007", "extra-before-field");
+            const $m = $decode('{"name":"A","age":1}');
+            if (Object.hasOwn($m,"nick")) $fail = "three-missing";
+            if ($encode($m) !== '{"name":"A","age":1}') $fail = "three-omit";
+            const $n = $decode('{"name":"B","nick":null,"age":2}');
+            if (!Object.hasOwn($n,"nick") || $n.nick !== null) $fail = "three-null";
+            if ($encode($n) !== '{"name":"B","nick":null,"age":2}') $fail = "three-null-text";
+            const $present = $decode('{"name":"C","nick":"c","age":3}');
+            if ($encode($present) !== '{"name":"C","nick":"c","age":3}') $fail = "three-value";
+            const $large = $decode('{"name":"","age":9007199254740992}');
+            if ($large.age !== 9007199254740992) $fail = "number-value";
             let $runs = 0;
-            const $counting = () => { $runs++; return { name: "", nick: $rt.MISSING, age: 0 }; };
-            if ($rt.jsonFromJson("@m/U", $fields, '{"name":"","age":"x"}', "p.js", 1, 1) !== null) $fail = "bad-number";
-            if ($runs !== 0) $fail = "defaults-ran:" + $runs;
-            // toJson identity backstop and cycle rejection (E8001).
-            try { $rt.jsonToJson("@m/Other", $m, $fields, "p.js", 1, 1); $fail = "identity-pass"; }
-            catch (e) { if (e.$dealCode !== "E8001") $fail = "identity-code"; }
-            const $nodeFields = [$f("next", "class", false, true,
-              { className: "@m/Node", fields: [] })];
-            const $node = $rt.classPlan("@m/Node", [{name:"next",descriptor:"?@m/Node",optional:false}], {next:null}, "p.js", 1, 1);
-            $rt.setProp($node, "next", $node);
-            try { $rt.jsonToJson("@m/Node", $node, $nodeFields, "p.js", 1, 1); $fail = "cycle-pass"; }
-            catch (e) { if (e.$dealCode !== "E8001") $fail = "cycle-code"; }
+            $rt.registerFactory("m",1,() => { $runs++; throw new Error("decode invoked a factory"); });
+            $reject('{"name":"","age":"x"}', "E8001", "bad-number", "@m/U", "number");
+            const $again = $decode('{"name":"","age":0}');
+            if ($runs !== 0 || $again === $o) $fail = "factory-or-freshness";
+            $rt.registerClassPlan("@m/Other", $fields);
+            try { $rt.checkType("@m/Other", $m, "p.js", 7, 3); $fail = "identity-pass"; }
+            catch(e) { if (e.$dealCode !== "E8001") $fail = "identity-code"; }
+            const $nodeFields = [{name:"next",descriptor:"?@m/Node",optional:false}];
+            $rt.registerClassPlan("@m/Node",$nodeFields);
+            const $node = $decode('{"next":null}',"@m/Node");
+            $rt.setProp($node,"next",$node);
+            try { $encode($node); $fail = "cycle-pass"; }
+            catch(e) { if (e.$dealCode !== "E8001") $fail = "cycle-code"; }
             console.log($fail === "" ? "JSONABLE-WALKERS-OK" : "JSONABLE-WALKERS-FAIL: " + $fail);
             """);
         check(run.exitCode() == 0
                 && run.output().equals("JSONABLE-WALKERS-OK"),
-            "the jsonable runtime walkers honor the top-level object gate "
-                + "(the empty array rejected at the root and at a nested class value), "
-                + "extra-key rejection, the three-state "
-                + "roundtrip, wide-number admission, the zero-defaults "
-                + "phase order, and the toJson E8001 arms: " + run.output());
+            "contextual runtime reconstruction rejects scalar/null/array class roots and nested arrays, "
+                + "pins required-field and extras-first failures with exact origins and rollback, "
+                + "preserves optional three-state values, wide numbers and fresh nominal instances, "
+                + "invokes no factory, and ordinary identity/cycle checks retain E8001: " + run.output());
     }
 
     private static void testIntrinsicFunctionValues() throws Exception {
@@ -6192,7 +6200,7 @@ public class JsBackendTest {
 
 
         NodeResult run = runDealNode("""
-            import * as console from "std/console";
+            import * as output from "std/console";
             function applyInt(f: (x: number) => number, v: number): number { return f(v); }
             function applyNumber(f: (x: number) => number, v: number): number { return f(v); }
             function int(x: number): number { return x; }
@@ -6204,7 +6212,7 @@ public class JsBackendTest {
               let nb: number = applyNumber(number, 7);
               let wide: (x: number, y: number) => number = number;
               let c: number = wide(9.0, 1.0);
-              let g: (x: string) => void = console.log;
+              let g: (x: string) => void = output.log;
               g("intrinsic-console-value");
               if (a === 3 && b === 4 && nb === 7.0 && c === 9) { return 1; }
               return 0;
@@ -6417,9 +6425,9 @@ public class JsBackendTest {
               "backend": "js"
             }""");
         writeFile("js_proj/src/orch_main.deal", """
-            import * as console from "std/console";
+            import * as output from "std/console";
             export function main(): null {
-              console.log("js-orchestrator-main");
+              output.log("js-orchestrator-main");
               return null;
             }
             function add(a: number, b: number): number { return a + b; }
@@ -6449,7 +6457,7 @@ public class JsBackendTest {
         check(Files.exists(outputDir.resolve("deal/runtime.js")),
             "orchestrator deployed deal/runtime.js");
         for (String stdlibModule : List.of("console", "string", "table",
-                "json", "math", "time")) {
+                "math", "time")) {
             check(Files.exists(outputDir.resolve("std/" + stdlibModule + ".js")),
                 "orchestrator deployed std/" + stdlibModule + ".js");
         }
@@ -6508,9 +6516,9 @@ public class JsBackendTest {
             "export function tag(): string { return \"nested-module-ok\"; }");
         writeFile("nest_proj/src/app/main.deal", """
             import * as lib from "./lib";
-            import * as console from "std/console";
+            import * as output from "std/console";
             export function main(): null {
-              console.log(lib.tag());
+              output.log(lib.tag());
               return null;
             }
             """);
@@ -6575,7 +6583,7 @@ public class JsBackendTest {
             """);
         writeFile("rej_proj/src/lib.deal", """
             import * as ffi from "ffi";
-            export function use(): number { return ffi.cFn(1); }
+            export function use(): number { return ffi.missing(1); }
             """);
         writeFile("rej_proj/src/rej_main.deal", """
             import * as lib from "./lib";
@@ -6604,10 +6612,10 @@ public class JsBackendTest {
         Path outputDir = Path.of(located.context().outputPath()
             .absoluteNormalizedPath());
         boolean success = orchestrator.compile();
-        check(!success, "the @extern-c project fails the compilation");
+        check(!success, "missing imported export fails the compilation");
         check(orchestrator.diagnostics().stream().anyMatch(d ->
-                "E1044".equals(d.code())),
-            "the orchestrator reports E1044: " + orchestrator.diagnostics());
+                "E2004".equals(d.code())),
+            "the orchestrator reports E2004: " + orchestrator.diagnostics());
         check(!Files.exists(outputDir.resolve("lib.js")),
             "the rejected module writes no artifact");
         // Transactional publication (whole-project-artifact-publication
@@ -6725,7 +6733,7 @@ public class JsBackendTest {
      * artifact's entry shim prints "pick ok" and exits 0.
      */
     private static final String ELSE_IF_REPRODUCER = """
-        import * as console from "std/console";
+        import * as output from "std/console";
         function pick(n: number): number {
           let r: number = 0;
           if (n === 1) { r = 10; }
@@ -6733,7 +6741,7 @@ public class JsBackendTest {
           return r;
         }
         export function main(): null {
-          if (pick(2) === 20) { console.log("pick ok"); }
+          if (pick(2) === 20) { output.log("pick ok"); }
           return null;
         }
         """;
@@ -6888,7 +6896,7 @@ public class JsBackendTest {
     }
 
     /**
-     * The orchestrator deploys deal/runtime.js and the six spec
+     * The orchestrator deploys deal/runtime.js and the five spec
      * std/*.js modules (including std/console.js) next to the emitted
      * artifacts.
      */
@@ -6939,7 +6947,7 @@ public class JsBackendTest {
                     outputRoot.resolve("deal/runtime.js")),
                 "deal/runtime.js is deployed to the output");
             for (String module : List.of("console", "string", "table",
-                    "json", "math", "time")) {
+                    "math", "time")) {
                 check(Files.isRegularFile(outputRoot.resolve(
                         "std/" + module + ".js")),
                     "std/" + module + ".js is deployed to the output");
@@ -6967,7 +6975,7 @@ public class JsBackendTest {
             Files.writeString(entry,
                 "import * as ffi from \"ffi\";\n"
                     + "export function main(): null {\n"
-                    + "  let v: number = ffi.cFn(1);\n"
+                    + "  let v: number = ffi.missing(1);\n"
                     + "  return null;\n"
                     + "}\n",
                 StandardCharsets.UTF_8);
@@ -6991,10 +6999,10 @@ public class JsBackendTest {
             Path outputRoot = Path.of(located.context().outputPath()
                 .absoluteNormalizedPath());
             boolean ok = orchestrator.compile();
-            check(!ok, "an @extern-c import fails the JS compilation");
+            check(!ok, "missing imported export fails the JS compilation");
             check(orchestrator.diagnostics().stream()
-                    .anyMatch(d -> "E1044".equals(d.code())),
-                "the rejection is E1044: " + orchestrator.diagnostics());
+                    .anyMatch(d -> "E2004".equals(d.code())),
+                "the rejection is E2004: " + orchestrator.diagnostics());
             check(!Files.exists(outputRoot.resolve("main.js")),
                 "no entry artifact is written for the rejected module");
             check(!Files.exists(outputRoot.resolve("ffi.js")),

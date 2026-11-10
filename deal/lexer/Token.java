@@ -8,17 +8,14 @@ import deal.diagnostics.RangeOrigin;
  * A token produced by the lexer.
  *
  * <p>{@code startScalarOffset} and {@code scalarLength} are measured in
- * decoded Unicode scalars (code points). Both components use
+ * UTF-16 code units. Both components use
  * {@link #UNKNOWN_OFFSET} as the explicit "no offset information" sentinel;
  * the convenience constructors set them to {@link #UNKNOWN_OFFSET}, never
  * {@code 0}. When both are non-negative, the token covers the half-open
  * scalar range {@code [startScalarOffset, startScalarOffset + scalarLength)}
  * in its file.</p>
  *
- * <p>Directive events are carried by {@link LexResult#directiveEvents()}
- * (fixed-name-directive-events D1): tokens carry no directive component,
- * the EOF token never carries events, and leftover events at EOF stay in
- * the result's event list as unanchored records.</p>
+ * <p>Comments carry no metadata and produce no tokens.</p>
  *
  */
 public record Token(

@@ -12,7 +12,11 @@ public final class JvmClassSizeProductionTest {
     private static String source(int functions, int width) {
         StringBuilder source = new StringBuilder("import * as c from \"std/console\";\n");
         for (int f = 0; f < functions; f++) {
-            source.append("function f").append(f).append("(depth:number):number{\n");
+            source.append("class Item").append(f).append("{value:number;next?:Item").append(f).append(";}\n");
+            source.append("function f").append(f).append("(depth:number):number{\n")
+                .append("let decoded:Item").append(f).append("=JSON.parse(`{\"value\":")
+                .append(f).append("}`);if(decoded.value!==").append(f)
+                .append(" || Object.hasOwn(decoded,\"next\")){throw {code:\"PLAN\",message:\"partitioned schema\"};}\n");
             for (int i = 0; i < width; i++) {
                 source.append("let x").append(i).append(":number=").append(i).append("+depth;\n");
             }
@@ -63,7 +67,7 @@ public final class JvmClassSizeProductionTest {
                         || Double.parseDouble(value.valueJson()) != 3)
                     throw new AssertionError("aggregate-size async completion: " + result);
             }
-            System.out.println("JVM class size: small/large sync and recursive async executions passed");
+            System.out.println("JVM class size: small/large sync, contextual schemas and recursive async executions passed");
         } finally {
             CompositionProductionTest.remove(root);
         }

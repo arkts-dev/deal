@@ -338,6 +338,13 @@ public class StdlibCallLoweringTest {
             check(!StdlibFunctionId.isReservedName(function.name()),
                 function + " is never a reserved selector name");
         }
+        check(StdlibFunctionCatalog.lookup("std.json", "parse").isEmpty()
+                && StdlibFunctionCatalog.lookup("std.json", "stringify").isEmpty(),
+            "JSON algorithms have no callable stdlib lookup");
+        check(StdlibFunctionCatalog.callableEntries().size() == 16
+                && StdlibFunctionCatalog.callableEntries().stream().noneMatch(
+                    row -> row.modulePath().equals("std.json")),
+            "only the sixteen ordinary functions populate the five module namespaces");
         check(StdlibFunctionId.RESERVED_NAMES.isEmpty(),
             "RESERVED_NAMES is empty (the superseded D8 reservation is retired) while the "
                 + "reserved-name guard stays");
@@ -363,7 +370,7 @@ public class StdlibCallLoweringTest {
     // =========================================================================
 
     static void testLoweringBatteryAllIds() throws Exception {
-        System.out.println("-- Lowering battery: all 21 ids, one validated STDLIB_CALL each --");
+        System.out.println("-- Lowering battery: stdlib algorithms and contextual JSON_PARSE --");
 
         Path tmp = Files.createTempDirectory("deal-stdlib-call-battery");
         try {
@@ -379,7 +386,7 @@ public class StdlibCallLoweringTest {
                     import * as output from "std/console";
                     import * as str from "std/string";
                     import * as tbl from "std/table";
-                    import * as json from "std/json";
+
                     import * as math from "std/math";
                     import * as time from "std/time";
 
@@ -396,8 +403,8 @@ public class StdlibCallLoweringTest {
                       let s8: string = str.trim(" x ");
                       let t: Record<string, unknown> = {k: 1};
                       let ks9: string[] = tbl.keys(t);
-                      let jt10: Record<string, unknown> = json.parse("{\\"a\\": 1}");
-                      let js11: string | undefined = json.stringify(t);
+                      let jt10: Record<string, unknown> = JSON.parse("{\\"a\\": 1}");
+                      let js11: string | undefined = JSON.stringify(t);
                       let f12: number = math.floor(1.5);
                       let f13: number = math.ceil(1.5);
                       let f14: number = math.sqrt(4.0);
@@ -425,16 +432,37 @@ public class StdlibCallLoweringTest {
             LoweredModuleUnit unit = lowering.unit();
 
             List<SemanticOp> stdlibOps = stdlibOps(unit);
-            check(stdlibOps.size() == 18,
-                "exactly one STDLIB_CALL per cataloged call: 18 ops; got "
+            check(stdlibOps.size() == 17,
+                "one STDLIB_CALL per callable algorithm plus builtin stringify: 17 ops; got "
                     + stdlibOps.size());
             EnumSet<StdlibFunctionId> produced = EnumSet.noneOf(StdlibFunctionId.class);
             for (SemanticOp op : stdlibOps) {
                 produced.add(((KindPayload.StdlibCallPayload) op.payload()).function());
             }
-            check(produced.equals(EnumSet.allOf(StdlibFunctionId.class)),
-                "the produced STDLIB_CALL function set equals the catalog's closed 21-id "
-                    + "set (fails if the catalog misses or adds an entry); got " + produced);
+            EnumSet<StdlibFunctionId> algorithms = EnumSet.allOf(StdlibFunctionId.class);
+            algorithms.remove(StdlibFunctionId.JSON_PARSE);
+            check(produced.equals(algorithms),
+                "the produced STDLIB_CALL set excludes contextual reconstruction; got " + produced);
+            List<SemanticOp> parses = unit.ops().stream()
+                .filter(op -> op.kind() == SemanticOpKind.JSON_PARSE).toList();
+            check(parses.size() == 1, "one explicit contextual JSON_PARSE operation");
+            if (parses.size() == 1) {
+                SemanticOp parse = parses.getFirst();
+                KindPayload.JsonParsePayload payload = (KindPayload.JsonParsePayload) parse.payload();
+                check(parse.failurePolicy() == FailurePolicyId.JSON_RECONSTRUCTION,
+                    "JSON_PARSE owns the reconstruction failure policy");
+                check(parse.operands().equals(List.of(payload.jsonString())),
+                    "JSON_PARSE carries its once-evaluated string operand");
+                check(parse.operandTypes().equals(List.of(RuntimeDescriptor.String.INSTANCE)),
+                    "JSON_PARSE requires a string input");
+                check(payload.target().equals(RuntimeDescriptor.Table.INSTANCE),
+                    "contextual Record annotation becomes the explicit target");
+                check(parse.resultType().equals(payload.target()),
+                    "JSON_PARSE result descriptor agrees with its target");
+                check(parse.result() instanceof ValueId, "JSON_PARSE publishes a fresh result id");
+                check(childrenOf(unit, parse.opId()).isEmpty(),
+                    "JSON_PARSE is not a callable stdlib parameter/return boundary");
+            }
 
             Map<StdlibFunctionId, Integer> counts = new LinkedHashMap<>();
             for (SemanticOp op : stdlibOps) {
@@ -444,8 +472,9 @@ public class StdlibCallLoweringTest {
                 StdlibFunctionCatalog.Entry row = catalogEntryOf(function);
                 Optional<StdlibFunctionCatalog.Entry> entry =
                     StdlibFunctionCatalog.lookup(row.modulePath(), row.exportName());
-                check(entry.isPresent() && entry.get().equals(row),
-                    "the produced " + function + " resolves to its closed catalog row");
+                check(function == StdlibFunctionId.JSON_STRINGIFY
+                        ? entry.isEmpty() : entry.isPresent() && entry.get().equals(row),
+                    "the produced " + function + " retains its signature without exposing builtin callables");
 
                 KindPayload.StdlibCallPayload payload =
                     (KindPayload.StdlibCallPayload) op.payload();
@@ -562,9 +591,14 @@ public class StdlibCallLoweringTest {
                         }
                     }
                 }
-                check(exportReads == 1 && registered,
-                    function + " emits exactly one EXPORT_READ of the cataloged export "
-                        + "with a registered function binding; got " + exportReads);
+                if (function == StdlibFunctionId.JSON_STRINGIFY) {
+                    check(exportReads == 0 && !registered,
+                        "direct-only builtin stringify has no callable export read or binding");
+                } else {
+                    check(exportReads == 1 && registered,
+                        function + " emits exactly one EXPORT_READ of the cataloged export "
+                            + "with a registered function binding; got " + exportReads);
+                }
             }
             for (Map.Entry<StdlibFunctionId, Integer> entry : counts.entrySet()) {
                 check(entry.getValue() == 1,
@@ -1149,13 +1183,13 @@ public class StdlibCallLoweringTest {
                     """,
                 "lib.deal", """
                     import * as output from "std/console";
-                    import * as json from "std/json";
+
                     import * as math from "std/math";
 
                     function run(): null {
                       output.log("hi");
-                      let t: Record<string, unknown> = json.parse("{\\"k\\": 1}");
-                      let s: string | undefined = json.stringify(t);
+                      let t: Record<string, unknown> = JSON.parse("{\\"k\\": 1}");
+                      let s: string | undefined = JSON.stringify(t);
                       let f: number = math.floor(1.5);
                       let i: number = math.absNumber(-3);
                       return null;
@@ -1212,11 +1246,14 @@ public class StdlibCallLoweringTest {
             check(text.contains("\"args\""),
                 "the dump serializes the payload args field");
             for (StdlibFunctionId function : List.of(StdlibFunctionId.CONSOLE_LOG,
-                    StdlibFunctionId.JSON_PARSE, StdlibFunctionId.JSON_STRINGIFY,
+                    StdlibFunctionId.JSON_STRINGIFY,
                     StdlibFunctionId.MATH_FLOOR, StdlibFunctionId.MATH_ABS_NUMBER)) {
                 check(text.contains("\"function\":\"" + function.name() + "\""),
                     "the dump carries the payload function " + function);
             }
+            check(text.contains("\"kind\":\"JSON_PARSE\"")
+                    && !text.contains("\"function\":\"JSON_PARSE\""),
+                "contextual parse serializes as its own operation, not a stdlib algorithm call");
             check(text.contains("\"kind\":\"STDLIB_PARAMETER\"")
                     && text.contains("\"kind\":\"STDLIB_RETURN\""),
                 "the dump carries the STDLIB_PARAMETER/STDLIB_RETURN boundary kinds");

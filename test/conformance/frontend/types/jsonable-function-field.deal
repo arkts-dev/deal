@@ -1,6 +1,6 @@
 // @spec: Classes — JSON serialization (@jsonable)
-// @description: number[] is absent from the jsonable field-type allowlist
-// @expected: compile-error E4007
+// @description: A comment cannot prohibit ordinary function field declarations
+// @expected: compile-ok
 // @features: jsonable, number[], classes, diagnostics, v1.2
 
 // @jsonable

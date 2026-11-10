@@ -629,7 +629,34 @@ public final class SemanticIrValidator {
         if (failure.isPresent()) {
             return failure;
         }
+        failure = checkStandaloneJsonTargets(unit, facts);
+        if (failure.isPresent()) return failure;
         return checkStandaloneProviderContext(unit, facts);
+    }
+
+    private static Optional<CompilerDiagnostic> checkStandaloneJsonTargets(RawUnit unit,
+            ComparisonFacts facts) {
+        if (unit.ops().stream().noneMatch(op -> "JSON_PARSE".equals(op.kind()))) return Optional.empty();
+        LoweredModuleUnit typed;
+        try {
+            typed = RawUnitMaterializer.materialize(unit);
+        } catch (RawUnitMaterializer.Defect defect) {
+            return materializationFailure(unit, facts, defect);
+        }
+        for (SemanticOp op : typed.ops()) {
+            if (!(op.payload() instanceof KindPayload.JsonParsePayload parse)) continue;
+            try {
+                // Standalone admission has only owned layouts. Imported and
+                // declaration-only plans require the complete project join.
+                deal.semantic.JsonDecodingSemantics.requireSchema(parse.target(), typed.classLayouts());
+            } catch (IllegalArgumentException defect) {
+                RawOp subject = unit.ops().stream().filter(raw -> raw.opId().equals(op.opId())).findFirst().orElseThrow();
+                return fail(subject, unit, facts, ClassConstructionValidator.JSON_LAYOUT_COHERENCE,
+                    SemanticCapability.CLASSES,
+                    origin(ClassConstructionValidator.JSON_LAYOUT_COHERENCE, "JSON_PARSE " + defect.getMessage()));
+            }
+        }
+        return Optional.empty();
     }
 
     /**
@@ -748,24 +775,15 @@ public final class SemanticIrValidator {
             new LinkedHashMap<>();
         Map<ClassId, ClassRegistrationSeeds.ClassRegistration> declarationClasses =
             classSeeds.registrations();
-        // The complete project's materialized units, the generated
-        // plan-bearing ({@code @jsonable}) declarations and their plan
-        // owners: the generated JSON plan key is the canonical class
-        // identity, so an identity carrying more than one plan-bearing
-        // declaration is ambiguous while an identity carrying more than
-        // one declaration resolves the unique plan-bearing declaration's
-        // layout (the emission order's last declaration otherwise). A unit
-        // whose facts do not materialize contributes nothing to the
-        // counts; its own admission below reports its defect at the pinned
-        // position (the materialization runs before the unit loop so the
-        // counts cover later modules too, and its result is reused — never
-        // recomputed).
+        // Every owned class layout contributes a structural schema. Duplicate
+        // identities are ambiguous regardless of comments or generated operations.
+        // Materialization precedes admission to count later declarations too;
+        // each malformed unit still reports its own first pinned defect.
         List<LoweredModuleUnit> materialized =
             new ArrayList<>(units.size());
         List<RawUnitMaterializer.Defect> materializationDefects =
             new ArrayList<>(units.size());
         Map<ClassId, List<ModuleId>> planDeclarations = new LinkedHashMap<>();
-        Map<ClassId, List<ModuleId>> planBearers = new LinkedHashMap<>();
         for (RawUnit unit : units) {
             LoweredModuleUnit typed;
             try {
@@ -780,35 +798,19 @@ public final class SemanticIrValidator {
                 continue;
             }
             Map<ClassId, ClassLayout> declarations = typed.classLayouts();
-            Set<ClassId> unitPlanClasses = new LinkedHashSet<>();
-            for (SemanticOp op : typed.ops()) {
-                if (op.kind() == SemanticOpKind.JSON_FROM_CLASS
-                        && op.payload()
-                            instanceof KindPayload.JsonFromClassPayload payload) {
-                    unitPlanClasses.add(payload.layout().classId());
-                } else if (op.kind() == SemanticOpKind.JSON_TO_CLASS
-                        && op.payload()
-                            instanceof KindPayload.JsonToClassPayload payload) {
-                    unitPlanClasses.add(payload.layout().classId());
-                }
-            }
             for (ClassId classId : declarations.keySet()) {
                 planDeclarations.computeIfAbsent(classId,
                     key -> new ArrayList<>()).add(typed.moduleId());
-                if (unitPlanClasses.contains(classId)) {
-                    planBearers.computeIfAbsent(classId,
-                        key -> new ArrayList<>()).add(typed.moduleId());
-                }
             }
         }
         Set<ClassId> ambiguousJsonPlanClassIds = new LinkedHashSet<>();
-        for (Map.Entry<ClassId, List<ModuleId>> entry : planBearers.entrySet()) {
+        for (Map.Entry<ClassId, List<ModuleId>> entry : planDeclarations.entrySet()) {
             if (entry.getValue().size() > 1) {
                 ambiguousJsonPlanClassIds.add(entry.getKey());
             }
         }
-        Map<ClassId, ClassConstructionValidator.ClassPlanOwner> jsonPlanOwners =
-            planOwners(planDeclarations, planBearers, interfaceIndex);
+        ClassConstructionValidator.JsonSchemaContext dependencyLayouts =
+            ClassConstructionValidator.JsonSchemaContext.forProject(interfaceIndex, classSeeds);
         for (int index = 0; index < units.size(); index++) {
             RawUnit unit = units.get(index);
             ExternalModuleInterface ownInterface =
@@ -836,11 +838,12 @@ public final class SemanticIrValidator {
                     typed.bodyTable(), typed.classFactories(),
                     ownInterface, sharedFactories,
                     declarationClasses, providerFactoryFacts,
-                    ambiguousJsonPlanClassIds, jsonPlanOwners);
+                    ambiguousJsonPlanClassIds, dependencyLayouts);
                 if (failure.isPresent()) {
                     return failure;
                 }
             }
+            dependencyLayouts = dependencyLayouts.withUnit(typed);
             accumulateSharedFactoryFacts(ownInterface, typed, sharedFactories,
                 providerFactoryFacts);
         }
@@ -892,48 +895,6 @@ public final class SemanticIrValidator {
      * actually produces a value. Later modules in dependency order resolve
      * their imported constructions through exactly these facts.
      */
-    /**
-     * The recorded plan owners of a raw project's multiple-declaration
-     * class identities: the declaration the generated JSON plan table
-     * carries under the canonical key (the unique plan-bearing
-     * declaration when one exists, the unit order's last declaration
-     * otherwise) and its construction entry when the owner module exports
-     * the class. The typed and text surfaces apply the identical
-     * selection, so a nested JSON link validates the owner declaration's
-     * layout instead of a unit-local sibling.
-     */
-    private static Map<ClassId, ClassConstructionValidator.ClassPlanOwner> planOwners(
-            Map<ClassId, List<ModuleId>> declarations,
-            Map<ClassId, List<ModuleId>> planBearers,
-            ProjectInterfaceIndex interfaceIndex) {
-        Map<ClassId, ClassConstructionValidator.ClassPlanOwner> owners =
-            new LinkedHashMap<>();
-        for (Map.Entry<ClassId, List<ModuleId>> entry : declarations.entrySet()) {
-            if (entry.getValue().size() <= 1) {
-                continue;
-            }
-            List<ModuleId> bearers = planBearers.get(entry.getKey());
-            int bearerCount = bearers == null ? 0 : bearers.size();
-            ModuleId owner = bearerCount == 1
-                ? bearers.get(0)
-                : entry.getValue().get(entry.getValue().size() - 1);
-            ClassFactoryId constructionEntry = null;
-            ExternalModuleInterface ownerInterface =
-                interfaceIndex.modules().get(owner);
-            if (ownerInterface != null) {
-                for (ClassInterface classEntry : ownerInterface.classes()) {
-                    if (classEntry.classId().equals(entry.getKey())) {
-                        constructionEntry = classEntry.constructionEntry();
-                        break;
-                    }
-                }
-            }
-            owners.put(entry.getKey(), new ClassConstructionValidator.ClassPlanOwner(
-                owner, constructionEntry));
-        }
-        return owners;
-    }
-
     private static void accumulateSharedFactoryFacts(ExternalModuleInterface ownInterface,
                                                      LoweredModuleUnit unit,
                                                      Map<ClassId, SharedFactoryFacts> accumulated,
@@ -2181,6 +2142,24 @@ public final class SemanticIrValidator {
                             origin(R_ENUM, "CONDITIONAL requires a preceding boolean condition, two owned value-producing branches and a compatible result"));
                 }
             }
+            case "JSON_PARSE" -> {
+                ValueId text = parseValueIdQuiet(payloadValue(payload, "jsonString") instanceof CanonicalJson.Obj obj ? obj : null);
+                RawOp source = null;
+                for (RawOp producer : unit.ops()) {
+                    if (producer.opId().equals(op.opId())) break;
+                    if (text != null && text.equals(producer.resultValue()) && unit.bodyTable() != null
+                            && unit.bodyTable().opBlocks().get(op.opId()) != null
+                            && java.util.Objects.equals(unit.bodyTable().opBlocks().get(producer.opId()),
+                                unit.bodyTable().opBlocks().get(op.opId()))) source = producer;
+                }
+                String target = optionalString(payload, "target");
+                if (source == null || !"string".equals(source.resultType()) || target == null
+                        || !target.equals(op.resultType()) || op.resultValue() == null || op.resultToken() != null
+                        || !op.operands().equals(java.util.List.of(text))
+                        || !op.operandTypes().equals(java.util.List.of("string")))
+                    return fail(op, unit, facts, R_ENUM, SemanticCapability.STDLIB_SEMANTICS,
+                        origin(R_ENUM, "JSON_PARSE requires one preceding string operand and its explicit target as result descriptor"));
+            }
             case "FOR_EACH" -> {
                 failure = checkSlotEnum(op, unit, facts, "mode", optionalString(payload, "mode"),
                     IterationMode.class);
@@ -2435,12 +2414,8 @@ public final class SemanticIrValidator {
             case INDEX_NORMALIZE ->
                 requirePolicy(unit, facts, op, policy, FailurePolicyId.NO_DEAL_FAILURE,
                     "INDEX_NORMALIZE");
-            case JSON_FROM_CLASS ->
-                requirePolicy(unit, facts, op, policy, FailurePolicyId.JSON_FROM_NULL,
-                    "JSON_FROM_CLASS");
-            case JSON_TO_CLASS ->
-                requirePolicy(unit, facts, op, policy, FailurePolicyId.JSON_TO_ERROR,
-                    "JSON_TO_CLASS");
+            case JSON_PARSE ->
+                requirePolicy(unit, facts, op, policy, FailurePolicyId.JSON_RECONSTRUCTION, "JSON_PARSE");
             case EXTERNAL_ENTRY ->
                 requirePolicy(unit, facts, op, policy, FailurePolicyId.NO_DEAL_FAILURE,
                     "EXTERNAL_ENTRY");
@@ -2677,18 +2652,6 @@ public final class SemanticIrValidator {
                         + " ARRAY_SLOT chain");
                 }
                 return Optional.empty();
-            }
-            case JSON_FROM_FIELD -> {
-                return policy == FailurePolicyId.JSON_FROM_NULL
-                    ? Optional.empty()
-                    : Optional.of("JSON_FROM_FIELD boundary must carry JSON_FROM_NULL, got "
-                        + policy.name());
-            }
-            case JSON_TO_FIELD -> {
-                return policy == FailurePolicyId.JSON_TO_ERROR
-                    ? Optional.empty()
-                    : Optional.of("JSON_TO_FIELD boundary must carry JSON_TO_ERROR, got "
-                        + policy.name());
             }
             case ASYNC_COMPLETION -> {
                 if (policy != FailurePolicyId.ASYNC_COMPLETION) {

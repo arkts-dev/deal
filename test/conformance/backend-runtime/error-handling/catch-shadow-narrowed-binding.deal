@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: error-handling, try-catch, nullable, narrowing, shadowing, blocks, parameters
 
-import * as console from "std/console";
+import * as printer from "std/console";
 
 function expectTrue(what: string, condition: boolean): void {
   if (!condition) { throw { code: "CHECK_FAIL", message: what }; }
@@ -167,6 +167,6 @@ export function main(): null {
   checkCatchAssignment();
   checkNestedTryCatchAssignment();
   checkParameterBinding(17);
-  console.log("OK");
+  printer.log("OK");
   return null;
 }

@@ -32,7 +32,7 @@ public class AdapterShapeMapPayloadTest {
             + "function main():void{" + setup
             + "let saved:(x:number,y:number)=>void=" + expression + ";}";
         var lex = new Lexer(source, "test.deal").tokenize();
-        var parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
+        var parse = new Parser(lex.tokens(), "test.deal").parse();
         check(parse.diagnostics().isEmpty(), "parse: " + parse.diagnostics());
         ProgramNode program = parse.program();
         var resolver = new NameResolver("test.deal", null);

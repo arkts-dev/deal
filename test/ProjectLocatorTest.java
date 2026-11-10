@@ -284,20 +284,21 @@ public final class ProjectLocatorTest {
         Path string = writeText(surface.resolve("string.d.deal"), "");
         Path console = writeText(surface.resolve("console.d.deal"), "");
         Files.createDirectory(surface.resolve("table.d.deal"));
-        Path json = surface.resolve("json.d.deal");
-        Files.createSymbolicLink(json, string.getFileName());
+        Path time = surface.resolve("time.d.deal");
+        Files.createSymbolicLink(time, string.getFileName());
+        writeText(surface.resolve("json.d.deal"), "");
         Files.createSymbolicLink(surface.resolve("math.d.deal"), Path.of("missing"));
         List<String> expected = new ArrayList<>();
         for (String module : ProjectLocator.SPEC_STDLIB_MODULES) {
             if (module.equals("console")) { expected.add(console.toRealPath().toString()); }
-            if (module.equals("string") || module.equals("json")) {
+            if (module.equals("string") || module.equals("time")) {
                 expected.add(string.toRealPath().toString());
             }
         }
         check(ProjectLocator.resolveStdlibDeclarationFiles(surface.toString())
                 .equals(expected),
             "shared declaration discovery preserves module order, canonical aliases"
-                + " and regular-file filtering");
+                + " and regular-file filtering while ignoring retired JSON declarations");
         check(ProjectLocator.resolveStdlibDeclarationFiles(null).isEmpty(),
             "an absent declaration surface has no files");
         check(ProjectLocator.resolveStdlibDeclarationFiles(
@@ -1082,7 +1083,7 @@ public final class ProjectLocatorTest {
     private static void testStdlibOverlapRejection() throws Exception {
         System.out.println("-- Externals: stdlib-overlap rejection");
 
-        // Project-local std/ with all six spec-listed files; an externals
+        // Project-local std/ with all five spec-listed files; an externals
         // declaration naming std/console.d.deal directly is E2010 with
         // the module-naming note.
         String manifest = "{\n  \"languageVersion\": \"1.6\",\n"
@@ -1090,7 +1091,7 @@ public final class ProjectLocatorTest {
             + "    \"host\": {\"declaration\": \"std/console.d.deal\"}\n"
             + "  }\n}\n";
         Path dir = fixture("stdlib-overlap-direct");
-        createSixStdlibFiles(dir);
+        createStdlibFiles(dir);
         writeEntry(dir, "main.deal");
         Path manifestFile = writeText(dir.resolve("deal.json"), manifest);
         CompilerDiagnostic direct = locateE2010(dir.resolve("main.deal"));
@@ -1111,7 +1112,7 @@ public final class ProjectLocatorTest {
             + "    \"host\": {\"declaration\": \"alias-console.d.deal\"}\n"
             + "  }\n}\n";
         Path linkDir = fixture("stdlib-overlap-link");
-        createSixStdlibFiles(linkDir);
+        createStdlibFiles(linkDir);
         Files.createSymbolicLink(linkDir.resolve("alias-console.d.deal"),
             Path.of("std/console.d.deal"));
         writeEntry(linkDir, "main.deal");
@@ -1133,7 +1134,7 @@ public final class ProjectLocatorTest {
             + "    \"host\": {\"declaration\": \"std/other.d.deal\"}\n"
             + "  }\n}\n";
         Path otherDir = fixture("stdlib-overlap-other");
-        createSixStdlibFiles(otherDir);
+        createStdlibFiles(otherDir);
         writeText(otherDir.resolve("std/other.d.deal"), "export function o(): null\n");
         writeEntry(otherDir, "main.deal");
         writeText(otherDir.resolve("deal.json"), otherManifest);
@@ -1144,8 +1145,8 @@ public final class ProjectLocatorTest {
         }
     }
 
-    /** Creates the six spec-listed stdlib declaration files under dir/std. */
-    private static void createSixStdlibFiles(Path dir) throws IOException {
+    /** Creates the five spec-listed stdlib declaration files under dir/std. */
+    private static void createStdlibFiles(Path dir) throws IOException {
         for (String module : ProjectLocator.SPEC_STDLIB_MODULES) {
             writeText(dir.resolve("std").resolve(module + ".d.deal"),
                 "// pinned stdlib declaration stub for " + module + "\n");
@@ -1197,7 +1198,7 @@ public final class ProjectLocatorTest {
         // A missing spec-listed file and a directory named like a
         // spec-listed file are both omitted, never errors.
         Path oddDir = fixture("stdlib-files-odd");
-        Files.createDirectories(oddDir.resolve("std/json.d.deal"));
+        Files.createDirectories(oddDir.resolve("std/math.d.deal"));
         writeText(oddDir.resolve("std/time.d.deal"), "// time declaration\n");
         writeEntry(oddDir, "main.deal");
         writeText(oddDir.resolve("deal.json"), VALID_MANIFEST);
@@ -1430,8 +1431,8 @@ public final class ProjectLocatorTest {
                     "without project-local std/, the process-CWD surface is selected: "
                         + fallbackContext.stdlibSurfacePath());
                 check(fallbackContext.stdlibDeclarationFiles() != null
-                        && fallbackContext.stdlibDeclarationFiles().size() == 6,
-                    "the CWD distribution surface publishes all six canonical"
+                        && fallbackContext.stdlibDeclarationFiles().size() == 5,
+                    "the CWD distribution surface publishes all five canonical"
                         + " declaration files: "
                         + fallbackContext.stdlibDeclarationFiles());
             } else {
@@ -1688,7 +1689,7 @@ public final class ProjectLocatorTest {
         Path project = fixture("combined/project");
         Files.createDirectories(project.resolve("src"));
         Files.createDirectories(project.resolve("lib"));
-        createSixStdlibFiles(project);
+        createStdlibFiles(project);
         writeEntry(project, "main.deal");
         writeText(project.resolve("decl.d.deal"), "export function d(): null\n");
         Path manifestFile = writeText(project.resolve("deal.json"),
@@ -1759,7 +1760,7 @@ public final class ProjectLocatorTest {
         }
         check(context.stdlibDeclarationFiles() != null
                 && context.stdlibDeclarationFiles().equals(expectedStdlibFiles),
-            "the six stdlib declaration files are published canonically: "
+            "the five stdlib declaration files are published canonically: "
                 + context.stdlibDeclarationFiles());
         ProjectDeploymentIdentity identity = context.projectDeploymentIdentity();
         check(identity.canonicalManifestUri().equals(

@@ -53,8 +53,7 @@ public sealed interface KindPayload
             KindPayload.FieldReadPayload,
             KindPayload.FieldWritePayload,
             KindPayload.FieldDeletePayload,
-            KindPayload.JsonFromClassPayload,
-            KindPayload.JsonToClassPayload,
+            KindPayload.JsonParsePayload,
             KindPayload.ModuleInitPayload,
             KindPayload.ModuleImportPayload,
             KindPayload.ExportReadPayload,
@@ -1018,29 +1017,11 @@ public sealed interface KindPayload
         }
     }
 
-    /**
-     * {@code JSON_FROM_CLASS} — class layout and JSON string; class or
-     * null; parse/key/field failure returns null (policy
-     * {@code JSON_FROM_NULL}).
-     */
-    record JsonFromClassPayload(ClassLayout layout, ValueId jsonString) implements KindPayload {
-
-        public JsonFromClassPayload {
-            Objects.requireNonNull(layout, "layout must not be null");
-            Objects.requireNonNull(jsonString, "jsonString must not be null");
-        }
-    }
-
-    /**
-     * {@code JSON_TO_CLASS} — class value and layout; deterministic JSON;
-     * first unsupported/cycle/nonfinite failure (policy
-     * {@code JSON_TO_ERROR}).
-     */
-    record JsonToClassPayload(ValueId classValue, ClassLayout layout) implements KindPayload {
-
-        public JsonToClassPayload {
-            Objects.requireNonNull(classValue, "classValue must not be null");
-            Objects.requireNonNull(layout, "layout must not be null");
+    /** Contextual JSON decoding: one string operand and an explicit reconstruction target. */
+    record JsonParsePayload(ValueId jsonString, RuntimeDescriptor target) implements KindPayload {
+        public JsonParsePayload {
+            Objects.requireNonNull(jsonString, "jsonString");
+            Objects.requireNonNull(target, "target");
         }
     }
 

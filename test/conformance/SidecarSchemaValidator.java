@@ -1,7 +1,5 @@
 package deal.test.conformance;
 
-import deal.lexer.CompilerDirective;
-import deal.lexer.DirectiveName;
 import deal.lexer.Lexer;
 import deal.semantic.ir.CanonicalJson;
 import deal.semantic.ir.SemanticIrTextDecodeException;

@@ -6,7 +6,16 @@ package.path = "./?.lua;./?/init.lua;" .. package.path
 
 -- The private carrier keys (ISSUE-0830): the runtime, the emitted chunks and
 -- the stdlib share one process-wide key set.
-local __K = require("deal.runtime").__keys
+local __rt = require("deal.runtime")
+local __K = __rt.__keys
+local jsonAlgorithms = require("deal.json")
+local function decodeRecord(text, file, line, column)
+  return jsonAlgorithms.decode(text, "record", {}, file, line, column)
+end
+local function decodeUnknown(text, file, line, column)
+  return jsonAlgorithms.decode(text, "unknown", {}, file, line, column)
+end
+local encode = jsonAlgorithms.encode
 
 local passed = 0
 local failed = 0
@@ -520,11 +529,10 @@ test("table.keys returns a chunk table carrier's present-null key", function()
 end)
 
 test("table.keys keeps a decoded object carrier's present-null member (v1.4)", function()
-  -- A decoded std/json object stores a present null as the runtime's null
+  -- A reconstructed Record stores a present null as the runtime's null
   -- sentinel, so the member is a present key of the table (the
   -- specification pins no order for keys).
-  local json = require("std.json")
-  local parsed = json.parse.f('{"n":null,"x":1}')
+  local parsed = decodeRecord('{"n":null,"x":1}')
   local keys = tablelib.keys.f(parsed)
   assert(#keys == 2, "expected two keys, got " .. #keys)
   local found = {}
@@ -565,13 +573,138 @@ test("table.keys rejects the emitted chunk's function carrier (ISSUE-0830)", fun
 end)
 
 -- ===========================================================================
--- std/json tests
+-- Builtin JSON algorithms (not callable stdlib exports)
 -- ===========================================================================
 
-local json = require("std.json")
+test("builtin JSON algorithms are not language callable wrappers and accept any root", function()
+  assert(type(jsonAlgorithms.scan)=="function" and type(encode)=="function"
+    and type(jsonAlgorithms.decode)=="function")
+  assert(jsonAlgorithms.parse==nil and jsonAlgorithms.stringify==nil)
+  assert(decodeUnknown('null')==__rt.__NULL and decodeUnknown('true')==true
+    and decodeUnknown('false')==false and decodeUnknown('"x"')=='x'
+    and decodeUnknown('7')==7 and 1/decodeUnknown('-0')==-math.huge)
+  local a=decodeUnknown('[1,null]')
+  assert(a[__K.a] and a[__K.n]==2 and a[__K.elementDescriptor]=='unknown'
+    and a[1]==1 and a[2]==__rt.__NULL)
+end)
+
+test("contextual declared schemas preserve freshness, recursion, presence and declaration order", function()
+  local plans={['@m/Node']={
+    {name='value',descriptor='number',optional=false},
+    {name='next',descriptor='?@m/Node',optional=true},
+    {name='label',descriptor='?string',optional=false}}}
+  local text='{"label":null,"next":{"label":"leaf","value":2},"value":1}'
+  local a=jsonAlgorithms.decode(text,'@m/Node',plans)
+  local b=jsonAlgorithms.decode(text,'@m/Node',plans)
+  assert(a~=b and a.next~=b.next and a[__K.classname]=='@m/Node'
+    and a.next[__K.classname]=='@m/Node' and a.next.next==nil)
+  assert(encode(a)=='{"value":1,"next":{"value":2,"label":"leaf"},"label":null}')
+  assert(__rt.check_type('@m/Node',a)==a)
+  local err=assert_error_code(function() __rt.check_type('@other/Node',a) end,'E8001')
+  assert(err.actual=='@m/Node')
+end)
+
+test("contextual failures scan first, check extras first, and never replace destination aliases", function()
+  local plans={['@m/Box']={
+    {name='value',descriptor='number',optional=false},
+    {name='child',descriptor='?@m/Box',optional=true}}}
+  local prior=jsonAlgorithms.decode('{"value":7,"child":{"value":8}}','@m/Box',plans)
+  local destination,alias=prior,prior.child
+  local cases={
+    {'{"extra":0,"value":"bad"}','E8007',nil},
+    {'{"extra":0,"value":{"x":1,"x":2}}','E8001','duplicate key'},
+    {'{"value":1,"child":{"value":"bad"}}','E8001','expected number'},
+    {'{}','E8001','expected number'}}
+  for _,case in ipairs(cases) do
+    local e=assert_error_code(function()
+      destination=jsonAlgorithms.decode(case[1],'@m/Box',plans,'parse.deal',7,13)
+    end,case[2])
+    assert(e.file=='parse.deal' and e.line==7 and e.column==13)
+    if case[3] then assert(string.find(e.message,case[3],1,true)) end
+    assert(destination==prior and destination.child==alias and prior.value==7 and alias.value==8)
+  end
+  local missing=assert_error_code(function()
+    jsonAlgorithms.decode('{}','@m/Box',plans)
+  end,'E8001')
+  assert(missing.actual=='undefined')
+end)
+
+test("contextual extra keys are lossless opaque arm parameters", function()
+  local plans={['@m/Box']={{name='value',descriptor='number',optional=false}}}
+  local keys={
+    {'{actual}','{actual}'},
+    {'x\\u0000y','x'..string.char(0)..'y'},
+    {'\\uD800',string.char(0xed,0xa0,0x80)},
+    {"a'b","a'b"},
+    {'',''}}
+  for _,key in ipairs(keys) do
+    local e=assert_error_code(function()
+      jsonAlgorithms.decode('{"'..key[1]..'":1}','@m/Box',plans,'keys.deal',9,17)
+    end,'E8007')
+    assert(e.message=="extra field '"..key[2].."' in class '@m/Box'")
+    assert(e.arm.id=='CLASS_EXTRA_FIELD' and e.arm.values.field==key[2]
+      and e.arm.values.classId=='@m/Box' and e.expected==nil and e.actual==nil)
+    assert(e.file=='keys.deal' and e.line==9 and e.column==17)
+  end
+end)
+
+test("contextual schemas reject omitted function and void descendants without hooks", function()
+  for _,bad in ipairs({'()->number','void'}) do
+    local plans={['@m/Bad']={{name='unused',descriptor=bad,optional=true}}}
+    assert_error(function() jsonAlgorithms.decode('{}','@m/Bad',plans) end)
+  end
+  local fields={{name='value',descriptor='number',optional=false}}
+  local a=jsonAlgorithms.decode('{"value":1}','@m/Item',{['@m/Item']=fields})
+  local b=jsonAlgorithms.decode('{"value":"s"}','@m/Item',{
+    ['@m/Item']={{name='value',descriptor='string',optional=false}}})
+  assert(a.value==1 and b.value=='s')
+  assert_error(function() jsonAlgorithms.decode('{}','@m/Missing',{}) end)
+  for _,malformed in ipairs({
+      {[2]=fields[1]},
+      {fields[1],fields[1]},
+      {{name='value',descriptor='number'}},
+      {{name='value',descriptor='not-a-descriptor',optional=false}},
+      {fields[1],unexpected=true}}) do
+    assert_error(function() jsonAlgorithms.decode('{}','@m/Item',{['@m/Item']=malformed}) end)
+  end
+  local poisoned=setmetatable({}, {__index=function() error('schema hook invoked') end})
+  local ok,e=pcall(jsonAlgorithms.decode,'{}','@m/Item',poisoned)
+  assert(not ok and string.find(tostring(e),'no exact class plan',1,true))
+  local optional=setmetatable({name='value',descriptor='number'},
+    {__index=function() error('field hook invoked') end})
+  ok,e=pcall(jsonAlgorithms.decode,'{}','@m/Item',{['@m/Item']={optional}})
+  assert(not ok and string.find(tostring(e),'malformed class plan',1,true))
+  local inert=setmetatable(fields,{__index=function() error('plan hook invoked') end})
+  assert(jsonAlgorithms.decode('{"value":3}','@m/Item',{['@m/Item']=inert}).value==3)
+end)
+
+test("contextual typed arrays retain canonical descriptors, nullish flags and Error public fields", function()
+  local a=jsonAlgorithms.decode('[null,1]','[?number]')
+  assert(a[__K.elementDescriptor]=='?number' and a[1]==__rt.__NULL and a[2]==1)
+  assert(__rt.check_type('[?number]',a)==a)
+  local empty=jsonAlgorithms.decode('[]','[number]')
+  assert(empty[__K.n]==0 and empty[__K.elementDescriptor]=='number')
+  local err=jsonAlgorithms.decode('{"message":"m","code":"C"}','Error')
+  assert(encode(err)=='{"code":"C","message":"m"}')
+  assert_error_code(function() jsonAlgorithms.decode('[null]','[!number]') end,'E8001')
+  assert_error_code(function() jsonAlgorithms.decode('{}','?number') end,'E8001')
+end)
+
+test("contextual deep reconstruction supports ordinary validation and encoding", function()
+  local plans={['@m/Node']={{name='value',descriptor='number',optional=false},
+    {name='next',descriptor='?@m/Node',optional=false}}}
+  local text=string.rep('{"value":1,"next":',5000)..'null'..string.rep('}',5000)
+  local node=jsonAlgorithms.decode(text,'?@m/Node',plans)
+  assert(__rt.check_type('?@m/Node',node)==node)
+  assert(encode(node)==text)
+  local input=string.rep('[',20000)..'-0'..string.rep(']',20000)
+  local nested=decodeUnknown(input)
+  assert(__rt.check_type('unknown',nested)==nested)
+  assert(encode(nested)==string.rep('[',20000)..'0'..string.rep(']',20000))
+end)
 
 test("json.stringify of simple object", function()
-  local result = json.stringify.f({ a = 1, b = "hi" })
+  local result = encode({ a = 1, b = "hi" })
   -- JSON object keys can be in any order; check that the result is valid JSON
   assert(type(result) == "string")
   assert(string.find(result, '"a"') ~= nil)
@@ -579,12 +712,12 @@ test("json.stringify of simple object", function()
 end)
 
 test("json.stringify of array", function()
-  local result = json.stringify.f({ [__K.a]=true, [__K.n]=3, 1, 2, 3 })
+  local result = encode({ [__K.a]=true, [__K.n]=3, 1, 2, 3 })
   assert(result == '[1,2,3]')
 end)
 
 test("json.stringify of nested object", function()
-  local result = json.stringify.f({ name = "test", data = { x = 1 } })
+  local result = encode({ name = "test", data = { x = 1 } })
   assert(type(result) == "string")
   assert(string.find(result, '"name"') ~= nil)
   assert(string.find(result, '"data"') ~= nil)
@@ -592,14 +725,14 @@ end)
 
 test("json.stringify encodes __NULL as null", function()
   local __rt = require("deal.runtime")
-  local result = json.stringify.f({ a = __rt.__NULL, b = 1 })
+  local result = encode({ a = __rt.__NULL, b = 1 })
   -- Should contain "null", not "{}"
   assert(string.find(result, "null") ~= nil, "should contain 'null' for __NULL value")
   assert(string.find(result, "{}") == nil, "should NOT contain '{}' for __NULL value")
 end)
 
 test("json.stringify boolean values", function()
-  local result = json.stringify.f({ a = true, b = false })
+  local result = encode({ a = true, b = false })
   assert(string.find(result, "true") ~= nil)
   assert(string.find(result, "false") ~= nil)
 end)
@@ -623,67 +756,64 @@ end
 
 test("json.stringify rejects a mixed-key table instead of coercing member names", function()
   assert_table_form_stringify_error(function()
-    json.stringify.f({ [1] = "a", name = "test" })
+    encode({ [1] = "a", name = "test" })
   end, "numeric key beside a string key")
   -- The collision hazard: [1] and "1" are distinct Lua keys but one JSON
   -- member name, so the coercion would emit the duplicate name twice.
   assert_table_form_stringify_error(function()
-    json.stringify.f({ [1] = "a", ["1"] = "b" })
+    encode({ [1] = "a", ["1"] = "b" })
   end, "colliding numeric and string key")
   assert_table_form_stringify_error(function()
-    json.stringify.f({ data = { [2] = "a", name = "test" } })
+    encode({ data = { [2] = "a", name = "test" } })
   end, "nested mixed-key table")
 end)
 
 test("json.stringify rejects every key form outside the two JSON table forms", function()
   assert_table_form_stringify_error(function()
-    json.stringify.f({ [0] = "a" })
+    encode({ [0] = "a" })
   end, "zero key")
   assert_table_form_stringify_error(function()
-    json.stringify.f({ [-1] = "a" })
+    encode({ [-1] = "a" })
   end, "negative key")
   assert_table_form_stringify_error(function()
-    json.stringify.f({ [1.5] = "a" })
+    encode({ [1.5] = "a" })
   end, "fractional key")
   assert_table_form_stringify_error(function()
-    json.stringify.f({ [true] = "a" })
+    encode({ [true] = "a" })
   end, "boolean key")
 end)
 
 test("json.stringify keeps marked arrays and string-keyed objects distinct", function()
-  local array = json.stringify.f({ [__K.a]=true, [__K.n]=2, "a", "b" })
+  local array = encode({ [__K.a]=true, [__K.n]=2, "a", "b" })
   assert(array == '["a","b"]', "the pure integer-keyed table is the array: " .. tostring(array))
-  assert(json.stringify.f({ [__K.a]=true, [__K.n]=2, [2] = "b" }) == '[null,"b"]',
+  assert(encode({ [__K.a]=true, [__K.n]=2, [2] = "b" }) == '[null,"b"]',
     "a hole in an admitted array substitutes null")
-  local object = json.stringify.f({ name = "test" })
+  local object = encode({ name = "test" })
   assert(object == '{"name":"test"}', "the pure string-keyed table is the object: " .. tostring(object))
-  local numericString = json.stringify.f({ ["1"] = "a" })
+  local numericString = encode({ ["1"] = "a" })
   assert(numericString == '{"1":"a"}', "a numeric string key is a string key: " .. tostring(numericString))
 end)
 
 test("json.stringify escapes all control characters", function()
   -- ASCII control character 0x01 (SOH)
-  local result = json.stringify.f({ a = "hello\x01world" })
+  local result = encode({ a = "hello\x01world" })
   assert(string.find(result, "\\u0001") ~= nil, "control character 0x01 should be \\u0001, got: " .. result)
   -- Also verify that no literal control character remains
   assert(string.find(result, "\x01") == nil, "no literal control character should remain")
 end)
 
 test("json.parse of object", function()
-  local result = json.parse.f('{"a":1,"b":"hi"}')
+  local result = decodeRecord('{"a":1,"b":"hi"}')
   assert(type(result) == "table")
   assert(result.a == 1)
   assert(result["b"] == "hi")
 end)
 
 test("json.parse rejects a top-level array with E8001 expected table (actual array)", function()
-  -- The declared (string)->table exit (ISSUE-0824): a top-level decoded
-  -- array is the array carrier, so it is rejected with the shared
-  -- table-admission tuple — exactly the emitted chunk's table cell and
-  -- the JS runtime's checkTable tuple (E8001 expected table, expected
-  -- table, actual array), never returned as a table.
+  -- Record is an explicit contextual target. Scanning accepts this root;
+  -- reconstruction rejects its shape at the parse expression, not a return gate.
   local err = assert_error_code(function()
-    json.parse.f('[1,2,3]', "caller.deal", 9, 18)
+    decodeRecord('[1,2,3]', "caller.deal", 9, 18)
   end, "E8001")
   assert(err.message == "expected table", "message, got: " .. tostring(err.message))
   assert(err.expected == "table", "expected token, got: " .. tostring(err.expected))
@@ -694,69 +824,69 @@ end)
 
 test("json.parse of null returns __NULL", function()
   local __rt = require("deal.runtime")
-  local result = json.parse.f('{"a":null}')
+  local result = decodeRecord('{"a":null}')
   assert(result.a == __rt.__NULL, "JSON null should parse to __NULL")
 end)
 
 test("json.parse of nested null returns __NULL", function()
   local __rt = require("deal.runtime")
-  local result = json.parse.f('{"a":[null]}')
+  local result = decodeRecord('{"a":[null]}')
   assert(result.a[1] == __rt.__NULL, "JSON null in array should parse to __NULL")
 end)
 
 test("json.parse of empty object", function()
-  local result = json.parse.f('{}')
+  local result = decodeRecord('{}')
   assert(type(result) == "table")
 end)
 
 test("json.parse rejects an empty top-level array with the array token", function()
-  local err = assert_error_code(function() json.parse.f('[]') end, "E8001")
+  local err = assert_error_code(function() decodeRecord('[]') end, "E8001")
   assert(err.message == "expected table", "message, got: " .. tostring(err.message))
   assert(err.expected == "table", "expected token, got: " .. tostring(err.expected))
   assert(err.actual == "array", "actual token, got: " .. tostring(err.actual))
 end)
 
 test("json.parse of top-level null is rejected as language null (E8001)", function()
-  local err = assert_error_code(function() json.parse.f('null') end, "E8001")
+  local err = assert_error_code(function() decodeRecord('null') end, "E8001")
   assert(err.message == "expected table", "message, got: " .. tostring(err.message))
   assert(err.expected == "table", "expected token, got: " .. tostring(err.expected))
   assert(err.actual == "null", "actual token, got: " .. tostring(err.actual))
 end)
 
 test("json.parse rejects invalid JSON: bare word", function()
-  local err = assert_error(function() json.parse.f("tru") end)
+  local err = assert_error(function() decodeRecord("tru") end)
   assert(type(err) == "table", "should get error table for 'tru'")
   assert(err.code ~= nil, "error should have code")
 end)
 
 test("json.parse rejects invalid JSON: malformed object", function()
-  local err = assert_error(function() json.parse.f("{invalid}") end)
+  local err = assert_error(function() decodeRecord("{invalid}") end)
   assert(type(err) == "table", "should get error table for '{invalid}'")
   assert(err.code ~= nil, "error should have code")
 end)
 
 test("json.parse rejects invalid JSON: trailing comma", function()
-  local err = assert_error(function() json.parse.f('[1,]') end)
+  local err = assert_error(function() decodeRecord('[1,]') end)
   assert(type(err) == "table", "should get error table for trailing comma")
   assert(err.code ~= nil, "error should have code")
 end)
 
 test("json.parse rejects invalid JSON: trailing garbage", function()
-  local err = assert_error(function() json.parse.f('1 2') end)
+  local err = assert_error(function() decodeRecord('1 2') end)
   assert(type(err) == "table", "should get error table for trailing garbage")
   assert(err.code ~= nil, "error should have code")
 end)
 
 test("json.parse rejects empty string", function()
-  local err = assert_error(function() json.parse.f('') end)
+  local err = assert_error(function() decodeRecord('') end)
   assert(type(err) == "table", "should get error table for empty string")
   assert(err.code ~= nil, "error should have code")
 end)
 
 test("json round-trip", function()
   local original = { a = 1, b = "hello", c = true, d = { nested = 2 } }
-  local encoded = json.stringify.f(original)
-  local decoded = json.parse.f(encoded)
+  local encoded = encode(original)
+  local decoded = decodeRecord(encoded)
   assert(decoded.a == 1)
   assert(decoded.b == "hello")
   assert(decoded.c == true)
@@ -766,23 +896,23 @@ end)
 test("json null round-trip", function()
   local __rt = require("deal.runtime")
   local original = { a = __rt.__NULL, b = 42 }
-  local encoded = json.stringify.f(original)
-  local decoded = json.parse.f(encoded)
+  local encoded = encode(original)
+  local decoded = decodeRecord(encoded)
   assert(decoded.a == __rt.__NULL, "null should round-trip to __NULL, got " .. tostring(decoded.a))
   assert(decoded.b == 42)
 end)
 
 test("json.stringify admits scalar strings", function()
-  assert(json.stringify.f("not a table") == '"not a table"', "scalar string root")
+  assert(encode("not a table") == '"not a table"', "scalar string root")
 end)
 
 test("json.stringify rejects raw foreign function roots at unknown ingress", function()
-  local err = assert_error_code(function() json.stringify.f(function() end) end, "E8001")
+  local err = assert_error_code(function() encode(function() end) end, "E8001")
   assert(err.message == "unsupported unknown ingress", "foreign function rejects at unknown boundary")
 end)
 
 test("json.parse with non-string raises error", function()
-  local err = assert_error(function() json.parse.f(42) end)
+  local err = assert_error(function() decodeRecord(42) end)
   assert(type(err) == "table", "error should be a table")
 end)
 
@@ -794,45 +924,44 @@ local function assert_nonfinite_substitution(fn, expected, label)
 end
 
 test("json.stringify substitutes null for NaN", function()
-  assert_nonfinite_substitution(function() return json.stringify.f({ x = 0.0/0.0 }) end,
+  assert_nonfinite_substitution(function() return encode({ x = 0.0/0.0 }) end,
     '{"x":null}', "NaN member")
 end)
 
 test("json.stringify substitutes null for Infinity", function()
-  assert_nonfinite_substitution(function() return json.stringify.f({ x = 1.0/0.0 }) end,
+  assert_nonfinite_substitution(function() return encode({ x = 1.0/0.0 }) end,
     '{"x":null}', "Infinity member")
 end)
 
 test("json.stringify substitutes null for negative Infinity", function()
-  assert_nonfinite_substitution(function() return json.stringify.f({ x = -1.0/0.0 }) end,
+  assert_nonfinite_substitution(function() return encode({ x = -1.0/0.0 }) end,
     '{"x":null}', "negative Infinity member")
 end)
 
 test("json.stringify substitutes null through a forwarded call site", function()
   assert_nonfinite_substitution(function()
-    return json.stringify.f({ x = 1.0/0.0 }, "caller.deal", 7, 9)
+    return encode({ x = 1.0/0.0 }, "caller.deal", 7, 9)
   end, '{"x":null}', "forwarded nonfinite")
 end)
 
 test("json.stringify accepts finite numbers unchanged", function()
-  local result = json.stringify.f({ x = 42.0 })
+  local result = encode({ x = 42.0 })
   assert(result == '{"x":42}' or string.find(result, '"x":42') ~= nil, "finite number should encode correctly, got: " .. tostring(result))
 end)
 
 test("json.stringify substitutes null for NaN in nested object", function()
   assert_nonfinite_substitution(
-    function() return json.stringify.f({ data = { val = 0.0/0.0 } }) end,
+    function() return encode({ data = { val = 0.0/0.0 } }) end,
     '{"data":{"val":null}}', "nested NaN")
 end)
 
 test("json.stringify substitutes null for Infinity in array", function()
-  assert_nonfinite_substitution(function() return json.stringify.f({ [__K.a]=true, [__K.n]=3, 1, 2, 1.0/0.0 }) end,
+  assert_nonfinite_substitution(function() return encode({ [__K.a]=true, [__K.n]=3, 1, 2, 1.0/0.0 }) end,
     '[1,2,null]', "array Infinity")
 end)
 
 -- ===========================================================================
--- std/json Unicode conformance tests (ISSUE-0171): byte-precise hostile-input
--- regressions pinning the hardened std/json.lua decode/rejection behavior.
+-- Internal JSON Unicode scanning: byte-precise hostile-input controls.
 -- Hostile bytes (raw controls, invalid UTF-8) are built with string.char at
 -- runtime; none are committed literally to this file.
 -- ===========================================================================
@@ -865,20 +994,15 @@ local function assert_json_error(fn, needle)
   return err
 end
 
-test("json.parse classifies exact decimal lexemes (v1.4)", function()
-  -- The lexeme's mathematical value decides the number/number variant before
-  -- binary64 rounding. The direct realization records that decision in
-  -- the decoded graph's per-slot __K.nK marks, so the canonical text of
-  -- the shipped stringify proves the same variant the compiled artifact
-  -- fixtures pin (stdlib/json/int32-boundary-parse). The declared
-  -- (string)->table exit admits an object root only, so every lexeme is
-  -- carried by one member of the document.
+test("json.parse rounds decimal lexemes to binary64 without losing negative zero", function()
+  -- Independent value assertions cover integral/fractional tokens, former
+  -- signed32 edges and exponent saturation inside explicit Record targets.
   local function lexeme(text)
-    return json.parse.f('{"v":' .. text .. '}').v
+    return decodeRecord('{"v":' .. text .. '}').v
   end
   local neg_zero = lexeme("-0.0")
-  assert(neg_zero == 0, "-0.0 normalizes to the integer zero")
-  assert(1 / neg_zero == -math.huge, "-0.0 is the positive zero, never -0.0")
+  assert(neg_zero == 0, "negative zero compares equal to zero")
+  assert(1 / neg_zero == -math.huge, "negative zero retains its sign")
   assert(lexeme("1.0") == 1, "1.0 denotes the integer value 1")
   assert(lexeme("1e0") == 1, "1e0 denotes the integer value 1")
   assert(lexeme("100e-2") == 1, "100e-2 denotes the integer value 1")
@@ -909,7 +1033,7 @@ end)
 -- use ECMAScript decimal spelling regardless of metadata or integrality.
 test("json.parse records the exact number/number variant in the decoded graph (v1.4)", function()
   local function roundtrip(text)
-    return json.stringify.f(json.parse.f(text))
+    return encode(decodeRecord(text))
   end
   assert(roundtrip('{"v":-2147483649}') == '{"v":-2147483649}',
     "-2147483649 stays the number variant, got: " .. roundtrip('{"v":-2147483649}'))
@@ -928,23 +1052,23 @@ test("json.parse records the exact number/number variant in the decoded graph (v
       == '{"v":{"xs":[0.1,-2147483649,1]}}',
     "an array slot keeps its recorded variant, got: "
       .. roundtrip('{"v":{"xs":[0.1,-2147483649,1]}}'))
-  -- An number-variant leaf stays unmarked: 1.0, 1e0, -0.0 and the signed32
-  -- edges keep the integer text.
-  local ints = json.parse.f('{"a":1.0,"b":1e0,"c":-0.0,"d":2147483647}')
-  local intMarks = ints[__K.nK]
-  assert(intMarks.a and intMarks.b and intMarks.c and intMarks.d,
-    "every decoded numeric leaf carries the binary64 mark")
+  -- Contextual reconstruction publishes binary64 leaves directly, not
+  -- scanner-private numeric marks. Signed zero remains independently visible.
+  local ints = decodeRecord('{"a":1.0,"b":1e0,"c":-0.0,"d":2147483647}')
+  assert(type(ints.a)=="number" and ints.a==1 and ints.b==1
+    and 1/ints.c == -math.huge and ints.d==2147483647,
+    "all leaves are binary64 values, including negative zero")
   assert(roundtrip('{"v":{"xs":[1.0,1e0,-0.0,2147483648]}}')
       == '{"v":{"xs":[1,1,0,2147483648]}}',
     "number leaves keep the integer text and the out-of-range integral token is the number variant, got: "
       .. roundtrip('{"v":{"xs":[1.0,1e0,-0.0,2147483648]}}'))
-  -- The marks are the same private map the emitted chunk reads; the
-  -- decoded value graph is not mutated by the encode.
-  local parsed = json.parse.f('{"v":0.1}')
-  assert(parsed[__K.nK] ~= nil and parsed[__K.nK].v == true,
-    "the decoded graph marks the number-variant slot")
-  assert(json.stringify.f(parsed) == '{"v":0.1}', "the encode keeps the text")
-  assert(parsed[__K.nK].v == true, "the encode leaves the mark in place")
+  local parsed = decodeRecord('{"v":0.1}')
+  local keys, order = parsed[__K.keys], parsed[__K.order]
+  assert(type(parsed.v)=="number" and parsed.v==0.1 and keys.v and order[1]=="v",
+    "the reconstructed graph retains binary64 and own presence/order")
+  assert(encode(parsed) == '{"v":0.1}', "the encode keeps the text")
+  assert(parsed.v==0.1 and parsed[__K.keys]==keys and parsed[__K.order]==order,
+    "encoding leaves the graph and private identities unchanged")
 end)
 
 -- The chunk table carrier's present-null member (DEAL v1.4): the emitted
@@ -956,43 +1080,43 @@ test("json.stringify keeps a present-null member of a chunk table carrier (v1.4)
   local __rt = require("deal.runtime")
   local carrier = {[__K.t] = true, [__K.keys] = { n = true, x = true },
     [__K.order] = { "n", "x" }, x = 1}
-  assert(json.stringify.f(carrier) == '{"n":null,"x":1}',
+  assert(encode(carrier) == '{"n":null,"x":1}',
     "the presence-recorded null member keeps its JSON null, got: "
-      .. json.stringify.f(carrier))
+      .. encode(carrier))
   local sentinel = {[__K.t] = true, [__K.keys] = { n = true, x = true },
     [__K.order] = { "n", "x" }, n = __rt.__NULL, x = 1}
-  assert(json.stringify.f(sentinel) == '{"n":null,"x":1}',
+  assert(encode(sentinel) == '{"n":null,"x":1}',
     "the __NULL member keeps its JSON null, got: "
-      .. json.stringify.f(sentinel))
+      .. encode(sentinel))
   local nested = {[__K.t] = true, [__K.keys] = { o = true },
     [__K.order] = { "o" },
     o = {[__K.t] = true, [__K.keys] = { n = true },
       [__K.order] = { "n" }}}
-  assert(json.stringify.f({ v = nested }) == '{"v":{"o":{"n":null}}}',
+  assert(encode({ v = nested }) == '{"v":{"o":{"n":null}}}',
     "a nested present-null member stays JSON null, got: "
-      .. json.stringify.f({ v = nested }))
+      .. encode({ v = nested }))
 end)
 
 test("json.parse rejects decoded-key duplicates at the second key (v1.4)", function()
-  local err = assert_json_error(function() json.parse.f('{"a":1,"a":2}') end,
+  local err = assert_json_error(function() decodeRecord('{"a":1,"a":2}') end,
     "JSON parse error at position 8: duplicate key")
   assert(err.expected == nil and err.actual == nil,
     "the duplicate tuple carries no expected/actual")
-  assert_json_error(function() json.parse.f('{"a":null,"\\u0061":1}') end, "duplicate key")
-  assert_json_error(function() json.parse.f('{"\\u0061":1,"a":2}') end, "duplicate key")
-  assert_json_error(function() json.parse.f('{"o":{"k":1,"k":2}}') end, "duplicate key")
-  local ok = json.parse.f('{"a":1,"b":2}')
+  assert_json_error(function() decodeRecord('{"a":null,"\\u0061":1}') end, "duplicate key")
+  assert_json_error(function() decodeRecord('{"\\u0061":1,"a":2}') end, "duplicate key")
+  assert_json_error(function() decodeRecord('{"o":{"k":1,"k":2}}') end, "duplicate key")
+  local ok = decodeRecord('{"a":1,"b":2}')
   assert(ok.a == 1 and ok.b == 2, "distinct decoded keys stay accepted")
 end)
 
 test("json.stringify rejects a path-local cycle with the closed arm (v1.4)", function()
   local cyc = {}
   cyc.self = cyc
-  assert_json_error(function() json.stringify.f(cyc) end,
+  assert_json_error(function() encode(cyc) end,
     "cyclic value cannot be encoded as JSON")
   -- A shared acyclic child is duplicated, never rejected.
   local shared = { v = 1 }
-  local ok = json.parse.f(json.stringify.f({ a = shared, b = shared }))
+  local ok = decodeRecord(encode({ a = shared, b = shared }))
   assert(ok.a.v == 1 and ok.b.v == 1, "a shared acyclic child serializes twice")
 end)
 
@@ -1002,7 +1126,7 @@ end)
 -- and the logical length), which is also what the LuaJIT host projection
 -- writes for a declared T[] host parameter.
 test("json.parse marks every decoded array, empty arrays included (v1.4)", function()
-  local parsed = json.parse.f('{"empty":[],"one":[1],"deep":{"nested":[[],{"k":1}]}}')
+  local parsed = decodeRecord('{"empty":[],"one":[1],"deep":{"nested":[[],{"k":1}]}}')
   assert(parsed.empty[__K.a] == true, "an empty decoded array carries the array mark")
   assert(parsed.empty[__K.n] == 0, "an empty decoded array records the zero length")
   assert(parsed.one[__K.a] == true, "a decoded array carries the array mark")
@@ -1022,21 +1146,21 @@ test("json.stringify encodes nested decoded arrays, empty arrays included (v1.4)
   -- The defect: a decoded nested empty array was indistinguishable from {},
   -- so the encoder produced {"items":{}} where every other lane and the
   -- compiled LuaJIT lane produce {"items":[]}.
-  assert(json.stringify.f(json.parse.f('{"items":[]}')) == '{"items":[]}',
+  assert(encode(decodeRecord('{"items":[]}')) == '{"items":[]}',
     "a nested empty decoded array encodes as []")
-  assert(json.stringify.f(json.parse.f('{"items":[1,2]}')) == '{"items":[1,2]}',
+  assert(encode(decodeRecord('{"items":[1,2]}')) == '{"items":[1,2]}',
     "a nested decoded array encodes as its elements")
-  assert(json.stringify.f(json.parse.f('{"a":[[],[]]}')) == '{"a":[[],[]]}',
+  assert(encode(decodeRecord('{"a":[[],[]]}')) == '{"a":[[],[]]}',
     "arrays nested in arrays keep every empty boundary")
-  assert(json.stringify.f(json.parse.f('{"a":[1,[2],{"b":[]}]}')) == '{"a":[1,[2],{"b":[]}]}',
+  assert(encode(decodeRecord('{"a":[1,[2],{"b":[]}]}')) == '{"a":[1,[2],{"b":[]}]}',
     "mixed decoded nesting keeps every array boundary")
   -- The encoder does not mutate the decoded carriers it reads.
-  local parsed = json.parse.f('{"items":[]}')
-  assert(json.stringify.f(parsed) == '{"items":[]}', "the first encode keeps the array")
+  local parsed = decodeRecord('{"items":[]}')
+  assert(encode(parsed) == '{"items":[]}', "the first encode keeps the array")
   assert(parsed.items[__K.a] == true and parsed.items[__K.n] == 0,
     "encoding leaves the decoded array marks in place")
   -- A round-trip keeps the marks: the re-decoded document is still arrays.
-  local again = json.parse.f(json.stringify.f(parsed))
+  local again = decodeRecord(encode(parsed))
   assert(again.items[__K.a] == true and again.items[__K.n] == 0,
     "the round-trip keeps the nested empty array mark")
 end)
@@ -1048,15 +1172,15 @@ test("json.stringify encodes the emitted chunk array carrier as an array (v1.4)"
   -- the mark before the numeric-key inference, so the carrier is a JSON
   -- array and none of its private table-object keys reach the output.
   local carrier = {[__K.a] = true, [__K.n] = 2, [__K.nK] = {}, 1, 2}
-  assert(json.stringify.f({ items = carrier }) == '{"items":[1,2]}',
+  assert(encode({ items = carrier }) == '{"items":[1,2]}',
     "a nested chunk array carrier encodes as an array")
-  assert(json.stringify.f({ items = {[__K.a] = true, [__K.n] = 0, [__K.nK] = {}} }) == '{"items":[]}',
+  assert(encode({ items = {[__K.a] = true, [__K.n] = 0, [__K.nK] = {}} }) == '{"items":[]}',
     "an empty chunk array carrier encodes as []")
   local nested = {[__K.a] = true, [__K.n] = 2, [__K.nK] = {},
     "a", {[__K.a] = true, [__K.n] = 0, [__K.nK] = {}}}
-  assert(json.stringify.f({ items = nested }) == '{"items":["a",[]]}',
+  assert(encode({ items = nested }) == '{"items":["a",[]]}',
     "a chunk array carrier's nested array element encodes as []")
-  local text = json.stringify.f({ items = carrier })
+  local text = encode({ items = carrier })
   assert(string.find(text, "table:", 1, true) == nil,
     "no private carrier key is encoded, got: " .. text)
   assert(carrier[__K.a] == true and carrier[__K.n] == 2 and carrier[1] == 1,
@@ -1074,30 +1198,30 @@ test("json.stringify projects a numeric-variant carrier to its number (v1.4)", f
   local function carrier(kind, value)
     return { [__K.jn] = true, k = kind, d = value }
   end
-  assert(json.stringify.f({ v = carrier("number", 7) }) == '{"v":7}',
+  assert(encode({ v = carrier("number", 7) }) == '{"v":7}',
     "an number-variant carrier encodes as its integer spelling")
-  assert(json.stringify.f({ v = carrier("number", 1.0) }) == '{"v":1}',
+  assert(encode({ v = carrier("number", 1.0) }) == '{"v":1}',
     "a number-variant integral value keeps its recorded number spelling")
-  assert(json.stringify.f({ v = carrier("number", 1.5) }) == '{"v":1.5}',
+  assert(encode({ v = carrier("number", 1.5) }) == '{"v":1.5}',
     "a number-variant fractional value keeps the decimal spelling")
-  assert(json.stringify.f({ v = carrier("number", 0.1) }) == '{"v":0.1}',
+  assert(encode({ v = carrier("number", 0.1) }) == '{"v":0.1}',
     "the canonical decimal spelling is the shortest round-tripping text")
-  assert(json.stringify.f({ v = carrier("number", -0.0) }) == '{"v":0}',
+  assert(encode({ v = carrier("number", -0.0) }) == '{"v":0}',
     "a negative-zero number variant keeps its sign")
-  assert(json.stringify.f({ v = carrier("number", 0) }) == '{"v":0}',
+  assert(encode({ v = carrier("number", 0) }) == '{"v":0}',
     "an number-variant zero stays the integer spelling")
-  assert(json.stringify.f({ v = carrier("number", 1e20) }) == '{"v":100000000000000000000}',
+  assert(encode({ v = carrier("number", 1e20) }) == '{"v":100000000000000000000}',
     "a number variant outside the plain range keeps the pinned exponent form")
   -- The carriers occur inside the decoded/array shapes at every depth.
   local chunkArray = { [__K.a] = true, [__K.n] = 2, [__K.nK] = {},
     carrier("number", 1), carrier("number", 2.0) }
-  assert(json.stringify.f({ v = chunkArray }) == '{"v":[1,2]}',
+  assert(encode({ v = chunkArray }) == '{"v":[1,2]}',
     "carriers inside a chunk array carrier keep their own variants")
-  local text = json.stringify.f({ v = carrier("number", 5) })
+  local text = encode({ v = carrier("number", 5) })
   assert(string.find(text, '"k"', 1, true) == nil
       and string.find(text, '"d"', 1, true) == nil,
     "the carrier's private k/d fields never surface, got: " .. text)
-  assert(json.stringify.f({ v = carrier("number", 0.0 / 0.0) }) == '{"v":null}',
+  assert(encode({ v = carrier("number", 0.0 / 0.0) }) == '{"v":null}',
     "carried NaN uses generic null substitution")
 end)
 
@@ -1113,32 +1237,32 @@ test("json.stringify encodes the chunk table carrier over its user keys (v1.4)",
   local carrier = { [__K.t] = true,
     [__K.keys] = { b = true, a = true },
     [__K.order] = { "b", "a" }, b = 2, a = 1 }
-  assert(json.stringify.f(carrier) == '{"b":2,"a":1}',
+  assert(encode(carrier) == '{"b":2,"a":1}',
     "the recorded insertion order selects and orders the user keys")
-  assert(json.stringify.f({ nested = carrier }) == '{"nested":{"b":2,"a":1}}',
+  assert(encode({ nested = carrier }) == '{"nested":{"b":2,"a":1}}',
     "a nested chunk table carrier encodes as an object")
   local empty = { [__K.t] = true, [__K.keys] = {}, [__K.order] = {} }
-  assert(json.stringify.f(empty) == '{}',
+  assert(encode(empty) == '{}',
     "an empty chunk table carrier encodes as an empty object")
   -- The presence/order marks can exist on a chunk table written outside
   -- TABLE_NEW (the first write creates them); the carrier is still an
   -- object over its string keys.
   local written = { [__K.keys] = { only = true }, [__K.order] = { "only" },
     only = 1 }
-  assert(json.stringify.f(written) == '{"only":1}',
+  assert(encode(written) == '{"only":1}',
     "the presence/order marks alone still select the object carrier")
   local noOrder = { [__K.t] = true, only = 1 }
-  assert(json.stringify.f(noOrder) == '{"only":1}',
+  assert(encode(noOrder) == '{"only":1}',
     "a table carrier without an order list keeps the string-key order")
   -- The per-slot number marks select the number-variant spelling.
   local marked = { [__K.t] = true,
     [__K.keys] = { n = true, i = true },
     [__K.order] = { "n", "i" },
     [__K.nK] = { n = true }, n = 1.0, i = 2.0 }
-  assert(json.stringify.f(marked) == '{"n":1,"i":2}',
+  assert(encode(marked) == '{"n":1,"i":2}',
     "a number-marked slot keeps the number spelling, an unmarked slot the number spelling")
   -- The marks are table-object keys: no private key text is ever emitted.
-  local text = json.stringify.f(carrier)
+  local text = encode(carrier)
   assert(string.find(text, "table:", 1, true) == nil,
     "no private carrier key is encoded, got: " .. text)
   assert(carrier[__K.t] == true and carrier[__K.order][1] == "b"
@@ -1149,12 +1273,12 @@ test("json.stringify encodes the chunk table carrier over its user keys (v1.4)",
   local cyc = { [__K.t] = true, [__K.keys] = { self = true },
     [__K.order] = { "self" } }
   cyc.self = cyc
-  assert_json_error(function() json.stringify.f(cyc) end,
+  assert_json_error(function() encode(cyc) end,
     "cyclic value cannot be encoded as JSON")
   local callable = require("deal.runtime").function_("()->void", function() end)
   local omitted = { [__K.t] = true, [__K.keys] = { fn = true },
     [__K.order] = { "fn" }, fn = callable }
-  assert(json.stringify.f(omitted) == '{}', "tagged function member is omitted")
+  assert(encode(omitted) == '{}', "tagged function member is omitted")
   assert(omitted.fn == callable, "serialization retains callable identity")
 end)
 
@@ -1174,22 +1298,22 @@ test("json.stringify encodes a chunk-written plain table with variant marks (v1.
     x = 1.0, y = 7, z = -0.0 }
   assert(written[__K.t] == nil,
     "the written plain table carries no TABLE_NEW mark")
-  local text = json.stringify.f(written)
+  local text = encode(written)
   assert(text == '{"x":1,"y":7,"z":0}',
     "a written plain table keeps its insertion order and per-slot variants, got: "
       .. text)
   assert(string.find(text, "table:", 1, true) == nil,
     "no private carrier key is encoded, got: " .. text)
-  assert(json.stringify.f({ nested = written })
+  assert(encode({ nested = written })
       == '{"nested":{"x":1,"y":7,"z":0}}',
     "a nested written plain table encodes as an object")
   -- A table that records only the per-slot variant marks (no presence or
   -- order list) takes the same object encoding, never the mark as a
   -- member.
   local marksOnly = { [__K.nK] = { amount = true }, amount = 1.0 }
-  assert(json.stringify.f(marksOnly) == '{"amount":1}',
+  assert(encode(marksOnly) == '{"amount":1}',
     "per-slot variant marks alone still select the object carrier, got: "
-      .. json.stringify.f(marksOnly))
+      .. encode(marksOnly))
   -- The encoder reads the marks; it never mutates the written table.
   assert(written[__K.keys].x == true and written[__K.order][1] == "x"
       and written[__K.nK].x == true and written.x == 1.0,
@@ -1198,49 +1322,83 @@ end)
 
 test("json.parse decodes the full RFC 8259 escape table", function()
   local text = '"' .. '\\"' .. '\\\\' .. '\\/' .. '\\b' .. '\\f' .. '\\n' .. '\\r' .. '\\t' .. '"'
-  local r = json.parse.f('{"v":' .. text .. '}').v
+  local r = decodeRecord('{"v":' .. text .. '}').v
   assert_byte_seq(r, 0x22, 0x5C, 0x2F, 0x08, 0x0C, 0x0A, 0x0D, 0x09)
 end)
 
 test("json.parse decodes \\u00E9 to UTF-8 bytes C3 A9", function()
-  assert_byte_seq(json.parse.f('{"v":"\\u00E9"}').v, 0xC3, 0xA9)
+  assert_byte_seq(decodeRecord('{"v":"\\u00E9"}').v, 0xC3, 0xA9)
   -- Hex digits are case-insensitive (RFC 8259 section 7: 4HEXDIG).
-  assert_byte_seq(json.parse.f('{"v":"\\u00e9"}').v, 0xC3, 0xA9)
+  assert_byte_seq(decodeRecord('{"v":"\\u00e9"}').v, 0xC3, 0xA9)
 end)
 
 test("json.parse decodes \\u4E2D to UTF-8 bytes E4 B8 AD", function()
-  assert_byte_seq(json.parse.f('{"v":"\\u4E2D"}').v, 0xE4, 0xB8, 0xAD)
+  assert_byte_seq(decodeRecord('{"v":"\\u4E2D"}').v, 0xE4, 0xB8, 0xAD)
 end)
 
 test("json.parse combines surrogate pair \\uD834\\uDD1E to U+1D11E (F0 9D 84 9E)", function()
-  assert_byte_seq(json.parse.f('{"v":"\\uD834\\uDD1E"}').v, 0xED, 0xA0, 0xB4, 0xED, 0xB4, 0x9E)
+  assert_byte_seq(decodeRecord('{"v":"\\uD834\\uDD1E"}').v, 0xED, 0xA0, 0xB4, 0xED, 0xB4, 0x9E)
 end)
 
 test("json.parse combines boundary pair \\uD800\\uDC00 to U+10000 (F0 90 80 80)", function()
-  assert_byte_seq(json.parse.f('{"v":"\\uD800\\uDC00"}').v, 0xED, 0xA0, 0x80, 0xED, 0xB0, 0x80)
+  assert_byte_seq(decodeRecord('{"v":"\\uD800\\uDC00"}').v, 0xED, 0xA0, 0x80, 0xED, 0xB0, 0x80)
 end)
 
 test("json.parse combines boundary pair \\uDBFF\\uDFFF to U+10FFFF (F4 8F BF BF)", function()
-  assert_byte_seq(json.parse.f('{"v":"\\uDBFF\\uDFFF"}').v, 0xED, 0xAF, 0xBF, 0xED, 0xBF, 0xBF)
+  assert_byte_seq(decodeRecord('{"v":"\\uDBFF\\uDFFF"}').v, 0xED, 0xAF, 0xBF, 0xED, 0xBF, 0xBF)
 end)
 
 test("json.parse preserves a lone high surrogate", function()
-  assert_byte_seq(json.parse.f('{"v":"\\uD834"}').v, 0xED, 0xA0, 0xB4)
+  assert_byte_seq(decodeRecord('{"v":"\\uD834"}').v, 0xED, 0xA0, 0xB4)
 end)
 
 test("json.parse preserves a lone low surrogate", function()
-  assert_byte_seq(json.parse.f('{"v":"\\uDD1E"}').v, 0xED, 0xB4, 0x9E)
+  assert_byte_seq(decodeRecord('{"v":"\\uDD1E"}').v, 0xED, 0xB4, 0x9E)
 end)
 
 test("json.parse preserves a high unit followed by a non-low unit", function()
-  assert_byte_seq(json.parse.f('{"v":"\\uD834\\u0041"}').v, 0xED, 0xA0, 0xB4, 0x41)
+  assert_byte_seq(decodeRecord('{"v":"\\uD834\\u0041"}').v, 0xED, 0xA0, 0xB4, 0x41)
+end)
+
+test("internal JSON scanner pins closed reasons and first bad byte offsets", function()
+  local cases = {
+    {'tru', 4, 'unexpected end of input'},
+    {'trX', 3, 'unexpected character'},
+    {'{"a" 1}', 6, 'missing colon'},
+    {'{', 2, 'unexpected end of input'},
+    {'{"a":1', 7, 'unterminated object'},
+    {'[1', 3, 'unterminated array'},
+    {'[1 2]', 4, 'missing comma'},
+    {'[1,]', 4, 'unexpected character'},
+    {'{"a":1,}', 8, 'missing key'},
+    {'01', 2, 'leading zero'},
+    {'1.', 3, 'invalid number'},
+    {'1e+', 4, 'invalid number'},
+    {'"\\u12G4"', 6, 'invalid escape'},
+    {'"\\u12', 6, 'invalid escape'},
+    {'"\\q"', 3, 'invalid escape'},
+    {'"abc\\', 6, 'unterminated string'},
+    {'"a' .. string.char(10) .. '"', 3, 'unexpected character'},
+    {'true false', 6, 'trailing content'},
+    {'{"é":1,"é":2}', 9, 'duplicate key'},
+  }
+  for _, case in ipairs(cases) do
+    local err = assert_error_code(function()
+      decodeUnknown(case[1], 'scan.deal', 7, 13)
+    end, 'E8001')
+    assert(err.arm.id == 'JSON_PARSE_ERROR')
+    assert(err.arm.values.oneBasedByteOffset == tostring(case[2]), case[1] .. ': offset ' .. err.message)
+    assert(err.arm.values.reason == case[3], case[1] .. ': reason ' .. err.message)
+    assert(err.message == 'JSON parse error at position ' .. case[2] .. ': ' .. case[3])
+    assert(err.file == 'scan.deal' and err.line == 7 and err.column == 13)
+  end
 end)
 
 test("json.parse rejects malformed \\u escapes with E8001", function()
   local forms = { '"\\u12"', '"\\u123"', '"\\uZZZZ"', '"\\u12G4"' }
   for _, text in ipairs(forms) do
-    assert_json_error(function() json.parse.f(text) end,
-      "invalid unicode escape: expected 4 hex digits")
+    assert_json_error(function() decodeRecord(text) end,
+      "invalid escape")
   end
 end)
 
@@ -1253,7 +1411,7 @@ test("json.parse rejects unknown escapes with E8001", function()
     '"' .. "\\v" .. '"',
   }
   for _, text in ipairs(forms) do
-    assert_json_error(function() json.parse.f(text) end, "unknown escape sequence")
+    assert_json_error(function() decodeRecord(text) end, "invalid escape")
   end
 end)
 
@@ -1261,31 +1419,31 @@ test("json.parse rejects raw control characters with E8001", function()
   local controls = { 0x00, 0x01, 0x08, 0x09, 0x0A, 0x0D }
   for _, b in ipairs(controls) do
     local text = '"' .. string.char(b) .. '"'
-    assert_json_error(function() json.parse.f(text) end,
-      "raw control character in string (must be escaped)")
+    assert_json_error(function() decodeRecord(text) end,
+      "unexpected character")
   end
 end)
 
 test("json.parse accepts raw DEL (0x7F) and escaped control forms", function()
-  assert_byte_seq(json.parse.f('{"v":"' .. string.char(0x7F) .. '"}').v, 0x7F)
-  assert_byte_seq(json.parse.f('{"v":"\\u0000"}').v, 0x00)
-  assert_byte_seq(json.parse.f('{"v":"\\u007F"}').v, 0x7F)
+  assert_byte_seq(decodeRecord('{"v":"' .. string.char(0x7F) .. '"}').v, 0x7F)
+  assert_byte_seq(decodeRecord('{"v":"\\u0000"}').v, 0x00)
+  assert_byte_seq(decodeRecord('{"v":"\\u007F"}').v, 0x7F)
 end)
 
 test("json.parse treats decoded \\u0022 and \\u005C as data, not structure", function()
   -- Decoded quote/backslash must not re-lex: the parse only succeeds when
   -- they are appended as data.
-  assert_byte_seq(json.parse.f('{"v":"\\u0022\\u005C"}').v, 0x22, 0x5C)
+  assert_byte_seq(decodeRecord('{"v":"\\u0022\\u005C"}').v, 0x22, 0x5C)
 end)
 
 test("json.parse passes raw supplementary UTF-8 through byte-identically", function()
   local supplementary = "\xF0\x9D\x84\x9E" -- U+1D11E, scalar-valid UTF-8
-  assert_byte_seq(json.parse.f('{"v":"' .. supplementary .. '"}').v, 0xED, 0xA0, 0xB4, 0xED, 0xB4, 0x9E)
+  assert_byte_seq(decodeRecord('{"v":"' .. supplementary .. '"}').v, 0xED, 0xA0, 0xB4, 0xED, 0xB4, 0x9E)
 end)
 
 test("json.stringify emits supplementary characters raw (byte-identical)", function()
   local supplementary = "\xF0\x9D\x84\x9E" -- U+1D11E
-  local result = require("deal.runtime").string_transport(json.stringify.f({ v = supplementary }))
+  local result = require("deal.runtime").string_transport(encode({ v = supplementary }))
   assert(string.find(result, supplementary, 1, true) ~= nil,
     "supplementary bytes should be emitted raw, got: " .. result)
   assert(string.find(result, "\\uD834\\uDD1E") == nil,
@@ -1295,9 +1453,9 @@ end)
 test("json supplementary stringify/parse round-trip is byte-identical", function()
   local orig = "\xF0\x9D\x84\x9E\xC3\xA9\xE4\xB8\xAD" -- U+1D11E U+00E9 U+4E2D
   local rt = require("deal.runtime")
-  local encoded = json.stringify.f({ v = orig })
+  local encoded = encode({ v = orig })
   assert(string.find(rt.string_transport(encoded), orig, 1, true) ~= nil, "transport retains scalar bytes")
-  local decoded = json.parse.f(encoded)
+  local decoded = decodeRecord(encoded)
   assert(decoded.v == rt.string_normalize(orig), "parse(stringify(s)) preserves code units")
 end)
 
@@ -1328,7 +1486,7 @@ test("json.stringify rejects invalid UTF-8 leaves with E8001", function()
     string.char(0xC3),             -- truncated 2-byte sequence
   }
   for _, s in ipairs(invalid) do
-    assert_invalid_scalar_stringify_error(function() json.stringify.f({ v = s }) end,
+    assert_invalid_scalar_stringify_error(function() encode({ v = s }) end,
       "invalid scalar leaf")
   end
 end)
@@ -1336,50 +1494,50 @@ end)
 test("json.stringify preserves lone-unit keys and rejects malformed keys", function()
   local t = {}
   t[string.char(0xED, 0xA0, 0x80)] = "value"
-  assert(json.stringify.f(t) == '{"\\ud800":"value"}')
+  assert(encode(t) == '{"\\ud800":"value"}')
   t = {[string.char(0xED, 0xA0)] = "value"}
-  assert_invalid_scalar_stringify_error(function() json.stringify.f(t) end,
+  assert_invalid_scalar_stringify_error(function() encode(t) end,
     "malformed key")
 end)
 
 -- The invalid-scalar key arm through a forwarded call site: the shipped
 -- realization publishes the closed string token and the caller's span, the
--- same tuple std/json.js and the compiled lanes publish for the same subject.
+-- same tuple the JS runtime and compiled lanes publish for the same subject.
 test("json.stringify invalid-scalar tuple matches the compiled-lane pin", function()
   local t = {}
   t[string.char(0xC0, 0xAF)] = 1
   assert_invalid_scalar_stringify_error(function()
-    json.stringify.f(t, "caller.deal", 4, 2)
+    encode(t, "caller.deal", 4, 2)
   end, "forwarded invalid scalar key", "caller.deal", 4, 2)
 end)
 
 test("json.parse rejects raw invalid UTF-8 input with E8001 (entry gate)", function()
   local surrogate_bytes = string.char(0xED, 0xA0, 0x80)
-  assert(json.parse.f('{"v":"' .. surrogate_bytes .. '"}').v == surrogate_bytes)
+  assert(decodeRecord('{"v":"' .. surrogate_bytes .. '"}').v == surrogate_bytes)
   local stray_bytes = string.char(0x61, 0x80, 0x62)
-  assert_json_error(function() json.parse.f('"' .. stray_bytes .. '"') end,
+  assert_json_error(function() decodeRecord('"' .. stray_bytes .. '"') end,
     "expected string, got invalid UTF-8 encoding")
 end)
 
 -- ===========================================================================
--- std/json int32 number mapping and stringify shape rejection (v1.2 D5)
+-- Binary64 edge values and stringify shape rejection
 -- ===========================================================================
 
 test("json.parse maps JSON numbers to number exactly inside the int32 range", function()
   local __rt = require("deal.runtime")
-  local result = json.parse.f('{"a":2147483647,"b":2147483648,"c":-2147483648,"d":-2147483649}')
+  local result = decodeRecord('{"a":2147483647,"b":2147483648,"c":-2147483648,"d":-2147483649}')
   assert(result.a == 2147483647, "2147483647 must parse")
   assert(result.b == 2147483648, "2147483648 must parse as number")
   assert(result.c == -2147483648, "-2147483648 must parse")
   assert(result.d == -2147483649, "-2147483649 must parse as number")
-  assert(__rt._json_is_number(result.a), "2147483647 maps to number")
-  assert(__rt._json_is_number(result.b), "2147483648 maps to number")
-  assert(__rt._json_is_number(result.c), "-2147483648 maps to number")
-  assert(__rt._json_is_number(result.d), "-2147483649 maps to number")
+  assert(__rt.check_type('number', result.a) == result.a, "2147483647 maps to number")
+  assert(__rt.check_type('number', result.b) == result.b, "2147483648 maps to number")
+  assert(__rt.check_type('number', result.c) == result.c, "-2147483648 maps to number")
+  assert(__rt.check_type('number', result.d) == result.d, "-2147483649 maps to number")
 end)
 
 test("json.parse normalizes -0 to 0", function()
-  local result = json.parse.f('{"z":-0}')
+  local result = decodeRecord('{"z":-0}')
   local z = result.z
   assert(1 / z < 0, "-0 must normalize to 0 (1/-0 is -Infinity)")
   assert(1 / z == -math.huge, "normalized zero divides to +Infinity")
@@ -1393,7 +1551,7 @@ end)
 test("json.stringify traverses a class instance without carrier keys", function()
   local __rt = require("deal.runtime")
   local inst = __rt.class_plan_("@m/C", {{name="a",descriptor="number",optional=false}}, {a=1})
-  local decoded = json.parse.f(json.stringify.f({ c = inst }))
+  local decoded = decodeRecord(encode({ c = inst }))
   assert(decoded.c.a == 1 and decoded.c[__K.kind] == nil, "class public field only")
 end)
 
@@ -1419,7 +1577,7 @@ test("Record parameters reject nominal carriers independently of generic stringi
   }
   for _, case in ipairs(cases) do
     if case.actual == "array" then
-      assert(json.stringify.f(case.value) == "[1,2]", case.name .. ": array encodes")
+      assert(encode(case.value) == "[1,2]", case.name .. ": array encodes")
     end
     do
       local err = assert_error_code(function() require("std.table").keys.f(case.value) end, "E8001")
@@ -1435,20 +1593,20 @@ end)
 test("json.stringify exposes only code/message of an Error instance", function()
   local __rt = require("deal.runtime")
   local ev = __rt.error_value("E1", "boom", "secret.deal", 9, 3)
-  assert(json.stringify.f({ e = ev }) == '{"e":{"code":"E1","message":"boom"}}', "Error public fields only")
+  assert(encode({ e = ev }) == '{"e":{"code":"E1","message":"boom"}}', "Error public fields only")
 end)
 
 test("json.stringify omits tagged function members and yields undefined for their root", function()
   local __rt = require("deal.runtime")
   local wrapper = __rt.function_("()->null", function() return __rt.__NULL end)
-  assert(json.stringify.f({ f = wrapper }) == '{}', "function member omission")
-  assert(json.stringify.f(wrapper) == __rt.__UNDEFINED, "function root")
+  assert(encode({ f = wrapper }) == '{}', "function member omission")
+  assert(encode(wrapper) == __rt.__UNDEFINED, "function root")
 end)
 
 test("json.stringify rejects an unread async handle at recursive ingress", function()
   local __rt = require("deal.runtime")
   local handle = __rt.async_start(function() return "done" end)
-  local err = assert_error_code(function() json.stringify.f({ op = handle }) end, "E8001")
+  local err = assert_error_code(function() encode({ op = handle }) end, "E8001")
   assert(err.message == "unsupported unknown ingress",
     "async handle message, got: " .. tostring(err.message))
   assert(err.actual == "table", "async handle actual token, got: " .. tostring(err.actual))
@@ -1456,24 +1614,24 @@ end)
 
 test("json.stringify omits undefined members and yields undefined for their root", function()
   local __rt = require("deal.runtime")
-  assert(json.stringify.f({ m = __rt.__MISSING }) == '{}', "undefined member omission")
-  assert(json.stringify.f(__rt.__MISSING) == __rt.__UNDEFINED, "undefined root")
+  assert(encode({ m = __rt.__MISSING }) == '{}', "undefined member omission")
+  assert(encode(__rt.__MISSING) == __rt.__UNDEFINED, "undefined root")
 end)
 
 -- Generic stringify substitutes null for array absence without repairing it.
 test("json.stringify substitutes null for a deleted decoded-array slot", function()
-  local doc = json.parse.f('{"xs":[1,2]}')
+  local doc = decodeRecord('{"xs":[1,2]}')
   doc.xs[1] = nil
-  assert(json.stringify.f(doc, "caller.deal", 12, 9) == '{"xs":[null,2]}', "hole substitution")
+  assert(encode(doc, "caller.deal", 12, 9) == '{"xs":[null,2]}', "hole substitution")
   assert(doc.xs[1] == nil, "deleted slot remains absent")
-  assert(json.stringify.f(json.parse.f('{"xs":[null,2]}')) == '{"xs":[null,2]}',
+  assert(encode(decodeRecord('{"xs":[null,2]}')) == '{"xs":[null,2]}',
     "a decoded present null still encodes as null")
 end)
 
 -- A marked array retains logical length; absent slots encode as JSON null.
 test("json.stringify substitutes null in sparse marked arrays", function()
-  assert(json.stringify.f({ [__K.a]=true, [__K.n]=2, [2] = 2 }, "caller.deal", 3, 1) == '[null,2]', "sparse array")
-  assert(json.stringify.f({ [__K.a]=true, [__K.n]=2, 1, 2 }) == '[1,2]', "the dense array still encodes")
+  assert(encode({ [__K.a]=true, [__K.n]=2, [2] = 2 }, "caller.deal", 3, 1) == '[null,2]', "sparse array")
+  assert(encode({ [__K.a]=true, [__K.n]=2, 1, 2 }) == '[1,2]', "the dense array still encodes")
 end)
 
 -- Chunk-shaped carriers use shared private metadata, never their transport keys.
@@ -1481,7 +1639,7 @@ test("json.stringify projects emitted class/Error carriers and omits callable me
   local __rt = require("deal.runtime")
   local carriers = {
     { name = "emitted class instance", actual = "table",
-      value = { [__K.c] = true, [__K.id] = "@m/C", [__K.f] = {}, [__K.p] = {}, [__K.classOrder] = {} },
+      value = { [__K.c] = true, [__K.id] = "@m/C", [__K.f] = {}, [__K.p] = {}, [__K.classOrder] = {}, [__K.classPlan] = {} },
       expected = '{"payload":{}}' },
     { name = "emitted Error value", actual = "table",
       value = { [__K.d] = true, code = "E1", m = "boom", o = nil, e = nil, a = nil },
@@ -1492,13 +1650,13 @@ test("json.stringify projects emitted class/Error carriers and omits callable me
       value = { [__K.fn] = function() end, [__K.f] = {}, [__K.sig] = "()->null" }, expected = '{}' },
   }
   for _, carrier in ipairs(carriers) do
-    local text = json.stringify.f({ payload = carrier.value })
+    local text = encode({ payload = carrier.value })
     assert(text == carrier.expected, carrier.name .. ": unexpected projection " .. tostring(text))
   end
   -- The valid JSON-shaped carriers are unchanged by the marker arm.
-  assert(json.stringify.f({ ok = 1 }) == '{"ok":1}', "a plain table still serializes")
-  assert(json.stringify.f({ [__K.a]=true, [__K.n]=2, 1, 2 }) == '[1,2]', "an array still serializes")
-  assert(json.stringify.f({ v = __rt.__NULL }) == '{"v":null}',
+  assert(encode({ ok = 1 }) == '{"ok":1}', "a plain table still serializes")
+  assert(encode({ [__K.a]=true, [__K.n]=2, 1, 2 }) == '[1,2]', "an array still serializes")
+  assert(encode({ v = __rt.__NULL }) == '{"v":null}',
     "a nested null mark still serializes")
 end)
 
@@ -1516,8 +1674,8 @@ test("a user table with carrier-like string keys encodes as data (v1.4)", functi
     __ja = true, __jkeys = 5, __jnum = 6, __jseen = 7, __ptr = 8,
     data = 9,
   }
-  local encoded = json.stringify.f(forged)
-  local back = json.parse.f(encoded)
+  local encoded = encode(forged)
+  local back = decodeRecord(encoded)
   assert(back.__kind == "class" and back.__c == true and back.__t == true,
     "the carrier-like keys survive the round-trip as data")
   assert(back.__keys == "keys" and back.__order == "order", "the map keys survive")
@@ -1530,8 +1688,8 @@ end)
 
 test("json number/number document round-trip", function()
   local doc = { count = 42, ratio = 2.5 }
-  local encoded = json.stringify.f(doc)
-  local back = json.parse.f(encoded)
+  local encoded = encode(doc)
+  local back = decodeRecord(encoded)
   assert(back.count == 42, "number round-trip mismatch")
   assert(back.ratio == 2.5, "number round-trip mismatch")
 end)
@@ -1539,6 +1697,51 @@ end)
 -- ===========================================================================
 -- std/math tests
 -- ===========================================================================
+
+test("json.stringify validates live declared positions in traversal order", function()
+  local plan = {
+    {name='first',descriptor='unknown',optional=false},
+    {name='name',descriptor='string',optional=false},
+    {name='grid',descriptor='[[number]]',optional=false},
+    {name='note',descriptor='!string',optional=true},
+    {name='required',descriptor='!string',optional=false},
+  }
+  local row = {[__K.a]=true,[__K.n]=1,[__K.elementDescriptor]='number',1}
+  local grid = {[__K.a]=true,[__K.n]=1,[__K.elementDescriptor]='[number]',row}
+  local value = __rt.class_plan_('@serialization/Owner',plan,
+    {first=__rt.__NULL,name='kept',grid=grid,required=__rt.__UNDEFINED})
+  local expected='{"first":null,"name":"kept","grid":[[1]]}'
+  assert(encode(value)==expected)
+  value.first=value; value.name=42
+  local e=assert_error_code(function() encode(value,'audit.deal',9,3) end,'E8001')
+  assert(e.message=='cyclic value cannot be encoded as JSON' and e.cause==nil)
+  value.first=__rt.__NULL
+  e=assert_error_code(function() encode(value,'audit.deal',9,3) end,'E8001')
+  assert(e.message=='expected string' and e.expected=='string' and e.actual=='number')
+  assert(e.file=='audit.deal' and e.line==9 and e.column==3)
+  value.name='kept'; row[1]=false
+  e=assert_error_code(function() encode(value,'audit.deal',9,3) end,'E8003')
+  assert(e.expected=='[number]' and e.actual=='array' and e.message=='array element 1 type mismatch')
+  assert(e.cause.code=='E8001' and e.cause.message=='expected number' and e.cause.cause==nil)
+  assert(e.cause.file=='audit.deal' and e.cause.line==9 and e.cause.column==3)
+  row[1]=1; value.required=nil
+  e=assert_error_code(function() encode(value) end,'E8001')
+  assert(e.message=='expected class instance' and e.actual=='@serialization/Owner')
+  value.required=__rt.__UNDEFINED; value.note=false
+  e=assert_error_code(function() encode(value) end,'E8001')
+  assert(e.expected=='string' and e.actual=='boolean')
+  value.note=nil
+  assert(encode(value)==expected and value.grid==grid and grid[1]==row)
+  local shared={x=1}
+  assert(encode({a=shared,b=shared})=='{"a":{"x":1},"b":{"x":1}}'
+      or encode({a=shared,b=shared})=='{"b":{"x":1},"a":{"x":1}}')
+  local parsed=jsonAlgorithms.decode('{"name":"ok"}','@serialization/Decoded',{
+    ['@serialization/Decoded']={{name='name',descriptor='string',optional=false}}})
+  parsed.name=42
+  e=assert_error_code(function() encode(parsed) end,'E8001')
+  assert(e.expected=='string' and e.actual=='number')
+  parsed.name='ok'; assert(encode(parsed)=='{"name":"ok"}')
+end)
 
 local mathlib = require("std.math")
 

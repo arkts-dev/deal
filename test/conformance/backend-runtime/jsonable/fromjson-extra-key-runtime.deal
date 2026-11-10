@@ -1,21 +1,18 @@
-// @spec: Classes — @jsonable validation
-// @description: fromJson rejects extra keys by returning null, not throwing
+// @spec: Standard library builtins — JSON decoding
+// @description: Contextual class decoding throws on an extra field before consuming a mismatched declared field.
 // @expected: runtime-ok
-// @features: jsonable, validation
+// @features: json, validation, failure-order
 
-// @jsonable
-export class User {
-  name: string;
-}
+export class User { name: string; }
 
 export function test_jsonable_extra_key_rejected(): null {
-  let u: User | null = User$fromJson("{\"name\":\"Ada\",\"extra\":1}");
-  if (u !== null) {
-    throw { code: "TEST_FAIL", message: "fromJson accepted extra key" };
-  }
+  let rejected = false;
+  try { let u: User = JSON.parse("{\"name\":7,\"extra\":1}"); }
+  catch (e) { let error = e as Error; rejected = error.code === "E8007" && error.message.includes("extra field 'extra'"); }
+  if (!rejected) { throw {code: "TEST_FAIL", message: "extra field did not reject before declared field"}; }
+  let valid: User = JSON.parse("{\"name\":\"Ada\"}");
+  if (valid.name !== "Ada") { throw {code: "TEST_FAIL", message: "valid class decode changed"}; }
   return null;
 }
 
-export function main(): null {
-  return null;
-}
+export function main(): null { return null; }

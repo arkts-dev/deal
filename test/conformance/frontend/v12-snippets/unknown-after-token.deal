@@ -1,7 +1,8 @@
 // @spec: Lexical elements
-// @description: Raw-source subject unknown-after-token — Unknown directive after last declaration is still lexical error (basis: Unknown compiler directive name is error)
-// @expected: compile-error E1044
+// @description: An unknown-looking trailing comment is whitespace; a subsequent invalid token retains its source range
+// @expected: compile-error E1001
 // @features: v1.2, lexer, raw-source
 
 export function f(): null {return null;}
 // @not-a-directive
+@

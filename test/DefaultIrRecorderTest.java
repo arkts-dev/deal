@@ -113,8 +113,7 @@ public final class DefaultIrRecorderTest {
             LexResult lex = new Lexer(source, "main.deal").tokenize();
             check(!lex.hasErrors(), "recorder fixture lexes: "
                 + lex.diagnostics());
-            ParseResult parse = new Parser(lex.tokens(), "main.deal",
-                lex.directiveEvents()).parse();
+            ParseResult parse = new Parser(lex.tokens(), "main.deal").parse();
             check(!parse.hasErrors(), "recorder fixture parses: "
                 + parse.diagnostics());
             ProgramNode program = parse.program();
@@ -627,8 +626,7 @@ public final class DefaultIrRecorderTest {
             .tokenize();
         check(!lex.hasErrors(), "shadowed-callee fixture lexes: "
             + lex.diagnostics());
-        ParseResult parse = new Parser(lex.tokens(), "main.deal",
-            lex.directiveEvents()).parse();
+        ParseResult parse = new Parser(lex.tokens(), "main.deal").parse();
         check(!parse.hasErrors(), "shadowed-callee fixture parses: "
             + parse.diagnostics());
         ProgramNode program = parse.program();
@@ -717,8 +715,7 @@ public final class DefaultIrRecorderTest {
             .tokenize();
         check(!lex.hasErrors(), "sibling body fixture lexes: "
             + lex.diagnostics());
-        ParseResult parse = new Parser(lex.tokens(), "main.deal",
-            lex.directiveEvents()).parse();
+        ParseResult parse = new Parser(lex.tokens(), "main.deal").parse();
         check(!parse.hasErrors(), "sibling body fixture parses: "
             + parse.diagnostics());
         ProgramNode program = parse.program();
@@ -818,8 +815,7 @@ public final class DefaultIrRecorderTest {
             .tokenize();
         check(!lex.hasErrors(), "identifier-assignment fixture lexes: "
             + lex.diagnostics());
-        ParseResult parse = new Parser(lex.tokens(), "main.deal",
-            lex.directiveEvents()).parse();
+        ParseResult parse = new Parser(lex.tokens(), "main.deal").parse();
         check(!parse.hasErrors(), "identifier-assignment fixture parses: "
             + parse.diagnostics());
         ProgramNode program = parse.program();
@@ -893,8 +889,7 @@ public final class DefaultIrRecorderTest {
         LexResult lex = new Lexer(source.toString(), "main.deal").tokenize();
         check(!lex.hasErrors(), "shadowing-initializer fixture lexes: "
             + lex.diagnostics());
-        ParseResult parse = new Parser(lex.tokens(), "main.deal",
-            lex.directiveEvents()).parse();
+        ParseResult parse = new Parser(lex.tokens(), "main.deal").parse();
         check(!parse.hasErrors(), "shadowing-initializer fixture parses: "
             + parse.diagnostics());
         ProgramNode program = parse.program();
@@ -1017,8 +1012,7 @@ public final class DefaultIrRecorderTest {
         LexResult lex = new Lexer(source.toString(), "main.deal").tokenize();
         check(!lex.hasErrors(), "member-assignment fixture lexes: "
             + lex.diagnostics());
-        ParseResult parse = new Parser(lex.tokens(), "main.deal",
-            lex.directiveEvents()).parse();
+        ParseResult parse = new Parser(lex.tokens(), "main.deal").parse();
         check(!parse.hasErrors(), "member-assignment fixture parses: "
             + parse.diagnostics());
         ProgramNode program = parse.program();
@@ -1154,8 +1148,7 @@ public final class DefaultIrRecorderTest {
         LexResult lex = new Lexer(source.toString(), "main.deal").tokenize();
         check(!lex.hasErrors(), "sibling fixture lexes: "
             + lex.diagnostics());
-        ParseResult parse = new Parser(lex.tokens(), "main.deal",
-            lex.directiveEvents()).parse();
+        ParseResult parse = new Parser(lex.tokens(), "main.deal").parse();
         check(!parse.hasErrors(), "sibling fixture parses: "
             + parse.diagnostics());
         ProgramNode program = parse.program();

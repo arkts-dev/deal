@@ -28,8 +28,6 @@ public enum BoundaryKind {
     STDLIB_RETURN,
     EXTERNAL_PARAMETER,
     EXTERNAL_RETURN,
-    JSON_FROM_FIELD,
-    JSON_TO_FIELD,
     /**
      * The operand/condition/value-consumer/throw-transfer position's
      * validation of one identifier read whose checked type is a

@@ -376,7 +376,7 @@ public final class CorpusDiscovery {
             return paths;
         }
         ParseResult result = new Parser(lex.tokens(),
-            "<corpus-import-resolution>", lex.directiveEvents()).parse();
+            "<corpus-import-resolution>").parse();
         if (result.hasErrors()) {
             return paths;
         }

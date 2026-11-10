@@ -1,34 +1,34 @@
-// @spec: Standard library declarations — std/json.d.deal
+// @spec: Standard library builtins — JSON encoding unknown reads and nominal identity
 // @description: stringify accepts unknown Record reads containing decoded arrays, null and nominal class instances without a Record assertion or retagging
 // @expected: runtime-ok
 // @features: stdlib, json, unknown
 
-import * as json from "std/json";
+
 
 class Box {
   label: string;
 }
 
 export function test_json_stringify_contextual_read_carrier(): null {
-  let doc: Record<string, unknown> = json.parse("{\"xs\":[\"a\",\"b\"],\"n\":null}");
+  let doc: Record<string, unknown> = JSON.parse("{\"xs\":[\"a\",\"b\"],\"n\":null}");
   let arrayValue: unknown[] = doc.xs as unknown[];
-  let arrayText: string = json.stringify(arrayValue) as string;
+  let arrayText: string = JSON.stringify(arrayValue) as string;
   if (arrayText !== "[\"a\",\"b\"]") {
     throw { code: "TEST_FAIL", message: "decoded array serialization: " + arrayText };
   }
   if ((doc.xs as unknown[]) !== arrayValue) {
     throw { code: "TEST_FAIL", message: "stringify changed array identity" };
   }
-  if ((json.stringify(doc.n) as string) !== "null" || !Object.hasOwn(doc, "n")) {
+  if ((JSON.stringify(doc.n) as string) !== "null" || !Object.hasOwn(doc, "n")) {
     throw { code: "TEST_FAIL", message: "present null serialization" };
   }
-  if (json.stringify(doc.missing) !== undefined || Object.hasOwn(doc, "missing")) {
+  if (JSON.stringify(doc.missing) !== undefined || Object.hasOwn(doc, "missing")) {
     throw { code: "TEST_FAIL", message: "missing undefined serialization" };
   }
   let holder: Record<string, unknown> = {};
   let box: Box = {label: "b"};
   holder.box = box;
-  if ((json.stringify(holder.box) as string) !== "{\"label\":\"b\"}") {
+  if ((JSON.stringify(holder.box) as string) !== "{\"label\":\"b\"}") {
     throw { code: "TEST_FAIL", message: "nominal class serialization" };
   }
   if ((holder.box as Box) !== box) {

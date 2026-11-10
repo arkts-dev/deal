@@ -2,7 +2,7 @@
 // @description: sequence-descriptor-True
 // @expected: runtime-ok
 // @features: boundary-validation
-import * as console from "std/console";
+import * as printer from "std/console";
 import * as host from "host/probe";
 
-export function main():null{let a:number[]=[];let u=host.echo(a);try{let x=u as unknown[];console.log("RETAGGED");}catch(e){let b=u as number[];if(a===b){console.log("OK");}else{console.log("COPY");}}return null;}
+export function main():null{let a:number[]=[];let u=host.echo(a);try{let x=u as unknown[];printer.log("RETAGGED");}catch(e){let b=u as number[];if(a===b){printer.log("OK");}else{printer.log("COPY");}}return null;}

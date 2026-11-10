@@ -6,8 +6,6 @@ import deal.diagnostics.DiagnosticNote;
 import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.RangeOrigin;
 import deal.distribution.DistributionHome;
-import deal.lexer.CompilerDirective;
-import deal.lexer.DirectiveName;
 import deal.lexer.LexResult;
 import deal.lexer.Lexer;
 import deal.source.ScalarSourceCursor;
@@ -45,9 +43,9 @@ public final class ProjectLocator {
     /** The exact v1.6 language version every published context carries. */
     public static final String LANGUAGE_VERSION = "1.6";
 
-    /** The six spec-listed stdlib modules, in pinned order. */
+    /** The five spec-listed stdlib modules, in pinned order. */
     public static final List<String> SPEC_STDLIB_MODULES = List.of(
-        "console", "string", "table", "json", "math", "time");
+        "console", "string", "table", "math", "time");
 
     /** The valid CLI backend aliases of D1 step 3 (trim + lowercase):
      * {@code lua}/{@code luajit} (LuaJIT), {@code jvm}, and {@code js}. */
@@ -501,7 +499,7 @@ public final class ProjectLocator {
     }
 
     /**
-     * The six spec-listed stdlib declaration files under the pinned
+     * The five spec-listed stdlib declaration files under the pinned
      * surface, each fully symlink-resolved (D1 step 6 / D6 (1)): for
      * each module in {@link #SPEC_STDLIB_MODULES} (pinned order),
      * {@code <surface>/<module>.d.deal} contributes its canonical

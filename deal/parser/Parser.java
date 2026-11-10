@@ -6,18 +6,11 @@ import deal.diagnostics.DiagnosticCode;
 import deal.diagnostics.DiagnosticNote;
 import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.RangeOrigin;
-import deal.lexer.CompilerDirective;
-import deal.lexer.DirectiveName;
 import deal.lexer.TemplateScanner;
 import deal.lexer.Token;
 import deal.source.ScalarSourceCursor;
 
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.IdentityHashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -50,59 +43,22 @@ public final class Parser {
     // -----------------------------------------------------------------------
 
     private final List<Token> tokens;
-    private final List<Integer> originalTokenIndices = new ArrayList<>();
     private final String file;
     private final List<CompilerDiagnostic> diagnostics = new ArrayList<>();
     /** The input list's EOF token, or null when the list has none. */
     private final Token inputEofToken;
     private int pos;          // current index into tokens (0-based)
 
-    /**
-     * The directive event stream (fixed-name-directive-events D1/D10):
-     * the parent lexer events plus the template-embedded merged events,
-     * in eventIndex order. Merged events append at
-     * {@code parseEmbeddedExpression} completion with continuing
-     * event indices.
-     */
-    private final List<CompilerDirective> directiveEvents = new ArrayList<>();
-    /** File-directive evaluation state (D4/D7), shared with merge points. */
-    private final FileDirectiveEvaluator evaluator;
-    /** Events claimed by declaration binding (identity semantics). */
-    private final Set<CompilerDirective> claimedEvents =
-        Collections.newSetFromMap(new IdentityHashMap<>());
-
     // -----------------------------------------------------------------------
     // Construction
     // -----------------------------------------------------------------------
 
-    /**
-     * The no-events constructor (fixed-name-directive-events D1/D10.7):
-     * pinned as the defensive form used by the template sub-parser,
-     * defensive/test callers, and the JVM harness runner parse (D8 item
-     * 2c) — no file-directive evaluation or binding runs.
-     */
+    /** Parses tokens with exact source positions; comments carry no meaning. */
     public Parser(List<Token> tokens, String file) {
-        this(tokens, file, List.of());
-    }
-
-    /**
-     * The events-carrying constructor
-     * (fixed-name-directive-events D1): the production shape — the
-     * lexer's {@code directiveEvents} flow in, file-directive evaluation
-     * and declaration binding run exactly as in production. Numeric tokens
-     * decode directly to binary64; unary negation is always an expression.
-     */
-    public Parser(List<Token> tokens, String file,
-                  List<CompilerDirective> directiveEvents) {
         this.tokens = new ArrayList<>(tokens);
-        for (int i = 0; i < tokens.size(); i++) originalTokenIndices.add(i);
         this.file = file;
         this.pos = 0;
         this.inputEofToken = findEofToken(this.tokens);
-        if (directiveEvents != null) {
-            this.directiveEvents.addAll(directiveEvents);
-        }
-        this.evaluator = new FileDirectiveEvaluator(diagnostics);
     }
 
     /**
@@ -123,9 +79,6 @@ public final class Parser {
     // =======================================================================
 
     public ParseResult parse() {
-        // Validate directive arguments in event order.
-        evaluator.evaluateParentEvents(directiveEvents);
-
         List<StatementNode> statements = new ArrayList<>();
 
         while (!isAtEnd()) {
@@ -136,8 +89,6 @@ public final class Parser {
                 statements.add(stmt);
             }
         }
-
-        sweepUnclaimedAndUnanchored();
 
         Span progSpan;
         if (statements.isEmpty()) {
@@ -152,111 +103,8 @@ public final class Parser {
             progSpan = spanBetween(first.span(), last.span());
         }
 
-        ProgramNode program = new ProgramNode(progSpan, List.copyOf(statements),
-            evaluator.build());
+        ProgramNode program = new ProgramNode(progSpan, List.copyOf(statements));
         return new ParseResult(program, List.copyOf(diagnostics));
-    }
-
-    // =======================================================================
-    // Directive binding (D4)
-    // =======================================================================
-
-    /**
-     * True when the source file path is a declaration file
-     * ({@code .d.deal}) — the declaration-file {@code @jsonable}
-     * no-effect rule (D4) keys on it.
-     */
-    private boolean isDeclarationFile() {
-        return file != null && file.endsWith(".d.deal");
-    }
-
-    /**
-     * Claims the directive events anchored at the current statement's
-     * start-token index. Binding applies only at the statement-dispatch
-     * start token (D4): {@code EXPORT} for exported declarations,
-     * {@code CLASS}/{@code FUNCTION}/{@code ASYNC} for non-exported
-     * ones. Events anchored to any other token stay unclaimed and are
-     * handled by the finalize sweep.
-     */
-    private List<CompilerDirective> claimAnchoredAt(int tokenIndex) {
-        TokenType type = peek().type();
-        if (type != TokenType.EXPORT && type != TokenType.CLASS
-                && type != TokenType.FUNCTION && type != TokenType.ASYNC) {
-            return List.of();
-        }
-        List<CompilerDirective> anchored = new ArrayList<>();
-        for (CompilerDirective e : directiveEvents) {
-            if (e.declarationAnchorTokenIndex() != null
-                    && e.declarationAnchorTokenIndex().equals(originalTokenIndices.get(tokenIndex))
-                    && !claimedEvents.contains(e)) {
-                anchored.add(e);
-            }
-        }
-        return anchored;
-    }
-
-    /**
-     * Applies binding to a parsed statement (D4). Returns the statement
-     * to record — an export-wrapped class whose metadata changed is
-     * rebuilt with the new directive set.
-     */
-    private StatementNode applyBinding(StatementNode stmt,
-                                       List<CompilerDirective> anchored) {
-        if (anchored.isEmpty() || stmt == null) {
-            return stmt;
-        }
-        if (stmt instanceof ExportDeclaration exp
-                && exp.declaration() instanceof ClassDeclaration cd) {
-            // Declaration files accept the marker without applying metadata.
-            Set<DeclarationDirective> dirs = new HashSet<>(cd.directives());
-            boolean changed = false;
-            for (CompilerDirective e : anchored) {
-                claimedEvents.add(e);
-                if (e.name() == DirectiveName.JSONABLE) {
-                    if (!isDeclarationFile()) {
-                        dirs.add(DeclarationDirective.JSONABLE);
-                        changed = true;
-                    }
-                }
-            }
-            if (!changed) {
-                return stmt;
-            }
-            ClassDeclaration newCd = new ClassDeclaration(cd.span(),
-                cd.name(), cd.fields(), dirs);
-            return new ExportDeclaration(exp.span(), newCd);
-        }
-        // Other declaration attachments reject without applying metadata.
-        for (CompilerDirective e : anchored) {
-            if (e.name() == DirectiveName.JSONABLE) {
-                errorJsonable(e);
-                claimedEvents.add(e);
-            } else {
-                claimedEvents.add(e);
-            }
-        }
-        return stmt;
-    }
-    /** Reject unattached jsonable events in event order. */
-    private void sweepUnclaimedAndUnanchored() {
-        for (CompilerDirective e : directiveEvents) {
-            if (claimedEvents.contains(e)) {
-                continue;
-            }
-            if (e.name() == DirectiveName.JSONABLE) {
-                errorJsonable(e);
-            }
-        }
-    }
-    /**
-     * The E1043 incompatible-attachment rejection (D4): error severity,
-     * the pinned message, no metadata, compilation continues; anchored at
-     * the complete directive comment range (parent D6).
-     */
-    private void errorJsonable(CompilerDirective e) {
-        diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E1043,
-            "@jsonable directive is only valid on 'export class'",
-            e.sourceRange()));
     }
 
     // =======================================================================
@@ -264,13 +112,6 @@ public final class Parser {
     // =======================================================================
 
     private StatementNode parseStatement() {
-        // D4: binding applies only at the statement-dispatch start token —
-        // EXPORT for exported declarations, CLASS/FUNCTION/ASYNC for
-        // non-exported ones. Events anchored to any other token are
-        // non-declaration anchors handled by the finalize sweep.
-        int startIndex = pos;
-        List<CompilerDirective> anchored = claimAnchoredAt(startIndex);
-
         TokenType type = peek().type();
         StatementNode stmt = switch (type) {
             case LBRACE    -> parseBlock();
@@ -331,7 +172,6 @@ public final class Parser {
             default        -> parseExpressionStatement();
         };
         if (stmt != null) {
-            stmt = applyBinding(stmt, anchored);
         }
         return stmt;
     }
@@ -1368,13 +1208,9 @@ public final class Parser {
      */
     private ExpressionNode parseTemplateLiteral() {
         Token token = previous(); // the TEMPLATE_LITERAL token
-        // D10.3: a merged embedded event's precedingNonCommentTokenCount
-        // is the template token's parent stream index plus 1 — pos is
-        // exactly that value right after the template token was advanced.
-        int templatePrecedingCount = pos;
         String raw = token.lexeme();
         List<ExpressionNode> parts = splitTemplateLiteral(raw, token.line(),
-            token.column(), token.startScalarOffset(), templatePrecedingCount);
+            token.column(), token.startScalarOffset());
         return new TemplateLiteralExpr(templateLiteralSpan(token, raw), parts);
     }
 
@@ -1421,8 +1257,7 @@ public final class Parser {
      * while an interpolation admits expression, comment, quoted-string and
      * nested template-literal rules. Each interpolation is sub-lexed
      * verbatim through {@link TemplateScalarMap}, which rebases every
-     * sub-lexed coordinate and merged directive event back onto the
-     * original source (D10/D11).</p>
+     * sub-lexed coordinate back onto the original source.</p>
      *
      * <p>The scan's trailing-backslash violations (an odd backslash run
      * before a text-run delimiter) are not re-reported here: the lexer
@@ -1432,8 +1267,7 @@ public final class Parser {
      * admission. This split therefore reads the segments only.</p>
      */
     private List<ExpressionNode> splitTemplateLiteral(String raw, int baseLine, int baseCol,
-                                                      int templateTokenStartScalarOffset,
-                                                      int templatePrecedingCount) {
+                                                      int templateTokenStartScalarOffset) {
         List<ExpressionNode> parts = new ArrayList<>();
         TemplateScanner.Scan scan = TemplateScanner.scan(raw, 0);
 
@@ -1460,8 +1294,7 @@ public final class Parser {
             TemplateScalarMap map = new TemplateScalarMap(raw, baseLine, baseCol,
                 templateTokenStartScalarOffset, exprStartRaw, exprEndRaw);
             parts.add(parseEmbeddedExpression(
-                raw.substring(exprUtf16Start, exprUtf16End), map, exprEndRaw,
-                templatePrecedingCount));
+                raw.substring(exprUtf16Start, exprUtf16End), map, exprEndRaw));
             textStart = Math.min(raw.length(), seg.end() + 1);
         }
         parts.add(textPart(raw, baseLine, baseCol, templateTokenStartScalarOffset,
@@ -1535,8 +1368,7 @@ public final class Parser {
      * position with exact scalar offsets.</p>
      */
     private ExpressionNode parseEmbeddedExpression(String source, TemplateScalarMap map,
-                                                   int eofRawScalarIndex,
-                                                   int templatePrecedingCount) {
+                                                   int eofRawScalarIndex) {
         // 1. Sub-lex the expression substring
         deal.lexer.Lexer subLexer = new deal.lexer.Lexer(source, file);
         deal.lexer.LexResult subResult = subLexer.tokenize();
@@ -1569,31 +1401,6 @@ public final class Parser {
             } else {
                 diagnostics.add(d);
             }
-        }
-
-        // 2b. Merge sub-lexer directive events (D10.1-3, D10.5): rebase
-        // both ranges through the same TemplateScalarMap rules, force the
-        // anchor null (sub-tokens never enter the parent stream and
-        // expressions cannot contain declarations), give the truthful
-        // preceding count (template token index + 1), and run the same
-        // per-event rules at this merge point with the shared seen-sets.
-        // The merge happens before the empty-expression early return so
-        // embedded directives are never silently dropped (D10).
-        for (CompilerDirective e : subResult.directiveEvents()) {
-            DiagnosticRange rebasedSource = rebaseSubRange(e.sourceRange(), map);
-            DiagnosticRange rebasedName = rebaseSubRange(e.nameRange(), map);
-            if (rebasedSource == null) {
-                rebasedSource = e.sourceRange();
-            }
-            if (rebasedName == null) {
-                rebasedName = e.nameRange();
-            }
-            CompilerDirective merged = new CompilerDirective(
-                directiveEvents.size(), e.name(), e.rawArgument(),
-                e.trimmedArgument(), rebasedSource, rebasedName,
-                templatePrecedingCount, null);
-            directiveEvents.add(merged);
-            evaluator.evaluateMergedEvent(merged);
         }
 
         // 3. Rebuild the adjusted token list: the sub-lexer's own EOF token is
@@ -1639,20 +1446,14 @@ public final class Parser {
         // 5. Parse interpolated expressions under the same binary64
         //    literal and ordinary unary-expression rules as outer source.
         //    parseExpression() is private but accessible — Java JLS section 6.6.1
-        //    D10.7: the sub-parser is constructed with NO directive
-        //    events — sub-events hoist to the enclosing parser instead of
-        //    being re-evaluated here; the seen-sets are shared with the
-        //    parent events (D10.5) so nested duplicate checks see them.
-        Parser subParser = new Parser(adjusted, file, List.of());
+        Parser subParser = new Parser(adjusted, file);
         ExpressionNode expr = subParser.parseExpression();
 
         // 6. Merge sub-parser diagnostics. The adjusted tokens carry rebased
         // line/column positions and exact original scalar offsets, so
         // sub-parser diagnostics are already SOURCE-exact in the original
         // file — including end-of-input errors anchored at the past-end
-        // pseudo-EOF derived from the retained rebased EOF token. Nested
-        // template-embedded per-event diagnostics surface here too (the
-        // nested merge points ran inside the sub-parser).
+        // pseudo-EOF derived from the retained rebased EOF token.
         diagnostics.addAll(subParser.diagnostics);
 
         // 7. v1.4: an interpolation contains exactly one complete
@@ -1664,18 +1465,6 @@ public final class Parser {
                 "Template literal interpolation must contain exactly one"
                     + " complete expression",
                 subParser.peek());
-        }
-
-        // 8. Nested-template events bubble up through the same append rule
-        // (D10.4): they were validated at their nested merge points, so no
-        // re-validation runs here; event indices continue after the parent
-        // lexer's last event and anchors stay null. The finalize sweep of
-        // this parser covers them as unanchored events.
-        for (CompilerDirective e : subParser.directiveEvents) {
-            directiveEvents.add(new CompilerDirective(
-                directiveEvents.size(), e.name(), e.rawArgument(),
-                e.trimmedArgument(), e.sourceRange(), e.nameRange(),
-                e.precedingNonCommentTokenCount(), null));
         }
 
         // D16: Null-safety guard — if the expression is syntactically invalid
@@ -1991,11 +1780,9 @@ public final class Parser {
                 && tokens.get(pos + 1).column() == t.column() + 2;
             if (arrow) {
                 tokens.remove(pos + 1);
-                originalTokenIndices.remove(pos + 1);
             }
             tokens.set(pos, new Token(TokenType.GT, ">", t.line(), t.column(), 1,
                 t.startScalarOffset(), 1));
-            originalTokenIndices.add(pos + 1, originalTokenIndices.get(pos));
             tokens.add(pos + 1, new Token(arrow ? TokenType.ARROW : TokenType.EQ_SIGN,
                 arrow ? "=>" : "=", t.line(), t.column() + 1, arrow ? 2 : 1,
                 t.startScalarOffset() < 0 ? t.startScalarOffset() : t.startScalarOffset() + 1, arrow ? 2 : 1));

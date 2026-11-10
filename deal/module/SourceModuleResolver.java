@@ -206,7 +206,7 @@ public final class SourceModuleResolver {
             return publishExternals(entry, importSpan);
         }
 
-        // The 6-module filter: a bare std/... import outside the filter is
+        // The five-module filter: a bare std/... import outside the filter is
         // E2003 before any search (the stdlib surface is the only std/
         // source authority).
         if (specifier.startsWith("std/")
@@ -241,7 +241,7 @@ public final class SourceModuleResolver {
     /**
      * Rule 3 stdlib-surface lookup: exactly one pinned candidate,
      * {@code <surface>/<module>.d.deal}. The generic four-candidate walk
-     * is deliberately not used under the surface — the six spec-listed
+     * is deliberately not used under the surface — the five spec-listed
      * files under the resolved surface are the only stdlib sources, so
      * {@code S.deal}, {@code S/index.deal}, and {@code S/index.d.deal}
      * are never consulted and can never satisfy a bare std import. The

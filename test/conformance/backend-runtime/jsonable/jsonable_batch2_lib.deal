@@ -3,22 +3,18 @@
 // catalog when a parent conformance fixture imports it. The v1.2 gate
 // (ISSUE-0107) removes unclassified skips: every .deal file carries an
 // explicit classification, and companions must keep compiling standalone.
-// @jsonable
 export class Child {
   value: number;
 }
 
-// @jsonable
 export class Parent {
   children: Child[];
 }
 
-// @jsonable
 export class MaybeChild {
   child?: Child | null;
 }
 
-// @jsonable
 export class TableWrap {
   data: Record<string, unknown>;
 }

@@ -107,8 +107,7 @@ public class DiagnosticClassificationTest {
                                                               String filename) {
         LexResult lex = new Lexer(source, filename).tokenize();
 
-        ParseResult parse = new Parser(lex.tokens(), filename,
-            lex.directiveEvents()).parse();
+        ParseResult parse = new Parser(lex.tokens(), filename).parse();
 
         List<CompilerDiagnostic> allDiags = new ArrayList<>();
         allDiags.addAll(lex.diagnostics());
@@ -123,11 +122,13 @@ public class DiagnosticClassificationTest {
             StubModuleResolver resolver = new StubModuleResolver();
             NameResolver nr = new NameResolver(filename, resolver);
             SymbolTable symTable = nr.resolve(parse.program());
+            int resolvedCount = nr.diagnostics().size();
             allDiags.addAll(nr.diagnostics());
 
             if (!hasErrors(allDiags)) {
                 CheckResult result = TypeChecker.check(filename, symTable,
                     nr, parse.program());
+                allDiags.addAll(nr.diagnostics().subList(resolvedCount, nr.diagnostics().size()));
                 allDiags.addAll(result.diagnostics());
             }
         }
@@ -162,14 +163,14 @@ public class DiagnosticClassificationTest {
         triggers.put("E4002",
             "class Foo { name: string; } "
             + inMain.replace("%s", "let f: Foo = { name: \"x\", extra: 1 }; "));
-        triggers.put("E4007",
-            "// @jsonable\nexport class Foo { fn: (x: number) => null; }");
+        triggers.put("E2008",
+            "// @jsonable\nexport function Foo$fromJson():null{return null;}");
         triggers.put("E5001", "function f(x: number): null {} f(true);");
         triggers.put("E1047", "function f(...xs: number[]): null { return null; }");
-        triggers.put("E1044",
-            "// @not-a-directive\nclass A { x: number; }\n");
-        triggers.put("E1045",
-            "// @jsonable:foo\nexport class A { x: number; }\n");
+        triggers.put("E1042",
+            "// @not-a-directive\nfunction f():null{function nested():null{return null;}return null;}\n");
+        triggers.put("E3004",
+            "// @jsonable:foo\nexport class A { x: Missing; }\n");
         triggers.put("E5003",
             "function f(): number { return \"hi\"; }");
 

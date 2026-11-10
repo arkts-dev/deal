@@ -86,8 +86,7 @@ public record ModuleFact(
         Objects.requireNonNull(moduleId, "moduleId must not be null");
         Objects.requireNonNull(ast, "ast must not be null");
         // Insertion-order-preserving defensive copy: the export map's
-        // insertion order (declaration order, then the @jsonable
-        // synthetics) is part of the pinned fact source.
+        // declaration order is part of the pinned fact source.
         exports = Collections.unmodifiableMap(new LinkedHashMap<>(exports));
         imports = List.copyOf(imports);
         classLiteralProviders = Map.copyOf(classLiteralProviders);

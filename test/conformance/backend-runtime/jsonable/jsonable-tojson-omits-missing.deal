@@ -1,9 +1,9 @@
-// @spec: Classes — @jsonable toJson omits missing optional
-// @description: toJson omits missing optional fields; fromJson preserves absence or explicit values.
+// @spec: Standard library builtins — JSON
+// @description: Encoding omits missing optional fields; contextual decoding preserves absence or explicit values.
 // @expected: runtime-ok
 // @features: jsonable, toJson, optional
 
-// @jsonable
+
 export class Config {
   name: string;
   debug?: boolean;
@@ -12,10 +12,10 @@ export class Config {
 export function test_toJson_omits_missing(): null {
   // Create instance without the optional field
   let c: Config = { name: "test" };
-  let json: string = Config$toJson(c);
+  let json: string = JSON.stringify(c) as string;
   // Roundtrip: the missing optional should not appear in JSON,
   // so fromJson should preserve absence.
-  let c2: Config | null = Config$fromJson(json);
+  let c2: Config | null = JSON.parse(json);
   if (c2 !== null) {
     if (c2.name !== "test") {
       throw { code: "TEST_FAIL", message: "name mismatch" };
@@ -28,7 +28,7 @@ export function test_toJson_omits_missing(): null {
   }
 
   // Also test that fromJson with explicit optional field works
-  let c3: Config | null = Config$fromJson("{\"name\":\"withDebug\",\"debug\":true}");
+  let c3: Config | null = JSON.parse("{\"name\":\"withDebug\",\"debug\":true}");
   if (c3 !== null) {
     if (c3.name !== "withDebug" || !Object.hasOwn(c3, "debug")) {
       throw { code: "TEST_FAIL", message: "withDebug name or presence mismatch" };

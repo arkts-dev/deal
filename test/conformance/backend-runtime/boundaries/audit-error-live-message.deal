@@ -2,7 +2,7 @@
 // @description: error live message
 // @expected: runtime-ok
 // @features: boundary-validation, host-abi
-import * as console from "std/console";
+import * as printer from "std/console";
 import * as host from "host/probe";
 
-export function main():null{let e:Error={code:"X",message:"m"};let alias=e;host.edit(e);console.log(e.message);console.log(host.read(e));e.message="source";console.log(host.read(e));try{throw e;}catch(x){if(x instanceof Error){if(x===alias){console.log(x.message);}}}return null;}
+export function main():null{let e:Error={code:"X",message:"m"};let alias=e;host.edit(e);printer.log(e.message);printer.log(host.read(e));e.message="source";printer.log(host.read(e));try{throw e;}catch(x){if(x instanceof Error){if(x===alias){printer.log(x.message);}}}return null;}

@@ -24,7 +24,6 @@ import deal.checker.NameResolver;
 import deal.checker.Symbol;
 import deal.checker.SymbolTable;
 import deal.checker.TypeChecker;
-import deal.identity.CanonicalClassIdentity;
 import deal.identity.CanonicalModuleIdentity;
 import deal.lexer.LexResult;
 import deal.lexer.Lexer;
@@ -47,9 +46,6 @@ import deal.types.Type;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.PrintStream;
-import java.lang.reflect.Constructor;
-import java.lang.reflect.Field;
-import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -842,7 +838,7 @@ public class DiagnosticRangeTest {
 
     private static ParseResult parseTemplateSource(String source) {
         LexResult lex = new Lexer(source, "test.deal").tokenize();
-        return new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
+        return new Parser(lex.tokens(), "test.deal").parse();
     }
 
     private static CompilerDiagnostic templateDiag(List<CompilerDiagnostic> diags,
@@ -1040,14 +1036,14 @@ public class DiagnosticRangeTest {
                                                                 String filename) {
         LexResult lex = new Lexer(source, filename).tokenize();
 
-        ParseResult parse = new Parser(lex.tokens(), filename,
-            lex.directiveEvents()).parse();
+        ParseResult parse = new Parser(lex.tokens(), filename).parse();
         StubModuleResolver resolver = new StubModuleResolver();
         NameResolver nr = new NameResolver(filename, resolver);
         SymbolTable symTable = nr.resolve(parse.program());
-        List<CompilerDiagnostic> diags = new ArrayList<>(nr.diagnostics());
         CheckResult result = TypeChecker.check(filename, symTable, nr,
             parse.program());
+        // Checking resolves unused annotations and can append resolver diagnostics.
+        List<CompilerDiagnostic> diags = new ArrayList<>(nr.diagnostics());
         diags.addAll(result.diagnostics());
         return diags;
     }
@@ -1159,9 +1155,8 @@ public class DiagnosticRangeTest {
 
         // 2. Type error after an astral character on the same line: E2001
         //    'Undeclared identifier' at the identifier span. The astral in
-        //    the string literal counts one scalar, so 'missing' starts at
-        //    (1,38) with scalar offset 37 — a UTF-16 column would report
-        //    39.
+        //    the string literal counts two UTF-16 units, so 'missing'
+        //    starts at (1,39) with UTF-16 offset 38.
         String src2 =
             "let s: string = \"\uD83D\uDE00\"; let y: number = missing;\n";
         List<CompilerDiagnostic> d2 = checkerDiagnostics(src2, "tc.deal");
@@ -1195,99 +1190,32 @@ public class DiagnosticRangeTest {
             checkFormattedStructuredAgree(e3010, "C3");
         }
 
-        // 4. Recorded-span E4008: the A <-> B cycle anchors at the class
-        //    declaration span of the cycle-closing node (B).
-        String src4 = "// @jsonable\n"
-            + "export class A { b: B; }\n"
-            + "// @jsonable\n"
-            + "export class B { a: A; }\n";
+        // 4. Recursive declarations are valid regardless of comment contents;
+        // a decoding restriction belongs to the parse expression, not the class.
+        String recursive = "// @jsonable\nexport class A { b:B; }\n"
+            + "// @jsonable\nexport class B { a:A; callback?:(x:number)=>null; }\n";
+        check(checkerDiagnostics(recursive, "cyc.deal").isEmpty(),
+            "C4: recursive declarations impose no marker-only restrictions");
+        String src4 = recursive + "function decode():A{return JSON.parse(\"{}\");}\n";
         List<CompilerDiagnostic> d4 = checkerDiagnostics(src4, "cyc.deal");
-        CompilerDiagnostic e4008 = checkerDiag(d4, "E4008");
-        check(e4008 != null, "C4: E4008 present, got " + d4);
-        if (e4008 != null) {
-            String classB = "class B { a: A; }";
-            int start = src4.indexOf(classB);
-            int end = start + classB.length();
-            ScalarSourceCursor cs = cursorAt(src4, start);
-            ScalarSourceCursor ce = cursorAt(src4, end);
-            DiagnosticRange r = e4008.range();
-            check(r.origin() == RangeOrigin.SOURCE
-                    && "cyc.deal".equals(r.file())
-                    && r.startLine() == cs.line()
-                    && r.startColumn() == cs.column()
-                    && r.endLine() == ce.line()
-                    && r.endColumn() == ce.column()
-                    && r.startScalarOffset() == cs.scalarOffset()
-                    && r.endScalarOffset() == ce.scalarOffset()
-                    && r.scalarLength() == ce.scalarOffset() - cs.scalarOffset(),
-                "C4: E4008 class-declaration span " + r + " vs cursor ("
-                    + cs.line() + "," + cs.column() + ",@" + cs.scalarOffset()
-                    + ")-(" + ce.line() + "," + ce.column() + ",@"
-                    + ce.scalarOffset() + ")");
-        }
+        CompilerDiagnostic schemaError = checkerDiag(d4, "E5001");
+        check(d4.size() == 1 && schemaError != null, "C4: one decoding schema error: " + d4);
+        checkNeedleRange(schemaError, src4, "cyc.deal", "JSON.parse(\"{}\")", "C4");
+        checkFormattedStructuredAgree(schemaError, "C4");
+        check(schemaError.message().equals("JSON.parse target must not contain function or void types"),
+            "C4: exact decoding restriction message");
 
-        // 5. E4008 cycle without a recorded span (defensive fallback):
-        //    the canonical synthetic range plus an anchor note naming the
-        //    cycle-node class. Production records the span for every
-        //    walked @jsonable class declaration before its dependencies,
-        //    so the test drives the detector directly with the span map
-        //    empty.
-        String src5 = "// @jsonable\nclass A { a: A; }\n";
-        LexResult lex5 = new Lexer(src5, "fallback.deal").tokenize();
-        ParseResult parse5 = new Parser(lex5.tokens(), "fallback.deal", lex5.directiveEvents()).parse();
-        StubModuleResolver resolver5 = new StubModuleResolver();
-        NameResolver nr5 = new NameResolver("fallback.deal", resolver5);
-        SymbolTable sym5 = nr5.resolve(parse5.program());
-
-        Constructor<TypeChecker> ctor = TypeChecker.class
-            .getDeclaredConstructor(String.class, SymbolTable.class,
-                NameResolver.class, Map.class);
-        ctor.setAccessible(true);
-        TypeChecker checker = ctor.newInstance("fallback.deal", sym5, nr5,
-            nr5.scopeMap());
-
-        Field depsField = TypeChecker.class.getDeclaredField("jsonableClassDeps");
-        depsField.setAccessible(true);
-        @SuppressWarnings("unchecked")
-        Map<CanonicalClassIdentity, Set<CanonicalClassIdentity>> deps =
-            (Map<CanonicalClassIdentity, Set<CanonicalClassIdentity>>)
-                depsField.get(checker);
-        CanonicalClassIdentity identityA =
-            IdentityTestFixtures.identityOf("fallback.deal", "A");
-        deps.put(identityA, Set.of(identityA));
-
-        Method detect = TypeChecker.class.getDeclaredMethod("detectJsonableCycles");
-        detect.setAccessible(true);
-        detect.invoke(checker);
-
-        Field diagsField = TypeChecker.class.getDeclaredField("diagnostics");
-        diagsField.setAccessible(true);
-        @SuppressWarnings("unchecked")
-        List<CompilerDiagnostic> fallbackDiags =
-            (List<CompilerDiagnostic>) diagsField.get(checker);
-
-        check(fallbackDiags.size() == 1,
-            "C5: fallback emits exactly one diagnostic, got " + fallbackDiags);
-        if (fallbackDiags.size() == 1) {
-            CompilerDiagnostic fb = fallbackDiags.get(0);
-            check("E4008".equals(fb.code()) && "error".equals(fb.severity())
-                    && "Circular @jsonable class dependency: A \u2192 A"
-                        .equals(fb.message()),
-                "C5: E4008 error with the cycle message, got " + fb);
-            DiagnosticRange r = fb.range();
-            check(r.origin() == RangeOrigin.SYNTHETIC
-                    && "fallback.deal".equals(r.file())
-                    && r.startLine() == 1 && r.startColumn() == 1
-                    && r.endLine() == 1 && r.endColumn() == 1
-                    && r.startScalarOffset() == 0 && r.endScalarOffset() == 0
-                    && r.scalarLength() == 0,
-                "C5: canonical synthetic (file,1,1,1,1,0,0,0,SYNTHETIC), got " + r);
-            boolean noteNamesClass = fb.notes().stream().anyMatch(n ->
-                n.range() == null && ("missing anchor: class declaration span"
-                    + " for cycle node 'A'").equals(n.message()));
-            check(noteNamesClass,
-                "C5: anchor note names the cycle-node class, got " + fb.notes());
-        }
+        // 5. An unresolved annotation still diagnoses in an unused recursive
+        // class, after astral comment text and CRLF. No reflection-only cycle
+        // detector or fabricated missing-span state is involved.
+        String src5 = "// @jsonable 🌍\r\nclass A{next?:A;field:Missing;}\r\n";
+        List<CompilerDiagnostic> d5 = checkerDiagnostics(src5, "annotation.deal");
+        CompilerDiagnostic annotation = checkerDiag(d5, "E3004");
+        check(d5.size() == 1 && annotation != null, "C5: unused annotation diagnoses: " + d5);
+        checkNeedleRange(annotation, src5, "annotation.deal", "Missing", "C5");
+        checkFormattedStructuredAgree(annotation, "C5");
+        check(annotation.range().origin() == RangeOrigin.SOURCE && annotation.notes().isEmpty(),
+            "C5: exact source annotation range, no synthetic cycle fallback");
 
         // 6. Error position after a CRLF line break: CRLF counts two
         //    scalars and one line break, so the E2000 'break' anchor on
@@ -1796,7 +1724,7 @@ public class DiagnosticRangeTest {
 
         List<CompilerDiagnostic> errors = frontendErrors(
             source, corpusPath, rejectingModuleResolver());
-        check(errors.size() == 2 && "E3004".equals(errors.get(0).code()),
+        check(diagnosticCodes(errors).equals("[E3004, E3004, E3007]"),
             "the mutated subject emits the v1.4 removed-type"
                 + " diagnostic, got " + diagnosticCodes(errors));
 
@@ -1829,8 +1757,9 @@ public class DiagnosticRangeTest {
                 String mismatch = mismatches.get(0);
                 check(mismatch.contains(corpusPath),
                     "the mismatch names the pinned subject: " + mismatch);
-                check(mismatch.contains("E3007"),
-                    "the mismatch carries the v1.4 independent unary diagnostic diagnostic: "
+                check(mismatch.contains("the fixture must emit exactly one error diagnostic, got 3")
+                        && mismatch.contains("Unknown type 'int'"),
+                    "the mismatch retains the independently resolved annotation diagnostic: "
                         + mismatch);
             }
         } finally {
@@ -2197,30 +2126,6 @@ public class DiagnosticRangeTest {
         }
 
         @Override
-        public boolean isFunctionExportedFromModule(
-                CanonicalModuleIdentity declaringModule, String functionName,
-                String importingModule) throws ModuleNotFoundException {
-
-            for (CorpusDiscovery.Fixture dependency : corpusByPath.values()) {
-                if (declaringModule.equals(
-                        IdentityTestFixtures.moduleIdentityOf(
-                            dependency.corpusPath()))) {
-                    // The dependency's export map is the authority: it
-                    // carries the explicitly declared helper functions
-                    // and the synthetics of every generated @jsonable
-                    // class (a declaration-file marker contributes
-                    // neither).
-                    ExportExtractor extractor = new ExportExtractor(
-                        dependency.corpusPath(),
-                        dependency.corpusPath().endsWith(".d.deal"));
-                    return extractor.extract(parse(dependency).program())
-                        .containsKey(functionName);
-                }
-            }
-            return false;
-        }
-
-        @Override
         public Type resolveTypeNodeInModule(TypeNode typeNode,
                 String modulePath, String importingModule)
                 throws ModuleNotFoundException {
@@ -2246,8 +2151,7 @@ public class DiagnosticRangeTest {
         private ParseResult parse(CorpusDiscovery.Fixture fixture) {
             LexResult lex = new Lexer(fixture.source(), fixture.corpusPath())
                 .tokenize();
-            Parser parser = new Parser(lex.tokens(), fixture.corpusPath(),
-                lex.directiveEvents());
+            Parser parser = new Parser(lex.tokens(), fixture.corpusPath());
             return parser.parse();
         }
 
@@ -2364,8 +2268,7 @@ public class DiagnosticRangeTest {
         if (lex.hasErrors()) {
             return errors;
         }
-        Parser parser = new Parser(lex.tokens(), filename,
-            lex.directiveEvents());
+        Parser parser = new Parser(lex.tokens(), filename);
         ParseResult parseResult = parser.parse();
         collectErrors(parseResult.diagnostics(), errors);
         if (parseResult.hasErrors()) {
@@ -2380,6 +2283,9 @@ public class DiagnosticRangeTest {
             ExportExtractor extractor = new ExportExtractor(filename, true);
             extractor.extract(parseResult.program());
             collectErrors(extractor.diagnostics(), errors);
+            NameResolver declarations = new NameResolver(filename, resolver);
+            declarations.resolve(parseResult.program());
+            collectErrors(declarations.diagnostics(), errors);
             return errors;
         }
         NameResolver nr = new NameResolver(filename, resolver);
@@ -2392,9 +2298,9 @@ public class DiagnosticRangeTest {
                 "missing anchor: fixture source '" + filename + "'"));
             return errors;
         }
-        collectErrors(nr.diagnostics(), errors);
         CheckResult result = TypeChecker.check(filename, symTable, nr,
             parseResult.program());
+        collectErrors(nr.diagnostics(), errors);
         collectErrors(result.diagnostics(), errors);
         if (resolver instanceof CorpusModuleResolver corpusResolver) {
             collectErrors(corpusResolver.ffiDiagnostics(), errors);
@@ -2666,13 +2572,13 @@ public class DiagnosticRangeTest {
 
         // syntheticError: canonical synthetic shape plus the provided
         // construct-naming anchor note.
-        CompilerDiagnostic e = CompilerDiagnostic.syntheticError(DiagnosticCode.E4008,
-            "circular jsonable dependency", "mod.deal",
+        CompilerDiagnostic e = CompilerDiagnostic.syntheticError(DiagnosticCode.E6005,
+            "missing class schema", "mod.deal",
             "missing anchor: class declaration span for cycle node 'A'");
-        check(e.code().equals("E4008"), "syntheticError code");
+        check(e.code().equals("E6005"), "syntheticError code");
         check(e.severity().equals("error"), "syntheticError severity");
-        check(e.message().equals("circular jsonable dependency"), "syntheticError message");
-        check(e.diagnosticCode() == DiagnosticCode.E4008, "syntheticError diagnosticCode");
+        check(e.message().equals("missing class schema"), "syntheticError message");
+        check(e.diagnosticCode() == DiagnosticCode.E6005, "syntheticError diagnosticCode");
         check(e.range().isCanonicalSynthetic(),
             "syntheticError range must be canonical synthetic");
         check(e.range().file().equals("mod.deal"), "syntheticError range file");
@@ -2709,7 +2615,7 @@ public class DiagnosticRangeTest {
 
         // The token factory appends the mandatory D4 anchor note as well
         // (tokens carry no file, so the note uses the empty file).
-        CompilerDiagnostic tokWarn = CompilerDiagnostic.warning(DiagnosticCode.E1043,
+        CompilerDiagnostic tokWarn = CompilerDiagnostic.warning(DiagnosticCode.E1050,
             "invalid placement", new Token(TokenType.EXPORT, "export", 2, 1, 6));
         check(tokWarn.range().origin() == RangeOrigin.SYNTHETIC,
             "UNKNOWN token factory range must be SYNTHETIC");
@@ -2725,7 +2631,7 @@ public class DiagnosticRangeTest {
             "known span factory range must be SOURCE");
         check(knownSpan.notes().isEmpty(),
             "known span factory must not append an anchor note");
-        CompilerDiagnostic knownTok = CompilerDiagnostic.warning(DiagnosticCode.E1043,
+        CompilerDiagnostic knownTok = CompilerDiagnostic.warning(DiagnosticCode.E1050,
             "invalid placement", new Token(TokenType.EXPORT, "export", 2, 1, 6, 11, 6));
         check(knownTok.range().origin() == RangeOrigin.SOURCE,
             "known token factory range must be SOURCE");
@@ -3040,9 +2946,9 @@ public class DiagnosticRangeTest {
                 && e.message().equals("type mismatch") && e.range() == r
                 && e.diagnosticCode() == DiagnosticCode.E3001,
             "error(DiagnosticCode, message, range) fields");
-        CompilerDiagnostic w = CompilerDiagnostic.warning(DiagnosticCode.E1043,
+        CompilerDiagnostic w = CompilerDiagnostic.warning(DiagnosticCode.E1050,
             "placement", r);
-        check(w.severity().equals("warning") && w.code().equals("E1043"),
+        check(w.severity().equals("warning") && w.code().equals("E1050"),
             "warning(DiagnosticCode, message, range) fields");
 
         // Deprecated string-code factories: pseudo codes yield null
@@ -3107,11 +3013,11 @@ public class DiagnosticRangeTest {
             "zero-length SOURCE format, got: " + DiagnosticFormatter.format(zero));
 
         // Canonical SYNTHETIC range with a construct-naming anchor note.
-        CompilerDiagnostic syn = CompilerDiagnostic.syntheticError(DiagnosticCode.E4008,
-            "circular jsonable dependency", "mod.deal",
+        CompilerDiagnostic syn = CompilerDiagnostic.syntheticError(DiagnosticCode.E6005,
+            "missing class schema", "mod.deal",
             "missing anchor: class declaration span for cycle node 'A'");
         check(DiagnosticFormatter.format(syn).equals(
-                "mod.deal:1:1-1:1: ERROR E4008: circular jsonable dependency [span 0]\n"
+                "mod.deal:1:1-1:1: ERROR E6005: missing class schema [span 0]\n"
                     + "    note: missing anchor: class declaration span for cycle node 'A'"),
             "SYNTHETIC format with construct-naming note, got: " + DiagnosticFormatter.format(syn));
 
@@ -3222,10 +3128,10 @@ public class DiagnosticRangeTest {
         // Canonical SYNTHETIC range with a construct-naming note: origin
         // SYNTHETIC, canonical (1,1)-(1,1) shape, the note is message-only
         // ("range": null).
-        CompilerDiagnostic syn = CompilerDiagnostic.syntheticError(DiagnosticCode.E4008,
-            "circular jsonable dependency", "mod.deal",
+        CompilerDiagnostic syn = CompilerDiagnostic.syntheticError(DiagnosticCode.E6005,
+            "missing class schema", "mod.deal",
             "missing anchor: class declaration span for cycle node 'A'");
-        String synJson = expectedJsonDocument("E4008", "circular jsonable dependency",
+        String synJson = expectedJsonDocument("E6005", "missing class schema",
             expectedJsonRange("mod.deal", "1,1,1,1,0,0,0", "SYNTHETIC"),
             expectedJsonNotes(expectedJsonNote("missing anchor: class declaration span for cycle node 'A'", "null")));
         check(DiagnosticStructuredOutput.toJson(List.of(syn)).equals(synJson),
@@ -3328,8 +3234,8 @@ public class DiagnosticRangeTest {
 
         // SYNTHETIC fixture: both surfaces carry the canonical (1,1)-(1,1)
         // zero-length shape; the structured origin is SYNTHETIC.
-        CompilerDiagnostic syn = CompilerDiagnostic.syntheticError(DiagnosticCode.E4008,
-            "circular jsonable dependency", "mod.deal",
+        CompilerDiagnostic syn = CompilerDiagnostic.syntheticError(DiagnosticCode.E6005,
+            "missing class schema", "mod.deal",
             "missing anchor: class declaration span for cycle node 'A'");
         String synHuman = DiagnosticFormatter.format(syn);
         String synJson = DiagnosticStructuredOutput.toJson(List.of(syn));
@@ -3353,8 +3259,8 @@ public class DiagnosticRangeTest {
             multiLineDiagnostic(),
             CompilerDiagnostic.error(DiagnosticCode.E2010, "Entry module must export 'main'",
                 new DiagnosticRange("f.deal", 1, 1, 1, 1, 0, 0, 0, RangeOrigin.SOURCE)),
-            CompilerDiagnostic.syntheticError(DiagnosticCode.E4008,
-                "circular jsonable dependency", "mod.deal",
+            CompilerDiagnostic.syntheticError(DiagnosticCode.E6005,
+                "missing class schema", "mod.deal",
                 "missing anchor: class declaration span for cycle node 'A'"),
             new CompilerDiagnostic("E3001", "warning", "type mismatch",
                 new DiagnosticRange("src/main.deal", 2, 5, 3, 9, 20, 24, 4,

@@ -407,6 +407,12 @@ public final class LlvmRuntimeAbiMirrorTest {
         checkEq("{ i8*, i8* }",
             LlvmTypeMapper.recordLayout("deal_arm_parameter").orElse(""),
             "the emitted arm-parameter layout follows that field order");
+        checkEq("const char *name; const char *value; size_t length",
+            structFields(errorHeader, "deal_arm_text_parameter"),
+            "length-delimited arm parameters retain text length");
+        checkEq("{ i8*, i8*, i64 }",
+            LlvmTypeMapper.recordLayout("deal_arm_text_parameter").orElse(""),
+            "length-delimited arm parameter IR layout");
         checkEq("uint32_t kind; deal_error *error; const char *code;"
                 + " const char *message; const char *expected; const char *actual",
             structFields(errorHeader, "deal_failure_admission"),
@@ -420,7 +426,7 @@ public final class LlvmRuntimeAbiMirrorTest {
             check(errorHeader.contains("#define DEAL_ARM_ID_" + id.name() + " "),
                 "the header publishes the arm identity " + id);
         }
-        checkEq("27", macroText(errorHeader, "DEAL_ARM_REPERTOIRE_COUNT"),
+        checkEq("26", macroText(errorHeader, "DEAL_ARM_REPERTOIRE_COUNT"),
             "the published repertoire count is the closed arm set");
     }
 

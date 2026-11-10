@@ -51,13 +51,12 @@ public enum SemanticOpKind {
     FIELD_READ,
     FIELD_WRITE,
     FIELD_DELETE,
-    JSON_FROM_CLASS,
-    JSON_TO_CLASS,
     MODULE_INIT,
     MODULE_IMPORT,
     EXPORT_READ,
     EXPORT_PUBLISH,
-    ENTRY_INVOKE;
+    ENTRY_INVOKE,
+    JSON_PARSE;
 
     /**
      * The exact mandatory {@link KindPayload} shape of this kind. The
@@ -119,8 +118,7 @@ public enum SemanticOpKind {
             case FIELD_READ -> KindPayload.FieldReadPayload.class;
             case FIELD_WRITE -> KindPayload.FieldWritePayload.class;
             case FIELD_DELETE -> KindPayload.FieldDeletePayload.class;
-            case JSON_FROM_CLASS -> KindPayload.JsonFromClassPayload.class;
-            case JSON_TO_CLASS -> KindPayload.JsonToClassPayload.class;
+            case JSON_PARSE -> KindPayload.JsonParsePayload.class;
             case MODULE_INIT -> KindPayload.ModuleInitPayload.class;
             case MODULE_IMPORT -> KindPayload.ModuleImportPayload.class;
             case EXPORT_READ -> KindPayload.ExportReadPayload.class;

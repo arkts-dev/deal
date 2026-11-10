@@ -2,7 +2,7 @@
 // @description: Lone UTF-16 Error message survives Record graph admission with live aliases
 // @expected: runtime-ok
 // @features: boundary-validation, host-abi
-import * as console from "std/console";
+import * as printer from "std/console";
 import * as host from "host/probe";
 
 export function main():null {
@@ -16,13 +16,13 @@ export function main():null {
   if(admitted!==alias || admitted.message!==`\uD800` || destination===original) {
     throw {code:"TEST",message:"Record admission lost lone message or identity"};
   }
-  console.log("ACCEPT");
+  printer.log("ACCEPT");
   host.repair();
   if(e!==alias || admitted.message!=="repaired") {
     throw {code:"TEST",message:"Record alias did not observe repair"};
   }
-  console.log("IDENTITY");
+  printer.log("IDENTITY");
   destination={unread:e};
-  console.log("RECOVERED");
+  printer.log("RECOVERED");
   return null;
 }

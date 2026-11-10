@@ -2,7 +2,7 @@
 // @description: sequence-array-wrong-return
 // @expected: runtime-ok
 // @features: boundary-validation
-import * as console from "std/console";
+import * as printer from "std/console";
 import * as host from "host/probe";
 function consume(a:number[]):void{}function identity(a:number[]):number[]{return a;}
-export function main():null{let a:number[]=[1];let get = function():number[]{console.log("RETURN_BODY");return a;};host.keep(a);let u=host.echo(a);host.effect();try{let b=get();console.log("OK");}catch(e){console.log("REJECT");}return null;}
+export function main():null{let a:number[]=[1];let get = function():number[]{printer.log("RETURN_BODY");return a;};host.keep(a);let u=host.echo(a);host.effect();try{let b=get();printer.log("OK");}catch(e){printer.log("REJECT");}return null;}

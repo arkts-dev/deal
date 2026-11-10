@@ -3,10 +3,10 @@
 // @expected: runtime-ok
 // @features: stdlib, console
 
-import * as console from "std/console";
+import * as printer from "std/console";
 
 function log(): void {
-  console.log("hello");
+  printer.log("hello");
 }
 
 export function test_console_log(): null {

@@ -96,12 +96,277 @@ public final class Language16RuntimeTest {
         fixtureAdmission("tables/builtin-has-own.deal", deal.semantic.ir.SemanticOpKind.HAS_FIELD, 17);
         fixtureAdmission("control-flow/conditional-expression.deal", deal.semantic.ir.SemanticOpKind.BRANCH, 102);
         fixtureAdmission("arrays/from-live.deal", deal.semantic.ir.SemanticOpKind.FOR_EACH, 17);
+        fixtureAdmission("stdlib/json/contextual-parse.deal", deal.semantic.ir.SemanticOpKind.JSON_PARSE, -1);
+        stringifyDeclaredFields();
+        stringifyOracleDeclaredFields();
+        jsonOperationOriginsAcrossCalls();
+        jsonParseTraces();
+        jsonParsePlanIsolation();
+        jsonParseGeneratedArtifactIsolation();
+        jsonParsePrivateProvider();
+        jsonParseDeclarationProvider();
         arrayRemovalAdmission(false);
         arrayRemovalAdmission(true);
         callableBodyAdmission();
         errorGraphAdmission();
         for (String fixture : List.of("core", "refinement", "assertion", "failures", "equality-loops", "json-values", "audit-scalars")) executeFixture(fixture);
         System.out.println("Language16RuntimeTest: passed (Oracle, JS, LuaJIT, JVM; deployed array descriptors)");
+    }
+
+    private static void stringifyDeclaredFields() {
+        var rt = new Object() {
+            Object encode(Object value) {
+                return deal.codegen.jvm.JvmRuntime.stdlibInvoke("STDLIB_CALL", "JSON_STRINGIFY",
+                    "audit", "-", "-", "audit.deal:9:3", new Object[]{value});
+            }
+        };
+        class Instance implements deal.codegen.jvm.JvmRuntime.ClassInstance {
+            final String identity;
+            final List<deal.codegen.jvm.JvmRuntime.ClassField> plan;
+            final Map<String,Object> values = new LinkedHashMap<>();
+            Instance(String identity, List<deal.codegen.jvm.JvmRuntime.ClassField> plan) {
+                this.identity = identity; this.plan = plan;
+            }
+            public String classIdText() { return identity; }
+            public List<String> fieldNames() { return plan.stream().map(deal.codegen.jvm.JvmRuntime.ClassField::name).toList(); }
+            public List<deal.codegen.jvm.JvmRuntime.ClassField> boundaryFields() { return plan; }
+            public boolean isPresent(String field) { return values.containsKey(field); }
+            public Object read(String field) { return values.getOrDefault(field, deal.codegen.jvm.JvmRuntime.MISSING); }
+            public void write(String field, Object value) { values.put(field, value); }
+            public void delete(String field) { values.remove(field); }
+        }
+        var leafPlan = List.of(new deal.codegen.jvm.JvmRuntime.ClassField("value", "number", true));
+        var leaf = new Instance("@serialization/Leaf", leafPlan);
+        leaf.write("value", 7.0);
+        var owner = new Instance("@serialization/Owner", List.of(
+            new deal.codegen.jvm.JvmRuntime.ClassField("name", "string", true),
+            new deal.codegen.jvm.JvmRuntime.ClassField("child", leaf.identity, true),
+            new deal.codegen.jvm.JvmRuntime.ClassField("items", "array(number)", true),
+            new deal.codegen.jvm.JvmRuntime.ClassField("note", "undefinedable(string)", false),
+            new deal.codegen.jvm.JvmRuntime.ClassField("required", "undefinedable(string)", true)));
+        var items = new deal.codegen.jvm.JvmRuntime.Array(2);
+        items.elements.add(1.0); items.elements.add(2.0); items.elementDescriptor = "number";
+        owner.write("name", "kept"); owner.write("child", leaf); owner.write("items", items);
+        owner.write("required", deal.codegen.jvm.JvmRuntime.UNDEFINED);
+        deal.codegen.jvm.JvmRuntime.bcheck(owner.identity, "ref", owner);
+        String expected = "{\"name\":\"kept\",\"child\":{\"value\":7},\"items\":[1,2]}";
+        if (!rt.encode(owner).equals(expected)) throw new AssertionError("valid class stringify");
+        java.util.function.Consumer<String> rejects = code -> {
+            try { rt.encode(owner); throw new AssertionError("corrupted class serialized"); }
+            catch (deal.codegen.jvm.JvmRuntime.DealError error) {
+                if (!error.code.equals(code) || !error.origin.equals("audit.deal:9:3"))
+                    throw new AssertionError("serialization boundary/origin", error);
+                if (code.equals("E8003") && (error.cause == null || !error.cause.origin.equals(error.origin)))
+                    throw new AssertionError("element cause origin", error);
+            }
+        };
+        owner.write("name", 42.0); rejects.accept("E8001"); owner.write("name", "kept");
+        owner.write("note", false); rejects.accept("E8001"); owner.write("note", deal.codegen.jvm.JvmRuntime.UNDEFINED);
+        if (!rt.encode(owner).equals(expected)) throw new AssertionError("undefined omission");
+        owner.delete("required"); rejects.accept("E8001"); owner.write("required", deal.codegen.jvm.JvmRuntime.UNDEFINED);
+        leaf.write("value", "bad"); rejects.accept("E8001"); leaf.write("value", 7.0);
+        var sibling = new Instance("@serialization/Sibling", leafPlan); sibling.write("value", 7.0);
+        owner.write("child", sibling); rejects.accept("E8001"); owner.write("child", leaf);
+        items.elements.set(1, "bad"); rejects.accept("E8003"); items.elements.set(1, 2.0);
+        if (owner.read("child") != leaf || owner.read("items") != items || !rt.encode(owner).equals(expected))
+            throw new AssertionError("same graph repair/identity");
+        items.elementDescriptor = "string";
+        try { rt.encode(owner); throw new AssertionError("persistent descriptor mismatch serialized"); }
+        catch (deal.codegen.jvm.JvmRuntime.DealError error) {
+            if (!error.code.equals("E8001") || !error.msg.equals("expected array")
+                    || !error.expected.equals("array") || !error.actual.equals("array"))
+                throw new AssertionError("persistent array projection", error);
+        }
+        items.elementDescriptor = "number";
+        var ordered = new Instance("@serialization/Ordered", List.of(
+            new deal.codegen.jvm.JvmRuntime.ClassField("first", "unknown", true),
+            new deal.codegen.jvm.JvmRuntime.ClassField("name", "string", true),
+            new deal.codegen.jvm.JvmRuntime.ClassField("grid", "array(array(number))", true)));
+        var row = new deal.codegen.jvm.JvmRuntime.Array(1);
+        row.elements.add(false); row.elementDescriptor = "number";
+        var grid = new deal.codegen.jvm.JvmRuntime.Array(1);
+        grid.elements.add(row); grid.elementDescriptor = "array(number)";
+        ordered.write("first", ordered); ordered.write("name", 42.0); ordered.write("grid", grid);
+        try { rt.encode(ordered); throw new AssertionError("earlier cycle serialized"); }
+        catch (deal.codegen.jvm.JvmRuntime.DealError error) {
+            if (!error.msg.equals("cyclic value cannot be encoded as JSON") || error.cause != null)
+                throw new AssertionError("earlier cycle ownership", error);
+        }
+        ordered.write("first", null);
+        try { rt.encode(ordered); throw new AssertionError("later string mismatch serialized"); }
+        catch (deal.codegen.jvm.JvmRuntime.DealError error) {
+            if (!error.msg.equals("expected string")) throw new AssertionError("reached field order", error);
+        }
+        ordered.write("name", "kept");
+        try { rt.encode(ordered); throw new AssertionError("nested array mismatch serialized"); }
+        catch (deal.codegen.jvm.JvmRuntime.DealError error) {
+            if (!error.code.equals("E8003") || !error.expected.equals("[number]")
+                    || !error.actual.equals("array") || error.cause == null
+                    || !error.cause.code.equals("E8001") || !error.cause.msg.equals("expected number")
+                    || !error.origin.equals("audit.deal:9:3") || !error.cause.origin.equals(error.origin))
+                throw new AssertionError("nested array unwrapped leaf", error);
+        }
+        row.elements.set(0, 1.0);
+        grid.elements.add(row);
+        if (!rt.encode(ordered).equals("{\"first\":null,\"name\":\"kept\",\"grid\":[[1],[1]]}"))
+            throw new AssertionError("shared child repair must not be a cycle");
+    }
+
+    private static void stringifyOracleDeclaredFields() throws Exception {
+        Path work = Files.createTempDirectory(Path.of("build"), "stringify-live-oracle-").toAbsolutePath();
+        try {
+            Path src = Files.createDirectories(work.resolve("src"));
+            Path entry = src.resolve("main.deal"), declaration = src.resolve("probe.d.deal");
+            Files.writeString(declaration, "export function keep(v:unknown):void;\nexport function change(mode:number):void;\n");
+            Files.writeString(entry, """
+                import * as probe from "host/probe";
+                class Place { city:string; }
+                class Other { city:string; }
+                class Item { first:unknown; name:string; grid:number[][]; required:string|undefined; home:Place; }
+                export function run():null {
+                  let item:Item={first:null,name:"kept",grid:[[1]],required:undefined,home:{city:"kept"}};
+                  probe.keep(item);
+                  probe.change(1);
+                  try { JSON.stringify(item); throw {code:"TEST",message:"missed cycle"}; }
+                  catch(e) { let error=e as Error; if(error.message !== "cyclic value cannot be encoded as JSON") {throw error;} }
+                  probe.change(2);
+                  try { JSON.stringify(item); throw {code:"TEST",message:"missed kind"}; }
+                  catch(e) { let error=e as Error; if(error.message !== "expected string") {throw error;} }
+                  probe.change(3);
+                  try { JSON.stringify(item); throw {code:"TEST",message:"missed element"}; }
+                  catch(e) { let error=e as Error; if(error.code !== "E8003") {throw error;} }
+                  probe.change(4);
+                  if ((JSON.stringify(item) as string) !== '{"first":null,"name":"kept","grid":[[1]],"home":{"city":"kept"}}') {throw {code:"TEST",message:"repair"};}
+                  probe.change(5);
+                  try { JSON.stringify(item); throw {code:"TEST",message:"missed nominal"}; }
+                  catch(e) { let error=e as Error; if(error.code !== "E8001") {throw error;} }
+                  probe.change(6);
+                  if ((JSON.stringify(item) as string) !== '{"first":null,"name":"kept","grid":[[1]],"home":{"city":"kept"}}') {throw {code:"TEST",message:"nominal repair"};}
+                  probe.change(7);
+                  try { JSON.stringify(item); throw {code:"TEST",message:"missed malformed transport"}; }
+                  catch(e) { let error=e as Error; if(error.message !== "expected string, got invalid Unicode scalar encoding") {throw error;} }
+                  probe.change(8);
+                  try { JSON.stringify(item); throw {code:"TEST",message:"missed later cycle"}; }
+                  catch(e) { let error=e as Error; if(error.message !== "cyclic value cannot be encoded as JSON") {throw error;} }
+                  probe.change(9);
+                  if ((JSON.stringify(item) as string) !== '{"first":{"bad":"kept"},"name":"kept","grid":[[1]],"home":{"city":"kept"}}') {throw {code:"TEST",message:"transport repair"};}
+                  return null;
+                }
+                export function main():null {return null;}
+                """);
+            Files.writeString(work.resolve("deal.json"),
+                "{\"languageVersion\":\"1.6\",\"stdlib\":\"1.6\",\"moduleRoots\":[\"src\"]}");
+            var invocation = deal.semantic.CompilerProfileProvider.resolve(
+                deal.semantic.ReleaseConfiguration.CURRENT_RELEASE_STATE,
+                deal.semantic.ReleaseConfiguration.releaseCapabilityRegistry());
+            var compiler = new deal.module.CompilationOrchestrator(entry, work.resolve("out"),
+                false,false,false,false,deal.codegen.Backend.JS, Map.of("host/probe",declaration.toString()),
+                List.of(src),null,null,invocation);
+            if (!compiler.compile()) throw new AssertionError("stringify Oracle compile: " + compiler.diagnostics());
+            var project = Objects.requireNonNull(compiler.producedProject());
+            var tables = new LinkedHashMap<deal.semantic.ir.ModuleId,deal.semantic.ir.StructuredBodyTable>();
+            var registries = new LinkedHashMap<deal.semantic.ir.ModuleId,deal.semantic.ir.ClassFactoryRegistry>();
+            project.modules().forEach((id,unit)->{tables.put(id,unit.bodyTable());registries.put(id,unit.classFactories());});
+            var responder = new deal.semantic.SemanticOracle.HostResponder() {
+                deal.semantic.SemanticOracle.Value.ClassValue saved;
+                deal.semantic.SemanticOracle.Value.ArrayValue row;
+                deal.semantic.SemanticOracle.Value.ClassValue home;
+                deal.semantic.SemanticOracle.Value.TableValue malformed;
+                public SyncOutcome call(deal.semantic.ir.ModuleId module,String name,
+                        deal.semantic.ir.RuntimeDescriptor.Func descriptor,List<deal.semantic.SemanticOracle.Value> args) {
+                    if (name.equals("keep")) {
+                        saved=(deal.semantic.SemanticOracle.Value.ClassValue)args.getFirst();
+                        var grid=(deal.semantic.SemanticOracle.Value.ArrayValue)((deal.semantic.SemanticOracle.Value.ClassFieldState.Present)saved.fields().get(2)).value();
+                        row=(deal.semantic.SemanticOracle.Value.ArrayValue)grid.elements().getFirst();
+                        home=(deal.semantic.SemanticOracle.Value.ClassValue)((deal.semantic.SemanticOracle.Value.ClassFieldState.Present)saved.fields().get(4)).value();
+                    } else {
+                        int mode=(int)((deal.semantic.SemanticOracle.Value.NumValue)args.getFirst()).value();
+                        saved.fields().set(0,new deal.semantic.SemanticOracle.Value.ClassFieldState.Present(mode==1
+                            ? saved : deal.semantic.SemanticOracle.Value.NullValue.INSTANCE));
+                        saved.fields().set(1,new deal.semantic.SemanticOracle.Value.ClassFieldState.Present(mode<=2
+                            ? new deal.semantic.SemanticOracle.Value.NumValue(42) : new deal.semantic.SemanticOracle.Value.StrValue("kept")));
+                        row.elements().set(0,mode==3 ? new deal.semantic.SemanticOracle.Value.BoolValue(false)
+                            : new deal.semantic.SemanticOracle.Value.NumValue(1));
+                        var sibling=project.modules().get(project.entryModule()).classLayouts().keySet().stream()
+                            .filter(id -> id.name().equals("Other")).findFirst().orElseThrow();
+                        saved.fields().set(4,new deal.semantic.SemanticOracle.Value.ClassFieldState.Present(mode==5
+                            ? new deal.semantic.SemanticOracle.Value.ClassValue(sibling,home.fields()) : home));
+                        if (mode==7) {
+                            malformed=new deal.semantic.SemanticOracle.Value.TableValue(new LinkedHashMap<>());
+                            malformed.entries().put("bad",new deal.semantic.SemanticOracle.Value.StrValue("placeholder",
+                                deal.semantic.ir.UnicodeScalars.Defect.MALFORMED));
+                            malformed.entries().put("later",malformed);
+                            saved.fields().set(0,new deal.semantic.SemanticOracle.Value.ClassFieldState.Present(malformed));
+                        } else if (mode==8 || mode==9) {
+                            malformed.entries().put("bad",new deal.semantic.SemanticOracle.Value.StrValue("kept"));
+                            if (mode==9) malformed.entries().remove("later");
+                            saved.fields().set(0,new deal.semantic.SemanticOracle.Value.ClassFieldState.Present(malformed));
+                        }
+                    }
+                    return new SyncOutcome.Returned(deal.semantic.SemanticOracle.Value.UndefinedValue.INSTANCE);
+                }
+            };
+            var result=deal.semantic.SemanticOracle.invokeSyncEntry(project,tables,registries,responder,
+                project.entryModule(),"run",List.of());
+            if (!(result.terminal() instanceof deal.semantic.SemanticRuntimeModel.Terminal.Success))
+                throw new AssertionError("stringify live Oracle: " + result.comparisonReport());
+            var failures=result.trace().stream().filter(e->e.kind()==deal.semantic.ir.SemanticOpKind.STDLIB_CALL
+                && e.phase()==deal.semantic.SemanticRuntimeModel.Phase.FAILURE).toList();
+            if (failures.size()!=6) throw new AssertionError("stringify Oracle failure population: " + failures);
+            var laterCycle=failures.get(5).error();
+            if (!laterCycle.code().equals("E8001")
+                    || !laterCycle.message().equals("cyclic value cannot be encoded as JSON")
+                    || laterCycle.expected()!=null || laterCycle.actual()!=null || laterCycle.cause()!=null)
+                throw new AssertionError("stringify Oracle repaired transport exposes later cycle: " + laterCycle);
+            var unsupported=failures.get(4).error();
+            if (!unsupported.code().equals("E8001")
+                    || !unsupported.message().equals("expected string, got invalid Unicode scalar encoding")
+                    || !"string".equals(unsupported.expected())
+                    || !"invalid-unicode".equals(unsupported.actual()) || unsupported.cause()!=null)
+                throw new AssertionError("stringify Oracle malformed transport before cycle: " + unsupported);
+            var homeType=project.modules().get(project.entryModule()).classLayouts().keySet().stream()
+                .filter(id -> id.name().equals("Place")).findFirst().orElseThrow();
+            var siblingType=project.modules().get(project.entryModule()).classLayouts().keySet().stream()
+                .filter(id -> id.name().equals("Other")).findFirst().orElseThrow();
+            var nominal=failures.get(3).error();
+            if (!nominal.code().equals("E8001")
+                    || !nominal.message().equals("expected instance of "+homeType.text()+", got "+siblingType.text())
+                    || !homeType.text().equals(nominal.expected()) || !siblingType.text().equals(nominal.actual())
+                    || nominal.cause()!=null)
+                throw new AssertionError("stringify Oracle nominal projection: " + nominal);
+            var cycle=failures.get(0).error();
+            if (!cycle.code().equals("E8001") || !cycle.message().equals("cyclic value cannot be encoded as JSON")
+                    || cycle.expected()!=null || cycle.actual()!=null || cycle.cause()!=null)
+                throw new AssertionError("stringify Oracle cycle projection: " + cycle);
+            var kind=failures.get(1).error();
+            if (!kind.code().equals("E8001") || !kind.message().equals("expected string")
+                    || !"string".equals(kind.expected()) || !"number".equals(kind.actual()) || kind.cause()!=null)
+                throw new AssertionError("stringify Oracle kind projection: " + kind);
+            var nested=failures.get(2).error();
+            if (!nested.code().equals("E8003") || !nested.message().equals("array element 1 type mismatch")
+                    || !"[number]".equals(nested.expected()) || !"array".equals(nested.actual())
+                    || nested.cause()==null || !nested.cause().code().equals("E8001")
+                    || !nested.cause().message().equals("expected number")
+                    || !"number".equals(nested.cause().expected()) || !"boolean".equals(nested.cause().actual())
+                    || nested.cause().cause()!=null)
+                throw new AssertionError("stringify Oracle element projection: " + nested);
+            for (var event : failures) {
+                var operation=project.modules().get(event.op().module()).ops().stream()
+                    .filter(op -> op.opId().equals(event.op())).findFirst().orElseThrow();
+                String expectedOrigin=operation.origin().sourceId()+":"+operation.origin().span().startLine()
+                    +":"+operation.origin().span().startColumn();
+                long starts=result.trace().stream().filter(e -> e.op().equals(event.op())
+                    && e.phase()==deal.semantic.SemanticRuntimeModel.Phase.START).count();
+                long terminals=result.trace().stream().filter(e -> e.op().equals(event.op())
+                    && e.phase()!=deal.semantic.SemanticRuntimeModel.Phase.START).count();
+                for (var error=event.error(); error!=null; error=error.cause()) {
+                    if (!expectedOrigin.equals(error.origin()) || error.frames().isEmpty())
+                        throw new AssertionError("stringify Oracle operation origin/frames: " + event);
+                }
+                if (starts!=1 || terminals!=1)
+                    throw new AssertionError("stringify Oracle selected operation event population: " + event);
+            }
+        } finally { CompositionProductionTest.remove(work); }
     }
 
     private static void fixtureAdmission(String fixture, deal.semantic.ir.SemanticOpKind kind, long expected) throws Exception {
@@ -123,6 +388,7 @@ public final class Language16RuntimeTest {
             var project = Objects.requireNonNull(compiler.producedProject());
             if (fixture.contains("conditional")) conditionalAdmission(project, invocation);
             if (fixture.contains("from-live")) arrayFromAdmission(project, invocation);
+            if (fixture.contains("contextual-parse")) jsonParseAdmission(project, invocation);
             var tables = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.StructuredBodyTable>();
             var registries = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.ClassFactoryRegistry>();
             project.modules().forEach((id, unit) -> { tables.put(id, unit.bodyTable()); registries.put(id, unit.classFactories()); });
@@ -134,6 +400,597 @@ public final class Language16RuntimeTest {
                 && e.phase()==deal.semantic.SemanticRuntimeModel.Phase.SUCCESS).count();
             if (expected >= 0 && tests!=expected) throw new AssertionError(fixture + " Oracle population: " + tests);
         } finally { CompositionProductionTest.remove(work); }
+    }
+
+    private static void jsonOperationOriginsAcrossCalls() throws Exception {
+        Path work = Files.createTempDirectory(Path.of("build"), "json-operation-origins-").toAbsolutePath();
+        try {
+            Path src = Files.createDirectories(work.resolve("src"));
+            String failures = """
+                export function fail():null {
+                  try { JSON.parse("bad"); } catch(e) {}
+                  let record:Record<string,unknown>={};
+                  record["self"]=record;
+                  try { JSON.stringify(record); } catch(e) {}
+                  return null;
+                }
+                """;
+            Files.writeString(src.resolve("lib.deal"), failures);
+            Path entry = src.resolve("main.deal");
+            Files.writeString(entry, "import * as lib from \"./lib\";\n" + failures + """
+                function choose(flag:boolean):()=>null { return flag ? fail : lib.fail; }
+                export function main():null {
+                  fail();
+                  let dynamic:()=>null=choose(true);
+                  dynamic();
+                  let adapted:(ignored:number)=>null=dynamic;
+                  adapted(7);
+                  lib.fail();
+                  return null;
+                }
+                """);
+            var invocation = deal.semantic.CompilerProfileProvider.resolve(
+                deal.semantic.ReleaseConfiguration.CURRENT_RELEASE_STATE,
+                deal.semantic.ReleaseConfiguration.releaseCapabilityRegistry());
+            var compiler = new deal.module.CompilationOrchestrator(entry, work.resolve("out"), false, false,
+                false, false, deal.codegen.Backend.JS, Map.of(), List.of(src), null, null, invocation);
+            if (!compiler.compile()) throw new AssertionError("JSON operation origin compile: " + compiler.diagnostics());
+            var project = Objects.requireNonNull(compiler.producedProject());
+            var tables = new LinkedHashMap<deal.semantic.ir.ModuleId,deal.semantic.ir.StructuredBodyTable>();
+            var registries = new LinkedHashMap<deal.semantic.ir.ModuleId,deal.semantic.ir.ClassFactoryRegistry>();
+            project.modules().forEach((id,unit)->{tables.put(id,unit.bodyTable());registries.put(id,unit.classFactories());});
+            var verdict = SemanticDifferentialHarness.runProject(project,tables,registries,
+                SemanticDifferentialHarness.Expectation.success("JSON operation origins across direct/dynamic/adapted/imported calls",
+                    List.of(),"null"),work.resolve("trace"));
+            if (!verdict.pass() || verdict.runs().size()!=3) throw new AssertionError(verdict.report());
+            for (var run : verdict.runs()) {
+                var selected = run.trace().stream().filter(event -> event.phase()==deal.semantic.SemanticRuntimeModel.Phase.FAILURE
+                    && (event.kind()==deal.semantic.ir.SemanticOpKind.JSON_PARSE
+                        || event.kind()==deal.semantic.ir.SemanticOpKind.STDLIB_CALL)).toList();
+                if (selected.size()!=8) throw new AssertionError(run.consumer()+" JSON call failure population: "+selected);
+                for (var event : selected) {
+                    var op = project.modules().get(event.op().module()).ops().stream()
+                        .filter(candidate -> candidate.opId().equals(event.op())).findFirst().orElseThrow();
+                    String origin=op.origin().sourceId()+":"+op.origin().span().startLine()+":"+op.origin().span().startColumn();
+                    String message=event.kind()==deal.semantic.ir.SemanticOpKind.JSON_PARSE
+                        ? "JSON parse error at position 1: unexpected character" : "cyclic value cannot be encoded as JSON";
+                    var error=event.error();
+                    if (!error.code().equals("E8001") || !error.message().equals(message)
+                            || error.expected()!=null || error.actual()!=null || error.cause()!=null
+                            || !origin.equals(error.origin()) || error.frames().isEmpty())
+                        throw new AssertionError(run.consumer()+" JSON call operation tuple: "+event);
+                    long starts=run.trace().stream().filter(e -> e.op().equals(event.op())
+                        && e.phase()==deal.semantic.SemanticRuntimeModel.Phase.START).count();
+                    long terminals=run.trace().stream().filter(e -> e.op().equals(event.op())
+                        && e.phase()!=deal.semantic.SemanticRuntimeModel.Phase.START).count();
+                    long expected=event.op().module().equals(project.entryModule()) ? 3 : 1;
+                    if (starts!=expected || terminals!=expected)
+                        throw new AssertionError(run.consumer()+" JSON call event population: "+event);
+                }
+            }
+        } finally { CompositionProductionTest.remove(work); }
+    }
+
+    private static void jsonParseTraces() throws Exception {
+        Path work = Files.createTempDirectory(Path.of("build"), "json-parse-traces-").toAbsolutePath();
+        try {
+            Path src = Files.createDirectories(work.resolve("src"));
+            Path entry = src.resolve("main.deal");
+            Files.writeString(entry, """
+                class Item { value:number; }
+                class Nullable { value:number|null; }
+                export function main():null {
+                  try { let n:number=JSON.parse(`"bad"`); } catch(e) {}
+                  try { JSON.parse(`bad`); } catch(e) {}
+                  try { let item:Item=JSON.parse(`{"extra":1}`); } catch(e) {}
+                  try { let record:Record<string,unknown>=JSON.parse(`[1,2]`); } catch(e) {}
+                  try { let item:Item=JSON.parse(`{"{actual}":1}`); } catch(e) {}
+                  try { let item:Item=JSON.parse(`{"x\\\\u0000y":1}`); } catch(e) {}
+                  try { let item:Item=JSON.parse(`{"\\\\uD800":1}`); } catch(e) {}
+                  try { let item:Item=JSON.parse(`{"a'b":1}`); } catch(e) {}
+                  try { let item:Item=JSON.parse(`{"":1}`); } catch(e) {}
+                  try { let item:Nullable=JSON.parse(`{}`); } catch(e) {}
+                  try { let n:number|null=JSON.parse(`[]`); } catch(e) {}
+                  try { let item:Item=JSON.parse(`[]`); } catch(e) {}
+                  let n:number=JSON.parse(`2`);
+                  if(n!==2) { throw {code:"TEST",message:"parse value"}; }
+                  return null;
+                }
+                """);
+            var invocation = deal.semantic.CompilerProfileProvider.resolve(
+                deal.semantic.ReleaseConfiguration.CURRENT_RELEASE_STATE,
+                deal.semantic.ReleaseConfiguration.releaseCapabilityRegistry());
+            var compiler = new deal.module.CompilationOrchestrator(entry, work.resolve("out"), false, false,
+                false, false, deal.codegen.Backend.JS, Map.of(), List.of(src), null, null, invocation);
+            if (!compiler.compile()) throw new AssertionError(compiler.diagnostics());
+            var project = Objects.requireNonNull(compiler.producedProject());
+            var tables = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.StructuredBodyTable>();
+            var registries = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.ClassFactoryRegistry>();
+            project.modules().forEach((id, unit) -> { tables.put(id, unit.bodyTable()); registries.put(id, unit.classFactories()); });
+            var verdict = SemanticDifferentialHarness.runProject(project, tables, registries,
+                SemanticDifferentialHarness.Expectation.success("JSON.parse syntax/target/extra failure events", List.of(), "null"),
+                work.resolve("trace"));
+            if (!verdict.pass() || verdict.runs().size() != 3) throw new AssertionError(verdict.report());
+            for (var run : verdict.runs()) {
+                var failures = run.trace().stream().filter(event -> event.kind()==deal.semantic.ir.SemanticOpKind.JSON_PARSE
+                    && event.phase()==deal.semantic.SemanticRuntimeModel.Phase.FAILURE).toList();
+                if (failures.size()!=12) throw new AssertionError(run.consumer()+" JSON.parse failure population: "+failures);
+                if (!failures.get(0).error().code().equals("E8001")
+                        || !failures.get(0).error().message().equals("expected number")
+                        || !failures.get(0).error().expected().equals("number")
+                        || !failures.get(0).error().actual().equals("string")
+                        || !failures.get(1).error().code().equals("E8001")
+                        || !failures.get(1).error().message().equals("JSON parse error at position 1: unexpected character")
+                        || failures.get(1).error().expected()!=null || failures.get(1).error().actual()!=null
+                        || !failures.get(2).error().code().equals("E8007")
+                        || !failures.get(2).error().message().equals("extra field 'extra' in class '@src/main.deal/Item'")
+                        || failures.get(2).error().expected()!=null || failures.get(2).error().actual()!=null
+                        || !failures.get(3).error().code().equals("E8001")
+                        || !failures.get(3).error().message().equals("expected table")
+                        || !failures.get(3).error().expected().equals("table")
+                        || !failures.get(3).error().actual().equals("array"))
+                    throw new AssertionError(run.consumer()+" JSON.parse failure projections: "+failures);
+                // User key text is opaque template data, including placeholder
+                // spellings, embedded NUL and lone UTF-16 units. These are
+                // reconstruction extras, never scanner or template defects.
+                var keys = List.of("{actual}", "x\u0000y", "\uD800", "a'b", "");
+                for (int i=0; i<keys.size(); ++i) {
+                    var error = failures.get(4+i).error();
+                    String message = "extra field '"+keys.get(i)+"' in class '@src/main.deal/Item'";
+                    if (!error.code().equals("E8007") || !error.message().equals(message)
+                            || error.expected()!=null || error.actual()!=null)
+                        throw new AssertionError(run.consumer()+" opaque extra key "+i+": "+error);
+                }
+                var kinds = List.of("number", "number", "class");
+                var actuals = List.of("undefined", "array", "array");
+                for (int i=0; i<kinds.size(); ++i) {
+                    var error = failures.get(9+i).error();
+                    String message = "expected "+(kinds.get(i).equals("class") ? "class instance" : kinds.get(i));
+                    if (!error.code().equals("E8001") || !error.message().equals(message)
+                            || !kinds.get(i).equals(error.expected()) || !actuals.get(i).equals(error.actual()))
+                        throw new AssertionError(run.consumer()+" contextual kind "+i+": "+error);
+                }
+                for (var event : failures) {
+                    var op = project.modules().get(event.op().module()).ops().stream()
+                        .filter(candidate -> candidate.opId().equals(event.op())).findFirst().orElseThrow();
+                    var span = op.origin().span();
+                    String origin = op.origin().sourceId()+":"+span.startLine()+":"+span.startColumn();
+                    if (!origin.equals(event.error().origin()) || event.error().cause()!=null || event.error().frames().isEmpty())
+                        throw new AssertionError(run.consumer()+" JSON.parse origin/cause/frames: "+event);
+                }
+                long successes = run.trace().stream().filter(event -> event.kind()==deal.semantic.ir.SemanticOpKind.JSON_PARSE
+                    && event.phase()==deal.semantic.SemanticRuntimeModel.Phase.SUCCESS).count();
+                if (successes!=1) throw new AssertionError(run.consumer()+" JSON.parse success population: "+successes);
+            }
+        } finally { CompositionProductionTest.remove(work); }
+    }
+
+    private static void jsonParsePlanIsolation() {
+        String identity = "@src/model.deal/Item";
+        var plan = new deal.codegen.jvm.JvmJson.Plan(identity,
+            new deal.codegen.jvm.JvmJson.Field[] {
+                new deal.codegen.jvm.JvmJson.Field("value", "number", false, "number", "number")
+            }, () -> new deal.codegen.jvm.JvmRuntime.ClassInstance() {
+                private Object value;
+                private boolean present;
+                public String classIdText() { return identity; }
+                public List<String> fieldNames() { return List.of("value"); }
+                public boolean isPresent(String field) { return present && field.equals("value"); }
+                public Object read(String field) { return value; }
+                public void write(String field, Object next) { value=next; present=true; }
+                public void delete(String field) { value=null; present=false; }
+            });
+        // Another generated project's static initialization must not replace
+        // this project's schema or constructor through the legacy helper map.
+        new deal.codegen.jvm.JvmJson.Plan(identity,
+            new deal.codegen.jvm.JvmJson.Field[] {
+                new deal.codegen.jvm.JvmJson.Field("run", "()->number", true, "ref", "()->number")
+            }, () -> { throw new AssertionError("foreign class constructor"); });
+        var origin = new deal.semantic.ir.SourceOrigin("parse", new deal.semantic.ir.SourceSpan(
+            "main.deal", 1, 1, 1, 2, 0, 1), deal.semantic.ir.SourceOriginKind.USER,
+            new deal.semantic.ir.AnchorId(1), null);
+        var decoded = (deal.codegen.jvm.JvmRuntime.ClassInstance) deal.codegen.jvm.JvmJson.decode(
+            "{\"value\":2}", identity, origin, "parse:1:1", Map.of(identity, plan));
+        if (!decoded.classIdText().equals(identity) || !decoded.read("value").equals(2.0))
+            throw new AssertionError("JSON.parse borrowed a foreign project plan");
+        try {
+            deal.codegen.jvm.JvmJson.decode("{}", identity, origin, "parse:1:1", Map.of());
+            throw new AssertionError("JSON.parse resolved an unavailable project plan");
+        } catch (IllegalArgumentException expected) {
+            if (!expected.getMessage().contains("no exact class layout")) throw expected;
+        }
+    }
+
+    private static void jsonParseGeneratedArtifactIsolation() throws Exception {
+        Path work = Files.createTempDirectory(Path.of("build"), "json-artifact-isolation-").toAbsolutePath();
+        try {
+            var invocation = deal.semantic.CompilerProfileProvider.resolve(
+                deal.semantic.ReleaseConfiguration.CURRENT_RELEASE_STATE,
+                deal.semantic.ReleaseConfiguration.releaseCapabilityRegistry());
+            var products = new ArrayList<Path>();
+            for (boolean numeric : List.of(true, false)) {
+                Path project = Files.createDirectories(work.resolve(numeric ? "numeric" : "text"));
+                Path src = Files.createDirectories(project.resolve("src"));
+                Path source = src.resolve("main.deal");
+                String type = numeric ? "number" : "string";
+                String literal = numeric ? "7" : "\"foreign\"";
+                Files.writeString(source, "class Item{value:" + type + ";}export function main():null{"
+                    + "let item:Item=JSON.parse(`{\"value\":" + literal + "}`);"
+                    + "if(item.value!==" + literal + "){throw {code:\"TEST\",message:\"foreign schema\"};}"
+                    + "return null;}");
+                Path out = project.resolve("out");
+                var compiler = new deal.module.CompilationOrchestrator(source, out,
+                    false, false, false, false, deal.codegen.Backend.JVM, Map.of(), List.of(src), null, null, invocation);
+                if (!compiler.compile()) throw new AssertionError("artifact isolation: " + compiler.diagnostics());
+                Path classes = Files.createDirectories(project.resolve("classes"));
+                var command = new ArrayList<>(List.of("javac", "--release", "25", "-proc:none", "-cp",
+                    TestClasspath.absolute(TestClasspath.EmptyEntry.OMIT), "-d", classes.toString()));
+                try (var files = Files.walk(out)) {
+                    files.filter(p -> p.toString().endsWith(".java")).sorted().forEach(p -> command.add(p.toString()));
+                }
+                var built = deal.test.conformance.JvmCompilation.compile(command, project);
+                if (built.exitCode()!=0) throw new AssertionError("artifact isolation compilation: " + built.stderr());
+                products.add(classes);
+            }
+            // Both artifacts use @src/main.deal/Item and share the same runtime
+            // classes. Initialize both before invoking either, then interleave
+            // real generated entries rather than constructing stand-in plans.
+            try (var numeric = new java.net.URLClassLoader(new java.net.URL[]{products.get(0).toUri().toURL()},
+                     Language16RuntimeTest.class.getClassLoader());
+                 var text = new java.net.URLClassLoader(new java.net.URL[]{products.get(1).toUri().toURL()},
+                     Language16RuntimeTest.class.getClassLoader())) {
+                var first = Class.forName("Main", true, numeric);
+                var second = Class.forName("Main", true, text);
+                if (first==second || first.getClassLoader()!=numeric || second.getClassLoader()!=text)
+                    throw new AssertionError("generated artifacts were not independently loaded");
+                for (var artifact : List.of(first, second, first, second)) {
+                    try { artifact.getMethod("dealMain").invoke(null); }
+                    catch (java.lang.reflect.InvocationTargetException failure) {
+                        throw new AssertionError("generated artifact borrowed a foreign schema", failure.getCause());
+                    }
+                }
+            }
+        } finally { CompositionProductionTest.remove(work); }
+    }
+
+    private static void jsonParsePrivateProvider() throws Exception {
+        Path work = Files.createTempDirectory(Path.of("build"), "json-private-provider-").toAbsolutePath();
+        try {
+            Path src = Files.createDirectories(work.resolve("src"));
+            Path source = src.resolve("main.deal");
+            Files.writeString(source, "import * as unrelated from \"./other\";import * as model from \"./model\";class Local{box:model.Box;}"
+                + "export function run():number{let marker:unrelated.Marker={};let box:model.Box=JSON.parse(`{\"item\":{\"value\":7}}`);"
+                + "let local:Local=JSON.parse(`{\"box\":{\"item\":{\"value\":8}}}`);"
+                + "if(model.read(local.box)!==8){throw {code:\"TEST\",message:\"local-to-private schema\"};}return model.read(box);}"
+                + "export function main():null{return null;}");
+            Files.writeString(src.resolve("other.deal"), "export class Marker{}");
+            Files.writeString(src.resolve("model.deal"), "class Item{value:number;next?:Item;}export class Box{item:Item;}"
+                + "export function read(box:Box):number{return box.item.value;}");
+            var invocation = deal.semantic.CompilerProfileProvider.resolve(
+                deal.semantic.ReleaseConfiguration.CURRENT_RELEASE_STATE,
+                deal.semantic.ReleaseConfiguration.releaseCapabilityRegistry());
+            var compiler = new deal.module.CompilationOrchestrator(source, work.resolve("out"),
+                false, false, false, false, deal.codegen.Backend.JS, Map.of(), List.of(src), null, null, invocation);
+            if (!compiler.compile()) throw new AssertionError("private schema: " + compiler.diagnostics());
+            var project = Objects.requireNonNull(compiler.producedProject());
+            var facts = new deal.semantic.ir.SemanticIrValidator.ComparisonFacts(
+                project.interfaceIndex().interfaceIndexDigest(), project.semanticProfile(), invocation.capabilityRegistryHash());
+            var typed = deal.semantic.ir.SemanticIrValidator.validate(project, facts);
+            var text = deal.semantic.ir.SemanticIrValidator.validateText(
+                deal.semantic.ir.SemanticIrValidator.toProjectText(project), facts);
+            if (typed.isPresent() || !typed.equals(text))
+                throw new AssertionError("private schema project transport: " + typed + " / " + text);
+            var tables = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.StructuredBodyTable>();
+            var registries = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.ClassFactoryRegistry>();
+            project.modules().forEach((id, unit) -> { tables.put(id, unit.bodyTable()); registries.put(id, unit.classFactories()); });
+            var result = deal.semantic.SemanticOracle.invokeSyncEntry(project, tables, registries,
+                new deal.semantic.SemanticOracle.HostResponder() {}, project.entryModule(), "run", List.of());
+            if (!(result.terminal() instanceof deal.semantic.SemanticRuntimeModel.Terminal.Success success)
+                    || !success.resultAtom().equals("num:0x1.cp2")) throw new AssertionError(result.comparisonReport());
+            var consumer = project.modules().get(project.entryModule());
+            var standalone = deal.semantic.ir.SemanticIrValidator.validate(consumer, facts);
+            var standaloneText = deal.semantic.ir.SemanticIrValidator.validateText(
+                deal.semantic.ir.SemanticIrValidator.toUnitText(consumer), facts);
+            if (standalone.isEmpty() || !standalone.equals(standaloneText))
+                throw new AssertionError("standalone private schema link: " + standalone + " / " + standaloneText);
+            // A consumer cannot manufacture construction authority by copying
+            // dependency layouts into its transported local declaration map.
+            var copiedLayouts = new LinkedHashMap<>(consumer.classLayouts());
+            project.modules().values().forEach(unit -> copiedLayouts.putAll(unit.classLayouts()));
+            var fabricated = new deal.semantic.ir.LoweredModuleUnit(consumer.formatVersion(), consumer.semanticProfile(),
+                consumer.moduleId(), consumer.interfaceHash(), consumer.loweringContextHash(), consumer.requiredCapabilities(),
+                consumer.constructCoverage(), copiedLayouts, consumer.functions(), consumer.moduleInit(), consumer.exportPlan(),
+                consumer.functionBindings(), consumer.ops(), consumer.bodyTable(), consumer.classFactories(), consumer.classBindingFacts());
+            var fabricatedStandalone = deal.semantic.ir.SemanticIrValidator.validate(fabricated, facts);
+            var fabricatedText = deal.semantic.ir.SemanticIrValidator.validateText(
+                deal.semantic.ir.SemanticIrValidator.toUnitText(fabricated), facts);
+            if (fabricatedStandalone.isEmpty() || !fabricatedStandalone.equals(fabricatedText))
+                throw new AssertionError("fabricated local schema authority: " + fabricatedStandalone + " / " + fabricatedText);
+            var changedModules = new LinkedHashMap<>(project.modules());
+            changedModules.put(project.entryModule(), fabricated);
+            var forgedProject = new deal.semantic.ir.ExecutableLoweredProject(project.semanticProfile(), project.interfaceIndex(),
+                changedModules, project.entryModule(), project.classSeeds());
+            var forgedTyped = deal.semantic.ir.SemanticIrValidator.validate(forgedProject, facts);
+            var forgedText = deal.semantic.ir.SemanticIrValidator.validateText(
+                deal.semantic.ir.SemanticIrValidator.toProjectText(forgedProject), facts);
+            if (forgedTyped.isEmpty() || !forgedTyped.equals(forgedText))
+                throw new AssertionError("fabricated project schema authority: " + forgedTyped + " / " + forgedText);
+            var provider = project.modules().values().stream()
+                .filter(unit -> unit.classLayouts().keySet().stream().anyMatch(id -> id.name().equals("Item")))
+                .findFirst().orElseThrow();
+            var unrelated = project.modules().values().stream()
+                .filter(unit -> unit.classLayouts().keySet().stream().anyMatch(id -> id.name().equals("Marker")))
+                .findFirst().orElseThrow();
+            var privateId = provider.classLayouts().keySet().stream()
+                .filter(id -> id.name().equals("Item")).findFirst().orElseThrow();
+            var privateLayout = provider.classLayouts().get(privateId);
+            for (String defect : List.of("missing", "sibling", "external", "forbidden", "relocated", "duplicate", "shadowed", "unrelated")) {
+                boolean collision = defect.equals("duplicate") || defect.equals("shadowed");
+                var layouts = new LinkedHashMap<>(provider.classLayouts());
+                layouts.remove(privateId);
+                if (!defect.equals("missing") && !defect.equals("relocated") && !defect.equals("unrelated")) {
+                    var id = defect.equals("sibling") ? new deal.semantic.ir.ClassId("src/other.deal", "Item")
+                        : defect.equals("external") ? new deal.semantic.ir.ClassId("$external/host/model", "Item") : privateId;
+                    var fields = new ArrayList<>(privateLayout.fields());
+                    if (defect.equals("forbidden")) fields.add(new deal.semantic.ir.ClassLayout.FieldLayout("run",
+                        deal.semantic.ir.RuntimeDescriptor.parseCanonicalText("()->number"), false,
+                        deal.semantic.ir.ConstructionProvider.LOCAL));
+                    layouts.put(id, new deal.semantic.ir.ClassLayout(id, fields));
+                }
+                var changedProvider = new deal.semantic.ir.LoweredModuleUnit(provider.formatVersion(), provider.semanticProfile(),
+                    provider.moduleId(), provider.interfaceHash(), provider.loweringContextHash(), provider.requiredCapabilities(),
+                    provider.constructCoverage(), layouts, provider.functions(), provider.moduleInit(), provider.exportPlan(),
+                    provider.functionBindings(), provider.ops(), provider.bodyTable(), provider.classFactories(), provider.classBindingFacts());
+                var modules = new LinkedHashMap<>(project.modules());
+                modules.put(provider.moduleId(), changedProvider);
+                if (defect.equals("relocated") || collision) {
+                    var movedLayouts = new LinkedHashMap<>(consumer.classLayouts());
+                    movedLayouts.put(privateId, defect.equals("shadowed")
+                        ? new deal.semantic.ir.ClassLayout(privateId, List.of(new deal.semantic.ir.ClassLayout.FieldLayout(
+                            "value", deal.semantic.ir.RuntimeDescriptor.String.INSTANCE, true, deal.semantic.ir.ConstructionProvider.LOCAL)))
+                        : privateLayout);
+                    modules.put(consumer.moduleId(), new deal.semantic.ir.LoweredModuleUnit(
+                        consumer.formatVersion(), consumer.semanticProfile(), consumer.moduleId(), consumer.interfaceHash(),
+                        consumer.loweringContextHash(), consumer.requiredCapabilities(), consumer.constructCoverage(), movedLayouts,
+                        consumer.functions(), consumer.moduleInit(), consumer.exportPlan(), consumer.functionBindings(),
+                        consumer.ops(), consumer.bodyTable(), consumer.classFactories(), consumer.classBindingFacts()));
+                }
+                if (defect.equals("unrelated")) {
+                    var movedLayouts = new LinkedHashMap<>(unrelated.classLayouts());
+                    movedLayouts.put(privateId, privateLayout);
+                    modules.put(unrelated.moduleId(), new deal.semantic.ir.LoweredModuleUnit(
+                        unrelated.formatVersion(), unrelated.semanticProfile(), unrelated.moduleId(), unrelated.interfaceHash(),
+                        unrelated.loweringContextHash(), unrelated.requiredCapabilities(), unrelated.constructCoverage(), movedLayouts,
+                        unrelated.functions(), unrelated.moduleInit(), unrelated.exportPlan(), unrelated.functionBindings(),
+                        unrelated.ops(), unrelated.bodyTable(), unrelated.classFactories(), unrelated.classBindingFacts()));
+                }
+                var changed = new deal.semantic.ir.ExecutableLoweredProject(project.semanticProfile(), project.interfaceIndex(),
+                    modules, project.entryModule(), project.classSeeds());
+                var rawModules = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.LoweredModuleUnit>();
+                modules.forEach((id, unit) -> rawModules.put(id, deal.semantic.ir.RawUnitMaterializer.materialize(
+                    deal.semantic.ir.RawUnit.fromTyped(unit))));
+                var rawProject = new deal.semantic.ir.ExecutableLoweredProject(project.semanticProfile(), project.interfaceIndex(),
+                    rawModules, project.entryModule(), project.classSeeds());
+                var rejected = deal.semantic.ir.SemanticIrValidator.validate(changed, facts);
+                var rejectedRaw = deal.semantic.ir.SemanticIrValidator.validate(rawProject, facts);
+                var rejectedText = deal.semantic.ir.SemanticIrValidator.validateText(
+                    deal.semantic.ir.SemanticIrValidator.toProjectText(changed), facts);
+                if (rejected.isEmpty() || !rejected.equals(rejectedRaw) || !rejected.equals(rejectedText)
+                        || !rejected.orElseThrow().message().contains("JSON_PARSE"))
+                    throw new AssertionError("private provider " + defect + " (" + provider.moduleId() + " owns " + privateId
+                        + "): " + rejected + " / " + rejectedRaw + " / " + rejectedText);
+                var firstParse = consumer.ops().stream().filter(op -> op.kind() == deal.semantic.ir.SemanticOpKind.JSON_PARSE)
+                    .findFirst().orElseThrow();
+                if (!rejected.orElseThrow().range().equals(firstParse.origin().span().range()))
+                    throw new AssertionError("private provider failure lost first parse origin: " + rejected);
+                if (collision && !rejected.orElseThrow().message().contains(
+                        "JSON_PARSE target has ambiguous declaring providers: " + privateId))
+                    throw new AssertionError("duplicate private schema chose an owner: " + rejected);
+                if (defect.equals("relocated") && !rejected.orElseThrow().message().contains(
+                        "JSON_PARSE dependency schema refers to a consumer-local layout: " + privateId))
+                    throw new AssertionError("relocated private provider used an unrelated rejection: " + rejected);
+                if (defect.equals("unrelated") && !rejected.orElseThrow().message().contains(
+                        "JSON_PARSE schema refers to a layout outside its defining provider's dependencies: " + privateId))
+                    throw new AssertionError("unrelated private provider used an unrelated rejection: " + rejected);
+            }
+            // Reachability follows the private declaration, even when its
+            // function field is optional and the JSON never mentions it.
+            Files.writeString(src.resolve("model.deal"), "class Item{value:number;run?:()=>number;}"
+                + "export class Box{item:Item;}export function read(box:Box):number{return box.item.value;}");
+            var forbidden = new deal.module.CompilationOrchestrator(source, work.resolve("forbidden-out"),
+                false, false, false, false, deal.codegen.Backend.JS, Map.of(), List.of(src), null, null, invocation);
+            if (forbidden.compile() || forbidden.diagnostics().stream().noneMatch(diagnostic ->
+                    diagnostic.message().equals("JSON.parse target must not contain function or void types")))
+                throw new AssertionError("unread private optional Func schema was not rejected: " + forbidden.diagnostics());
+        } finally { CompositionProductionTest.remove(work); }
+    }
+
+    private static void jsonParseDeclarationProvider() throws Exception {
+        Path work = Files.createTempDirectory(Path.of("build"), "json-declaration-provider-").toAbsolutePath();
+        try {
+            Path src = Files.createDirectories(work.resolve("src"));
+            Path source = src.resolve("main.deal");
+            Path host = work.resolve("probe.d.deal");
+            Files.writeString(host, "class Inner{value:number;next?:Inner;}export class Leaf{value:number;child?:Inner;}");
+            Files.writeString(source, "import * as host from \"host/probe\";import * as model from \"./model\";"
+                + "export function main():null{let box:model.Box=JSON.parse(`{\"item\":{\"value\":7}}`);"
+                + "let leaf:host.Leaf=JSON.parse(`{\"value\":8}`);return null;}");
+            Files.writeString(src.resolve("model.deal"), "class Item{value:number;}export class Box{item:Item;}");
+            var invocation = deal.semantic.CompilerProfileProvider.resolve(
+                deal.semantic.ReleaseConfiguration.CURRENT_RELEASE_STATE,
+                deal.semantic.ReleaseConfiguration.releaseCapabilityRegistry());
+            var compiler = new deal.module.CompilationOrchestrator(source, work.resolve("out"),
+                false, false, false, false, deal.codegen.Backend.JS, Map.of("host/probe", host.toString()),
+                List.of(src), null, null, invocation);
+            if (!compiler.compile()) throw new AssertionError("declaration schema: " + compiler.diagnostics());
+            var project = Objects.requireNonNull(compiler.producedProject());
+            var facts = new deal.semantic.ir.SemanticIrValidator.ComparisonFacts(
+                project.interfaceIndex().interfaceIndexDigest(), project.semanticProfile(), invocation.capabilityRegistryHash());
+            if (deal.semantic.ir.SemanticIrValidator.validate(project, facts).isPresent()
+                    || deal.semantic.ir.SemanticIrValidator.validateText(
+                        deal.semantic.ir.SemanticIrValidator.toProjectText(project), facts).isPresent())
+                throw new AssertionError("valid declaration schema did not survive transport");
+            var leafId = project.classSeeds().registrations().keySet().stream()
+                .filter(id -> id.name().equals("Leaf")).findFirst().orElseThrow();
+            var provider = project.modules().values().stream().filter(unit ->
+                unit.classLayouts().keySet().stream().anyMatch(id -> id.name().equals("Item"))).findFirst().orElseThrow();
+            var layouts = new LinkedHashMap<>(provider.classLayouts());
+            var itemId = layouts.keySet().stream().filter(id -> id.name().equals("Item")).findFirst().orElseThrow();
+            var fields = new ArrayList<>(layouts.get(itemId).fields());
+            fields.add(new deal.semantic.ir.ClassLayout.FieldLayout("foreign", new deal.semantic.ir.RuntimeDescriptor.Class(leafId),
+                false, deal.semantic.ir.ConstructionProvider.LOCAL));
+            layouts.put(itemId, new deal.semantic.ir.ClassLayout(itemId, fields));
+            var modules = new LinkedHashMap<>(project.modules());
+            modules.put(provider.moduleId(), new deal.semantic.ir.LoweredModuleUnit(provider.formatVersion(), provider.semanticProfile(),
+                provider.moduleId(), provider.interfaceHash(), provider.loweringContextHash(), provider.requiredCapabilities(),
+                provider.constructCoverage(), layouts, provider.functions(), provider.moduleInit(), provider.exportPlan(),
+                provider.functionBindings(), provider.ops(), provider.bodyTable(), provider.classFactories(), provider.classBindingFacts()));
+            var changed = new deal.semantic.ir.ExecutableLoweredProject(project.semanticProfile(), project.interfaceIndex(),
+                modules, project.entryModule(), project.classSeeds());
+            var rawModules = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.LoweredModuleUnit>();
+            modules.forEach((id, unit) -> rawModules.put(id, deal.semantic.ir.RawUnitMaterializer.materialize(
+                deal.semantic.ir.RawUnit.fromTyped(unit))));
+            var rawProject = new deal.semantic.ir.ExecutableLoweredProject(project.semanticProfile(), project.interfaceIndex(),
+                rawModules, project.entryModule(), project.classSeeds());
+            var typed = deal.semantic.ir.SemanticIrValidator.validate(changed, facts);
+            var raw = deal.semantic.ir.SemanticIrValidator.validate(rawProject, facts);
+            var text = deal.semantic.ir.SemanticIrValidator.validateText(
+                deal.semantic.ir.SemanticIrValidator.toProjectText(changed), facts);
+            var firstParse = modules.get(project.entryModule()).ops().stream()
+                .filter(op -> op.kind() == deal.semantic.ir.SemanticOpKind.JSON_PARSE).findFirst().orElseThrow();
+            if (typed.isEmpty() || !typed.equals(raw) || !typed.equals(text)
+                    || !typed.orElseThrow().message().contains(
+                        "JSON_PARSE schema refers to a layout outside its defining provider's dependencies: " + leafId)
+                    || !typed.orElseThrow().range().equals(firstParse.origin().span().range()))
+                throw new AssertionError("unrelated declaration schema: " + typed + " / " + raw + " / " + text);
+            // The same registered host schema is valid when the defining
+            // implementation actually imports it. Optional omission must
+            // still traverse its schema without inventing a value.
+            Files.writeString(src.resolve("model.deal"), "import * as host from \"host/probe\";"
+                + "class Item{value:number;foreign?:host.Leaf;}export class Box{item:Item;}");
+            var valid = new deal.module.CompilationOrchestrator(source, work.resolve("linked-out"),
+                false, false, false, false, deal.codegen.Backend.JS, Map.of("host/probe", host.toString()),
+                List.of(src), null, null, invocation);
+            if (!valid.compile()) throw new AssertionError("reachable declaration schema: " + valid.diagnostics());
+            var linked = Objects.requireNonNull(valid.producedProject());
+            var linkedFacts = new deal.semantic.ir.SemanticIrValidator.ComparisonFacts(
+                linked.interfaceIndex().interfaceIndexDigest(), linked.semanticProfile(), invocation.capabilityRegistryHash());
+            if (deal.semantic.ir.SemanticIrValidator.validate(linked, linkedFacts).isPresent()
+                    || deal.semantic.ir.SemanticIrValidator.validateText(
+                        deal.semantic.ir.SemanticIrValidator.toProjectText(linked), linkedFacts).isPresent())
+                throw new AssertionError("reachable declaration schema transport");
+            // Fresh declaration wrappers must terminate by nominal/provider
+            // identity, yet omitted optional recursive fields still constrain
+            // the complete target schema.
+            Files.writeString(host, "class Inner{value:number;next?:Inner;run?:()=>number;}"
+                + "export class Leaf{value:number;child?:Inner;}");
+            var forbidden = new deal.module.CompilationOrchestrator(source, work.resolve("forbidden-out"),
+                false, false, false, false, deal.codegen.Backend.JS, Map.of("host/probe", host.toString()),
+                List.of(src), null, null, invocation);
+            if (forbidden.compile() || forbidden.diagnostics().stream().noneMatch(d ->
+                    d.message().contains("JSON.parse target must not contain function or void types")))
+                throw new AssertionError("private recursive declaration function schema: " + forbidden.diagnostics());
+        } finally { CompositionProductionTest.remove(work); }
+    }
+
+    private static void jsonParseAdmission(deal.semantic.ir.ExecutableLoweredProject project,
+            deal.semantic.CompilerInvocation invocation) {
+        var facts = new deal.semantic.ir.SemanticIrValidator.ComparisonFacts(
+            project.interfaceIndex().interfaceIndexDigest(), project.semanticProfile(), invocation.capabilityRegistryHash());
+        var admitted = deal.semantic.ir.SemanticIrValidator.validateText(
+            deal.semantic.ir.SemanticIrValidator.toProjectText(project), facts);
+        if (admitted.isPresent()) throw new AssertionError("JSON.parse project transport: " + admitted);
+        int mutations = 0;
+        int parses = 0;
+        var defects = List.of("input", "forward", "target", "result", "operand", "missing-operand",
+            "extra-operand", "type", "policy", "schema-root", "schema", "layout");
+        for (var unit : project.modules().values()) {
+            var rebuilt = deal.semantic.ir.RawUnitMaterializer.materialize(deal.semantic.ir.RawUnit.fromTyped(unit));
+            if (!deal.semantic.ir.SemanticIrValidator.toUnitText(unit).equals(deal.semantic.ir.SemanticIrValidator.toUnitText(rebuilt)))
+                throw new AssertionError("JSON.parse raw round trip");
+            for (var op : unit.ops()) {
+                if (!(op.payload() instanceof deal.semantic.ir.KindPayload.JsonParsePayload parse)) continue;
+                parses++;
+                for (String defect : defects) {
+                    var target = defect.equals("target") ? deal.semantic.ir.RuntimeDescriptor.Boolean.INSTANCE
+                        : defect.equals("schema-root") ? deal.semantic.ir.RuntimeDescriptor.parseCanonicalText("()->number")
+                        : defect.equals("schema") ? deal.semantic.ir.RuntimeDescriptor.parseCanonicalText("[()->number]")
+                        : defect.equals("layout") ? new deal.semantic.ir.RuntimeDescriptor.Class(new deal.semantic.ir.ClassId("src/absent.deal", "Absent"))
+                        : parse.target();
+                    // Use a different target even when this particular parse already returns boolean.
+                    if (defect.equals("target") && target.equals(parse.target())) target = deal.semantic.ir.RuntimeDescriptor.String.INSTANCE;
+                    var input = defect.equals("input") ? new deal.semantic.ir.ValueId(Integer.MAX_VALUE)
+                        : defect.equals("forward") ? (deal.semantic.ir.ValueId) op.result() : parse.jsonString();
+                    var payload = new deal.semantic.ir.KindPayload.JsonParsePayload(input, target);
+                    var type = defect.equals("result") ? deal.semantic.ir.RuntimeDescriptor.Void.INSTANCE
+                        : List.of("schema-root", "schema", "layout").contains(defect) ? target : op.resultType();
+                    var operands = defect.equals("operand") ? List.of((deal.semantic.ir.ValueId) op.result())
+                        : defect.equals("missing-operand") ? List.<deal.semantic.ir.ValueId>of()
+                        : defect.equals("extra-operand") ? List.of(input, input) : List.of(input);
+                    var types = defect.equals("type") ? List.<deal.semantic.ir.RuntimeDescriptor>of(deal.semantic.ir.RuntimeDescriptor.Number.INSTANCE)
+                        : defect.equals("missing-operand") ? List.<deal.semantic.ir.RuntimeDescriptor>of()
+                        : defect.equals("extra-operand") ? List.of(op.operandTypes().getFirst(), op.operandTypes().getFirst())
+                        : op.operandTypes();
+                    var policy = defect.equals("policy") ? deal.semantic.ir.FailurePolicyId.NO_DEAL_FAILURE : op.failurePolicy();
+                    var old = op.contract();
+                    var provisional = new deal.semantic.ir.OperationContractSnapshot(old.version(), old.opKind(), type, types,
+                        old.selector(), payload, policy, old.referencedSemanticIds(), "pending");
+                    var contract = new deal.semantic.ir.OperationContractSnapshot(old.version(), old.opKind(), type, types,
+                        old.selector(), payload, policy, old.referencedSemanticIds(), deal.semantic.ir.ContractSnapshotCanonicalizer.digest(provisional));
+                    var changed = new deal.semantic.ir.SemanticOp(op.opId(), op.kind(), op.origin(), op.result(), type,
+                        operands, types, payload, policy, contract);
+                    var ops = unit.ops().stream().map(cell -> cell == op ? changed : cell).toList();
+                    var malformed = new deal.semantic.ir.LoweredModuleUnit(unit.formatVersion(), unit.semanticProfile(), unit.moduleId(),
+                        unit.interfaceHash(), unit.loweringContextHash(), unit.requiredCapabilities(), unit.constructCoverage(), unit.classLayouts(),
+                        unit.functions(), unit.moduleInit(), unit.exportPlan(), unit.functionBindings(), ops, unit.bodyTable(), unit.classFactories(), unit.classBindingFacts());
+                    var typed = deal.semantic.ir.SemanticIrValidator.validate(malformed, facts);
+                    var raw = deal.semantic.ir.SemanticIrValidator.validate(deal.semantic.ir.RawUnitMaterializer.materialize(
+                        deal.semantic.ir.RawUnit.fromTyped(malformed)), facts);
+                    var text = deal.semantic.ir.SemanticIrValidator.validateText(deal.semantic.ir.SemanticIrValidator.toUnitText(malformed), facts);
+                    if (typed.isEmpty() || !typed.equals(raw) || !typed.equals(text))
+                        throw new AssertionError("JSON.parse " + defect + ": " + typed + " / " + raw + " / " + text);
+                    // Result corruption in a conditional arm first violates the
+                    // enclosing conditional's join, which is recorded before
+                    // its arm operations. Pin that owner rather than accepting
+                    // any rejection from the three admission surfaces.
+                    var firstSubject = op;
+                    if (List.of("result", "schema-root", "schema", "layout").contains(defect)) {
+                        for (var candidate : unit.ops()) {
+                            if (candidate.payload() instanceof deal.semantic.ir.KindPayload.BranchPayload branch
+                                    && branch.selector() == deal.semantic.ir.ControlSelector.CONDITIONAL
+                                    && (Objects.equals(branch.selectedValue(), op.result())
+                                        || Objects.equals(branch.alternateValue(), op.result()))) {
+                                firstSubject = candidate;
+                                break;
+                            }
+                        }
+                    }
+                    String detail = firstSubject != op
+                        ? "CONDITIONAL requires a preceding boolean condition, two owned value-producing branches and a compatible result"
+                        : defect.equals("schema-root")
+                        ? "function-typed result ValueId " + ((deal.semantic.ir.ValueId) op.result()).id()
+                            + " without exactly one FunctionExecutionBinding"
+                        : defect.equals("policy")
+                        ? "policy NO_DEAL_FAILURE not allowed for JSON_PARSE (expected JSON_RECONSTRUCTION)"
+                        : defect.equals("schema") ? "JSON_PARSE JSON decoding target contains a function type"
+                        : defect.equals("layout") ? "JSON_PARSE JSON decoding target has no exact class layout: @src/absent.deal/Absent"
+                        : "JSON_PARSE requires one preceding string operand and its explicit target as result descriptor";
+                    String rule = firstSubject != op ? "R-ENUM"
+                        : defect.equals("schema-root") ? "R-FUNCTION-BINDING"
+                        : defect.equals("policy") ? "R-POLICY-KIND"
+                        : List.of("schema", "layout").contains(defect) ? "JSON_LAYOUT_COHERENCE" : "R-ENUM";
+                    var diagnostic = typed.orElseThrow();
+                    if (!diagnostic.code().equals("E6005")
+                            || !diagnostic.message().contains("validatorRule " + rule + ",")
+                            || !diagnostic.message().contains(detail)
+                            || !diagnostic.range().equals(firstSubject.origin().span().range()))
+                        throw new AssertionError("JSON.parse " + defect + " first failure/origin: " + diagnostic);
+                    mutations++;
+                }
+            }
+        }
+        if (parses == 0 || mutations != parses * defects.size())
+            throw new AssertionError("JSON.parse mutation population: " + mutations + " for " + parses + " parses");
     }
 
     private static void arrayFromAdmission(deal.semantic.ir.ExecutableLoweredProject project,
@@ -685,15 +1542,15 @@ public final class Language16RuntimeTest {
                         for (String loadRuntime : List.of("", "require('deal.runtime');")) {
                             run(out, "luajit", "-e", loadRuntime + """
                                 local entry=dofile('main.lua')
-                                local json=require('std.json')
+                                local json=require('deal.json')
                                 local instance=entry.exportedNode.f()
-                                assert(json.stringify.f(instance)=='{"first":true,"tail":null}')
+                                assert(json.encode(instance)=='{"first":true,"tail":null}')
                                 local rt=require('deal.runtime'); local k=rt.__keys
                                 instance[k.f].next=instance; instance[k.p].next=true
-                                local ok,e=pcall(json.stringify.f,instance)
+                                local ok,e=pcall(json.encode,instance)
                                 assert(not ok and e.code=='E8001')
                                 instance[k.p].next=nil
-                                assert(json.stringify.f(instance)=='{"first":true,"tail":null}')
+                                assert(json.encode(instance)=='{"first":true,"tail":null}')
                                 """);
                         }
                         var result = new deal.codegen.lua.LuaJitAsyncExportInvoker().invoke(
@@ -725,7 +1582,8 @@ public final class Language16RuntimeTest {
                   try {rt.checkType('unknown',bad)} catch(e) {rejected=e.code==='E8001'}
                   if(!rejected) throw Error('unsupported unknown ingress');
                 }
-                const json=require('./std/json');
+                const json={parse:{$f:text=>rt.jsonDecode(text,'unknown')},
+                  stringify:{$f:value=>rt.jsonStringifyText(value,[])}};
                 const untouched=[];
                 const invalid=new Map([['bad',{$kind:'function',$sig:'()->number',$f:null}],['array',untouched]]);
                 let invalidRejected=false;
@@ -747,9 +1605,10 @@ public final class Language16RuntimeTest {
                 let cycle=false; try {json.stringify.$f(instance)} catch(e) {cycle=e.code==='E8001'}
                 if(!cycle) throw Error('class cycle');
                 delete instance.next;
-                const fields=[{name:'first',jtype:'boolean',optional:false,nullable:false},
-                  {name:'tail',jtype:'string',optional:false,nullable:true}];
-                const decoded=rt.jsonFromJson('@m/Decoded',fields,'{"tail":null,"first":true}');
+                const fields=[{name:'first',descriptor:'boolean',optional:false},
+                  {name:'tail',descriptor:'?string',optional:false}];
+                rt.registerClassPlan('@m/Decoded',fields);
+                const decoded=rt.jsonDecode('{"tail":null,"first":true}','@m/Decoded');
                 if(decoded===null || json.stringify.$f(decoded)!=='{"first":true,"tail":null}') throw Error('decoded class metadata');
                 rt.hostFunction('(@m/Decoded)->void',value=>{
                   if(json.stringify.$f(value)!=='{"first":true,"tail":null}') throw Error('projected class metadata');
@@ -782,36 +1641,36 @@ public final class Language16RuntimeTest {
                   local ok,e=pcall(rt.check_type,'unknown',bad)
                   assert(not ok and e.code=='E8001')
                 end
-                local json=require('std.json')
+                local json=require('deal.json')
                 local instance=rt.class_plan_('@m/Node',{
                   {name='first',descriptor='boolean',optional=false},
                   {name='next',descriptor='unknown',optional=true},
                   {name='tail',descriptor='?string',optional=false}},{tail=rt.__NULL,first=true})
-                assert(json.stringify.f(instance)=='{"first":true,"tail":null}')
+                assert(json.encode(instance)=='{"first":true,"tail":null}')
                 instance.next=instance
-                local ok,e=pcall(json.stringify.f,instance)
+                local ok,e=pcall(json.encode,instance)
                 assert(not ok and e.code=='E8001')
                 instance.next=nil
                 setmetatable(instance,{__index=function() error('JSON invoked user hook') end})
-                assert(json.stringify.f(instance)=='{"first":true,"tail":null}')
-                local fields={{name='first',jtype='boolean',optional=false,nullable=false},
-                  {name='tail',jtype='string',optional=false,nullable=true}}
-                local decoded=rt.json_from_json('@m/Decoded',{tail=rt.__NULL,first=true},fields)
-                assert(decoded and json.stringify.f(decoded)=='{"first":true,"tail":null}')
+                assert(json.encode(instance)=='{"first":true,"tail":null}')
+                local fields={{name='first',descriptor='boolean',optional=false},
+                  {name='tail',descriptor='?string',optional=false}}
+                local decoded=json.decode('{"tail":null,"first":true}', '@m/Decoded', {['@m/Decoded']=fields})
+                assert(decoded and json.encode(decoded)=='{"first":true,"tail":null}')
                 local plan={{name='first',descriptor='boolean',optional=false},
                   {name='tail',descriptor='?string',optional=false}}
-                local planned=rt.json_from_plan('@m/Planned',plan,{tail=rt.__NULL,first=true})
-                assert(planned and json.stringify.f(planned)=='{"first":true,"tail":null}')
-                assert(json.stringify.f({a=instance,b=instance})==
+                local planned=json.decode('{"tail":null,"first":true}', '@m/Planned', {['@m/Planned']=plan})
+                assert(planned and json.encode(planned)=='{"first":true,"tail":null}')
+                assert(json.encode({a=instance,b=instance})==
                   '{"a":{"first":true,"tail":null},"b":{"first":true,"tail":null}}')
                 local deep=instance
                 for i=1,600 do deep=rt.class_plan_('@m/Node',{
                   {name='first',descriptor='boolean',optional=false},
                   {name='next',descriptor='unknown',optional=true},
                   {name='tail',descriptor='?string',optional=false}},{tail=rt.__NULL,first=true,next=deep}) end
-                local _,count=string.gsub(json.stringify.f(deep),'"first":true','')
+                local _,count=string.gsub(json.encode(deep),'"first":true','')
                 assert(count==601)
-                assert(json.stringify.f(rt.error_value('C','m'))=='{"code":"C","message":"m"}')
+                assert(json.encode(rt.error_value('C','m'))=='{"code":"C","message":"m"}')
                 assert(rt.check_type('unknown',s.split)==s.split)
                 for _,a in ipairs({s.split.f('a,b',','),s.split.f('',','),
                     s.split.f('ab',''),t.keys.f({a=true}),t.keys.f({})}) do

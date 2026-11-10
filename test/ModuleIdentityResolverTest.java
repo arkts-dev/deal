@@ -422,10 +422,12 @@ public final class ModuleIdentityResolverTest {
 
         checkBuiltin(classify(context, uriOf("/p/proj/std/console.d.deal")),
             "the pinned std/console.d.deal under the surface is BuiltinModule");
-        for (String module : List.of("string", "table", "json", "math", "time")) {
+        for (String module : List.of("string", "table", "math", "time")) {
             checkBuiltin(classify(context, uriOf("/p/proj/std/" + module + ".d.deal")),
                 "the pinned std/" + module + ".d.deal is BuiltinModule");
         }
+        checkNone(classify(context, uriOf("/p/proj/std/json.d.deal")),
+            "a retired JSON declaration grants no builtin module identity");
         checkNone(classify(context, uriOf("/p/proj/std/io.d.deal")),
             "a non-spec-listed .d.deal inside the std directory selects none");
         checkNone(classify(context, uriOf("/p/other/console.d.deal")),
@@ -828,7 +830,7 @@ public final class ModuleIdentityResolverTest {
 
         // A project-local surface whose console.d.deal is a symlink
         // pointing outside the surface: the canonical URI of the stdlib
-        // file is the resolved target. T4 publishes the six files fully
+        // file is the resolved target. T4 publishes the five files fully
         // symlink-resolved, and the classifier keys its BuiltinModule
         // predicate on those canonical paths — so the symlinked file
         // keeps its pinned classification (the bare std/... spelling and
@@ -846,7 +848,7 @@ public final class ModuleIdentityResolverTest {
             "export function otherLog(s: string): null;\n");
         Files.createSymbolicLink(dir.resolve("std/console.d.deal"),
             outside.resolve("console.d.deal"));
-        for (String module : List.of("string", "table", "json", "math", "time")) {
+        for (String module : List.of("string", "table", "math", "time")) {
             writeText(dir.resolve("std").resolve(module + ".d.deal"),
                 "export function pinned(): null;\n");
         }
@@ -991,11 +993,14 @@ public final class ModuleIdentityResolverTest {
                     dir.resolve("std").toRealPath().toString()),
             "combined context pins the project-local std surface");
         check(context.stdlibDeclarationFiles() != null
-                && context.stdlibDeclarationFiles().size() == 6
+                && context.stdlibDeclarationFiles().size() == 5
                 && context.stdlibDeclarationFiles().contains(
                     dir.resolve("std/console.d.deal").toRealPath().toString()),
-            "combined context publishes the six canonical stdlib declaration"
+            "combined context publishes the five canonical stdlib declaration"
                 + " files");
+        check(!context.stdlibDeclarationFiles().contains(
+                dir.resolve("std/json.d.deal").toRealPath().toString()),
+            "a retired JSON declaration on the local surface grants no stdlib identity");
 
         // Real resolved files: canonical URIs via the T1 protected
         // boundary (full symlink resolution), classified by rule.

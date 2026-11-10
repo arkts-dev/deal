@@ -2,6 +2,6 @@
 // @description: math-ceil--0
 // @expected: runtime-ok
 // @features: boundary-validation
-import * as console from "std/console";
+import * as printer from "std/console";
 import * as m from "std/math";
-export function main():null{try{let x=m.ceil(-0);if(1/x===-1/0){console.log("NEGZERO");}else{console.log("WRONG");}}catch(e){console.log("THREW");}return null;}
+export function main():null{try{let x=m.ceil(-0);if(1/x===-1/0){printer.log("NEGZERO");}else{printer.log("WRONG");}}catch(e){printer.log("THREW");}return null;}

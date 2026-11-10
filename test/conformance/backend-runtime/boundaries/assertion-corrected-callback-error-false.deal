@@ -2,7 +2,7 @@
 // @description: assertion-corrected-callback-error-False
 // @expected: runtime-ok
 // @features: boundary-validation
-import * as console from "std/console";
+import * as printer from "std/console";
 import * as host from "host/probe";
 
-export function main():null{let err:Error={code:"OWNED",message:"owned"};let f:()=>void=function():void{throw err;};try{host.invoke(f);console.log("LOST");}catch(e){if((e as Error)===err){console.log("OK");}else{console.log("COPIED");}}return null;}
+export function main():null{let err:Error={code:"OWNED",message:"owned"};let f:()=>void=function():void{throw err;};try{host.invoke(f);printer.log("LOST");}catch(e){if((e as Error)===err){printer.log("OK");}else{printer.log("COPIED");}}return null;}

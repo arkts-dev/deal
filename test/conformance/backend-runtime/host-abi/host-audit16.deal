@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: host-abi, unknown, undefined, arrays, functions, async
 import * as host from "host/audit16";
-import * as json from "std/json";
+
 function check(ok:boolean):void { if(!ok){throw {code:"FAIL",message:"host audit contract"};} }
 function callback():void {}
 function thrown():void { throw {code:"CALLBACK",message:"callback"}; }
@@ -23,9 +23,9 @@ export function test_sync():void {
   let grown=host.fresh();host.grow();check(grown[1]===2);check(grown.length===2);
   host.fresh();grown=host.fresh();host.grow();
   let visits=0;for(let value of grown){visits=visits+1;}check(visits===2);
-  let document=json.parse("{\"a\":[1]}");let array=document.a as unknown[];
+  let document:Record<string,unknown>=JSON.parse("{\"a\":[1]}");let array=document.a as unknown[];
   check(host.echoArray(array)===array);host.replace(array);check((array[0] as number)===2);
-  let nested=json.parse("{\"a\":[[1]]}").a as unknown[];
+  let nested=(JSON.parse("{\"a\":[[1]]}") as Record<string,unknown>).a as unknown[];
   let nestedEcho=host.echoArray(nested);check(nestedEcho===nested);
   check((nestedEcho[0] as unknown[])===(nested[0] as unknown[]));
   let cyclic:unknown[]=[];cyclic[0]=cyclic;check(host.echoArray(cyclic)===cyclic);

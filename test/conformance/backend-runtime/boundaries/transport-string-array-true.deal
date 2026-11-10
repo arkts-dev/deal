@@ -2,7 +2,7 @@
 // @description: transport-string[]-True
 // @expected: runtime-ok
 // @features: boundary-validation
-import * as console from "std/console";
+import * as printer from "std/console";
 import * as host from "host/probe";
 
-export function main():null{let u=host.f();if(u.length!==1 || u[0]!==`\uD800`){throw {code:"TEST",message:"lone string array lost at host ingress"};}console.log("OK");return null;}
+export function main():null{let u=host.f();if(u.length!==1 || u[0]!==`\uD800`){throw {code:"TEST",message:"lone string array lost at host ingress"};}printer.log("OK");return null;}

@@ -14,6 +14,7 @@ public enum BuiltinCall {
     TIME_NOW_MILLIS("Date", "now", List.of(), Type.Number.INSTANCE),
     ARRAY_FROM("Array", "from", List.of(Type.Unknown.INSTANCE, Type.Unknown.INSTANCE), Type.Unknown.INSTANCE),
     OBJECT_KEYS("Object", "keys", List.of(Type.Unknown.INSTANCE), new Type.Array(Type.String.INSTANCE)),
+    JSON_PARSE("JSON", "parse", List.of(Type.String.INSTANCE), Type.Unknown.INSTANCE),
     JSON_STRINGIFY("JSON", "stringify", List.of(Type.Unknown.INSTANCE),
         new Type.Nullable(Type.String.INSTANCE, false, true));
 

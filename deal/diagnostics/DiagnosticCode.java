@@ -112,14 +112,6 @@ public enum DiagnosticCode {
      */
     E1042(Phase.FRONTEND, "Invalid template literal"),
 
-    /** @jsonable directive is only valid on 'export class'. */
-    E1043(Phase.FRONTEND, "Invalid @jsonable directive placement"),
-
-    /** Unrecognized compiler directive. */
-    E1044(Phase.FRONTEND, "Unrecognized compiler directive"),
-
-    /** Invalid compiler directive argument. */
-    E1045(Phase.FRONTEND, "Invalid compiler directive argument"),
     /** Rest parameters are not supported. */
     E1047(Phase.FRONTEND, "Rest parameters are not supported"),
 
@@ -298,11 +290,6 @@ public enum DiagnosticCode {
 
     /** Cannot declare class 'Error': it is a built-in type. */
     E4006(Phase.FRONTEND, "Cannot declare class Error"),
-
-    /** Non-jsonable field type in @jsonable class. */
-    E4007(Phase.FRONTEND, "Non-jsonable field type"),
-    /** Circular @jsonable class dependency between same-module classes. */
-    E4008(Phase.FRONTEND, "Circular @jsonable class dependency"),
 
     // =========================================================================
     // E5xxx — function signature and call validation (FRONTEND)

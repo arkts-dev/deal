@@ -1,5 +1,5 @@
-// @spec: Classes — @jsonable table fields
-// @description: Table fields containing nested arrays roundtrip through @jsonable helpers
+// @spec: Standard library builtins — JSON
+// @description: Record fields containing nested arrays survive repeated contextual class roundtrips
 // @expected: runtime-ok
 // @features: jsonable, tables, arrays
 
@@ -7,12 +7,19 @@ import * as Lib from "./jsonable_batch2_lib";
 
 export function test_jsonable_table_field_nested_arrays(): null {
   let w: Lib.TableWrap = Lib.makeTableWrap();
-  let json: string = Lib.TableWrap$toJson(w);
-  let w2: Lib.TableWrap | null = Lib.TableWrap$fromJson(json);
+  let json: string = JSON.stringify(w) as string;
+  let w2: Lib.TableWrap | null = JSON.parse(json);
   if (w2 !== null) {
-    let json2: string = Lib.TableWrap$toJson(w2);
-    let w3: Lib.TableWrap | null = Lib.TableWrap$fromJson(json2);
-    if (w3 !== null) { return null; }
+    let json2: string = JSON.stringify(w2) as string;
+    let w3: Lib.TableWrap | null = JSON.parse(json2);
+    if (w3 !== null) {
+      let rows = w3.data.values as unknown[];
+      let second = rows[1] as unknown[];
+      if ((second[1] as number) !== 4 || w3 === w2 || w3.data === w2.data) {
+        throw {code: "TEST_FAIL", message: "nested Record array values or freshness changed"};
+      }
+      return null;
+    }
   }
   throw { code: "TEST_FAIL", message: "table nested arrays roundtrip failed" };
 }

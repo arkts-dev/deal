@@ -1,938 +1,391 @@
 package deal.test;
 
-import deal.ast.ClassDeclaration;
-import deal.ast.ExportDeclaration;
-import deal.ast.ProgramNode;
-import deal.ast.Span;
-import deal.ast.StatementNode;
-import deal.checker.CheckResult;
-import deal.checker.ModuleResolver;
-import deal.checker.NameResolver;
-import deal.checker.Symbol;
-import deal.checker.SymbolTable;
-import deal.checker.TypeChecker;
-import deal.diagnostics.CompilerDiagnostic;
-import deal.diagnostics.DiagnosticRange;
-import deal.diagnostics.RangeOrigin;
+import deal.ast.*;
+import deal.checker.*;
+import deal.diagnostics.*;
 import deal.lexer.Lexer;
 import deal.parser.Parser;
-import deal.semantic.CapabilityRegistry;
-import deal.semantic.CheckedModuleInput;
-import deal.semantic.CheckedModuleKind;
-import deal.semantic.CheckedProjectBuilder;
-import deal.semantic.CompilerInvocation;
-import deal.semantic.CompilerProfileProvider;
-import deal.semantic.ContainerPayloadDescriptors;
-import deal.semantic.LoweringSupport;
-import deal.semantic.ModuleFact;
-import deal.semantic.RequirementManifestResult;
-import deal.semantic.SemanticLowerer;
-import deal.semantic.ir.BlockId;
-import deal.semantic.ir.ClassId;
-import deal.semantic.ir.ClassInterface;
-import deal.semantic.ir.ClassLayout;
-import deal.semantic.ir.ConstructKind;
-import deal.semantic.ir.ExternalModuleInterface;
-import deal.semantic.ir.ExternalModuleKind;
-import deal.semantic.ir.FailurePolicyId;
-import deal.semantic.ir.FunctionAllocationIdentity;
-import deal.semantic.ir.FunctionExecutionBinding;
-import deal.semantic.ir.KindPayload;
-import deal.semantic.ir.LoweredFunction;
-import deal.semantic.ir.LoweredModuleUnit;
-import deal.semantic.ir.ModuleId;
-import deal.semantic.ir.OpId;
-import deal.semantic.ir.ProjectInterfaceIndex;
-import deal.semantic.ir.ReleaseState;
-import deal.semantic.ir.ResolvedImport;
-import deal.semantic.ir.RuntimeDescriptor;
-import deal.semantic.ir.SemanticIdAllocator;
-import deal.semantic.ir.SemanticIrDumper;
-import deal.semantic.ir.SemanticIrValidator;
-import deal.semantic.ir.SemanticOp;
-import deal.semantic.ir.SemanticOpKind;
-import deal.semantic.ir.SemanticProfile;
-import deal.semantic.ir.SharedFactoryFacts;
-import deal.semantic.ir.SourceOriginKind;
-import deal.semantic.ir.StructuredBodyTable;
-import deal.semantic.ir.ValueId;
+import deal.semantic.*;
+import deal.semantic.ir.*;
 import deal.types.Type;
-import deal.types.Types;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 
-public class JsonClassLoweringTest {
-
-    private static int passed = 0;
-    private static int failed = 0;
+/** Structural JSON schemas, ordinary provider bodies, origins and exact dependencies. */
+public final class JsonClassLoweringTest {
+    private static int passed;
+    private static int failed;
+    private static final ModuleId MAIN = new ModuleId("main");
+    private static final ModuleId OWNER = new ModuleId("owner");
+    private static final CompilerInvocation INVOCATION = CompilerProfileProvider.resolve(
+        ReleaseState.V1_6_ACTIVE, CapabilityRegistry.releaseRegistry());
+    private static final String SOURCE = """
+        // @jsonable: arbitrary comment arguments
+        export class Point { x: number; tag: string; note?: string; }
+        export function decode(s: string): Point { return JSON.parse(s); }
+        export function encode(p: Point): string { return JSON.stringify(p) as string; }
+        export function main(): null { let p: Point = decode(`{"x":1,"tag":"ok"}`); encode(p); return null; }
+        """;
 
     private static void check(boolean condition, String message) {
-        if (condition) { passed++; }
+        if (condition) passed++;
         else { failed++; System.err.println("FAIL: " + message); }
     }
+    private record Slice(ProgramNode program, SymbolTable symbols, CheckResult checks,
+                         Map<String, Type> exports) {}
+    private record Pipeline(CheckedProjectBuildResult built, RequirementManifestResult manifests) {}
 
-    private static void fail(String message) {
-        failed++;
-        System.err.println("FAIL: " + message);
-    }
-
-    // =========================================================================
-    // Fixed invocation facts
-    // =========================================================================
-
-    private static final ModuleId MODULE = new ModuleId("main");
-    private static final String SOURCE_ID = "test.deal";
-    private static final String REGISTRY_HASH =
-        CapabilityRegistry.releaseRegistry().capabilityRegistryHash();
-
-    // The two cross-unit modules of the combined scenario.
-    private static final ModuleId OWNER = new ModuleId("owner");
-    private static final ModuleId CALLER = new ModuleId("main");
-    private static final String OWNER_SOURCE_ID = "owner.deal";
-    private static final String CALLER_SOURCE_ID = "caller.deal";
-    private static final String IMPORT_SPECIFIER = "owner";
-
-    private record CheckedSlice(ProgramNode program, SymbolTable symbols, CheckResult checks) {
-    }
-
-    private record PipelineSlice(CheckedSlice slice, String interfaceHash,
-                                 ExternalModuleInterface ownInterface,
-                                 Map<ConstructKind, List<SemanticOpKind>> coverage) {
-    }
-
-    private record ProjectFacts(ProjectInterfaceIndex index, String interfaceHash,
-                                Map<ModuleId, Map<ConstructKind, List<SemanticOpKind>>>
-                                    coverages) {
-    }
-
-    private record LoweredPair(
-        SemanticLowerer.ClassDeclarationCoreResult owner,
-        SemanticLowerer.ClassDeclarationCoreResult caller,
-        ProjectFacts project,
-        Map<ClassId, SharedFactoryFacts> facts) {
-    }
-
-    // =========================================================================
-    // Single-module pipeline (the ClassDeclarationLoweringTest discipline)
-    // =========================================================================
-
-    private static CheckedSlice checkSlice(String source, ModuleId moduleId,
-                                           ModuleResolver resolver) {
-        String sourceId = moduleId.path() + ".deal";
-        Lexer lexer = new Lexer(source, sourceId);
-        deal.lexer.LexResult lex = lexer.tokenize();
-        Parser parser = new Parser(lex.tokens(), sourceId, lex.directiveEvents());
-        deal.parser.ParseResult parse = parser.parse();
-        check(parse.diagnostics().isEmpty(), "the slice parses cleanly: " + parse.diagnostics());
-        if (!parse.diagnostics().isEmpty()) {
-            return null;
-        }
-        NameResolver names = new NameResolver(moduleId.path(), resolver);
-        SymbolTable symbols = names.resolve(parse.program());
-        check(names.diagnostics().isEmpty(),
-            "the slice resolves cleanly: " + names.diagnostics());
-        if (!names.diagnostics().isEmpty()) {
-            return null;
-        }
-        CheckResult checks = TypeChecker.check(moduleId.path(), symbols, names,
-            parse.program());
-        check(checks.diagnostics().isEmpty(),
-            "the slice checks cleanly: " + checks.diagnostics());
-        if (checks.hasErrors()) {
-            return null;
-        }
-        return new CheckedSlice(parse.program(), symbols, checks);
-    }
-
-    /** The owner's Phase-3-corrected export map (the orchestrator's derivation). */
-    private static Map<String, Type> ownerExports(CheckedSlice owner) {
+    private static Slice checked(String source, ModuleId id, ModuleResolver resolver) {
+        var lex = new Lexer(source, id.path() + ".deal").tokenize();
+        check(lex.diagnostics().isEmpty(), "clean lexing: " + lex.diagnostics());
+        var parse = new Parser(lex.tokens(), id.path() + ".deal").parse();
+        check(parse.diagnostics().isEmpty(), "clean parsing: " + parse.diagnostics());
+        if (!parse.diagnostics().isEmpty()) return null;
+        var names = new NameResolver(id.path(), resolver);
+        var symbols = names.resolve(parse.program());
+        var result = TypeChecker.check(id.path(), symbols, names, parse.program());
+        check(names.diagnostics().isEmpty(), "all annotation resolution: " + names.diagnostics());
+        check(result.diagnostics().isEmpty(), "clean checking: " + result.diagnostics());
+        if (!names.diagnostics().isEmpty() || result.hasErrors()) return null;
         Map<String, Type> exports = new LinkedHashMap<>();
-        for (StatementNode stmt : owner.program().statements()) {
-            if (stmt instanceof ExportDeclaration exp
-                    && exp.declaration() instanceof ClassDeclaration cd) {
-                Symbol sym = owner.symbols().resolve(cd.name());
-                if (sym instanceof Symbol.ClassSymbol cs) {
-                    exports.put(cd.name(), Types.classType(cs.name(), cs.identity()));
-                    if (cd.isJsonable()) {
-                        // The synthetic C$fromJson/C$toJson exports the
-                        // checker's @jsonable field validation routes
-                        // through (the generated function symbols).
-                        Symbol fromSym = owner.symbols().resolve(cd.name() + "$fromJson");
-                        Symbol toSym = owner.symbols().resolve(cd.name() + "$toJson");
-                        if (fromSym instanceof Symbol.FunctionSymbol from) {
-                            exports.put(cd.name() + "$fromJson", from.funcType());
-                        }
-                        if (toSym instanceof Symbol.FunctionSymbol to) {
-                            exports.put(cd.name() + "$toJson", to.funcType());
-                        }
-                    }
+        for (StatementNode statement : parse.program().statements()) {
+            if (!(statement instanceof ExportDeclaration export)) continue;
+            if (export.declaration() instanceof ClassDeclaration cls) {
+                var symbol = (Symbol.ClassSymbol) symbols.resolve(cls.name());
+                exports.put(cls.name(), deal.types.Types.classType(symbol.name(), symbol.identity(),
+                    deal.types.Types.providerModule(symbol.modulePath())));
+            } else if (export.declaration() instanceof FunctionDeclaration function) {
+                exports.put(function.name(), ((Symbol.FunctionSymbol) symbols.resolve(function.name())).funcType());
+            }
+        }
+        return new Slice(parse.program(), symbols, result, exports);
+    }
+    private static Pipeline pipeline(LinkedHashMap<ModuleId, Slice> slices) {
+        List<ModuleFact> facts = new ArrayList<>();
+        for (var entry : slices.entrySet()) {
+            ModuleId id = entry.getKey();
+            Slice slice = entry.getValue();
+            facts.add(new ModuleFact(id.path() + ".deal", id, false, false, slice.program(),
+                slice.exports(), slice.symbols(), slice.checks(),
+                id.equals(MAIN) && slices.containsKey(OWNER)
+                    ? List.of(new ModuleFact.ImportFact("Owner", "owner", "owner.deal")) : List.of()));
+        }
+        var built = CheckedProjectBuilder.build(INVOCATION, MAIN, facts);
+        check(!built.hasErrors() && built.input() != null && built.index() != null,
+            "checked project: " + built.diagnostics());
+        if (built.hasErrors() || built.input() == null) return null;
+        var manifests = LoweringSupport.computeManifests(INVOCATION, built.input(), built.index());
+        check(manifests.diagnostics().isEmpty() && manifests.manifests().size() == slices.size(),
+            "complete manifest population: " + manifests.diagnostics());
+        return manifests.diagnostics().isEmpty() ? new Pipeline(built, manifests) : null;
+    }
+    private static SemanticLowerer.ProjectLoweringResult lower(Pipeline pipeline) {
+        var result = SemanticLowerer.lowerProject(INVOCATION, pipeline.built().input(),
+            pipeline.built().index(), pipeline.manifests().manifests(),
+            new HostDeclarationSurface(Map.of()), Map.of(),
+            BuiltinErrorDeclaration.synthesized(pipeline.built().input().modules().getFirst().ast().span()), Set.of());
+        check(result.project() != null && result.diagnostics().isEmpty(),
+            "validated project lowering: " + result.diagnostics());
+        return result;
+    }
+    private static Pipeline single(Slice slice) {
+        var slices = new LinkedHashMap<ModuleId, Slice>();
+        slices.put(MAIN, slice);
+        return pipeline(slices);
+    }
+    private static List<SemanticOp> kind(LoweredModuleUnit unit, SemanticOpKind kind) {
+        return unit.ops().stream().filter(op -> op.kind() == kind).toList();
+    }
+    private static SemanticOp op(LoweredModuleUnit unit, OpId id) {
+        return unit.ops().stream().filter(candidate -> candidate.opId().equals(id)).findFirst().orElse(null);
+    }
+    private static void testBodiesAndSchemas() {
+        Slice slice = checked(SOURCE, MAIN, null);
+        if (slice == null) return;
+        Pipeline pipeline = single(slice);
+        if (pipeline == null) return;
+        var result = lower(pipeline);
+        if (result.project() == null) return;
+        var unit = result.project().modules().get(MAIN);
+        var point = new ClassId("main", "Point");
+        var layout = unit.classLayouts().get(point);
+        check(layout != null, "explicit Point layout exists");
+        if (layout == null) return;
+        check(layout.fields().stream().map(ClassLayout.FieldLayout::name).toList()
+            .equals(List.of("x", "tag", "note")), "schema declaration order");
+        check(layout.fields().get(0).descriptor() == RuntimeDescriptor.Number.INSTANCE, "number field descriptor");
+        check(layout.fields().get(1).descriptor() == RuntimeDescriptor.String.INSTANCE, "string field descriptor");
+        check(layout.fields().get(0).required() && layout.fields().get(1).required(), "required fields");
+        check(!layout.fields().get(2).required(), "optional presence is separate from descriptor");
+        check(layout.fields().get(2).descriptor() == RuntimeDescriptor.String.INSTANCE, "optional storage descriptor");
+        check(slice.symbols().resolve("Point$fromJson") == null, "no decoder symbol synthesis");
+        check(slice.symbols().resolve("Point$toJson") == null, "no encoder symbol synthesis");
+        check(pipeline.built().index().modules().get(MAIN).exports().stream().map(ExportInterface::name).collect(java.util.stream.Collectors.toSet())
+            .equals(Set.of("Point", "decode", "encode", "main")), "only explicit exports");
+        check(unit.ops().stream().noneMatch(op -> op.kind().name().equals("JSON_FROM_CLASS")
+            || op.kind().name().equals("JSON_TO_CLASS")), "no legacy class JSON operations");
+        var parses = kind(unit, SemanticOpKind.JSON_PARSE);
+        check(parses.size() == 1, "one explicit contextual parse");
+        if (parses.size() != 1) return;
+        SemanticOp parse = parses.getFirst();
+        var payload = (KindPayload.JsonParsePayload) parse.payload();
+        check(payload.target().equals(new RuntimeDescriptor.Class(point)), "return annotation owns target");
+        check(parse.resultType().equals(payload.target()), "target is exact result descriptor, not nullable helper result");
+        check(parse.failurePolicy() == FailurePolicyId.JSON_RECONSTRUCTION, "parse throws reconstruction failure");
+        check(parse.origin().kind() == SourceOriginKind.USER, "parse is a user expression");
+        check(parse.origin().span().startLine() == 3 && parse.origin().span().startColumn() == 51,
+            "parse origin independently pinned to expression 3:51");
+        var producers = unit.ops().stream().filter(candidate -> payload.jsonString().equals(candidate.result())).toList();
+        check(producers.size() == 1, "one parse operand producer");
+        if (producers.size() == 1) {
+            SemanticOp producer = producers.getFirst();
+            check(producer.resultType() == RuntimeDescriptor.String.INSTANCE, "string input descriptor");
+            check(unit.ops().indexOf(producer) < unit.ops().indexOf(parse), "input precedes parse");
+            check(producer.kind() == SemanticOpKind.BINDING_LOAD, "input comes from ordinary parameter");
+        }
+        var stringify = kind(unit, SemanticOpKind.STDLIB_CALL).stream().filter(candidate ->
+            candidate.payload() instanceof KindPayload.StdlibCallPayload call
+                && call.function() == StdlibFunctionId.JSON_STRINGIFY).toList();
+        check(stringify.size() == 1, "one builtin stringify, no imported JSON namespace");
+        if (stringify.size() == 1) {
+            SemanticOp encode = stringify.getFirst();
+            var call = (KindPayload.StdlibCallPayload) encode.payload();
+            check(encode.failurePolicy() == FailurePolicyId.JSON_TO_ERROR,
+                "stringify retains its throwing encoding policy");
+            check(encode.resultType().equals(new RuntimeDescriptor.Nullable(RuntimeDescriptor.String.INSTANCE, false, true)),
+                "stringify result is string|undefined before the explicit assertion");
+            check(encode.origin().kind() == SourceOriginKind.USER
+                && encode.origin().span().startLine() == 4 && encode.origin().span().startColumn() == 51,
+                "stringify origin independently pinned to expression 4:51");
+            check(call.args().size() == 1, "stringify has exactly one value operand");
+            if (call.args().size() == 1) {
+                var inputs = unit.ops().stream().filter(candidate -> call.args().getFirst().equals(candidate.result())).toList();
+                check(inputs.size() == 1, "stringify operand has exactly one producer");
+                if (inputs.size() == 1) {
+                    SemanticOp input = inputs.getFirst();
+                    check(input.kind() == SemanticOpKind.BINDING_LOAD
+                        && input.resultType().equals(new RuntimeDescriptor.Class(point)),
+                        "stringify consumes the exact nominal parameter, not a projected copy");
+                    check(unit.ops().indexOf(input) < unit.ops().indexOf(encode),
+                        "stringify parameter read precedes encoding");
                 }
             }
         }
-        return exports;
+        check(unit.functions().values().stream().map(LoweredFunction::sourceName).collect(java.util.stream.Collectors.toSet())
+            .containsAll(Set.of("decode", "encode", "main")), "ordinary provider bodies recorded");
+        check(unit.functions().values().stream().noneMatch(function -> function.sourceName() != null && function.sourceName().contains("$")),
+            "no manufactured helper body");
+        for (String name : List.of("decode", "encode")) {
+            var function = unit.functions().values().stream().filter(candidate -> name.equals(candidate.sourceName())).findFirst().orElse(null);
+            check(function != null, name + " function record");
+            if (function == null) continue;
+            check(function.captures().isEmpty(), name + " has no captures");
+            RuntimeDescriptor parameter = name.equals("decode") ? RuntimeDescriptor.String.INSTANCE
+                : new RuntimeDescriptor.Class(point);
+            RuntimeDescriptor returned = name.equals("decode") ? new RuntimeDescriptor.Class(point)
+                : RuntimeDescriptor.String.INSTANCE;
+            var signature = new RuntimeDescriptor.Func(List.of(parameter), returned, false);
+            check(function.descriptor().equals(signature), name + " exact ordinary synchronous signature");
+            var closures = kind(unit, SemanticOpKind.CLOSURE_NEW).stream().filter(candidate ->
+                candidate.payload() instanceof KindPayload.ClosureNewPayload closure
+                    && closure.function().equals(function.functionId())).toList();
+            check(closures.size() == 1, name + " exactly one closure producer");
+            if (closures.size() == 1) {
+                SemanticOp closure = closures.getFirst();
+                var creation = (KindPayload.ClosureNewPayload) closure.payload();
+                check(creation.signature().equals(signature) && closure.resultType().equals(signature)
+                    && creation.captures().isEmpty(), name + " closure signature and empty captures");
+                check(closure.failurePolicy() == FailurePolicyId.NO_DEAL_FAILURE,
+                    name + " closure allocation policy");
+                check(creation.binding().functionId().equals(function.functionId())
+                    && creation.binding().blockId().equals(function.body()), name + " exact creation body binding");
+                check(unit.functionBindings().get(new FunctionAllocationIdentity(((ValueId) closure.result()).id()))
+                    .equals(creation.binding()), name + " own allocation identity registers that same body");
+            }
+            var ids = unit.bodyTable().blockOps().get(function.body());
+            check(ids != null && !ids.isEmpty(), name + " owned body block");
+            if (ids == null) continue;
+            var body = ids.stream().map(id -> op(unit, id)).toList();
+            check(body.stream().anyMatch(candidate -> candidate.kind() == SemanticOpKind.BINDING_ALLOC), name + " parameter allocation");
+            check(body.stream().anyMatch(candidate -> candidate.kind() == SemanticOpKind.BINDING_LOAD), name + " parameter read");
+            var reads = body.stream().filter(candidate -> candidate.kind() == SemanticOpKind.BINDING_LOAD).toList();
+            check(reads.size() == 1, name + " exactly one parameter read");
+            if (reads.size() == 1) {
+                SemanticOp read = reads.getFirst();
+                var load = (KindPayload.BindingLoadPayload) read.payload();
+                check(read.resultType().equals(parameter) && load.generation() == 0,
+                    name + " exact parameter descriptor and generation");
+                var allocations = body.stream().filter(candidate -> candidate.payload() instanceof KindPayload.BindingAllocPayload alloc
+                    && alloc.binding().equals(load.binding())).toList();
+                check(allocations.size() == 1, name + " parameter read resolves its own allocation");
+                if (allocations.size() == 1) {
+                    SemanticOp allocation = allocations.getFirst();
+                    var alloc = (KindPayload.BindingAllocPayload) allocation.payload();
+                    check(alloc.mutable() && alloc.generation() == 0
+                        && body.indexOf(allocation) < body.indexOf(read), name + " mutable generation-zero parameter allocated before read");
+                }
+            }
+            check(body.stream().anyMatch(candidate -> candidate.kind() == SemanticOpKind.RETURN), name + " explicit return");
+            check(body.stream().anyMatch(candidate -> candidate.kind() == (name.equals("decode")
+                ? SemanticOpKind.JSON_PARSE : SemanticOpKind.STDLIB_CALL)), name + " actual algorithm in body");
+            check(unit.functionBindings().values().stream().anyMatch(binding ->
+                binding instanceof FunctionExecutionBinding.LoweredBody bodyBinding
+                    && bodyBinding.functionId().equals(function.functionId())
+                    && bodyBinding.blockId().equals(function.body())),
+                name + " closure registers its exact ordinary body");
+        }
+        check(unit.ops().stream().noneMatch(candidate -> candidate.kind().name().contains("DEFAULT")), "no initializer operations");
+        var again = lower(single(checked(SOURCE, MAIN, null)));
+        check(again.project() != null && Arrays.equals(SemanticIrDumper.dumpModule(unit),
+            SemanticIrDumper.dumpModule(again.project().modules().get(MAIN))), "single-module deterministic bytes");
     }
-
-    /** The owner's checked class symbols by simple name. */
-    private static Map<String, Symbol.ClassSymbol> ownerClassSymbols(CheckedSlice owner) {
-        Map<String, Symbol.ClassSymbol> symbols = new LinkedHashMap<>();
-        for (StatementNode stmt : owner.program().statements()) {
-            StatementNode declaration = stmt instanceof ExportDeclaration exp
-                ? exp.declaration() : stmt;
-            if (declaration instanceof ClassDeclaration cd) {
-                Symbol sym = owner.symbols().resolve(cd.name());
-                if (sym instanceof Symbol.ClassSymbol cs) {
-                    symbols.put(cd.name(), cs);
+    private static void testCommentOnlyClasses() {
+        for (String comment : List.of("", "// @jsonable\n", "/* @jsonable: x */\n", "// @deal-version: nonsense\n")) {
+            Slice slice = checked(comment + "export class Plain { x:number; }", MAIN, null);
+            if (slice == null) continue;
+            Pipeline pipeline = single(slice);
+            if (pipeline == null) continue;
+            var result = lower(pipeline);
+            if (result.project() == null) continue;
+            var unit = result.project().modules().get(MAIN);
+            check(unit.classLayouts().size() == 1, "comment-only class has structural schema");
+            check(unit.functions().isEmpty(), "class comment generates no functions");
+            check(kind(unit, SemanticOpKind.CLOSURE_NEW).isEmpty(), "class comment generates no closures");
+            check(kind(unit, SemanticOpKind.JSON_PARSE).isEmpty(), "class comment generates no parse");
+            check(unit.ops().stream().noneMatch(op -> op.kind().name().equals("JSON_FROM_CLASS")
+                || op.kind().name().equals("JSON_TO_CLASS")), "class comment generates no legacy operations");
+            check(pipeline.built().index().modules().get(MAIN).exports().stream().map(ExportInterface::name).toList().equals(List.of("Plain")), "explicit class export only");
+        }
+    }
+    private static void testAnnotationOrigins() {
+        String source = "// @jsonable\nclass Leaf { n:number; }\nexport class Widget { child:Leaf; }\n";
+        for (boolean offsetless : List.of(false, true)) {
+            for (String name : List.of("MissingLeaf", "Absent")) {
+                Slice slice = checked(source, MAIN, null);
+                if (slice == null) continue;
+                Pipeline pipeline = single(slice);
+                if (pipeline == null) continue;
+                ClassDeclaration widget = (ClassDeclaration) ((ExportDeclaration) slice.program().statements().get(1)).declaration();
+                ClassField field = widget.fields().getFirst();
+                Span span = offsetless ? new Span("writer.deal", 3, 29, 3, 33) : field.type().span();
+                var annotation = new NamedType(span, name);
+                var replacement = new ClassDeclaration(widget.span(), widget.name(), List.of(
+                    new ClassField(field.span(), field.name(), field.optional(), field.nullable(), annotation)));
+                var program = new ProgramNode(slice.program().span(), List.of(slice.program().statements().getFirst(),
+                    new ExportDeclaration(widget.span(), replacement)));
+                var coverage = new LinkedHashMap<>(pipeline.manifests().manifests().getFirst().constructCoverage());
+                coverage.remove(ConstructKind.IMPORT_EXPORT_ENTRY);
+                var result = SemanticLowerer.lowerModuleClassCore(new CheckedModuleInput(MAIN, "main.deal", Path.of("main.deal"),
+                    program, slice.checks(), List.of(), List.of(), CheckedModuleKind.IMPLEMENTATION),
+                    INVOCATION.semanticProfile(), coverage, pipeline.built().index().interfaceIndexDigest(),
+                    INVOCATION.capabilityRegistryHash(), pipeline.built().index().modules().get(MAIN),
+                    SemanticIdAllocator.over(List.of(MAIN)));
+                check(result.lowering().hasErrors() && result.lowering().unit() == null, "consumed missing annotation fact rejects without unit");
+                if (!result.lowering().hasErrors()) continue;
+                var diagnostic = result.lowering().diagnostics().getFirst();
+                check(diagnostic.code().equals("E6005"), "annotation fact defect is E6005");
+                check(diagnostic.message().contains("unknown type '" + name + "'"), "exact missing annotation fact named: " + diagnostic);
+                check(diagnostic.range().equals(span.range()), "annotation's own range, not helper/class/call range");
+                var range = diagnostic.range();
+                if (offsetless) {
+                    check(range.origin() == RangeOrigin.SYNTHETIC && range.file().equals("writer.deal"), "known offsetless file retained");
+                    check(range.startLine() == 1 && range.startColumn() == 1 && range.endLine() == 1 && range.endColumn() == 1,
+                        "offsetless canonical anchor");
+                    check(range.startScalarOffset() == 0 && range.endScalarOffset() == 0 && range.scalarLength() == 0,
+                        "offsetless zero range");
+                } else {
+                    check(range.origin() == RangeOrigin.SOURCE && range.file().equals("main.deal"), "source annotation file retained");
+                    check(range.startLine() == 3 && range.startColumn() == 29 && range.endColumn() == 33, "independent annotation coordinates");
+                    check(range.startScalarOffset() == source.lastIndexOf("Leaf") && range.scalarLength() == 4,
+                        "independent annotation offsets");
                 }
             }
         }
-        return symbols;
     }
-
-    /**
-     * The caller's stub module resolver: the owner's exports and class
-     * symbols routed by the module path and by the carried canonical
-     * module identity — including the {@code @jsonable} synthetic
-     * function exports the checker's field-type validation consumes.
-     */
-    private static final class OwnerResolver implements ModuleResolver {
-
-        private final Map<String, Type> exports;
-        private final Map<String, Symbol.ClassSymbol> classSymbols;
-        private final Set<String> syntheticFunctions;
-
-        OwnerResolver(CheckedSlice owner) {
-            this.exports = ownerExports(owner);
-            this.classSymbols = ownerClassSymbols(owner);
-            this.syntheticFunctions = new LinkedHashSet<>();
-            for (StatementNode stmt : owner.program().statements()) {
-                StatementNode declaration = stmt instanceof ExportDeclaration exp
-                    ? exp.declaration() : stmt;
-                if (declaration instanceof ClassDeclaration cd && cd.isJsonable()) {
-                    syntheticFunctions.add(cd.name() + "$fromJson");
-                    syntheticFunctions.add(cd.name() + "$toJson");
-                }
+    private static void testDependencies() {
+        Slice owner = checked("export class Address { city:string; zip:number; }", OWNER, null);
+        if (owner == null) return;
+        var ownerClass = (Symbol.ClassSymbol) owner.symbols().resolve("Address");
+        ModuleResolver resolver = new ModuleResolver() {
+            public Map<String, Type> resolveModule(String path, String importing, Set<String> active) throws ModuleNotFoundException {
+                if (path.equals("owner")) return owner.exports();
+                throw new ModuleNotFoundException(path);
             }
-        }
-
-        @Override
-        public Map<String, Type> resolveModule(String modulePath, String importingModule,
-                                               Set<String> modulesInProgress)
-                throws ModuleNotFoundException {
-            if (IMPORT_SPECIFIER.equals(modulePath)) {
-                return exports;
+            public Symbol.ClassSymbol resolveClassSymbol(String name, String path, String importing) {
+                return name.equals("Address") ? ownerClass : null;
             }
-            throw new ModuleNotFoundException("Module not found: " + modulePath);
-        }
-
-        @Override
-        public Symbol.ClassSymbol resolveClassSymbol(String className, String modulePath,
-                                                      String importingModule)
-                throws ModuleNotFoundException {
-            if (OWNER.path().equals(modulePath)) {
-                return classSymbols.get(className);
+            public Symbol.ClassSymbol resolveClassSymbol(String name, deal.identity.CanonicalModuleIdentity identity, String importing) {
+                return name.equals("Address") && identity.equals(ownerClass.identity().moduleIdentity()) ? ownerClass : null;
             }
-            return null;
-        }
-
-        @Override
-        public Symbol.ClassSymbol resolveClassSymbol(String className,
-                deal.identity.CanonicalModuleIdentity declaringModule,
-                String importingModule) throws ModuleNotFoundException {
-            if (IdentityTestFixtures.moduleIdentityOf(OWNER.path())
-                    .equals(declaringModule)) {
-                return classSymbols.get(className);
-            }
-            return null;
-        }
-
-        @Override
-        public boolean isFunctionExportedFromModule(
-                deal.identity.CanonicalModuleIdentity declaringModule, String functionName,
-                String importingModule) throws ModuleNotFoundException {
-            if (IdentityTestFixtures.moduleIdentityOf(OWNER.path())
-                    .equals(declaringModule)) {
-                return syntheticFunctions.contains(functionName);
-            }
-            return false;
-        }
-    }
-
-    /** The single-module pipeline driver: lexer/parser/checker → lowerModuleClassCore. */
-    private static SemanticLowerer.ClassDeclarationCoreResult lowerModule(String source) {
-        CheckedSlice slice = checkSlice(source, MODULE, null);
-        if (slice == null) {
-            return null;
-        }
-        PipelineSlice pipeline = pipeline(slice);
-        if (pipeline == null) {
-            return null;
-        }
-        return SemanticLowerer.lowerModuleClassCore(moduleOf(slice, MODULE, List.of()),
-            SemanticProfile.DEAL_V1_6_BINARY64, pipeline.coverage(), pipeline.interfaceHash(),
-            REGISTRY_HASH, pipeline.ownInterface(),
-            SemanticIdAllocator.over(List.of(MODULE)));
-    }
-
-    /** The foundation detector's project facts of the slice (index + coverage). */
-    private static PipelineSlice pipeline(CheckedSlice slice) {
-        CompilerInvocation invocation = CompilerProfileProvider.resolve(ReleaseState.V1_6_ACTIVE,
-            CapabilityRegistry.releaseRegistry());
-        ModuleFact fact = new ModuleFact(SOURCE_ID, MODULE, false, false, slice.program(),
-            Map.of(), slice.symbols(), slice.checks(), List.of());
-        deal.semantic.CheckedProjectBuildResult built = CheckedProjectBuilder.build(invocation,
-            MODULE, List.of(fact));
-        check(built != null && !built.hasErrors() && built.input() != null
-                && built.index() != null,
-            "the checked project builds cleanly: "
-                + (built == null ? "null" : built.diagnostics()));
-        if (built == null || built.hasErrors() || built.input() == null
-                || built.index() == null) {
-            return null;
-        }
-        RequirementManifestResult manifests = LoweringSupport.computeManifests(invocation,
-            built.input(), built.index());
-        check(manifests != null && manifests.diagnostics().isEmpty()
-                && manifests.manifests() != null && manifests.manifests().size() == 1,
-            "the foundation detector produces exactly one requirement manifest: "
-                + (manifests == null ? "null" : manifests.diagnostics()));
-        if (manifests == null || !manifests.diagnostics().isEmpty()
-                || manifests.manifests() == null || manifests.manifests().size() != 1) {
-            return null;
-        }
-        Map<ConstructKind, List<SemanticOpKind>> coverage =
-            new LinkedHashMap<>(manifests.manifests().get(0).constructCoverage());
-        coverage.remove(ConstructKind.IMPORT_EXPORT_ENTRY);
-        ExternalModuleInterface own = built.index().modules().get(MODULE);
-        check(own != null, "the index carries the module's own interface entry");
-        return new PipelineSlice(slice, built.index().interfaceIndexDigest(), own, coverage);
-    }
-
-    private static CheckedModuleInput moduleOf(CheckedSlice slice, ModuleId moduleId,
-                                               List<ResolvedImport> imports) {
-        return new CheckedModuleInput(moduleId, moduleId.path() + ".deal",
-            Path.of(moduleId.path() + ".deal"), slice.program(), slice.checks(), imports,
-            List.of(), CheckedModuleKind.IMPLEMENTATION);
-    }
-
-    /** The two-module checked project: index digest + per-module coverage rows. */
-    private static ProjectFacts buildProject(CheckedSlice owner, CheckedSlice caller) {
-        CompilerInvocation invocation = CompilerProfileProvider.resolve(ReleaseState.V1_6_ACTIVE,
-            CapabilityRegistry.releaseRegistry());
-        ModuleFact ownerFact = new ModuleFact(OWNER_SOURCE_ID, OWNER, false, false,
-            owner.program(), ownerExports(owner), owner.symbols(), owner.checks(), List.of());
-        ModuleFact callerFact = new ModuleFact(CALLER_SOURCE_ID, CALLER, false, false,
-            caller.program(), Map.of(), caller.symbols(), caller.checks(),
-            List.of(new ModuleFact.ImportFact("Owner", IMPORT_SPECIFIER, OWNER_SOURCE_ID)));
-        deal.semantic.CheckedProjectBuildResult built = CheckedProjectBuilder.build(invocation,
-            CALLER, List.of(ownerFact, callerFact));
-        check(built != null && !built.hasErrors() && built.input() != null
-                && built.index() != null,
-            "the two-module checked project builds cleanly: "
-                + (built == null ? "null" : built.diagnostics()));
-        if (built == null || built.hasErrors() || built.input() == null
-                || built.index() == null) {
-            return null;
-        }
-        RequirementManifestResult manifests = LoweringSupport.computeManifests(invocation,
-            built.input(), built.index());
-        check(manifests != null && manifests.diagnostics().isEmpty()
-                && manifests.manifests() != null && manifests.manifests().size() == 2,
-            "the foundation detector produces exactly two requirement manifests (owner, "
-                + "caller): "
-                + (manifests == null ? "null" : manifests.diagnostics()));
-        if (manifests == null || !manifests.diagnostics().isEmpty()
-                || manifests.manifests() == null || manifests.manifests().size() != 2) {
-            return null;
-        }
-        Map<ModuleId, Map<ConstructKind, List<SemanticOpKind>>> coverages =
-            new LinkedHashMap<>();
-        List<ModuleId> ordered = List.of(OWNER, CALLER);
-        for (int i = 0; i < ordered.size(); i++) {
-            Map<ConstructKind, List<SemanticOpKind>> coverage =
-                new LinkedHashMap<>(manifests.manifests().get(i).constructCoverage());
-            coverage.remove(ConstructKind.IMPORT_EXPORT_ENTRY);
-            coverages.put(ordered.get(i), coverage);
-        }
-        return new ProjectFacts(built.index(), built.index().interfaceIndexDigest(),
-            coverages);
-    }
-
-    /** Lowers the owner and the caller through the two-module seam. */
-    private static LoweredPair lowerPair(String ownerSource, String callerSource) {
-        CheckedSlice owner = checkSlice(ownerSource, OWNER, null);
-        if (owner == null) {
-            return null;
-        }
-        CheckedSlice caller = checkSlice(callerSource, CALLER, new OwnerResolver(owner));
-        if (caller == null) {
-            return null;
-        }
-        ProjectFacts project = buildProject(owner, caller);
-        if (project == null) {
-            return null;
-        }
-        SemanticIdAllocator allocator = SemanticIdAllocator.over(List.of(OWNER, CALLER));
-        SemanticLowerer.ClassDeclarationCoreResult ownerResult =
-            SemanticLowerer.lowerModuleClassCore(moduleOf(owner, OWNER, List.of()),
-                SemanticProfile.DEAL_V1_6_BINARY64, project.coverages().get(OWNER),
-                project.interfaceHash(), REGISTRY_HASH,
-                project.index().modules().get(OWNER), Map.of(), allocator);
-        check(ownerResult != null && ownerResult.lowering() != null
-                && !ownerResult.lowering().hasErrors()
-                && ownerResult.lowering().unit() != null,
-            "the owner module lowers to a validated unit: "
-                + (ownerResult == null || ownerResult.lowering() == null ? "null"
-                    : ownerResult.lowering().diagnostics()));
-        if (ownerResult == null || ownerResult.lowering() == null
-                || ownerResult.lowering().hasErrors()
-                || ownerResult.lowering().unit() == null) {
-            return null;
-        }
-
-        Map<ClassId, SharedFactoryFacts> facts = new LinkedHashMap<>();
-        ExternalModuleInterface ownerInterface = project.index().modules().get(OWNER);
-        LoweredModuleUnit ownerUnit = ownerResult.lowering().unit();
-        for (ClassInterface entry : ownerInterface.classes()) {
-            ClassLayout ownerLayout = ownerUnit.classLayouts().get(entry.classId());
-            OpId factoryOpId = ownerResult.registry().factoryFor(entry.constructionEntry());
-            SemanticOp factoryOp = opById(ownerUnit, factoryOpId);
-            check(ownerLayout != null && factoryOpId != null && factoryOp != null
-                    && factoryOp.result() instanceof ValueId,
-                "the owner facts resolve: layout, registry binding, factory op, and "
-                    + "factory result of " + entry.classId());
-            if (ownerLayout == null || factoryOpId == null || factoryOp == null
-                    || !(factoryOp.result() instanceof ValueId factoryResult)) {
-                return null;
-            }
-            facts.put(entry.classId(), new SharedFactoryFacts(entry.classId(), entry,
-                ownerLayout, factoryOpId, factoryResult));
-        }
-        List<ResolvedImport> callerImports = List.of(new ResolvedImport("Owner",
-            IMPORT_SPECIFIER, OWNER, ExternalModuleKind.IMPLEMENTATION));
-        SemanticLowerer.ClassDeclarationCoreResult callerResult =
-            SemanticLowerer.lowerModuleClassCore(moduleOf(caller, CALLER, callerImports),
-                SemanticProfile.DEAL_V1_6_BINARY64, project.coverages().get(CALLER),
-                project.interfaceHash(), REGISTRY_HASH,
-                project.index().modules().get(CALLER), facts, allocator);
-        check(callerResult != null && callerResult.lowering() != null
-                && !callerResult.lowering().hasErrors()
-                && callerResult.lowering().unit() != null,
-            "the caller module lowers to a validated unit: "
-                + (callerResult == null || callerResult.lowering() == null ? "null"
-                    : callerResult.lowering().diagnostics()));
-        if (callerResult == null || callerResult.lowering() == null
-                || callerResult.lowering().hasErrors()
-                || callerResult.lowering().unit() == null) {
-            return null;
-        }
-        return new LoweredPair(ownerResult, callerResult, project, facts);
-    }
-
-    private static List<SemanticOp> ofKind(List<SemanticOp> ops, SemanticOpKind kind) {
-        List<SemanticOp> matches = new ArrayList<>();
-        for (SemanticOp op : ops) {
-            if (op.kind() == kind) {
-                matches.add(op);
-            }
-        }
-        return matches;
-    }
-
-    private static SemanticOp opById(LoweredModuleUnit unit, OpId opId) {
-        for (SemanticOp op : unit.ops()) {
-            if (op.opId().equals(opId)) {
-                return op;
-            }
-        }
-        return null;
-    }
-
-    private static KindPayload.ClosureNewPayload closurePayload(SemanticOp op) {
-        return (KindPayload.ClosureNewPayload) op.payload();
-    }
-
-    // =========================================================================
-    // (a) the generated bodies pinned (signatures, registrations, wiring)
-    // =========================================================================
-
-    private static void testGeneratedBodiesPinned(
-            SemanticLowerer.ClassDeclarationCoreResult result) {
-        System.out.println("-- the generated C$fromJson/C$toJson bodies: exact "
-            + "signatures, LoweredBody registrations, parameter load plus the JSON op "
-            + "wiring, policies, result types --");
-
-        check(result != null && result.lowering() != null && !result.lowering().hasErrors()
-                && result.lowering().unit() != null,
-            "the @jsonable slice lowers to a validated unit: "
-                + (result == null || result.lowering() == null ? "null"
-                    : result.lowering().diagnostics()));
-        if (result == null || result.lowering() == null || result.lowering().hasErrors()
-                || result.lowering().unit() == null) {
-            return;
-        }
-        LoweredModuleUnit unit = result.lowering().unit();
-        StructuredBodyTable table = result.lowering().table();
-        ClassId pointId = new ClassId(MODULE.path(), "Point");
-        ClassLayout layout = unit.classLayouts().get(pointId);
-        check(layout != null, "the layout of the @jsonable class exists");
-        if (layout == null) {
-            return;
-        }
-        RuntimeDescriptor classDescriptor = new RuntimeDescriptor.Class(pointId);
-        RuntimeDescriptor fromResult = new RuntimeDescriptor.Nullable(classDescriptor);
-
-        // Exactly two CLOSURE_NEW ops with the pinned generated
-        // signatures.
-        List<SemanticOp> closures = ofKind(unit.ops(), SemanticOpKind.CLOSURE_NEW);
-        check(closures.size() == 2, "exactly two generated CLOSURE_NEW ops; got "
-            + closures.size());
-        if (closures.size() != 2) {
-            return;
-        }
-        SemanticOp fromClosure = null;
-        SemanticOp toClosure = null;
-        for (SemanticOp closure : closures) {
-            KindPayload.ClosureNewPayload payload = closurePayload(closure);
-            if (payload.signature().equals(new RuntimeDescriptor.Func(
-                    List.of(RuntimeDescriptor.String.INSTANCE), fromResult, false))) {
-                fromClosure = closure;
-            } else if (payload.signature().equals(new RuntimeDescriptor.Func(
-                    List.of(classDescriptor), RuntimeDescriptor.String.INSTANCE, false))) {
-                toClosure = closure;
-            }
-        }
-        check(fromClosure != null && toClosure != null,
-            "one closure carries C$fromJson(s: string): C|null and one carries "
-                + "C$toJson(v: C): string; got from=" + (fromClosure != null)
-                + " to=" + (toClosure != null));
-        if (fromClosure == null || toClosure == null) {
-            return;
-        }
-        check(fromClosure.failurePolicy() == FailurePolicyId.NO_DEAL_FAILURE
-                && toClosure.failurePolicy() == FailurePolicyId.NO_DEAL_FAILURE,
-            "the generated closures carry NO_DEAL_FAILURE");
-        check(fromClosure.origin().kind() == SourceOriginKind.SYNTHETIC
-                && toClosure.origin().kind() == SourceOriginKind.SYNTHETIC,
-            "the generated closures carry SYNTHETIC origins (deterministic synthetic "
-                + "origins)");
-
-        // The LoweredFunction records and the LoweredBody registrations
-        // through the registry seam (generated synthetics are ordinary
-        // CLOSURE_NEW producers).
-        KindPayload.ClosureNewPayload fromPayload = closurePayload(fromClosure);
-        KindPayload.ClosureNewPayload toPayload = closurePayload(toClosure);
-        check(unit.functions().containsKey(fromPayload.function())
-                && unit.functions().containsKey(toPayload.function()),
-            "unit.functions carries both generated LoweredFunction records");
-        LoweredFunction fromFunction = unit.functions().get(fromPayload.function());
-        LoweredFunction toFunction = unit.functions().get(toPayload.function());
-        check(fromFunction != null && fromFunction.captures().isEmpty()
-                && fromFunction.body().equals(fromPayload.binding().blockId())
-                && toFunction != null && toFunction.captures().isEmpty()
-                && toFunction.body().equals(toPayload.binding().blockId()),
-            "the LoweredFunction records pin the signatures, empty captures, and the "
-                + "binding body blocks");
-        FunctionAllocationIdentity fromIdentity = new FunctionAllocationIdentity(
-            ((ValueId) fromClosure.result()).id());
-        FunctionAllocationIdentity toIdentity = new FunctionAllocationIdentity(
-            ((ValueId) toClosure.result()).id());
-        check(unit.functionBindings().get(fromIdentity)
-                instanceof FunctionExecutionBinding.LoweredBody fromBinding
-                && fromBinding.functionId().equals(fromPayload.function())
-                && fromBinding.blockId().equals(fromPayload.binding().blockId()),
-            "the fromJson closure identity registers exactly one LoweredBody binding "
-                + "through the registry seam");
-        check(unit.functionBindings().get(toIdentity)
-                instanceof FunctionExecutionBinding.LoweredBody toBinding
-                && toBinding.functionId().equals(toPayload.function())
-                && toBinding.blockId().equals(toPayload.binding().blockId()),
-            "the toJson closure identity registers exactly one LoweredBody binding "
-                + "through the registry seam");
-
-        // The fromJson body block: the parameter ALLOC, the parameter
-        // load, and exactly one JSON_FROM_CLASS op.
-        List<OpId> fromBody = table.blockOps().get(fromPayload.binding().blockId());
-        check(fromBody != null && fromBody.size() == 3,
-            "the fromJson body block carries exactly three ops (parameter ALLOC, "
-                + "parameter load, JSON op); got " + (fromBody == null ? "null"
-                    : fromBody.size()));
-        if (fromBody == null || fromBody.size() != 3) {
-            return;
-        }
-        SemanticOp fromAlloc = opById(unit, fromBody.get(0));
-        SemanticOp fromLoad = opById(unit, fromBody.get(1));
-        SemanticOp fromJson = opById(unit, fromBody.get(2));
-        check(fromAlloc != null && fromAlloc.kind() == SemanticOpKind.BINDING_ALLOC
-                && fromAlloc.payload() instanceof KindPayload.BindingAllocPayload fromAllocP
-                && fromAllocP.mutable() && fromAllocP.generation() == 0,
-            "the fromJson parameter ALLOC sits at the body entry (mutable, generation 0)");
-        check(fromLoad != null && fromLoad.kind() == SemanticOpKind.BINDING_LOAD
-                && fromLoad.payload() instanceof KindPayload.BindingLoadPayload fromLoadP
-                && fromLoadP.binding().equals(((KindPayload.BindingAllocPayload)
-                    fromAlloc.payload()).binding())
-                && fromLoadP.generation() == 0
-                && fromLoad.resultType().equals(RuntimeDescriptor.String.INSTANCE),
-            "the fromJson parameter load wires the parameter binding with the string "
-                + "result type");
-        check(fromJson != null && fromJson.kind() == SemanticOpKind.JSON_FROM_CLASS
-                && fromJson.failurePolicy() == FailurePolicyId.JSON_FROM_NULL,
-            "the fromJson body's single JSON op carries policy JSON_FROM_NULL");
-        check(fromJson != null && fromJson.payload()
-                instanceof KindPayload.JsonFromClassPayload fromJsonP
-                && fromJsonP.layout().equals(layout)
-                && fromJsonP.jsonString().equals(fromLoad.result()),
-            "the JSON_FROM_CLASS payload pins the class layout and the parameter load "
-                + "result as the jsonString operand");
-        check(fromJson != null && fromJson.resultType() != null
-                && fromJson.resultType().equals(fromResult)
-                && fromJson.result() instanceof ValueId,
-            "the JSON_FROM_CLASS op publishes the pinned ?class:<ClassId> result type");
-
-        // The toJson body block: the parameter ALLOC, the parameter
-        // load, and exactly one JSON_TO_CLASS op.
-        List<OpId> toBody = table.blockOps().get(toPayload.binding().blockId());
-        check(toBody != null && toBody.size() == 3,
-            "the toJson body block carries exactly three ops; got " + (toBody == null
-                ? "null" : toBody.size()));
-        if (toBody != null && toBody.size() == 3) {
-            SemanticOp toAlloc = opById(unit, toBody.get(0));
-            SemanticOp toLoad = opById(unit, toBody.get(1));
-            SemanticOp toJson = opById(unit, toBody.get(2));
-            check(toAlloc != null && toAlloc.kind() == SemanticOpKind.BINDING_ALLOC
-                    && toLoad != null && toLoad.kind() == SemanticOpKind.BINDING_LOAD
-                    && toLoad.resultType().equals(classDescriptor),
-                "the toJson parameter load wires the class descriptor result type");
-            check(toJson != null && toJson.kind() == SemanticOpKind.JSON_TO_CLASS
-                    && toJson.failurePolicy() == FailurePolicyId.JSON_TO_ERROR,
-                "the toJson body's single JSON op carries policy JSON_TO_ERROR");
-            check(toJson != null && toJson.payload()
-                    instanceof KindPayload.JsonToClassPayload toJsonP
-                    && toJsonP.layout().equals(layout)
-                    && toJsonP.classValue().equals(toLoad.result()),
-                "the JSON_TO_CLASS payload pins the parameter load result as the "
-                    + "classValue operand and the class layout");
-            check(toJson != null && toJson.resultType() != null
-                    && toJson.resultType().equals(RuntimeDescriptor.String.INSTANCE)
-                    && toJson.result() instanceof ValueId,
-                "the JSON_TO_CLASS op publishes the pinned string result type");
-        }
-
-        check(unit.ops().stream().noneMatch(op -> op.kind().name().equals("CLASS_DEFAULT")),
-            "JSON decoding owns no initializer operations");
-    }
-
-    // =========================================================================
-    // (b) the non-@jsonable negative
-    // =========================================================================
-
-    private static void testNonJsonableNegative() {
-        System.out.println("-- a non-@jsonable class generates no JSON functions and "
-            + "records no table entry --");
-
-        SemanticLowerer.ClassDeclarationCoreResult result = lowerModule("""
-            export class Plain {
-              x: number;
-            }
-            """);
-        check(result != null && result.lowering() != null && !result.lowering().hasErrors()
-                && result.lowering().unit() != null,
-            "the non-@jsonable slice lowers: "
-                + (result == null || result.lowering() == null ? "null"
-                    : result.lowering().diagnostics()));
-        if (result == null || result.lowering() == null || result.lowering().hasErrors()
-                || result.lowering().unit() == null) {
-            return;
-        }
-        LoweredModuleUnit unit = result.lowering().unit();
-        check(ofKind(unit.ops(), SemanticOpKind.JSON_FROM_CLASS).isEmpty()
-                && ofKind(unit.ops(), SemanticOpKind.JSON_TO_CLASS).isEmpty()
-                && ofKind(unit.ops(), SemanticOpKind.CLOSURE_NEW).isEmpty(),
-            "no JSON op and no CLOSURE_NEW op exist for the non-@jsonable class");
-    }
-
-    // =========================================================================
-    // (b2) the @jsonable helper descriptor origins (ISSUE-0750)
-    // =========================================================================
-
-    /**
-     * ISSUE-0750: the generated @jsonable helper signatures are
-     * declaration-owned at the class-core boundary — a corrupted checked
-     * {@code C$fromJson}/{@code C$toJson} signature (the closed fact no
-     * checker-valid program produces) fails closed at the owning class
-     * declaration's own range, the same span the helper's
-     * declared-parameter origin records. A known-file offsetless
-     * declaration span keeps its file and stays SYNTHETIC at the
-     * canonical anchor, never borrowing the empty-file anchor.
-     */
-    private static void testGeneratedHelperDescriptorOrigins() {
-        System.out.println("-- the generated @jsonable helper descriptor failures keep "
-            + "the class declaration's own range --");
-
+        };
         String source = """
-            // @jsonable
-            export class Widget { n: number; }
-            """;
-
-        // (a) both generated signatures (fromJson, toJson), known offsets:
-        // exactly the class declaration's own converted SOURCE range.
-        for (String helper : List.of("Widget$fromJson", "Widget$toJson")) {
-            CheckedSlice slice = checkSlice(source, MODULE, null);
-            if (slice == null) {
-                continue;
-            }
-            PipelineSlice pipeline = pipeline(slice);
-            if (pipeline == null) {
-                continue;
-            }
-            ClassDeclaration declaration = jsonableClassOf(slice);
-            check(declaration != null,
-                "the slice carries the @jsonable class declaration");
-            if (declaration == null) {
-                continue;
-            }
-            CompilerDiagnostic diagnostic = lowerCorruptedHelper(slice, pipeline,
-                slice.program(), helper);
-            if (diagnostic == null) {
-                continue;
-            }
-            assertDescriptorFailure(diagnostic, helper);
-            DiagnosticRange range = diagnostic.range();
-            check(range.origin() == RangeOrigin.SOURCE
-                    && "main.deal".equals(range.file())
-                    && range.startLine() == 2 && range.startColumn() == 8
-                    && range.endLine() == 2 && range.endColumn() == 35
-                    && range.startScalarOffset() == 20
-                    && range.endScalarOffset() == 47
-                    && range.scalarLength() == 27,
-                "the corrupted " + helper + " failure carries the class declaration's "
-                    + "own exact SOURCE range main.deal 2:8-2:35 [20,47) length 27; got "
-                    + range);
-            check(range.equals(declaration.span().range()),
-                "the " + helper + " range is exactly the class declaration's own span "
-                    + "conversion; got " + range);
-        }
-
-        // (b) known-file offsetless control: the same class-walk derivation
-        // with an offsetless declaration span keeps its file and stays
-        // SYNTHETIC at the canonical anchor.
-        for (String helper : List.of("Widget$fromJson", "Widget$toJson")) {
-            CheckedSlice slice = checkSlice(source, MODULE, null);
-            if (slice == null) {
-                continue;
-            }
-            PipelineSlice pipeline = pipeline(slice);
-            if (pipeline == null) {
-                continue;
-            }
-            ClassDeclaration parsed = jsonableClassOf(slice);
-            if (parsed == null) {
-                continue;
-            }
-            ClassDeclaration declaration = new ClassDeclaration(
-                new Span("writer.deal", 2, 8, 2, 35), parsed.name(), parsed.fields(),
-                parsed.directives());
-            ProgramNode program = new ProgramNode(
-                new Span("writer.deal", 1, 1, 2, 35), List.of(declaration));
-            CompilerDiagnostic diagnostic = lowerCorruptedHelper(slice, pipeline,
-                program, helper);
-            if (diagnostic == null) {
-                continue;
-            }
-            assertDescriptorFailure(diagnostic, helper);
-            DiagnosticRange range = diagnostic.range();
-            check(range.origin() == RangeOrigin.SYNTHETIC
-                    && "writer.deal".equals(range.file())
-                    && range.startLine() == 1 && range.startColumn() == 1
-                    && range.endLine() == 1 && range.endColumn() == 1
-                    && range.startScalarOffset() == 0
-                    && range.endScalarOffset() == 0
-                    && range.scalarLength() == 0,
-                "the offsetless " + helper + " class declaration keeps its known file "
-                    + "and stays SYNTHETIC at the canonical anchor: " + range);
-        }
-    }
-
-    /** The single exported @jsonable class declaration of the slice. */
-    private static ClassDeclaration jsonableClassOf(CheckedSlice slice) {
-        for (StatementNode statement : slice.program().statements()) {
-            StatementNode declaration = statement instanceof ExportDeclaration export
-                ? export.declaration() : statement;
-            if (declaration instanceof ClassDeclaration classDeclaration
-                    && classDeclaration.isJsonable()) {
-                return classDeclaration;
-            }
-        }
-        return null;
-    }
-
-    /**
-     * One class-core drive of one corrupted generated-helper signature:
-     * the named synthetic symbol of the slice's root table is replaced
-     * with a {@code Type.Error} return type, and the supplied program is
-     * lowered through {@code lowerModuleClassCore}. Returns the first
-     * diagnostic of the failed lowering, or null when the lowering did
-     * not fail.
-     */
-    private static CompilerDiagnostic lowerCorruptedHelper(CheckedSlice slice,
-            PipelineSlice pipeline, ProgramNode program, String helper) {
-        slice.checks().symbolTable().remove(helper);
-        slice.checks().symbolTable().define(helper,
-            new Symbol.FunctionSymbol(helper,
-                new Type.Func(List.of(Type.String.INSTANCE), Type.Error.INSTANCE, false)));
-        SemanticLowerer.ClassDeclarationCoreResult result =
-            SemanticLowerer.lowerModuleClassCore(
-                new CheckedModuleInput(MODULE, "writer.deal", Path.of("writer.deal"),
-                    program, slice.checks(), List.of(), List.of(),
-                    CheckedModuleKind.IMPLEMENTATION),
-                SemanticProfile.DEAL_V1_6_BINARY64, pipeline.coverage(),
-                pipeline.interfaceHash(), REGISTRY_HASH, pipeline.ownInterface(),
-                SemanticIdAllocator.over(List.of(MODULE)));
-        check(result != null && result.lowering().hasErrors()
-                && result.lowering().unit() == null,
-            "the corrupted " + helper + " signature fails the class-core lowering hard "
-                + "with no unit");
-        if (result == null || !result.lowering().hasErrors()) {
-            return null;
-        }
-        return result.lowering().diagnostics().get(0);
-    }
-
-    /** The unchanged E6005 DESCRIPTOR_UNREPRESENTABLE conversion of one helper failure. */
-    private static void assertDescriptorFailure(CompilerDiagnostic diagnostic,
-            String helper) {
-        check("E6005".equals(diagnostic.code())
-                && diagnostic.message().contains(
-                    ContainerPayloadDescriptors.DESCRIPTOR_UNREPRESENTABLE),
-            "the corrupted " + helper + " signature converts to the unchanged E6005 "
-                + "DESCRIPTOR_UNREPRESENTABLE; got " + diagnostic.message());
-    }
-
-    private static void testPairDefaultChildren(LoweredPair pair) {
-        if (pair == null) {
-            return;
-        }
-        LoweredModuleUnit caller = pair.caller().lowering().unit();
-        List<SemanticOp> from = ofKind(caller.ops(), SemanticOpKind.JSON_FROM_CLASS);
-        check(from.size() == 2, "Person and Strict each produce a fromJson op");
-        for (SemanticOp op : from) {
-            ClassId classId = ((KindPayload.JsonFromClassPayload) op.payload()).layout().classId();
-            check(caller.classLayouts().containsKey(classId),
-                classId + ": decoding uses its structural layout");
-        }
-        for (ClassInterface entry : pair.project().index().modules().get(OWNER).classes()) {
-            SemanticOp factory = opById(pair.owner().lowering().unit(),
-                pair.owner().registry().factoryFor(entry.constructionEntry()));
-            check(factory != null && factory.kind() == SemanticOpKind.CLASS_FACTORY,
-                "the nested owner factory resolves through its construction entry");
-        }
-    }
-
-    // =========================================================================
-    // (d) determinism
-    // =========================================================================
-
-    private static void testDeterminism() {
-        System.out.println("-- determinism: two repetitions byte-identical --");
-
-        testPairDeterminism();
-        testSingleModuleDeterminism();
-    }
-
-    private static void testPairDeterminism() {
-        String ownerSource = """
-            // @jsonable
-            export class Address {
-              city: string;
-              zip: number;
-            }
-            """;
-        String callerSource = """
             import * as Owner from "owner";
-
             // @jsonable
-            export class Person {
-              name: string;
-              age: number;
-              home: Owner.Address;
-            }
-
-            // @jsonable
-            export class Strict {
-              tag: string;
-            }
+            export class Person { name:string; home:Owner.Address; }
+            export class Strict { tag:string; }
+            export function person(s:string):Person { return JSON.parse(s); }
+            export function strict(s:string):Strict { return JSON.parse(s); }
+            export function main():null { return null; }
             """;
-        LoweredPair first = lowerPair(ownerSource, callerSource);
-        testPairDefaultChildren(first);
-        LoweredPair second = lowerPair(ownerSource, callerSource);
-        check(first != null && second != null, "both repetitions lower");
-        if (first == null || second == null) {
-            return;
+        Slice main = checked(source, MAIN, resolver);
+        if (main == null) return;
+        var slices = new LinkedHashMap<ModuleId, Slice>();
+        slices.put(OWNER, owner); slices.put(MAIN, main);
+        Pipeline pipeline = pipeline(slices);
+        if (pipeline == null) return;
+        var first = lower(pipeline);
+        var second = lower(pipeline);
+        if (first.project() == null || second.project() == null) return;
+        var caller = first.project().modules().get(MAIN);
+        check(kind(caller, SemanticOpKind.JSON_PARSE).size() == 2, "Person/Strict each own an explicit parse");
+        check(!caller.classLayouts().containsKey(new ClassId("owner", "Address")), "dependency schema not relocated into caller");
+        var person = caller.classLayouts().get(new ClassId("main", "Person"));
+        check(person != null && person.fields().get(1).descriptor().equals(new RuntimeDescriptor.Class(new ClassId("owner", "Address"))),
+            "exact dependency nominal descriptor");
+        var ownerUnit = first.project().modules().get(OWNER);
+        for (var cls : pipeline.built().index().modules().get(OWNER).classes()) {
+            OpId factoryId = ownerUnit.classFactories().factoryFor(cls.constructionEntry());
+            check(factoryId != null && op(ownerUnit, factoryId).kind() == SemanticOpKind.CLASS_FACTORY, "construction entry still resolves owner factory");
         }
-        byte[] firstOwner = SemanticIrDumper.dumpModule(first.owner().lowering().unit());
-        byte[] secondOwner = SemanticIrDumper.dumpModule(second.owner().lowering().unit());
-        byte[] firstCaller = SemanticIrDumper.dumpModule(first.caller().lowering().unit());
-        byte[] secondCaller = SemanticIrDumper.dumpModule(second.caller().lowering().unit());
-        check(Arrays.equals(firstOwner, secondOwner),
-            "the owner unit dump is byte-identical across repetitions");
-        check(Arrays.equals(firstCaller, secondCaller),
-            "the caller unit dump is byte-identical across repetitions");
+        for (ModuleId id : List.of(OWNER, MAIN)) {
+            byte[] bytes = SemanticIrDumper.dumpModule(first.project().modules().get(id));
+            check(Arrays.equals(bytes, SemanticIrDumper.dumpModule(second.project().modules().get(id))), id + " dependency-order deterministic bytes");
+            String dump = new String(bytes, StandardCharsets.UTF_8);
+            check(!dump.contains("jsonDefaults") && !dump.contains("$fromJson") && !dump.contains("$toJson"), id + " no retired helper/default transport");
+        }
 
-        check(!new String(firstCaller, java.nio.charset.StandardCharsets.UTF_8).contains("jsonDefaults"),
-            "canonical units contain no retired JSON initializer companion");
-    }
-
-    private static void testSingleModuleDeterminism() {
-        // The single-module slice repeats byte-identically too.
-        SemanticLowerer.ClassDeclarationCoreResult a = lowerModule("""
-            // @jsonable
-            export class Point {
-              x: number;
-              tag: string;
-              note?: string;
-            }
-            """);
-        testGeneratedBodiesPinned(a);
-        SemanticLowerer.ClassDeclarationCoreResult b = lowerModule("""
-            // @jsonable
-            export class Point {
-              x: number;
-              tag: string;
-              note?: string;
-            }
-            """);
-        check(a != null && b != null && a.lowering() != null && b.lowering() != null
-                && a.lowering().unit() != null && b.lowering().unit() != null,
-            "both single-module repetitions lower");
-        if (a != null && b != null && a.lowering() != null && b.lowering() != null
-                && a.lowering().unit() != null && b.lowering().unit() != null) {
-            check(Arrays.equals(SemanticIrDumper.dumpModule(a.lowering().unit()),
-                    SemanticIrDumper.dumpModule(b.lowering().unit())),
-                "the single-module dump is byte-identical across repetitions");
+        // Remove a checked fact the existing qualified field actually consumes.
+        // Keep the AST, exports, import records and all executable calls unchanged.
+        check(main.symbols().resolve("Owner") instanceof Symbol.ModuleSymbol,
+            "qualified annotation baseline has its actual module symbol");
+        main.symbols().remove("Owner");
+        var coverage = new LinkedHashMap<>(pipeline.manifests().manifests().getLast().constructCoverage());
+        coverage.remove(ConstructKind.IMPORT_EXPORT_ENTRY);
+        var broken = SemanticLowerer.lowerModuleClassCore(pipeline.built().input().modules().getLast(),
+            INVOCATION.semanticProfile(), coverage, pipeline.built().index().interfaceIndexDigest(),
+            INVOCATION.capabilityRegistryHash(), pipeline.built().index().modules().get(MAIN),
+            SemanticIdAllocator.over(List.of(OWNER, MAIN)));
+        check(broken.lowering().unit() == null && broken.lowering().hasErrors(),
+            "removed consumed module annotation fact rejects without a partial unit");
+        if (broken.lowering().hasErrors()) {
+            var diagnostic = broken.lowering().diagnostics().getFirst();
+            var range = diagnostic.range();
+            check(diagnostic.code().equals("E6005") && diagnostic.message().contains("unknown module 'Owner'"),
+                "removed module fact names the qualified annotation: " + diagnostic);
+            check(range.origin() == RangeOrigin.SOURCE && range.file().equals("main.deal")
+                && range.startLine() == 3 && range.startColumn() == 41 && range.endColumn() == 54
+                && range.startScalarOffset() == source.indexOf("Owner.Address") && range.scalarLength() == 13,
+                "removed fact keeps independently pinned qualified annotation range: " + range);
         }
     }
-
-    // =========================================================================
-    // Runner
-    // =========================================================================
-
     public static void main(String[] args) {
-        System.out.println("=== Json Class Lowering Tests (ISSUE-0515 K-D8/K-D10) ===\n");
-
-        testNonJsonableNegative();
-        testGeneratedHelperDescriptorOrigins();
-        testDeterminism();
-
-        System.out.println("\nJsonClassLoweringTest: " + passed + " passed, "
-            + failed + " failed");
-        if (failed > 0) {
-            System.exit(1);
-        }
+        testCommentOnlyClasses();
+        testBodiesAndSchemas();
+        testAnnotationOrigins();
+        testDependencies();
+        System.out.println("JsonClassLoweringTest: " + passed + " passed, " + failed + " failed");
+        if (failed != 0) System.exit(1);
     }
 }

@@ -2,7 +2,7 @@
 // @description: Lone UTF-16 Error code survives unknown graph admission with live aliases
 // @expected: runtime-ok
 // @features: boundary-validation, host-abi
-import * as console from "std/console";
+import * as printer from "std/console";
 import * as host from "host/probe";
 
 export function main():null {
@@ -16,13 +16,13 @@ export function main():null {
   if(admitted!==alias || admitted.code!==`\uD800`) {
     throw {code:"TEST",message:"unknown admission lost lone code or identity"};
   }
-  console.log("ACCEPT");
+  printer.log("ACCEPT");
   host.repair();
   if(e!==alias || admitted.code!=="repaired") {
     throw {code:"TEST",message:"unknown alias did not observe repair"};
   }
-  console.log("IDENTITY");
+  printer.log("IDENTITY");
   destination=e;
-  console.log("RECOVERED");
+  printer.log("RECOVERED");
   return null;
 }

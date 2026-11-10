@@ -2,7 +2,7 @@
 // @description: Lone UTF-16 Error code reaches parameter body with live identity
 // @expected: runtime-ok
 // @features: boundary-validation, host-abi
-import * as console from "std/console";
+import * as printer from "std/console";
 import * as host from "host/probe";
-function take(e:Error):void{console.log("PARAM_BODY");}
-export function main():null{let e:Error={code:"X",message:"m"};let original:Error={code:"OLD",message:"old"};let destination=original;let alias=e;let get: () => Error = function():Error{console.log("RETURN_BODY");return e;};host.edit(e);take(e);if(e!==alias || e.code!==`\uD800`){throw {code:"TEST",message:"parameter lost lone code or identity"};}console.log("ACCEPT");host.repair();if(e!==alias || destination!==original || e.code!=="repaired"){throw {code:"TEST",message:"repair lost alias or unrelated destination"};}console.log("IDENTITY");take(e);console.log("RECOVERED");return null;}
+function take(e:Error):void{printer.log("PARAM_BODY");}
+export function main():null{let e:Error={code:"X",message:"m"};let original:Error={code:"OLD",message:"old"};let destination=original;let alias=e;let get: () => Error = function():Error{printer.log("RETURN_BODY");return e;};host.edit(e);take(e);if(e!==alias || e.code!==`\uD800`){throw {code:"TEST",message:"parameter lost lone code or identity"};}printer.log("ACCEPT");host.repair();if(e!==alias || destination!==original || e.code!=="repaired"){throw {code:"TEST",message:"repair lost alias or unrelated destination"};}printer.log("IDENTITY");take(e);printer.log("RECOVERED");return null;}

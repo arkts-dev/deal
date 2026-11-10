@@ -1286,14 +1286,6 @@ public class FieldOpsLoweringTest {
         }
 
         @Override
-        public boolean isFunctionExportedFromModule(
-                deal.identity.CanonicalModuleIdentity declaringModule,
-                String functionName, String importingModule) throws ModuleNotFoundException {
-            Map<String, deal.types.Type> exports = modules.get(lib);
-            return exports != null && exports.containsKey(functionName);
-        }
-
-        @Override
         public deal.types.Type resolveTypeNodeInModule(deal.ast.TypeNode typeNode,
                 String modulePath, String importingModule) throws ModuleNotFoundException {
             return switch (typeNode) {

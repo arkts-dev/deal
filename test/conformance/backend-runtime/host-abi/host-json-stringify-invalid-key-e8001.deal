@@ -3,11 +3,11 @@
 // @expected: runtime-ok
 // @features: stdlib, json, host-abi, unicode, v1.6
 import * as host from "host/jsonabletable";
-import * as json from "std/json";
+
 export function test_json_stringify_invalid_key(): void {
   let value = host.makeBadKey();
-  let text = json.stringify(value) as string;
-  let decoded = json.parse(text);
+  let text = JSON.stringify(value) as string;
+  let decoded: Record<string, unknown> = JSON.parse(text);
   if((value[`\uD800`] as number)!==1 || (decoded[`\uD800`] as number)!==1) {
     throw {code:"FAIL",message:"lone key lost during host or JSON crossing"};
   }

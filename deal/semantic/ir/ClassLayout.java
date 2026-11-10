@@ -5,8 +5,8 @@ import java.util.Objects;
 
 /**
  * A class layout of {@code deal.semantic-ir/2} (parent D16; schema S2):
- * the structural field layout a {@code CLASS_NEW}/{@code CLASS_FACTORY}
- * and the {@code JSON_FROM_CLASS}/{@code JSON_TO_CLASS} conversions carry.
+ * the structural field layout for construction, field operations,
+ * contextual JSON reconstruction and live serialization boundaries.
  * Fields retain declaration order, presence and declaring-provider routing.
  * Construction requires supplied values for every nonoptional field.
  *
@@ -40,13 +40,10 @@ public record ClassLayout(ClassId classId, List<FieldLayout> fields) {
         /**
          * The field's read-result descriptor (the checker's optional-read
          * wrap): a required-present field reads as its declared descriptor,
-         * and an optional field reads as {@code T | null}. The wrap is the
-         * one canonical nullable production
-         * ({@link RuntimeDescriptor#nullable}), so an optional field whose
-         * declared type is {@code null} reads as that {@code null} atom —
-         * {@code null | null} is {@code null}, never the forbidden
-         * {@code ?null} wrapper measured with a raw
-         * {@code new RuntimeDescriptor.Nullable(...)}.
+         * and an optional field adds undefined independently of null via
+         * {@link RuntimeDescriptor#optionalRead}. In particular optional
+         * {@code null} reads as {@code null | undefined}; absence must not
+         * be modeled by a nullable wrap or fabricated null.
          */
         public RuntimeDescriptor readResultDescriptor() {
             return required ? descriptor : RuntimeDescriptor.optionalRead(descriptor);

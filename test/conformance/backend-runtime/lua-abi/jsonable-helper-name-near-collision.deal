@@ -1,23 +1,18 @@
-// @spec: Runtime execution model — Lua backend ABI — generated helper names
-// @description: User identifiers near jsonable helper names do not collide with generated helper exports
+// @spec: Standard library builtins — JSON
+// @description: Ordinary JSON wrapper names and similar local bindings remain distinct in generated artifacts.
 // @expected: runtime-ok
-// @features: lua-abi, jsonable, naming
+// @features: lua-abi, json, naming
 
-// @jsonable
-export class User {
-  name: string;
-}
+export class User { name: string; }
+export function User_fromJson(text: string): User { return JSON.parse(text); }
 
 export function test_jsonable_helper_name_near_collision(): null {
-  let User_fromJson: string = "local";
-  let u: User | null = User$fromJson("{\"name\":\"Ada\"}");
-  if (u !== null) {
-    if (User_fromJson !== "local") { throw { code: "TEST_FAIL", message: "helper name collision" }; }
-    return null;
+  let User_fromJson_local: string = "local";
+  let u: User = User_fromJson("{\"name\":\"Ada\"}");
+  if (User_fromJson_local !== "local" || u.name !== "Ada") {
+    throw {code: "TEST_FAIL", message: "ordinary wrapper name collision"};
   }
-  throw { code: "TEST_FAIL", message: "fromJson failed" };
-}
-
-export function main(): null {
   return null;
 }
+
+export function main(): null { return null; }

@@ -19,11 +19,11 @@ public final class StdlibModuleResolver {
     private StdlibModuleResolver() {}
 
     /**
-     * The 6 spec-listed stdlib modules, in declaration order.
+     * The five spec-listed stdlib modules, in declaration order.
      * This is the authoritative filter — only these modules are valid stdlib.
      */
     public static final List<String> SPEC_STDLIB_MODULES = List.of(
-        "std/console", "std/string", "std/table", "std/json", "std/math", "std/time"
+        "std/console", "std/string", "std/table", "std/math", "std/time"
     );
 
     /**
@@ -236,8 +236,7 @@ public final class StdlibModuleResolver {
                 + lex.diagnostics());
         }
 
-        Parser parser = new Parser(lex.tokens(), filename,
-            lex.directiveEvents());
+        Parser parser = new Parser(lex.tokens(), filename);
         ParseResult parseResult = parser.parse();
         if (parseResult.hasErrors()) {
             throw new RuntimeException("Parse errors in " + filename + ": "

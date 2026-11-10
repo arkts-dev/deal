@@ -4,12 +4,10 @@
 // of two same-directory sibling declarations of the class name Item: its
 // canonical class identity names this defining file, so an instance of it
 // never passes the other sibling's typed boundary.
-// @jsonable
 export class Item {
   value: number;
 }
 
-// @jsonable
 export class Payload {
   label: string;
   item: Item;
@@ -44,11 +42,11 @@ export function maybeIdentity(item: Item | null): Item | null {
 
 export function payloadJson(): string {
   let p: Payload = { label: "a", item: { value: 1 } };
-  return Payload$toJson(p);
+  return JSON.stringify(p) as string;
 }
 
 export function payloadRoundTrip(): number {
-  let p: Payload | null = Payload$fromJson(payloadJson());
+  let p: Payload | null = JSON.parse(payloadJson());
   if (p !== null) {
     return read(p.item);
   }
@@ -56,11 +54,11 @@ export function payloadRoundTrip(): number {
 }
 
 export function itemJson(item: Item): string {
-  return Item$toJson(item);
+  return JSON.stringify(item) as string;
 }
 
 export function itemRoundTrip(value: number): number {
-  let restored: Item | null = Item$fromJson(itemJson({ value: value }));
+  let restored: Item | null = JSON.parse(itemJson({ value: value }));
   if (restored !== null) {
     return read(restored);
   }

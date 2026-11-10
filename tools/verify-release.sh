@@ -16,8 +16,8 @@
 #   2. backend execution   compile, inspect the published set, and execute
 #                          the smoke project on luajit, jvm and js
 #   3. runtime failure     a thrown Error exits nonzero with its code
-#   4. old version         a languageVersion "1.2" manifest and a
-#                          "@deal-version 1.2" declaration are rejected
+#   4. version admission   an old manifest rejects; version-shaped declaration
+#                          comments are inert; dollar declarations reject
 #   5. missing declaration a missing spec-listed declaration is rejected
 #   6. missing implementation  a missing spec-listed implementation is rejected
 #   7. missing runtime     a missing runtime library is rejected
@@ -41,8 +41,8 @@ case "$DIST" in
   *) DIST="$PWD/$DIST" ;;
 esac
 
-# The six spec-listed stdlib modules, in spec declaration order.
-STDLIB_MODULES="console string table json math time"
+# The five spec-listed stdlib modules, in spec declaration order.
+STDLIB_MODULES="console string table math time"
 # The packaged smoke entry's exact stdout.
 SMOKE_STDOUT="smoke deal"
 
@@ -72,7 +72,7 @@ leg "leg 1/10 distribution resource set"
 if [ ! -x "$DIST/bin/deal" ]; then
   fail "distribution launcher not found: $DIST/bin/deal"
 fi
-for asset in deal/Main.class deal/runtime.lua deal/runtime.js \
+for asset in deal/Main.class deal/runtime.lua deal/json.lua deal/runtime.js \
              deal/lua_async_export_driver.lua; do
   if [ ! -f "$DIST/$asset" ]; then
     fail "distribution resource missing: $asset"
@@ -84,6 +84,12 @@ for module in $STDLIB_MODULES; do
       fail "distribution resource missing: std/$module.$extension"
     fi
   done
+done
+
+for extension in d.deal lua js; do
+  if [ -e "$DIST/std/json.$extension" ]; then
+    fail "distribution carries retired resource: std/json.$extension"
+  fi
 done
 
 # =========================================================================
@@ -216,13 +222,17 @@ verify_backend() {
     luajit)
       artifact=$(single_artifact "$out" lua)
       require_copy "$out/deal/runtime.lua" "$DIST/deal/runtime.lua"
+      require_copy "$out/deal/json.lua" "$DIST/deal/json.lua"
       for module in $STDLIB_MODULES; do
         require_copy "$out/std/$module.lua" "$DIST/std/$module.lua"
       done
       # The deployed runtime and every deployed Lua stdlib implementation
       # load through the published set's own module path.
-      if ! ( cd "$out" && luajit -e "for _, m in ipairs({'console',
-            'string', 'table', 'json', 'math', 'time'}) do
+      if ! ( cd "$out" && luajit -e "local j=require('deal.json');
+            assert(type(j.encode)=='function' and type(j.decode)=='function');
+            assert(j.encode(j.decode('[1,null]', 'unknown'))=='[1,null]');
+            for _, m in ipairs({'console',
+            'string', 'table', 'math', 'time'}) do
             assert(type(require('std.' .. m)) == 'table', m) end" ) \
           >"$SCRATCH/$backend/deployment-load.log" 2>&1; then
         cat "$SCRATCH/$backend/deployment-load.log" >&2
@@ -238,7 +248,7 @@ verify_backend() {
       # The deployed runtime and every deployed JS stdlib implementation
       # load through the published set's own module path.
       if ! ( cd "$out" && node -e "for (const m of ['console', 'string',
-            'table', 'json', 'math', 'time']) {
+            'table', 'math', 'time']) {
             const mod = require('./std/' + m);
             if (typeof mod !== 'object' || mod === null) throw new Error(m);
             }" ) >"$SCRATCH/$backend/deployment-load.log" 2>&1; then
@@ -325,10 +335,10 @@ for backend in luajit jvm js; do
 done
 
 # =========================================================================
-# 4. Older declared versions are rejected before any artifact exists.
+# 4. Manifest versions govern admission; declaration comments are whitespace.
 # =========================================================================
 
-leg "leg 4/10 old versions are rejected"
+leg "leg 4/10 manifest versions, inert comments and declaration identifiers"
 
 OLD_PROJECT="$SCRATCH/old-version"
 mkdir -p "$OLD_PROJECT"
@@ -357,7 +367,37 @@ printf '%s\n' '// @deal-version 1.2' \
   >"$old_declaration/std/string.d.deal.tmp"
 mv "$old_declaration/std/string.d.deal.tmp" \
   "$old_declaration/std/string.d.deal"
-rejected_compile old-declaration-version "$old_declaration" E1044
+for backend in luajit jvm js; do
+  project="$SCRATCH/commented-declaration-$backend"
+  out="$SCRATCH/commented-declaration-out-$backend"
+  log="$SCRATCH/commented-declaration-$backend.log"
+  copy_smoke "$project"
+  if ! compile "$old_declaration" "$project" "$project/src/main.deal" "$backend" "$out" "$log"; then
+    cat "$log" >&2
+    fail "$backend interpreted a version-shaped comment as a declaration directive"
+  fi
+  case "$backend" in
+    luajit) artifact=$(single_artifact "$out" lua) ;;
+    jvm) artifact=$(single_artifact "$out" java) ;;
+    js) artifact=$(single_artifact "$out" js) ;;
+  esac
+  stdout="$SCRATCH/commented-declaration-$backend.stdout"
+  stderr="$SCRATCH/commented-declaration-$backend.stderr"
+  if ! execute_artifact "$backend" "$old_declaration" "$out" "$artifact" "$stdout" "$stderr"; then
+    cat "$stderr" >&2
+    fail "$backend version-comment positive did not execute"
+  fi
+  printf '%s\n' "$SMOKE_STDOUT" >"$SCRATCH/commented-declaration.expected"
+  if ! cmp -s "$stdout" "$SCRATCH/commented-declaration.expected" || [ -s "$stderr" ]; then
+    fail "$backend version-comment positive changed the smoke transcript"
+  fi
+done
+
+bad_identifier=$(private_dist dollar-declaration)
+printf '%s\n' 'export function retired$probe(): null;' \
+  | cat - "$bad_identifier/std/string.d.deal" >"$bad_identifier/std/string.d.deal.tmp"
+mv "$bad_identifier/std/string.d.deal.tmp" "$bad_identifier/std/string.d.deal"
+rejected_compile dollar-declaration "$bad_identifier" E2008
 
 # =========================================================================
 # 5-8. Missing and mismatched distribution resources are rejected at the
@@ -379,6 +419,12 @@ leg "leg 7/10 a missing runtime library is rejected"
 missing_runtime=$(private_dist missing-runtime)
 rm "$missing_runtime/deal/runtime.lua"
 rejected_compile missing-runtime "$missing_runtime" E6000
+missing_json_runtime=$(private_dist missing-json-runtime)
+rm "$missing_json_runtime/deal/json.lua"
+rejected_compile missing-json-runtime "$missing_json_runtime" E6000
+if ! grep -q 'Runtime library not found: deal/json.lua' "$SCRATCH/missing-json-runtime.log"; then
+  fail "missing internal JSON runtime did not name its resource"
+fi
 
 leg "leg 8/10 a mismatched declaration is rejected"
 mismatched=$(private_dist mismatched-declaration)
@@ -415,6 +461,33 @@ execute_artifact js "$bad_deployment" "$bad_out" "$artifact" \
   || status=$?
 if [ "$status" -eq 0 ]; then
   fail "a broken deployed stdlib implementation executed successfully"
+fi
+
+# The internal algorithms are independently executable runtime resources,
+# not language stdlib functions. A present but broken scanner cannot be
+# repaired from the checkout or silently replaced with the old parser.
+bad_json=$(private_dist bad-json-runtime)
+printf '%s\n' 'return {scan=function() error("broken internal JSON scanner",0) end}' \
+  >"$bad_json/deal/json.lua"
+json_project="$SCRATCH/bad-json-runtime-smoke"
+json_out="$SCRATCH/bad-json-runtime-out"
+copy_smoke "$json_project"
+printf '%s\n' 'export function main(): null {' \
+  '  let value: number = JSON.parse("1");' '  return null;' '}' \
+  >"$json_project/src/main.deal"
+if ! compile "$bad_json" "$json_project" "$json_project/src/main.deal" luajit \
+    "$json_out" "$SCRATCH/bad-json-runtime.log"; then
+  cat "$SCRATCH/bad-json-runtime.log" >&2
+  fail "broken internal JSON runtime control did not compile"
+fi
+require_copy "$json_out/deal/json.lua" "$bad_json/deal/json.lua"
+artifact=$(single_artifact "$json_out" lua)
+status=0
+execute_artifact luajit "$bad_json" "$json_out" "$artifact" \
+  "$SCRATCH/bad-json-runtime.stdout" "$SCRATCH/bad-json-runtime.stderr" || status=$?
+if [ "$status" -eq 0 ] || ! grep -q 'broken internal JSON scanner' "$SCRATCH/bad-json-runtime.stderr"; then
+  cat "$SCRATCH/bad-json-runtime.stderr" >&2
+  fail "a broken internal JSON scanner was not observed at execution"
 fi
 
 # =========================================================================

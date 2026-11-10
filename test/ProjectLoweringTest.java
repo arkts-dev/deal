@@ -215,7 +215,7 @@ public class ProjectLoweringTest {
      * attempt's counter read ({@code 1 * 1000 + 1100}) and throws.
      */
     private static final String DEFAULT_REENTRANCY_APP_SOURCE = """
-        import * as console from "std/console";
+        import * as output from "std/console";
         import * as state from "host/retained_default";
 
         class A {
@@ -240,7 +240,7 @@ public class ProjectLoweringTest {
           if (a.x !== 1100) {
             throw { code: "OPERAND_OVERWRITE", message: "a nested attempt overwrote the enclosing operands" };
           }
-          console.log("ok");
+          output.log("ok");
           return null;
         }
         """;
@@ -262,7 +262,7 @@ public class ProjectLoweringTest {
      * enclosing construction and fails the first tripwire.
      */
     private static final String DEFAULT_TWO_DEFAULTS_APP_SOURCE = """
-        import * as console from "std/console";
+        import * as output from "std/console";
         import * as state from "host/retained_default";
 
         class A {
@@ -287,7 +287,7 @@ public class ProjectLoweringTest {
           if (a.y !== 7) {
             throw { code: "ATTEMPT_VALUE_LOST", message: "the enclosing attempt's second default value is wrong" };
           }
-          console.log("ok");
+          output.log("ok");
           return null;
         }
         """;
@@ -337,7 +337,7 @@ public class ProjectLoweringTest {
 
     /** The consumer of the imported two-required-default class. */
     private static final String IMPORTED_DEFAULT_TWO_DEFAULTS_APP_SOURCE = """
-        import * as console from "std/console";
+        import * as output from "std/console";
         import * as lib from "lib";
         import * as state from "host/retained_default";
 
@@ -349,7 +349,7 @@ public class ProjectLoweringTest {
           if (a.y !== 7) {
             throw { code: "ATTEMPT_VALUE_LOST", message: "the transferred second default value is wrong" };
           }
-          console.log("ok");
+          output.log("ok");
           return null;
         }
         """;
@@ -546,11 +546,11 @@ public class ProjectLoweringTest {
           let n: alpha.Point | null = { x: 2 };
           if (n === null) { throw { code: "WRONG_NULLABLE", message: "n" }; }
           let w: Wrap = {a: {x: 1}, b: {y: "s"}};
-          let json: string = Wrap$toJson(w);
-          if (json !== "{\\\"a\\\":{\\\"x\\\":1.0},\\\"b\\\":{\\\"y\\\":\\\"s\\\"}}") {
+          let json: string = JSON.stringify(w) as string;
+          if (json !== "{\\\"a\\\":{\\\"x\\\":1},\\\"b\\\":{\\\"y\\\":\\\"s\\\"}}") {
             throw { code: "WRONG_JSON", message: json };
           }
-          let back: Wrap | null = Wrap$fromJson(json);
+          let back: Wrap | null = JSON.parse(json);
           if (back !== null) {
             if (back.a.x !== 1 || back.b.y !== "s") {
               throw { code: "WRONG_JSON_FIELDS", message: "back" };
@@ -677,8 +677,8 @@ public class ProjectLoweringTest {
         export class Wrap { item: ir.Ir; }
 
         export function main(): null {
-          let w: Wrap = {item: {a: 7}};
-          let s: string = Wrap$toJson(w);
+          let w: Wrap = JSON.parse(`{"item":{"a":7}}`);
+          let s: string = JSON.stringify(w) as string;
           if (s === "") { throw { code: "WRONG", message: "s" }; }
           return null;
         }
@@ -708,8 +708,8 @@ public class ProjectLoweringTest {
         export class Wrap { p: Point; }
 
         export function main(): null {
-          let w: Wrap = {p: {nick: "l"}};
-          let s: string = Wrap$toJson(w);
+          let w: Wrap = JSON.parse(`{"p":{"nick":"l"}}`);
+          let s: string = JSON.stringify(w) as string;
           if (s !== "{\\\"p\\\":{\\\"nick\\\":\\\"l\\\"}}") {
             throw { code: "WRONG", message: s };
           }
@@ -751,11 +751,11 @@ public class ProjectLoweringTest {
 
         export function main(): null {
           let w: Wrap = {p: {a: 7}};
-          let s: string = Wrap$toJson(w);
-          if (s !== "{\\\"p\\\":{\\\"a\\\":7.0}}") {
+          let s: string = JSON.stringify(w) as string;
+          if (s !== "{\\\"p\\\":{\\\"a\\\":7}}") {
             throw { code: "WRONG", message: s };
           }
-          let w2: Wrap | null = Wrap$fromJson("{\\\"p\\\":{\\\"a\\\":7}}");
+          let w2: Wrap | null = JSON.parse(`{"p":{"a":7}}`);
           if (w2 !== null) {
             if (w2.p.a !== 7) { throw { code: "WRONG_A", message: "a" }; }
           } else {
@@ -965,7 +965,7 @@ public class ProjectLoweringTest {
 
     /**
      * The binding/class common-admission fixture: a module-level class with
-     * generated JSON defaults, an ordinary closure with two generation-pinned
+     * contextual JSON reconstruction, an ordinary closure with two generation-pinned
      * captures, a host function value materialized at its producing crossing,
      * and parameter/import initializations.
      */
@@ -976,6 +976,8 @@ public class ProjectLoweringTest {
           label: string;
           note?: string;
         }
+
+        export function decodePoint(s: string): Point { return JSON.parse(s); }
 
         export function makeCounter(start: number, step: number): () => number {
           let n: number = start;
@@ -6149,7 +6151,7 @@ public class ProjectLoweringTest {
                 "the closure payload and the function record carry the same ordered "
                     + "generation-pinned captures");
             check(util.classFactories().factories().size() == 1
-                    && util.ops().stream().filter(op -> op.kind() == SemanticOpKind.JSON_FROM_CLASS).count() == 1,
+                    && util.ops().stream().filter(op -> op.kind() == SemanticOpKind.JSON_PARSE).count() == 1,
                 "the class module carries its factory registry and structural JSON operation");
             boolean sharedFactory = false;
             for (SemanticOp op : app.ops()) {
@@ -6348,7 +6350,7 @@ public class ProjectLoweringTest {
                     .iterator().next();
                 OpId classDefault = null;
                 for (SemanticOp op : util.ops()) {
-                    if (op.kind() == SemanticOpKind.JSON_FROM_CLASS) {
+                    if (op.kind() == SemanticOpKind.JSON_PARSE) {
                         classDefault = op.opId();
                     }
                 }

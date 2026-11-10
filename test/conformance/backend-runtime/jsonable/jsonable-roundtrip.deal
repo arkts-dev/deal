@@ -1,9 +1,9 @@
-// @spec: Classes — @jsonable roundtrip
-// @description: @jsonable toJson→fromJson roundtrip preserves all field values
+// @spec: Standard library builtins — JSON
+// @description: Class JSON roundtrip preserves string, boolean and binary64 fields
 // @expected: runtime-ok
 // @features: jsonable, roundtrip
 
-// @jsonable
+
 export class Person {
   name: string;
   active: boolean;
@@ -12,8 +12,8 @@ export class Person {
 
 export function test_roundtrip(): null {
   let p: Person = { name: "Carol", active: false, score: 99.5 };
-  let json: string = Person$toJson(p);
-  let p2: Person | null = Person$fromJson(json);
+  let json: string = JSON.stringify(p) as string;
+  let p2: Person | null = JSON.parse(json);
   if (p2 !== null) {
     if (p2.name !== "Carol") {
       throw { code: "TEST_FAIL", message: "roundtrip name mismatch" };

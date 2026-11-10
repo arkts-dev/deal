@@ -177,7 +177,7 @@ public final class FunctionArityExtensionProductionTest {
 
         export function useTriple(f: (x: number, y: number, z: number) => number): number;
 
-        export function useParse(f: (text: string, extra: number) => Record<string, unknown>): Record<string, unknown>;
+        export function useLength(f: (text: string, extra: number) => number): number;
 
         export function useIntTable(f: (x: number, y: Record<string, unknown>) => number): number;
         """;
@@ -194,7 +194,7 @@ public final class FunctionArityExtensionProductionTest {
           useTriple = function(f)
             return f(5, 9, 13)
           end,
-          useParse = function(f)
+          useLength = function(f)
             return f("{}", 9)
           end,
           useIntTable = function(f)
@@ -217,7 +217,7 @@ public final class FunctionArityExtensionProductionTest {
           useTriple: function (f) {
             return f.$f(5, 9, 13);
           },
-          useParse: function (f) {
+          useLength: function (f) {
             return f.$f("{}", 9);
           },
           useIntTable: function (f) {
@@ -241,7 +241,7 @@ public final class FunctionArityExtensionProductionTest {
             return Double.valueOf(f.invoke(5, 9, 13));
           }
 
-          public static Object useParse($DealRt.Fn2_S_N_R_$record f) {
+          public static Object useLength($DealRt.Fn2_S_N_R_N f) {
             return f.invoke("{}", 9);
           }
 
@@ -366,18 +366,18 @@ public final class FunctionArityExtensionProductionTest {
 
     /**
      * The host-invoked cataloged stdlib callable: the host parameter carries
-     * the arity-extension adapter over {@code json.parse}, and the host
+     * the arity-extension adapter over {@code strings.length}, and the host
      * calls the adapter through the declared function shape, so the D15
      * invocation dispatches the stdlib row on LuaJIT and the JVM.
      */
     private static final String HOST_STDLIB_SOURCE = """
         import * as output from "std/console";
         import * as host from "host/arity_extension_host";
-        import * as json from "std/json";
+        import * as strings from "std/string";
 
         export function main(): null {
-          let parsed: Record<string, unknown> = host.useParse(json.parse);
-          if ((json.stringify(parsed) as string) !== "{}") {
+          let length: number = host.useLength(strings.length);
+          if (length !== 2) {
             throw { code: "TEST_FAIL", message: "host stdlib adapter failed" };
           }
           output.log("OK");

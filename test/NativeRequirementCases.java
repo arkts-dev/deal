@@ -7,7 +7,7 @@ import deal.toolchain.NativeBuildRequest;
 import java.nio.file.*;
 import java.util.*;
 
-/** Executed emitter-level controls for IR shapes not expressible by v1.5 Record syntax. */
+/** Executed emitter-level controls for IR shapes not expressible by Record source syntax. */
 final class NativeRequirementCases {
     static void run(NativeCorpusAccounting accounting) throws Exception {
         Path corpus = NativeCompiler.executableScratch("native-requirements");
@@ -17,7 +17,7 @@ final class NativeRequirementCases {
             Files.createDirectories(source.getParent());
             String body = """
                 import * as math from "std/math";
-                // @jsonable
+
                 export class Cell { value: number; }
                 function check(ok: boolean, site: string): void {
                   if (!ok) { throw {code: "REQUIREMENT_TEST", message: site}; }
@@ -42,23 +42,27 @@ final class NativeRequirementCases {
                     }
                   }
                   check(rejected, "wrong optional kind");
-                  let cell = Cell$fromJson("{\"value\":7}");
-                  check(cell !== null, "decoded");
-                  if (cell !== null) {
-                    let roundtrip = Cell$fromJson(Cell$toJson(cell));
-                    check(roundtrip !== null, "encoded object");
-                    if (roundtrip !== null) { check(roundtrip.value === 7, "encoded field"); }
+                  let cell: Cell = JSON.parse(`{"value":7}`);
+                  check(cell.value === 7, "decoded field");
+                  let roundtrip: Cell = JSON.parse(JSON.stringify(cell) as string);
+                  check(roundtrip !== cell && roundtrip.value === 7, "fresh encoded object");
+                  let original = cell;
+                  rejected = false;
+                  try { cell = JSON.parse(`{"value":"bad"}`); }
+                  catch (failure) {
+                    if (failure instanceof Error) {
+                      rejected = failure.code === "E8001"
+                        && failure.message === "expected number";
+                      if (!rejected) { throw failure; }
+                    }
                   }
-                  check(Cell$fromJson("{\"value\":\"bad\"}") === null, "invalid decoded");
+                  check(rejected && cell === original && cell.value === 7, "invalid decode rollback");
                   let imported = math.sqrt as (x: number) => number;
                   check(imported(9) === 3, "imported function");
                   check(math.sqrt(4) === 2, "imported");
                   return null;
                 }
                 """;
-            // JSON quotes must survive the DEAL source string literal.
-            body = body.replace("\"{\"value\":7}\"", "\"{\\\"value\\\":7}\"")
-                .replace("\"{\"value\":\"bad\"}\"", "\"{\\\"value\\\":\\\"bad\\\"}\"");
             Files.writeString(source, body);
             var fixture = new CorpusDiscovery.Fixture(source, "backend-runtime/requirements.deal", "backend-runtime",
                 "Runtime execution model", "native requirement controls", "runtime-ok", "", "", body, body, 0,
@@ -93,10 +97,8 @@ final class NativeRequirementCases {
                     }
                 }
                 accounting.executed(lowered, null);
-                // Both actual class JSON services ran above: successful field roundtrip
-                // and wrong-field decode returning null, not fabricated semantic ops.
-                accounting.runtimeBoundary(BoundaryKind.JSON_FROM_FIELD);
-                accounting.runtimeBoundary(BoundaryKind.JSON_TO_FIELD);
+                // Contextual reconstruction and builtin serialization are credited
+                // through their actual lowered operations, not synthetic boundaries.
                 System.out.println("Native requirement controls: admitted optional envelopes, imported function, class JSON O0/O2 normal/stress");
             }
             runtimeContracts(corpus, accounting);
@@ -147,7 +149,7 @@ final class NativeRequirementCases {
     }
 
     /** Preserve the source assertions while spelling their equivalent raw-read/optional IR envelope.
-     * v1.5 source Record reads are unknown; only this emitter control constructs the legacy envelope. */
+     * Source Record reads are unknown; only this emitter control constructs the optional envelope. */
     private static ExecutableLoweredProject optionalEnvelopes(ExecutableLoweredProject project) {
         Map<ModuleId, LoweredModuleUnit> modules = new LinkedHashMap<>();
         int changed = 0;

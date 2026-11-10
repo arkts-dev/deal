@@ -10,6 +10,8 @@ import deal.project.ProjectLocator;
 import deal.semantic.CompilerInvocation;
 import deal.semantic.CompilerProfileProvider;
 import deal.semantic.ReleaseConfiguration;
+import deal.semantic.ir.CanonicalJson;
+import deal.test.conformance.ErrorSnapshot;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.PrintStream;
@@ -243,13 +245,13 @@ public final class LlvmCallClosureEmissionTest {
      * against the declared {@code unknown} parameter.
      */
     private static final String STDLIB_BOXING_SOURCE = """
-        import * as json from "std/json";
+
         function one(n: number): number { return n; }
         export function main(): null {
-          let numberText: string | undefined = json.stringify(1);
-          let booleanText: string | undefined = json.stringify(true);
-          let nullText: string | undefined = json.stringify(null);
-          let functionText: string | undefined = json.stringify(one);
+          let numberText: string | undefined = JSON.stringify(1);
+          let booleanText: string | undefined = JSON.stringify(true);
+          let nullText: string | undefined = JSON.stringify(null);
+          let functionText: string | undefined = JSON.stringify(one);
           let value: number = 3;
           let observed: string = (value as unknown) as string;
           return null;
@@ -348,6 +350,7 @@ public final class LlvmCallClosureEmissionTest {
             testCheckedAssertions(scratch);
             testSyntheticBodyDeclarations(scratch);
             testAdapterFrames(scratch);
+            testJsonOperationOrigins(scratch);
             testDeterminism(scratch);
         } finally {
             deleteRecursively(scratch);
@@ -820,10 +823,10 @@ public final class LlvmCallClosureEmissionTest {
     private static final String STDLIB_CONTAINER_SOURCE = """
         import * as strings from "std/string";
         import * as table from "std/table";
-        import * as json from "std/json";
+
         export function main(): null {
           let parts: string[] = strings.split("a,b,c", ",");
-          let record: Record<string, unknown> = json.parse("{\\"x\\":1,\\"y\\":2}");
+          let record: Record<string, unknown> = JSON.parse("{\\"x\\":1,\\"y\\":2}");
           let names: string[] = table.keys(record);
           if (parts.length === 3 && names.length === 2) {
             let observed: string = (parts.length as unknown) as string;
@@ -1877,6 +1880,87 @@ public final class LlvmCallClosureEmissionTest {
             }
         }
         return lines;
+    }
+
+    /** JSON failures belong to their operations, not any form of caller. */
+    private static void testJsonOperationOrigins(Path scratch) throws Exception {
+        System.out.println("-- JSON operation origins across direct/dynamic/adapted/imported calls --");
+        int executions = 0;
+        for (boolean parse : new boolean[] {true, false}) {
+            String body = parse ? """
+                  let decoded: unknown = JSON.parse("bad");
+                  return null;
+                """ : """
+                  let cycle: Record<string, unknown> = {};
+                  cycle.loop = cycle;
+                  let encoded: string | undefined = JSON.stringify(cycle);
+                  return null;
+                """;
+            for (String mode : List.of("direct", "dynamic", "adapted", "imported")) {
+                String call = switch (mode) {
+                    case "direct" -> "fail();";
+                    case "dynamic" -> "let fn: () => null = choose(true); fn();";
+                    case "adapted" -> "let fn: (ignored:number) => null = fail; fn(7);";
+                    case "imported" -> "lib.remote();";
+                    default -> throw new AssertionError(mode);
+                };
+                String source = "import * as lib from \"./lib\";\n"
+                    + "function fail(): null {\n" + body + "}\n"
+                    + "function spare(): null { return null; }\n"
+                    + "function choose(value:boolean): () => null { if (value) { return fail; } return spare; }\n"
+                    + "export function main(): null { " + call + " return null; }\n";
+                String library = "export function remote(): null {\n" + body + "}\n";
+                String name = "json-origin-" + (parse ? "parse-" : "stringify-") + mode;
+                Path root = scratch.resolve(name);
+                writeProject(root, Map.of("src/main.deal", source, "src/lib.deal", library));
+                Path published = root.resolve("build/llvm");
+                CompileOutcome compiled = compile(root.resolve("src/main.deal"), published);
+                check(compiled.success(), name + " compiles: " + compiled.diagnostics());
+                if (!compiled.success()) continue;
+                boolean imported = mode.equals("imported");
+                Map<String, CanonicalJson.Value> expected = Map.of(
+                    "code", new CanonicalJson.Str("E8001"),
+                    "message", new CanonicalJson.Str(parse
+                        ? "JSON parse error at position 1: unexpected character"
+                        : "cyclic value cannot be encoded as JSON"),
+                    "sourceFile", new CanonicalJson.Str(imported ? "src/lib.deal" : "src/main.deal"),
+                    "line", new CanonicalJson.Int((parse ? 2 : 4) + (imported ? 0 : 1)),
+                    "column", new CanonicalJson.Int(parse ? 26 : 37),
+                    "frames", new CanonicalJson.Int(2));
+                for (int level : new int[] {0, 2}) {
+                    for (boolean sanitized : new boolean[] {false, true}) {
+                        Path product = root.resolve("native" + level + (sanitized ? "-sanitized" : ""));
+                        NativeCompiler.build(new deal.toolchain.NativeBuildRequest(
+                            published, product, level, List.of(), null),
+                            sanitized ? NativeCompiler.SANITIZER_FLAGS : List.of());
+                        for (boolean stress : new boolean[] {false, true}) {
+                            Map<String, String> environment = new LinkedHashMap<>();
+                            environment.put("DEAL_GC_STRESS", stress ? "1" : "0");
+                            if (sanitized) environment.putAll(NativeCompiler.sanitizerEnvironment());
+                            NativeCompiler.Result run = sanitized
+                                ? NativeCompiler.runSanitized(product, root, environment).result()
+                                : NativeCompiler.execute(product, root, environment);
+                            String where = name + " O" + level + " sanitized=" + sanitized + " stress=" + stress;
+                            checkEq(1, run.exitCode(), where + " reaches JSON rejection: " + run.describe());
+                            checkEq("", run.stderr(), where + " has no runtime fault or sanitizer finding");
+                            String[] lines = run.stdout().split("\n", -1);
+                            check(lines.length == 3 && lines[0].equals("DEAL_ERROR_CODE: E8001")
+                                && lines[1].startsWith(ErrorSnapshot.SNAPSHOT_LINE_PREFIX)
+                                && lines[2].isEmpty(), where + " exactly one terminal error: " + run.describe());
+                            if (lines.length != 3 || !lines[1].startsWith(ErrorSnapshot.SNAPSHOT_LINE_PREFIX)) continue;
+                            String snapshot = lines[1].substring(ErrorSnapshot.SNAPSHOT_LINE_PREFIX.length());
+                            check(ErrorSnapshot.canonicalViolation(snapshot).isEmpty(), where + " canonical error snapshot");
+                            CanonicalJson.Obj object = (CanonicalJson.Obj) CanonicalJson.parse(snapshot);
+                            Map<String, CanonicalJson.Value> actual = new LinkedHashMap<>();
+                            for (var entry : object.entries()) actual.put(entry.key(), entry.value());
+                            checkEq(expected, actual, where + " complete tuple, operation coordinates and two source frames");
+                            executions++;
+                        }
+                    }
+                }
+            }
+        }
+        checkEq(64, executions, "all eight JSON call subjects execute every optimization/stress/instrumentation product");
     }
 
     // =========================================================================

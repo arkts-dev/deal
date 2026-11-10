@@ -23,11 +23,10 @@ import java.util.stream.Stream;
 /**
  * The optional-null field read production drive (ISSUE-0883): the corpus
  * fixtures whose optional fields are declared {@code null} — the class case
- * (same-module, imported-class and imported jsonable reads, parameters,
+ * (same-module, imported-class and contextually reconstructed reads, parameters,
  * returns, presence, write and delete, beside the retained optional
- * {@code T} and optional nullable {@code T} wraps) and the jsonable case
- * (the generated {@code $fromJson}/{@code $toJson} path in the missing and
- * explicit-null states) — through the release-owned production compile of
+ * {@code T} and optional nullable {@code T} wraps) and contextual JSON
+ * reconstruction/stringify in the missing and explicit-null states — through the release-owned production compile of
  * all three backends and the recorded run of every published artifact.
  *
  * <p>The drive reproduces the reported defect before the correction: the
@@ -288,8 +287,10 @@ public final class OptionalNullFieldReadProductionTest {
         if (!Files.isRegularFile(artifact)) {
             return;
         }
-        check(Files.isRegularFile(project.out().resolve("deal/runtime.lua")),
-            label + " luajit: the production compile deploys the runtime");
+        for (String resource : List.of("deal/runtime.lua", "deal/json.lua")) {
+            check(Files.isRegularFile(project.out().resolve(resource)),
+                label + " luajit: the production compile deploys " + resource);
+        }
         assertNullAtomReadResult(label, "luajit",
             "pcall(__bcheck, \"nullable(undefined)\", \"nullable:undefined\"",
             Files.readString(artifact, StandardCharsets.UTF_8));

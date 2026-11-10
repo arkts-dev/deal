@@ -1,5 +1,5 @@
-// @spec: Classes — @jsonable cross-module nested class arrays
-// @description: Cross-module @jsonable array of nested classes roundtrips correctly
+// @spec: Standard library builtins — JSON
+// @description: Cross-module nested class arrays roundtrip with exact nominal identities
 // @expected: runtime-ok
 // @features: jsonable, arrays, nested, modules
 
@@ -7,10 +7,10 @@ import * as Lib from "./jsonable_batch2_lib";
 
 export function test_jsonable_cross_module_nested_class_array(): null {
   let p: Lib.Parent = Lib.makeParent(3, 4);
-  let json: string = Lib.Parent$toJson(p);
-  let p2: Lib.Parent | null = Lib.Parent$fromJson(json);
+  let json: string = JSON.stringify(p) as string;
+  let p2: Lib.Parent | null = JSON.parse(json);
   if (p2 !== null) {
-    if (p2.children[1].value !== 4) { throw { code: "TEST_FAIL", message: "cross-module nested class array mismatch" }; }
+    if (p2.children[0].value !== 3 || p2.children[1].value !== 4 || !(p2.children[1] instanceof Lib.Child) || p2.children === p.children) { throw { code: "TEST_FAIL", message: "cross-module nested class array mismatch" }; }
     return null;
   }
   throw { code: "TEST_FAIL", message: "cross-module nested class array fromJson failed" };

@@ -9,8 +9,7 @@ import java.util.Objects;
  * the function's original source name.
  *
  * <p>{@code sourceName} is the DEAL declaration name of the lowered
- * function (the module-level, nested, group-member, or {@code @jsonable}
- * helper name); it is {@code null} for a name-less function expression.
+ * function; it is {@code null} for a name-less function expression.
  * The name is the source half of a stack frame entry: the generated half
  * is the target's emitted function name ({@code F<functionId>}), so a
  * host-visible error frame names both the original source function and

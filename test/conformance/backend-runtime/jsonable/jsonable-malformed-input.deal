@@ -1,13 +1,15 @@
-// @spec: Classes — @jsonable malformed input
-// @description: @jsonable fromJson returns null for malformed JSON input
+// @spec: Standard library builtins — JSON decoding
+// @description: Contextual imported class parsing throws on malformed JSON
 // @expected: runtime-ok
 // @features: jsonable, runtime-errors, json
 
 import * as Lib from "./jsonable_complex_lib";
 
 export function test_jsonable_malformed_input(): null {
-  let u: Lib.User | null = Lib.User$fromJson("{bad json");
-  if (u !== null) { throw { code: "TEST_FAIL", message: "malformed input should return null" }; }
+  let rejected = false;
+  try { let u: Lib.User = JSON.parse("{bad json"); }
+  catch (e) { let error = e as Error; rejected = error.code === "E8001" && error.message.startsWith("JSON parse error at position "); }
+  if (!rejected) { throw { code: "TEST_FAIL", message: "malformed input must throw syntax error" }; }
   return null;
 }
 

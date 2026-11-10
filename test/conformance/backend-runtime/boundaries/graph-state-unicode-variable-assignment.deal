@@ -2,7 +2,7 @@
 // @description: Revalidate retained graph at state-unicode-variable-assignment
 // @expected: runtime-ok
 // @features: boundary-validation
-import * as console from "std/console";
+import * as printer from "std/console";
 import * as host from "host/probe";
-class B{r:Record<string,unknown>;}function consume(r:Record<string,unknown>):void{console.log("PARAM_BODY");}
-export function main():null{let r:Record<string,unknown>={};r.self=r;let old:Record<string,unknown>={};let d=old;let b:B={r:old};let xs:Record<string,unknown>[]=[old];let get: () => Record<string,unknown> = function():Record<string,unknown>{console.log("RETURN_BODY");return r;};host.corrupt(r);d=r;if(d!==r || d.self!==(r as unknown) || (d.bad as string)!==`\uD800` || b.r!==old || xs[0]!==old){throw {code:"TEST",message:"lone graph assignment changed value, aliases or unrelated destinations"};}console.log("ACCEPT");host.repair();if(d!==r || Object.hasOwn(d,"bad")){throw {code:"TEST",message:"retained graph did not observe repair"};}console.log("STORED");d=r;if(d!==r){throw {code:"TEST",message:"retry lost identity"};}consume(r);console.log("RECOVERED");return null;}
+class B{r:Record<string,unknown>;}function consume(r:Record<string,unknown>):void{printer.log("PARAM_BODY");}
+export function main():null{let r:Record<string,unknown>={};r.self=r;let old:Record<string,unknown>={};let d=old;let b:B={r:old};let xs:Record<string,unknown>[]=[old];let get: () => Record<string,unknown> = function():Record<string,unknown>{printer.log("RETURN_BODY");return r;};host.corrupt(r);d=r;if(d!==r || d.self!==(r as unknown) || (d.bad as string)!==`\uD800` || b.r!==old || xs[0]!==old){throw {code:"TEST",message:"lone graph assignment changed value, aliases or unrelated destinations"};}printer.log("ACCEPT");host.repair();if(d!==r || Object.hasOwn(d,"bad")){throw {code:"TEST",message:"retained graph did not observe repair"};}printer.log("STORED");d=r;if(d!==r){throw {code:"TEST",message:"retry lost identity"};}consume(r);printer.log("RECOVERED");return null;}

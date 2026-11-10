@@ -233,8 +233,10 @@ public final class NullArraySuffixProductionTest {
         Path artifact = project.out().resolve(ENTRY_MODULE + ".lua");
         check(Files.isRegularFile(artifact), "luajit: the production compile "
             + "stages the entry chunk " + artifact);
-        check(Files.isRegularFile(project.out().resolve("deal/runtime.lua")),
-            "luajit: the production compile deploys the runtime");
+        for (String resource : List.of("deal/runtime.lua", "deal/json.lua")) {
+            check(Files.isRegularFile(project.out().resolve(resource)),
+                "luajit: the production compile deploys " + resource);
+        }
 
         assertExecution("luajit",
             runProcess(List.of("luajit", ENTRY_MODULE + ".lua"), project.out()),

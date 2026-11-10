@@ -1736,7 +1736,7 @@ final class JvmHostAbiEmission {
             + "java.lang.Object value) {\n");
         for (FieldInfo field : record.fields()) {
             out.append("      if (").append(javaString(field.name()))
-                .append(".equals(key)) { ").append(field.javaName()).append(" = ")
+                .append(".equals(key)) { this.").append(field.javaName()).append(" = ")
                 .append(writeProjection(field, "value")).append(";");
             if (field.optional()) {
                 out.append(" ").append(field.javaName()).append("$present = true;");

@@ -114,24 +114,6 @@ final class StubModuleResolver implements ModuleResolver {
         return null;
     }
 
-    /**
-     * The identity-keyed export check: route the carried module identity
-     * back to the registered path and consult its export map.
-     */
-    @Override
-    public boolean isFunctionExportedFromModule(
-            CanonicalModuleIdentity declaringModule, String functionName,
-            String importingModule) throws ModuleNotFoundException {
-        for (Map.Entry<String, Map<String, Type>> entry
-                : modules.entrySet()) {
-            if (IdentityTestFixtures.moduleIdentityOf(entry.getKey())
-                    .equals(declaringModule)) {
-                return entry.getValue().containsKey(functionName);
-            }
-        }
-        return false;
-    }
-
     static void deployJsSupport(Path dir) throws IOException {
         Path runtimeDir = dir.resolve("deal");
         Files.createDirectories(runtimeDir);

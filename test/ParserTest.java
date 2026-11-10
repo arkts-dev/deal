@@ -37,14 +37,12 @@ public class ParserTest {
     private static ParseResult parse(String source) {
         LexResult lex = new Lexer(source, "test.deal").tokenize();
 
-        return new Parser(lex.tokens(), "test.deal",
-            lex.directiveEvents()).parse();
+        return new Parser(lex.tokens(), "test.deal").parse();
     }
 
     private static ParseResult parseFile(String source, String filename) {
         LexResult lex = new Lexer(source, filename).tokenize();
-        return new Parser(lex.tokens(), filename,
-            lex.directiveEvents()).parse();
+        return new Parser(lex.tokens(), filename).parse();
     }
 
     private static void assertNoParseErrors(ParseResult result, String context) {
@@ -252,8 +250,9 @@ public class ParserTest {
     static void testDealVersionDirectives() {
         ParseResult r = parse("export function probe(): null { return null; }");
         assertNoParseErrors(r, "source needs no file-level version metadata");
-        check(r.program().fileDirectives().equals(FileDirectives.empty()),
-            "empty source directive metadata");
+        check(r.program().statements().size() == 1
+                && r.program().statements().getFirst() instanceof ExportDeclaration,
+            "source contains only its explicit exported function");
     }
 
     static void testTrailingDirectiveEofAnchor() {
@@ -2210,7 +2209,7 @@ public class ParserTest {
     }
 
     static void testJsonableExportClass() {
-        System.out.println("-- @jsonable export class -> isJsonable=true --");
+        System.out.println("-- Comment before exported class has no metadata --");
 
         ParseResult r = parse("// @jsonable\nexport class C { x: number; }");
         assertNoParseErrors(r, "@jsonable export class");
@@ -2221,118 +2220,49 @@ public class ParserTest {
                 ExportDeclaration.class, "@jsonable export class node");
         ClassDeclaration cd = assertInstance(ed.declaration(),
                 ClassDeclaration.class, "exported declaration is class");
-        check(cd.isJsonable(),
-            "ClassDeclaration.isJsonable should be true with @jsonable directive");
+        check(cd.name().equals("C") && cd.fields().size() == 1, "comment preserves explicit exported class schema");
     }
 
     static void testJsonableExportFunction() {
-        System.out.println("-- @jsonable export function -> E1043 error --");
-
-        ParseResult r = parse("// @jsonable\nexport function f(): number { return 0; }");
-        assertParseError(r, "E1043", "@jsonable export function");
-
-        List<CompilerDiagnostic> diags = r.diagnostics();
-        CompilerDiagnostic warnDiag = diags.stream()
-                .filter(d -> d.code().equals("E1043"))
-                .findFirst().orElse(null);
-        check(warnDiag != null, "E1043 diagnostic present for export function");
-        if (warnDiag != null) {
-            check(warnDiag.severity().equals("error"),
-                "severity is error, got: " + warnDiag.severity());
-            check(warnDiag.message().contains("export class"),
-                "message mentions export class: " + warnDiag.message());
-
-            check(warnDiag.range().origin() == RangeOrigin.SOURCE,
-                "E1043 range must be SOURCE, got " + warnDiag.range().origin());
-            check(warnDiag.line() == 1 && warnDiag.column() == 1,
-                "E1043 must anchor at the complete comment (1,1), got ("
-                    + warnDiag.line() + "," + warnDiag.column() + ")");
-            check(warnDiag.range().startScalarOffset() == 0,
-                "E1043 start offset must be 0, got "
-                    + warnDiag.range().startScalarOffset());
-            check(warnDiag.range().endScalarOffset() == 12,
-                "E1043 end offset must be 12, got "
-                    + warnDiag.range().endScalarOffset());
-            check(warnDiag.range().scalarLength() == 12,
-                "E1043 scalar length must be 12 (complete comment), got "
-                    + warnDiag.range().scalarLength());
-            check(warnDiag.range().endLine() == 1 && warnDiag.range().endColumn() == 13,
-                "E1043 range end must be (1,13), got ("
-                    + warnDiag.range().endLine() + ","
-                    + warnDiag.range().endColumn() + ")");
+        for (String comment : List.of("@jsonable", "@jsonable:foo", "@nope", "@")) {
+            ParseResult r = parse("// " + comment + "\nexport function f(): number { return 0; }");
+            assertNoParseErrors(r, "comment before exported function: " + comment);
+            ExportDeclaration ed = assertInstance(r.program().statements().getFirst(),
+                ExportDeclaration.class, "export remains intact");
+            FunctionDeclaration fd = assertInstance(ed.declaration(), FunctionDeclaration.class,
+                "function remains intact");
+            check(fd.span().startLine() == 2, "function position follows comment");
         }
     }
 
     static void testJsonableStandaloneClass() {
-        System.out.println("-- @jsonable standalone class -> E1043 error, isJsonable=false --");
-
         ParseResult r = parse("// @jsonable\nclass C { x: number; }");
-        assertParseError(r, "E1043", "@jsonable standalone class");
-
-        List<CompilerDiagnostic> diags = r.diagnostics();
-        CompilerDiagnostic warnDiag = diags.stream()
-                .filter(d -> d.code().equals("E1043"))
-                .findFirst().orElse(null);
-        check(warnDiag != null, "E1043 diagnostic present for standalone class");
-        if (warnDiag != null) {
-            check(warnDiag.severity().equals("error"),
-                "severity is error, got: " + warnDiag.severity());
-        }
-
-        // isJsonable should be false: an incompatible attachment applies no
-        // metadata.
-        ProgramNode prog = r.program();
-        assertStmtCount(prog, 1, "standalone class");
-        ClassDeclaration cd = assertInstance(prog.statements().get(0),
-                ClassDeclaration.class, "standalone class node");
-        check(!cd.isJsonable(),
-            "ClassDeclaration.isJsonable should be false - directive ignored");
-        assertJsonableErrorSeverity(r);
-        assertStmtCount(prog, 1, "one statement");
-        ClassDeclaration invalid = assertInstance(prog.statements().get(0),
-                ClassDeclaration.class, "class node");
-        check(!invalid.isJsonable(),
-            "isJsonable should be false after invalid placement warning");
+        assertNoParseErrors(r, "comment before private class");
+        assertStmtCount(r.program(), 1, "private class retained");
+        ClassDeclaration cd = assertInstance(r.program().statements().getFirst(),
+            ClassDeclaration.class, "private class node");
+        check(cd.name().equals("C"), "comment preserves private class name");
+        check(cd.fields().size() == 1, "private class retains field schema");
     }
 
     static void testJsonableStandaloneFunction() {
-        System.out.println("-- @jsonable standalone function -> E1043 error --");
-
         ParseResult r = parse("// @jsonable\nfunction f(): number { return 0; }");
-        assertParseError(r, "E1043", "@jsonable standalone function");
-
-        List<CompilerDiagnostic> diags = r.diagnostics();
-        CompilerDiagnostic warnDiag = diags.stream()
-                .filter(d -> d.code().equals("E1043"))
-                .findFirst().orElse(null);
-        check(warnDiag != null, "E1043 diagnostic present for standalone function");
-        if (warnDiag != null) {
-            check(warnDiag.severity().equals("error"),
-                "severity is error, got: " + warnDiag.severity());
-        }
+        assertNoParseErrors(r, "comment before private function");
+        assertStmtCount(r.program(), 1, "private function retained");
+        assertInstance(r.program().statements().getFirst(), FunctionDeclaration.class,
+            "private function node");
     }
 
     static void testJsonableNotPresent() {
-        System.out.println("-- no @jsonable -> isJsonable=false --");
+        System.out.println("-- Class syntax needs no comment marker --");
 
         ParseResult r = parse("export class C { x: number; }");
         assertNoParseErrors(r, "export class without @jsonable");
 
         ExportDeclaration ed = (ExportDeclaration) r.program().statements().get(0);
         ClassDeclaration cd = (ClassDeclaration) ed.declaration();
-        check(!cd.isJsonable(),
-            "ClassDeclaration.isJsonable should be false without directive");
-    }
-
-    private static void assertJsonableErrorSeverity(ParseResult r) {
-        for (CompilerDiagnostic d : r.diagnostics()) {
-            if (d.code().equals("E1043")) {
-                check(d.severity().equals("error"),
-                    "severity should be 'error', got: '" + d.severity() + "'");
-            }
-        }
-        check(r.hasErrors(),
-            "an incompatible directive attachment is a compile error");
+        check(cd.name().equals("C") && cd.fields().size() == 1,
+            "unmarked class carries its explicit schema");
     }
 
     // =========================================================================
@@ -2522,37 +2452,15 @@ public class ParserTest {
     }
 
     static void testJsonableEndToEndLexParse() {
-        System.out.println("-- @jsonable end-to-end lex + parse --");
-
-        // Verify that lexing + parsing @jsonable + let produces the
-        // incompatible-attachment E1043 error through the event pipeline.
         LexResult lex = new Lexer("// @jsonable\nlet x: number = 1;", "test.deal").tokenize();
-        Parser parser = new Parser(lex.tokens(), "test.deal",
-            lex.directiveEvents());
-        ParseResult r = parser.parse();
-        assertParseError(r, "E1043", "@jsonable let");
-        CompilerDiagnostic warnDiag = diagOf(r, "E1043");
-        check(warnDiag != null, "E1043 diagnostic present for let");
-        if (warnDiag != null) {
-            check(warnDiag.severity().equals("error"),
-                "severity is error, got: " + warnDiag.severity());
-        }
-
-        List<CompilerDiagnostic> diags = r.diagnostics();
-        boolean foundError = diags.stream().anyMatch(
-                d -> d.code().equals("E1043") && d.severity().equals("error"));
-        check(foundError, "end-to-end: E1043 with error severity");
-
-        // Verify the event anchored at the LET token (index 0) with no
-        // token-carried directives.
-        check(lex.directiveEvents().size() == 1,
-            "end-to-end: one directive event, got "
-                + lex.directiveEvents().size());
-        check(lex.directiveEvents().get(0).declarationAnchorTokenIndex() != null
-                && lex.directiveEvents().get(0).declarationAnchorTokenIndex() == 0,
-            "end-to-end: the jsonable event anchors at the LET token");
-        check(lex.tokens().get(0).type() == TokenType.LET,
-            "end-to-end: LET is the first token");
+        ParseResult r = new Parser(lex.tokens(), "test.deal").parse();
+        assertNoParseErrors(r, "comment before variable");
+        check(lex.diagnostics().isEmpty(), "comment has no lexical diagnostics");
+        check(lex.tokens().stream().noneMatch(t -> t.lexeme().contains("@jsonable")),
+            "comment creates no source tokens");
+        check(lex.tokens().getFirst().type() == TokenType.LET, "LET remains the first token");
+        check(lex.tokens().getFirst().startScalarOffset() == 13, "LET retains original offset");
+        assertStmtCount(r.program(), 1, "variable declaration retained");
     }
 
     // =========================================================================
@@ -2727,10 +2635,8 @@ public class ParserTest {
     static void testDeclarationFileJsonableNoEffect() {
         System.out.println("-- declaration-file @jsonable no-effect (D4) --");
 
-        // @jsonable on an export class in a .d.deal file: no metadata,
-        // no E1043, and explicitly declared C$fromJson/C$toJson
-        // signatures are preserved (no synthetic exports are recorded —
-        // ExportExtractor's synthetic loop keys on isJsonable()).
+        // Comments do not alter explicit declarations. The parser retains
+        // dollar spellings for the resolver's universal E2008 rejection.
         String decl = "// @jsonable\nexport class C { x: number; }\n"
             + "export function C$fromJson(s: string): C | null;\n"
             + "export function C$toJson(c: C): string;";
@@ -2738,10 +2644,9 @@ public class ParserTest {
         assertNoParseErrors(r, "declaration-file @jsonable export class");
         ExportDeclaration ed = (ExportDeclaration) r.program().statements().get(0);
         ClassDeclaration cd = (ClassDeclaration) ed.declaration();
-        check(!cd.isJsonable(),
-            "no JSONABLE metadata recorded in a .d.deal file");
-        check(cd.directives().isEmpty(),
-            "no declaration directives recorded, got " + cd.directives());
+        check(cd.name().equals("C"), "declaration class name is explicit");
+        check(cd.fields().size() == 1 && cd.fields().getFirst().name().equals("x"),
+            "declaration class schema is explicit");
         boolean hasE1043 = r.diagnostics().stream()
                 .anyMatch(d -> d.code().equals("E1043"));
         check(!hasE1043, "no E1043 for the export-class attachment");
@@ -2751,112 +2656,62 @@ public class ParserTest {
             "three statements (class + two explicit JSON functions), got "
                 + r.program().statements().size());
 
-        // Attachment to a non-class declaration is E1043 with no
-        // metadata.
+        // Comment placement never changes a function declaration.
         r = parseFile("// @jsonable\nexport function f(): number { return 0; }",
             "lib.d.deal");
-        assertParseError(r, "E1043",
-            "declaration-file @jsonable on a function errors E1043");
-        CompilerDiagnostic w = diagOf(r, "E1043");
-        if (w != null) {
-            check(w.severity().equals("error"),
-                "E1043 is an error, got " + w.severity());
-        }
+        assertNoParseErrors(r, "declaration-file function comment is whitespace");
+        check(r.program().statements().size() == 1, "comment leaves function intact");
 
-        // The E1045 argument rule still fires in .d.deal files.
+        // Arbitrary comment suffixes remain whitespace in declaration files.
         r = parseFile("// @jsonable:foo\nexport class C { x: number; }",
             "lib.d.deal");
-        assertParseError(r, "E1045",
-            "@jsonable:foo in a .d.deal file still produces E1045");
+        assertNoParseErrors(r, "declaration-file comment arguments are whitespace");
     }
 
     static void testTemplateEmbeddedDirectives() {
         System.out.println("-- template-embedded directive events (D10) --");
 
-        // ${ // @jsonable ... }: exactly one E1043 at the rebased
-        // complete-comment range, no metadata.
+        // Comments inside interpolation expressions never become declarations.
         String src = "let s = `${ // @jsonable\n x}`;";
         ParseResult r = parse(src);
         long e1043Count = r.diagnostics().stream()
                 .filter(d -> d.code().equals("E1043")).count();
-        check(e1043Count == 1,
-            "exactly one E1043 for the template-embedded @jsonable, got "
-                + e1043Count + ": " + r.diagnostics());
-        CompilerDiagnostic w = diagOf(r, "E1043");
-        if (w != null) {
-            // The template token starts at column 9 ("let s = `" is 8
-            // scalars + backtick at col 9); content after the backtick:
-            // '${' at cols 10-11; the comment starts at col 13.
-            check(w.range().origin() == RangeOrigin.SOURCE,
-                "rebased E1043 range must be SOURCE");
-            check(w.range().startScalarOffset() == 12
-                    && w.range().endScalarOffset() == 24
-                    && w.range().scalarLength() == 12,
-                "E1043 at the rebased complete comment (12,24), got ("
-                    + w.range().startScalarOffset() + ","
-                    + w.range().endScalarOffset() + ")");
-        }
-        // No JSONABLE metadata anywhere.
-        boolean jsonable = false;
-        for (StatementNode stmt : r.program().statements()) {
-            if (stmt instanceof ClassDeclaration cd && cd.isJsonable()) {
-                jsonable = true;
-            }
-        }
-        check(!jsonable, "no metadata from the template-embedded event");
+        check(e1043Count == 0 && r.diagnostics().isEmpty(),
+            "template comment is whitespace: " + r.diagnostics());
+        VariableDeclaration declaration = assertInstance(r.program().statements().getFirst(),
+            VariableDeclaration.class, "template variable retained");
+        check(declaration.initializer() instanceof TemplateLiteralExpr, "template retained");
+        TemplateLiteralExpr template = (TemplateLiteralExpr) declaration.initializer();
+        check(template.parts().get(1) instanceof IdentifierExpr, "embedded expression retained");
+        IdentifierExpr embedded = (IdentifierExpr) template.parts().get(1);
+        check(embedded.span().startLine() == 2 && embedded.span().startColumn() == 2,
+            "embedded identifier retains original line/column");
+        check(r.program().statements().stream().noneMatch(stmt -> stmt instanceof ClassDeclaration),
+            "template comment manufactures no class declaration");
 
-        // An unknown name inside an interpolation: E1044 at the rebased
-        // recovered-name range AND its complete-comment note range in
-        // original-source coordinates (D10.8).
+        // Unknown-looking comment contents have the same whitespace meaning.
         String src2 = "let s = `${ // @nope\n x}`;";
         ParseResult r2 = parse(src2);
         CompilerDiagnostic e1044 = diagOf(r2, "E1044");
-        check(e1044 != null, "E1044 for the embedded unknown directive");
-        if (e1044 != null) {
-            check(e1044.range().origin() == RangeOrigin.SOURCE,
-                "E1044 primary range must be SOURCE");
-            // The comment starts at original offset 12; '@' at 15; the
-            // name 'nope' runs 16..20.
-            check(e1044.range().startScalarOffset() == 16
-                    && e1044.range().endScalarOffset() == 20,
-                "E1044 at the rebased recovered name (16,20), got ("
-                    + e1044.range().startScalarOffset() + ","
-                    + e1044.range().endScalarOffset() + ")");
-            check(e1044.range().startLine() == 1
-                    && e1044.range().startColumn() == 17,
-                "E1044 at original-source (1,17), got ("
-                    + e1044.range().startLine() + ","
-                    + e1044.range().startColumn() + ")");
-            boolean noteOk = e1044.notes().size() == 1
-                    && e1044.notes().get(0).range() != null
-                    && e1044.notes().get(0).range().origin()
-                        == RangeOrigin.SOURCE
-                    && e1044.notes().get(0).range().startScalarOffset() == 12
-                    && e1044.notes().get(0).range().endScalarOffset() == 20;
-            check(noteOk,
-                "E1044 note range in original-source coordinates (12,20): "
-                    + e1044.notes());
-        }
+        check(e1044 == null && r2.diagnostics().isEmpty(),
+            "unknown template comment is whitespace: " + r2.diagnostics());
+        check(r2.program().statements().getFirst().span().endLine() == 2,
+            "template spans include comment-contained line breaks");
 
-        // Removed directives remain unknown inside an interpolation.
+        // Version-like comment text remains whitespace inside interpolation.
         String src3 = "let s = `${ // @deal-version 1.3\n x}`;";
         ParseResult r3 = parse(src3);
         CompilerDiagnostic e1046 = diagOf(r3, "E1044");
-        check(e1046 != null,
-            "embedded @deal-version produces E1044 placement, got "
-                + r3.diagnostics());
+        check(e1046 == null && r3.diagnostics().isEmpty(),
+            "version template comment is whitespace: " + r3.diagnostics());
 
-        // A C marker inside an interpolation: E1044 (no extern-C context).
+        // C-like comment text likewise has no compiler meaning.
         String src4 = "let s = `${ // @c-struct\n x}`;";
         ParseResult r4 = parse(src4);
         CompilerDiagnostic e1046c = diagOf(r4, "E1044");
-        check(e1046c != null,
-            "embedded C marker produces E1044, got " + r4.diagnostics());
-        if (e1046c != null) {
-            check(e1046c.range().startScalarOffset() == 16
-                    && e1046c.range().endScalarOffset() == 24,
-                "embedded C-marker E1044 at the rebased directive range (12,24)");
-        }
+        check(e1046c == null && r4.diagnostics().isEmpty(),
+            "C-like template comment is whitespace: " + r4.diagnostics());
+        check(r4.program().statements().size() == 1, "C-like comment leaves template intact");
     }
 
 }

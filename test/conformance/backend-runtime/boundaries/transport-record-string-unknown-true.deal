@@ -2,7 +2,7 @@
 // @description: transport-Record<string,unknown>-True
 // @expected: runtime-ok
 // @features: boundary-validation
-import * as console from "std/console";
+import * as printer from "std/console";
 import * as host from "host/probe";
 
-export function main():null{let u=host.f();if((u.x as string)!==`\uD800`){throw {code:"TEST",message:"lone Record string lost at host ingress"};}console.log("OK");return null;}
+export function main():null{let u=host.f();if((u.x as string)!==`\uD800`){throw {code:"TEST",message:"lone Record string lost at host ingress"};}printer.log("OK");return null;}

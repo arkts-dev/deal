@@ -156,6 +156,7 @@ public final class LlvmTypeMapper {
         map.put("deal_class_supplied",
             "{ i8*, %struct.deal_check_input, %struct.deal_origin }");
         map.put("deal_arm_parameter", "{ i8*, i8* }");
+        map.put("deal_arm_text_parameter", "{ i8*, i8*, i64 }");
         map.put("deal_failure_admission", "{ i32, i8*, i8*, i8*, i8*, i8* }");
         map.put("deal_host_span", "{ i8*, i64 }");
         map.put("deal_host_error_text", "{ i8*, i8*, i8*, i8* }");

@@ -15,7 +15,7 @@ public final class Language16FrontendTest {
     }
     private static List<deal.diagnostics.CompilerDiagnostic> diagnostics(String source) {
         var lex = new Lexer(source, "test.deal").tokenize();
-        var parsed = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
+        var parsed = new Parser(lex.tokens(), "test.deal").parse();
         var diagnostics = new ArrayList<>(lex.diagnostics());
         diagnostics.addAll(parsed.diagnostics());
         if (diagnostics.isEmpty()) {
@@ -63,6 +63,29 @@ public final class Language16FrontendTest {
         for (String expression : List.of("Math.floor", "Date.now", "console.log", "Math.abs()", "Date.now(1)", "console.log(1)", "Math.sqrt(true)")) {
             check("function f():void{let value=" + expression + ";}", false);
         }
+        check("function f():unknown{return JSON.parse(\"1\");}", true);
+        check("function f():number{return JSON.parse(\"1\");}", true);
+        check("function f():number[]{return (JSON.parse(\"[]\"));}", true);
+        check("class Node{value:number;next?:Node;} function f():Node{return JSON.parse(\"{}\");}", true);
+        check("function f():Error{return JSON.parse(\"{}\");}", true);
+        for (String target : List.of("node.child.value", "node.items[0]", "xs[node.key]"))
+            check("class Node{value:number;child?:Node;items?:number[];key?:number;}"
+                + "function f(node:Node,xs:number[]):void{" + target + "=1;}", false);
+        for (String target : List.of("node.child.child", "record[node.key]"))
+            check("class Node{child?:Node;key?:string;}"
+                + "function f(node:Node,record:Record<string,unknown>):void{delete " + target + ";}", false);
+        check("class Node{value:number;child?:Node;items?:number[];key?:string;index?:number;}"
+            + "function f(node:Node,record:Record<string,unknown>):void{"
+            + "(node.child as Node).value=1;(node.items as number[])[node.index as number]=2;"
+            + "record[node.key as string]=3;delete record[node.key as string];"
+            + "delete (node.child as Node).child;node.child=node;delete node.child;}", true);
+        check("function f(record:Record<string,unknown>):void{record.child.value=1;}", false);
+        check("class Handler{run?:()=>void;} function f():Handler{return JSON.parse(\"{}\");}", false);
+        check("class Opaque{payload:unknown;} function f():Opaque{return JSON.parse(\"{}\");}", true);
+        check("function f():()=>void{return JSON.parse(\"null\");}", false);
+        for (String expression : List.of("JSON.parse", "JSON.parse()", "JSON.parse(1)", "JSON.parse(\"1\",\"2\")"))
+            check("function f():void{let value=" + expression + ";}", false);
+        check("class Handler{run?:()=>void;} function f():Handler{return JSON.parse(\"{}\") as Handler;}", true);
         check("function f(x:unknown):string|undefined{return JSON.stringify(x);}", true);
         check("function f():string|undefined{return JSON.stringify(undefined);}", true);
         check("function f():string|undefined{return JSON.stringify(()=>1);}", false);

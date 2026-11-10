@@ -26,8 +26,7 @@ import java.util.Map;
 
 /**
  * The C11 {@code json} and {@code std} service groups
- * (ISSUE-0908, {@code llvm-native-runtime-value-model} R6/R7/R8/R10,
- * {@code JsonFromClass}/{@code JsonToClass}/{@code StdlibInvoke}).
+ * (contextual {@code JSON_PARSE}, builtin stringify and {@code STDLIB_CALL}).
  *
  * <p>Every case compiles and links the <em>published</em> runtime tree produced
  * by {@link NativeCompiler#deployDeploymentSet(Path)} with the pinned strict
@@ -43,20 +42,21 @@ import java.util.Map;
  *   <li>the v1.6 stringify rules — omission of undefined/function members, the
  *       array substitution, non-finite to null, own-key order, the top-level
  *       undefined result, a path-local cycle versus shared acyclic children and
- *       the closed std/json rejection arm — against the specification's rules
+ *       the closed builtin encoding rejection arm — against the specification's rules
  *       and the failure-arm authority;</li>
  *   <li>every one of the eighteen merged {@code StdlibFunctionId} operations
- *       against {@link SharedStdlibSemantics}, with the Unicode scalar
- *       positions of the string family, the two bound failures, the parameter
+ *       against {@link SharedStdlibSemantics}, with the UTF-16 code-unit
+ *       positions and clamped substring bounds of the string family, the parameter
  *       and return crossings through the typed-boundary arm and a positive
  *       binary64 epoch {@code nowMillis};</li>
- *   <li>the two emitted class walks ({@code C$fromJson}/{@code C$toJson})
- *       against the specification's {@code @jsonable} rules: declaration order,
- *       required presence, rejected unknown keys, preserved optional absence,
- *       the required-undefined asymmetry, non-finite to null and the walk and
- *       cycle arms;</li>
- *   <li>the stack-safe traversal of both class walks: a recursive
- *       {@code @jsonable} plan decodes a 100000-level document — nested through
+ *   <li>contextual class decoding with explicit exact nominal targets:
+ *       declaration order, required presence, extras-before-fields, preserved
+ *       optional absence, scanner errors and typed mismatches with the parse
+ *       origin, and unchanged destination/descendant aliases on rejection;
+ *       declared-field encoding independently retains non-finite substitution
+ *       and the walk and cycle arms;</li>
+ *   <li>stack-safe contextual reconstruction: a recursive declaration
+ *       schema decodes a 100000-level document — nested through
  *       the class field and nested through an array — to its innermost level
  *       with the explicit frame stack, exactly as the parser and the encoder
  *       carry no nesting cap;</li>
@@ -157,7 +157,7 @@ public final class NativeJsonStdlibTest {
     }
 
     /**
-     * The std/json rejection arm's pinned expected text is the failure-arm
+     * The builtin stringify rejection arm's pinned expected text is the failure-arm
      * authority's, never a text the runtime authors: the one C constant is
      * compared against the registry so a registry change can never drift
      * silently past the runtime.
@@ -178,7 +178,7 @@ public final class NativeJsonStdlibTest {
                 "the runtime's pinned expected text equals the authority's");
         }
         checkEq("string, number, boolean, or table", pinned,
-            "the std/json rejection arm's pinned expected text");
+            "the builtin stringify rejection arm's pinned expected text");
     }
 
     // =========================================================================
@@ -187,7 +187,7 @@ public final class NativeJsonStdlibTest {
 
     private static void runAcceptance(int level) throws IOException {
         System.out.println("-- the JSON matrix, the stringify rules, every stdlib"
-            + " operation and both class walks at -O" + level + " --");
+            + " operation, contextual reconstruction and nominal encoding at -O" + level + " --");
         Path product = scratch.resolve("json-stdlib-o" + level);
         List<Path> sources = new ArrayList<>();
         sources.add(NativeCompiler.fixtures().resolve("json_stdlib_driver.c"));
@@ -282,6 +282,18 @@ public final class NativeJsonStdlibTest {
             checkEq("failure line\n", sanitized.result().stderr(),
                 "the ambient console-error effect is the only stderr under "
                     + "ASan/UBSan at -O" + level);
+            Map<String, String> sanitizedStressEnvironment = new java.util.HashMap<>(
+                NativeCompiler.sanitizerEnvironment());
+            sanitizedStressEnvironment.put("DEAL_GC_STRESS", "1");
+            NativeCompiler.SanitizedRun sanitizedStress = NativeCompiler.runSanitized(
+                sanitizedProduct, scratch, sanitizedStressEnvironment);
+            checkEq(0, sanitizedStress.result().exitCode(),
+                "the nominal JSON matrix exits zero under sanitized stress at -O" + level
+                    + ": " + sanitizedStress.result().describe());
+            checkEq(withoutTime(normal.stdout()), withoutTime(sanitizedStress.result().stdout()),
+                "the nominal JSON matrix retains every observation under sanitized stress at -O" + level);
+            checkEq("failure line\n", sanitizedStress.result().stderr(),
+                "sanitized stress reports only the declared console effect at -O" + level);
         }
 
         NativeCompiler.Result deep = NativeCompiler.execute(product, scratch,
@@ -293,8 +305,8 @@ public final class NativeJsonStdlibTest {
         checkEq("", deep.stderr(), "the deep round trip publishes no fault at -O"
             + level);
 
-        // The class decode walk is stack-safe for the same reason: a recursive
-        // `@jsonable` plan decoded from a 100000-level document reaches the
+        // Contextual class reconstruction is stack-safe: a recursive
+        // declaration schema decoded from a 100000-level document reaches the
         // innermost level through the explicit frame stack, for the chain shape
         // and for the nested-array shape.
         NativeCompiler.Result classDeep = NativeCompiler.execute(product, scratch,
@@ -367,7 +379,7 @@ public final class NativeJsonStdlibTest {
             Map.of(), null, null, null);
     }
 
-    /** The std/json rejection arm for one failing carrier kind. */
+    /** The builtin stringify rejection arm for one failing carrier kind. */
     private static BoundaryFailure stringifyArm(
             FailureProjections.CarrierKind carrierKind) {
         return FailureProjections.stringifyUnsupported(carrierKind);
@@ -570,8 +582,8 @@ public final class NativeJsonStdlibTest {
                 ((Value.Number) value).value()));
         }
 
-        // 7. std/string substring: clamping, reversed ranges, scalar slicing and
-        // the two bound failures.
+        // 7. std/string substring: clamping, reversed ranges, UTF-16 unit slicing,
+        // fractional/NaN bounds and infinities.
         expected.add(substringExpectation("substring-basic", "hello", 1, 3));
         expected.add(substringExpectation("substring-negative-start", "hello", -5, 3));
         expected.add(substringExpectation("substring-negative-end", "hello", 3, -1));
@@ -682,7 +694,7 @@ public final class NativeJsonStdlibTest {
         expected.addAll(arrayExpectation("table-keys",
             SharedStdlibSemantics.tableKeys(origin(), table)));
 
-        // 12. std/json parse: the record root and the closed return boundary.
+        // 12. Contextual Record parsing: the root shape is validated at parse.
         Value record = success(SharedStdlibSemantics.jsonParse(origin(),
             valid("{\"a\":1}")), "parse-record");
         expected.add("STD\tparse-record\tTABLE\t"
@@ -694,7 +706,7 @@ public final class NativeJsonStdlibTest {
             kindArm("record", "number")));
         expected.add(stdFailure("parse-null-root", kindArm("record", "null")));
 
-        // 13. std/json stringify through the closed operation.
+        // 13. Builtin stringify through the generic runtime primitive.
         SemanticTable<Value> simple = new SemanticTable<>();
         simple.put("k", Value.string("v"));
         expected.add(stdText("stringify-record", text(success(
@@ -765,13 +777,13 @@ public final class NativeJsonStdlibTest {
         // the observation verifier rather than by a fixed timestamp.
         expected.add("NOW-MILLIS");
 
-        // 16. The two stdlib crossing failures.
+        // 16. Ordinary stdlib and builtin JSON string-operand admission failures.
         expected.add(stdFailure("length-kind-failure",
             kindArm("string", "number")));
         expected.add(stdFailure("stringify-nothing-failure",
             kindArm("string", "undefined")));
 
-        // 17. The class walks: authored from docs/spec-v1.6.md's @jsonable rules.
+        // 17. Contextual class reconstruction and declared-field encoding.
         expected.add("FROM\tcomplete\tTEXT\t" + "{\"name\":\"Ada\",\"bio\":null,"
             + "\"tags\":[\"x\",\"y\"],\"props\":{\"k\":[1,2]},"
             + "\"items\":[{\"id\":2}],\"label\":null}");
@@ -779,19 +791,23 @@ public final class NativeJsonStdlibTest {
             + "\"nick\":\"A\",\"bio\":\"text\",\"tags\":[],\"props\":{},"
             + "\"items\":[{\"id\":2,\"note\":\"n\"}],"
             + "\"label\":\"L\"}");
-        expected.add("FROM\textra-key\tNULL");
-        expected.add("FROM\tmissing-required\tNULL");
-        expected.add("FROM\tmissing-required-nullable\tNULL");
-        expected.add("FROM\twrong-kind\tNULL");
-        expected.add("FROM\tduplicate-nested-key\tNULL");
-        expected.add("FROM\tnested-extra-key\tNULL");
-        expected.add("FROM\tarray-element-kind\tNULL");
-        expected.add("FROM\tnon-object-root\tNULL");
-        expected.add("FROM\tsyntax-defect\tNULL");
-        expected.add("FROM\textra-present-undefined-member\tNULL");
-        // The required-undefined asymmetry on the decode side: `label!: ?!string`
-        // must be present even though its type admits undefined.
-        expected.add("FROM\trequired-undefined-omitted\tNULL");
+        expected.add(decodeFailure("extra-key", extraArm("naem")));
+        expected.add(decodeFailure("missing-required", kindArm("string", "undefined")));
+        expected.add(decodeFailure("missing-required-nullable", kindArm("string", "undefined")));
+        expected.add(decodeFailure("wrong-kind", kindArm("string", "number")));
+        String duplicate = "{\"name\":\"Ada\",\"bio\":null,\"tags\":[],\"props\":{},"
+            + "\"items\":[{\"id\":1,\"id\":2}]}";
+        expected.add(decodeFailure("duplicate-nested-key", failureOf(
+            SharedStdlibSemantics.jsonParse(origin(), valid(duplicate)), "nested duplicate")));
+        expected.add(decodeFailure("nested-extra-key", extraArm("inner")));
+        expected.add(decodeFailure("array-element-kind", kindArm("string", "number")));
+        expected.add(decodeFailure("non-object-root", kindArm("@src/model.deal/Outer", "array")));
+        expected.add(decodeFailure("syntax-defect", failureOf(
+            SharedStdlibSemantics.jsonParse(origin(), valid("{\"name\":\"Ada\",\"bio\":null")),
+            "truncated class document")));
+        expected.add(decodeFailure("extra-present-undefined-member", kindArm("string", "null")));
+        // Required fields remain required even when their type admits undefined.
+        expected.add(decodeFailure("required-undefined-omitted", kindArm("string", "undefined")));
         expected.add("TO\tinstance-minimal\tTEXT\t" + "{\"name\":\"Ada\","
             + "\"bio\":null,\"tags\":[\"x\",\"y\"],\"props\":{\"k\":\"v\"},"
             + "\"items\":[{\"id\":3}],\"label\":null}");
@@ -799,34 +815,66 @@ public final class NativeJsonStdlibTest {
             + "\"bio\":null,\"tags\":[],\"props\":{},\"items\":[],"
             + "\"label\":null}");
         expected.add("TO\tmissing-required-field\tERROR\t"
-            + tail(walkArm("name", "nil")));
+            + tail(kindArm("@src/model.deal/Outer", "@src/model.deal/Outer")));
         expected.add("TO\tundefined-required-field\tERROR\t"
-            + tail(walkArm("name", "undefined")));
+            + tail(kindArm("string", "undefined")));
         expected.add("TO\tnonfinite-field\tTEXT\t" + "{\"name\":\"Ada\","
             + "\"bio\":null,\"tags\":[],\"props\":{},\"items\":[{\"id\":null}],"
             + "\"label\":null}");
         expected.add("TO\trecord-content\tTEXT\t" + "{\"name\":\"Ada\","
             + "\"bio\":null,\"tags\":[],\"props\":{\"kept\":[\"a\"]},"
             + "\"items\":[],\"label\":null}");
-        expected.add("TO\trecord-class-member\tERROR\t"
-            + tail(walkArm("props.nested", "table")));
+        expected.add("TO\trecord-class-member\tTEXT\t" + "{\"name\":\"Ada\","
+            + "\"bio\":null,\"tags\":[],\"props\":{\"nested\":{\"id\":1}},"
+            + "\"items\":[],\"label\":null}");
         expected.add("TO\trecord-cycle\tERROR\t" + tail(cycleArm()));
+        expected.add("TO\tcycle-before-later-kind\tERROR\t" + tail(cycleArm()));
+        expected.add("TO\tlater-array-kind\tERROR\t" + tail(kindArm("[@src/model.deal/Inner]", "boolean")));
+        expected.add("TO\ttyped-element-invalid\tERROR\t" + tail(FailureContractRegistry.render(
+            FailureArmId.ARRAY_ELEMENT_KIND, Map.of("oneBasedIndex", "2"),
+            "@src/model.deal/Inner", "@src/model.deal/Inner", kindArm("number", "boolean"))));
+        expected.add("TO\ttyped-element-repaired\tTEXT\t" + "{\"name\":\"Ada\","
+            + "\"bio\":null,\"tags\":[],\"props\":{},\"items\":[{\"id\":7},{\"id\":9}],\"label\":null}");
+        expected.add("TO\tnullable-array-descendant-invalid\tERROR\t" + tail(FailureContractRegistry.render(
+            FailureArmId.ARRAY_ELEMENT_KIND, Map.of("oneBasedIndex", "1"),
+            "@src/model.deal/Node", "@src/model.deal/Node", kindArm("@src/model.deal/Node", "string"))));
+        expected.add("TO\tnullable-array-descendant-repaired\tTEXT\t{\"list\":[{\"child\":null}]}");
+        var nodeLeaf = kindArm("@src/model.deal/Node", "string");
+        var nodeElement = FailureContractRegistry.render(FailureArmId.ARRAY_ELEMENT_KIND,
+            Map.of("oneBasedIndex", "1"), "@src/model.deal/Node", "@src/model.deal/Node", nodeLeaf);
+        expected.add("TO\tunrecorded-array-descendant-invalid\tERROR\t" + tail(nodeElement));
+        expected.add("TO\tunrecorded-array-descendant-repaired\tTEXT\t{\"list\":[{\"child\":null}]}");
+        expected.add("TO\tnested-array-descendant-invalid\tERROR\t" + tail(nodeElement));
+        String sharedNodes = "{\"list\":[{\"child\":null,\"list\":[{\"child\":null}]},"
+            + "{\"child\":null,\"list\":[{\"child\":null}]}]}";
+        expected.add("TO\tnested-array-shared-repaired\tTEXT\t" + sharedNodes);
+        expected.add("TO\tnullable-array-persistent-mismatch\tERROR\t" + tail(kindArm("[@src/model.deal/Node]", "array")));
+        expected.add("TO\tnullable-array-persistent-repaired\tTEXT\t" + sharedNodes);
         // The encode side of the required-undefined asymmetry: the required
         // `label` is present-undefined, so its key is omitted and the encoded
         // text cannot decode back (a missing required key).
         expected.add("TO\trequired-undefined-present\tTEXT\t" + "{\"name\":\"Ada\","
             + "\"bio\":null,\"tags\":[],\"props\":{},\"items\":[]}");
-        // A failure projection three segments deep: `props.a.b[0]`, produced by
-        // the walk position the encoder materializes only at the failure.
-        expected.add("TO\trecord-deep-member\tERROR\t"
-            + tail(walkArm("props.a.b[0]", "table")));
+        // Ordinary nominal values remain serializable inside Record/array
+        // descendants; declaration order is retained at the nested class.
+        expected.add("TO\trecord-deep-member\tTEXT\t" + "{\"name\":\"Ada\","
+            + "\"bio\":null,\"tags\":[],\"props\":{\"a\":{\"b\":[{\"id\":1}]}},"
+            + "\"items\":[],\"label\":null}");
+        expected.add("TO\trecord-deep-invalid\tERROR\t"
+            + tail(kindArm("number", "undefined")));
+        expected.add("TO\trecord-deep-repaired\tTEXT\t" + "{\"name\":\"Ada\","
+            + "\"bio\":null,\"tags\":[],\"props\":{\"a\":{\"b\":[{\"id\":2}]}},"
+            + "\"items\":[],\"label\":null}");
         return expected;
     }
 
-    /** The walk arm's own render at one position and one typed-boundary token. */
-    private static BoundaryFailure walkArm(String fieldPath, String actual) {
-        return FailureContractRegistry.render(FailureArmId.JSON_TO_WALK,
-            Map.of("fieldPath", fieldPath, "actual", actual), null, actual, null);
+    private static String decodeFailure(String label, BoundaryFailure failure) {
+        return "FROM\t" + label + "\tERROR\t" + tail(failure);
+    }
+
+    private static BoundaryFailure extraArm(String field) {
+        return FailureContractRegistry.render(FailureArmId.CLASS_EXTRA_FIELD,
+            Map.of("field", field, "classId", "@src/model.deal/Outer"), null, null, null);
     }
 
     private static String substringExpectation(String label, String text,

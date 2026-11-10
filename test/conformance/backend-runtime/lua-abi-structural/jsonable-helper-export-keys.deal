@@ -1,21 +1,21 @@
-// @spec: Runtime execution model — Lua backend ABI — jsonable helper export keys
-// @description: @jsonable helper exports remain callable through DEAL $ helper names
+// @spec: Standard library builtins — JSON
+// @description: Ordinary exported encode/decode functions use legal DEAL names and remain callable through saved values.
 // @expected: runtime-ok
-// @features: lua-abi, jsonable, structural
+// @features: lua-abi, json, structural, functions
 
-// @jsonable
 export class AbiUser { name: string; }
+export function encode(value: AbiUser): string { return JSON.stringify(value) as string; }
+export function decode(text: string): AbiUser { return JSON.parse(text); }
 
 export function test_abi_jsonable_helper_export_keys(): null {
-  let u: AbiUser | null = AbiUser$fromJson("{\"name\":\"Ada\"}");
-  if (u !== null) {
-    let s: string = AbiUser$toJson(u);
-    let u2: AbiUser | null = AbiUser$fromJson(s);
-    if (u2 !== null) { return null; }
+  let parse: (text: string) => AbiUser = decode;
+  let stringify: (value: AbiUser) => string = encode;
+  let u: AbiUser = parse("{\"name\":\"Ada\"}");
+  let u2: AbiUser = parse(stringify(u));
+  if (u2.name !== "Ada" || u === u2 || parse !== decode || stringify !== encode) {
+    throw {code: "TEST_FAIL", message: "ordinary JSON export key or identity failed"};
   }
-  throw { code: "TEST_FAIL", message: "jsonable helper export key failed" };
-}
-
-export function main(): null {
   return null;
 }
+
+export function main(): null { return null; }

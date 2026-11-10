@@ -108,7 +108,7 @@ public class BindingsValidationTest {
 
     private static CheckedSlice checkSlice(String source) {
         LexResult lex = new Lexer(source, SOURCE_ID).tokenize();
-        ParseResult parse = new Parser(lex.tokens(), SOURCE_ID, lex.directiveEvents()).parse();
+        ParseResult parse = new Parser(lex.tokens(), SOURCE_ID).parse();
         check(parse.diagnostics().isEmpty(), "the slice parses cleanly: " + parse.diagnostics());
         if (!parse.diagnostics().isEmpty()) {
             return null;
@@ -1052,8 +1052,7 @@ public class BindingsValidationTest {
     /** One source the real checker must reject with the exact code. */
     private static void checkerRejects(String source, String code, String what) {
         LexResult lex = new Lexer(source, SOURCE_ID).tokenize();
-        ParseResult parse = new Parser(lex.tokens(), SOURCE_ID,
-            lex.directiveEvents()).parse();
+        ParseResult parse = new Parser(lex.tokens(), SOURCE_ID).parse();
         NameResolver nr = new NameResolver(SOURCE_ID, null);
         SymbolTable symTable = nr.resolve(parse.program());
         CheckResult result = TypeChecker.check(SOURCE_ID, symTable, nr, parse.program());

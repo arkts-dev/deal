@@ -551,10 +551,8 @@ public final class RawUnitMaterializer {
                 valueIdAt(p, "classValue", where), classIdAt(p, "classId", where),
                 stringAt(p, "field", where),
                 optionalClassFactoryId(p, "classFactoryRef", where));
-            case JSON_FROM_CLASS -> new KindPayload.JsonFromClassPayload(
-                layoutAt(p, "layout", where), valueIdAt(p, "jsonString", where));
-            case JSON_TO_CLASS -> new KindPayload.JsonToClassPayload(
-                valueIdAt(p, "classValue", where), layoutAt(p, "layout", where));
+            case JSON_PARSE -> new KindPayload.JsonParsePayload(
+                valueIdAt(p, "jsonString", where), descriptorAt(p, "target", where));
             case MODULE_INIT -> new KindPayload.ModuleInitPayload(
                 moduleIdAt(p, "module", where), moduleIds(p, "imports", where),
                 blockIdAt(p, "initBlock", where));

@@ -2,7 +2,7 @@
 // @description: Invalid live Error code rejects record graph admission and permits repair
 // @expected: runtime-ok
 // @features: boundary-validation, host-abi
-import * as console from "std/console";
+import * as printer from "std/console";
 import * as host from "host/probe";
 
 export function main():null {
@@ -13,13 +13,13 @@ export function main():null {
   host.edit(e);
   try {
     destination={unread:e};
-    console.log("BAD");
+    printer.log("BAD");
   } catch(x) {
-    if(x instanceof Error) { console.log(x.code); }
+    if(x instanceof Error) { printer.log(x.code); }
   }
   host.repair();
-  if(e===alias && destination===original) { console.log("UNCHANGED"); }
+  if(e===alias && destination===original) { printer.log("UNCHANGED"); }
   destination={unread:e};
-  console.log("RECOVERED");
+  printer.log("RECOVERED");
   return null;
 }

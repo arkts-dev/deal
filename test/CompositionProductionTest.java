@@ -17,6 +17,10 @@ import java.util.Map;
 /** Executes independently specified generated compositions on deployed artifacts. */
 public final class CompositionProductionTest {
     private static final List<Backend> BACKENDS = List.of(Backend.JS, Backend.LUAJIT, Backend.JVM);
+    private static int executions;
+    private static NativeKnownSkips knownSkips = NativeKnownSkips.none();
+    private static final java.util.Set<String> skippedCompositions = new java.util.LinkedHashSet<>();
+    private static final java.util.Set<Path> subjects = new java.util.LinkedHashSet<>();
 
     static void execute(String source, String expected, Path root, Path host) throws Exception {
         execute(source, expected, root, host, BACKENDS);
@@ -29,6 +33,17 @@ public final class CompositionProductionTest {
 
     static void execute(String source, String expected, String expectedStderr,
                         Path root, Path host, List<Backend> backends) throws Exception {
+        execute(source, expected, expectedStderr, root, host, backends, Map.of());
+    }
+
+    static void execute(String source, String expected, String expectedStderr,
+                        Path root, Path host, List<Backend> backends, Map<String, String> modules) throws Exception {
+        execute(source, expected, expectedStderr, root, host, backends, modules, host != null);
+    }
+
+    private static void execute(String source, String expected, String expectedStderr,
+                        Path root, Path host, List<Backend> backends, Map<String, String> modules,
+                        boolean nativeSanitizers) throws Exception {
         for (Backend backend : backends) {
             Path project = root.resolve(backend.name());
             Path src = project.resolve("src");
@@ -36,6 +51,11 @@ public final class CompositionProductionTest {
             Files.createDirectories(src);
             Path entry = src.resolve("main.deal");
             Files.writeString(entry, source);
+            for (var module : modules.entrySet()) {
+                Path file = src.resolve(module.getKey());
+                Files.createDirectories(file.getParent());
+                Files.writeString(file, module.getValue());
+            }
             if (host != null) {
                 Files.createDirectories(src.resolve("host"));
                 Files.copy(host.resolve("probe.d.deal"), src.resolve("host/probe.d.deal"));
@@ -51,6 +71,12 @@ public final class CompositionProductionTest {
             if (!compiler.diagnostics().isEmpty() || compiler.semanticEmissionCount() != 1)
                 throw new AssertionError("SOURCE_REJECTION " + backend + ": " + compiler.diagnostics());
             if (backend == Backend.LLVM) {
+                String subject = root.getFileName().toString();
+                if (knownSkips.contains("composition", subject)) {
+                    knownSkips.report("composition", subject);
+                    skippedCompositions.add(subject);
+                    continue; // No native execution or pass credit; common lanes already ran.
+                }
                 List<Path> hostUnits = new ArrayList<>();
                 if (host != null) {
                     Path nativeHost = project.resolve("hosts");
@@ -61,8 +87,8 @@ public final class CompositionProductionTest {
                         Files.copy(Path.of("test/conformance/host-fixtures/" + helper), nativeHost.resolve(helper));
                     hostUnits.add(unit);
                 }
-                boolean[] instrumentation = host == null
-                    ? new boolean[] {false} : new boolean[] {false, true};
+                boolean[] instrumentation = nativeSanitizers
+                    ? new boolean[] {false, true} : new boolean[] {false};
                 for (int level : new int[] {0, 2}) {
                     for (boolean sanitized : instrumentation) {
                         Path product = project.resolve("native" + level + (sanitized ? "-sanitized" : ""));
@@ -73,6 +99,8 @@ public final class CompositionProductionTest {
                             var environment = new java.util.HashMap<String, String>();
                             environment.put("DEAL_GC_STRESS", stress ? "1" : "0");
                             if (sanitized) environment.putAll(NativeCompiler.sanitizerEnvironment());
+                            System.out.println("Executing LLVM O" + level + " stress=" + stress
+                                + " sanitized=" + sanitized + ": " + root.getFileName());
                             var result = sanitized
                                 ? NativeCompiler.runSanitized(product, project, environment).result()
                                 : NativeCompiler.execute(product, project, environment);
@@ -81,6 +109,8 @@ public final class CompositionProductionTest {
                                 throw new AssertionError("RUNTIME_OR_RESULT_FAILURE LLVM O" + level
                                     + " stress=" + stress + " sanitized=" + sanitized + ": " + result.describe()
                                     + " expected stdout=" + expected + " source=" + entry);
+                            executions++;
+                            subjects.add(root);
                         }
                     }
                 }
@@ -115,6 +145,8 @@ public final class CompositionProductionTest {
                     || !result.stderr().equals(expectedStderr) || !result.stdout().equals(expected))
                 throw new AssertionError("RUNTIME_OR_RESULT_FAILURE " + backend + ": " + result
                     + " expected stdout=" + expected + " source=" + entry);
+            executions++;
+            subjects.add(root);
         }
     }
 
@@ -122,6 +154,37 @@ public final class CompositionProductionTest {
         try (var paths = Files.walk(root)) {
             for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) Files.delete(path);
         }
+    }
+
+    static void jsonDeclarationComposition(Path root) throws Exception {
+        Path host = Files.createDirectories(root.resolve("json-schema-host"));
+        for (String extension : List.of("d.deal", "js", "lua", "java", "c"))
+            Files.copy(Path.of("test/conformance/host-fixtures/boundaries/boundary_json_schema." + extension),
+                host.resolve("probe." + extension));
+        execute("""
+            import * as host from "host/probe";
+            import * as model from "./model";
+            function check(ok:boolean,step:number):void{if(!ok){throw {code:"TEST"+String(step),message:"declaration schema"};}}
+            export function main():null{
+              let leaf:host.Leaf=JSON.parse(`{"value":8,"child":{"value":9,"next":{"value":10}}}`);
+              check(host.read(leaf)===8,1);
+              check((JSON.stringify(leaf) as string)===`{"value":8,"child":{"value":9,"next":{"value":10}}}`,2);
+              let box:model.Box=JSON.parse(`{"item":{"value":7,"foreign":{"value":11,"child":{"value":12}}}}`);
+              check(model.read(box)===11,3);
+              let omitted:model.Box=JSON.parse(`{"item":{"value":7}}`);
+              check(!model.hasForeign(omitted),4);
+              let original=box;let caught=false;
+              try{box=JSON.parse(`{"item":{"value":7,"foreign":{"value":11,"child":{"value":"bad"}}}}`);}
+              catch(e){check((e as Error).code==="E8001",5);caught=true;}
+              check(caught && box===original && model.read(box)===11,6);
+              return null;
+            }
+            """, "", "", root.resolve("json-parse-declaration-provider"), host,
+            List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM), Map.of(
+                "model.deal", "import * as host from \"host/probe\";"
+                    + "class Item{value:number;foreign?:host.Leaf;}export class Box{item:Item;}"
+                    + "export function read(box:Box):number{return host.read(box.item.foreign as host.Leaf);}"
+                    + "export function hasForeign(box:Box):boolean{return Object.hasOwn(box.item,\"foreign\");}"));
     }
 
     public static void main(String[] args) throws Exception {
@@ -134,6 +197,13 @@ public final class CompositionProductionTest {
             finally { remove(root); }
             return;
         }
+        if (args.length == 0) knownSkips = NativeKnownSkips.none();
+        else if (args.length == 2 && args[0].equals("--known-skips"))
+            knownSkips = NativeKnownSkips.load(Path.of(args[1]));
+        else throw new IllegalArgumentException("expected no arguments or --known-skips <path>");
+        executions = 0;
+        subjects.clear();
+        skippedCompositions.clear();
         Path root = Files.createTempDirectory("deal-compositions-");
         try {
             String fixture = "control-flow/for-of-nested-compositions.deal";
@@ -178,8 +248,8 @@ public final class CompositionProductionTest {
             execute(popCallable.replace(".pop()", ".splice(0,1)[0]").replace("host.poison(fn)", "host.poisonSignature(fn)"), "",
                 root.resolve("splice-callable-signature"), popHost,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
-            String decodedPop = "import * as codec from \"std/json\";export function main():null{"
-                + "let r=codec.parse(\"{\\\"xs\\\":[1,-0,null,2]}\");let xs=r.xs as unknown[];let alias=xs;"
+            String decodedPop = "export function main():null{"
+                + "let r:Record<string,unknown>=JSON.parse(\"{\\\"xs\\\":[1,-0,null,2]}\");let xs=r.xs as unknown[];let alias=xs;"
                 + "if((xs.pop() as number)!==2 || xs.pop()!==null || 1/(xs.pop() as number)!==-1/0 || xs.length!==1){"
                 + "throw {code:\"DECODED\",message:\"pop values\"};}"
                 + "xs[xs.length]=3;if(alias.length!==2 || (alias.pop() as number)!==3 || (xs.pop() as number)!==1"
@@ -187,8 +257,8 @@ public final class CompositionProductionTest {
                 + "throw {code:\"DECODED\",message:\"pop metadata\"};}return null;}";
             execute(decodedPop, "", root.resolve("pop-decoded"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
-            String decodedSplice = "import * as codec from \"std/json\";export function main():null{"
-                + "let r=codec.parse(\"{\\\"xs\\\":[1,-0,null,2,3]}\");let xs=r.xs as unknown[];let alias=xs;"
+            String decodedSplice = "export function main():null{"
+                + "let r:Record<string,unknown>=JSON.parse(\"{\\\"xs\\\":[1,-0,null,2,3]}\");let xs=r.xs as unknown[];let alias=xs;"
                 + "let out=xs.splice(1,2);if(out.length!==2 || 1/(out[0] as number)!==-1/0 || out[1]!==null"
                 + " || alias.length!==3 || (alias[1] as number)!==2 || (JSON.stringify(r) as string)!==\"{\\\"xs\\\":[1,2,3]}\"){"
                 + "throw {code:\"DECODED\",message:\"splice shift\"};}xs[xs.length]=4;out[out.length]=9;"
@@ -407,6 +477,97 @@ public final class CompositionProductionTest {
                 + "if(state!==2 || JSON.stringify(shared)===undefined){throw {code:\"RETRY\",message:\"JSON repair\"};}return null;}";
             execute(jsonEncoding, "", root.resolve("json-encoding"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
+            String parseFixture = "stdlib/json/contextual-parse.deal";
+            execute(ConformanceHarnessMetadata.productionCorpusSource(Files.readString(
+                Path.of("test/conformance/backend-runtime").resolve(parseFixture)), parseFixture),
+                "", root.resolve("json-parse-corpus"), null,
+                List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
+            execute("""
+                import * as left from "./left";
+                import * as again from "././left";
+                import * as right from "./right";
+                class Envelope { first:left.Node; second:right.Node; }
+                function verify(ok:boolean):void{if(!ok){throw {code:"TEST",message:"parse provider"};}}
+                export function main():null {
+                  let a:left.Node=JSON.parse(`{"z":1,"a":2,"next":{"z":3,"a":4}}`);
+                  let b:right.Node=JSON.parse(`{"z":5,"a":6}`);
+                  let c:again.Node=a;
+                  verify(left.read(c)===1 && right.read(b)===6);
+                  let keys=Object.keys(a);verify(keys[0]==="z" && keys[1]==="a");
+                  keys=Object.keys(b);verify(keys[0]==="a" && keys[1]==="z");
+                  let nested:Envelope=JSON.parse(`{"first":{"z":7,"a":8},"second":{"a":9,"z":10}}`);
+                  verify(left.read(nested.first)===7 && right.read(nested.second)===9);
+                  let rawA:unknown=a;let rawB:unknown=b;
+                  let caught=0;try{let wrong:right.Node=rawA as right.Node;}catch(e){caught=caught+1;}
+                  try{let wrong:left.Node=rawB as left.Node;}catch(e){caught=caught+1;}
+                  verify(caught===2);
+                  verify((JSON.stringify(a) as string)===`{"z":1,"a":2,"next":{"z":3,"a":4}}`);
+                  return null;
+                }
+                """, "", "", root.resolve("json-parse-providers"), null,
+                List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM), Map.of(
+                    "left.deal", "export class Node{z:number;a:number;next?:Node;}export function read(n:Node):number{return n.z;}",
+                    "right.deal", "export class Node{a:number;z:number;next?:Node;}export function read(n:Node):number{return n.a;}"));
+            execute("import * as model from \"./model\";class Local{box:model.Box;}export function main():null{"
+                + "let box:model.Box=JSON.parse(`{\"item\":{\"value\":7}}`);"
+                + "let local:Local=JSON.parse(`{\"box\":{\"item\":{\"value\":8,\"next\":{\"value\":9}}}}`);"
+                + "if(model.read(box)!==7 || model.read(local.box)!==8){throw {code:\"TEST\",message:\"private schema provider\"};}return null;}",
+                "", "", root.resolve("json-parse-private-provider"), null,
+                List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM), Map.of(
+                    "model.deal", "class Item{value:number;next?:Item;}export class Box{item:Item;}"
+                        + "export function read(box:Box):number{return box.item.value;}"));
+            execute("import * as model from \"./model\";class Local{box:model.Box;}export function main():null{"
+                + "let local:Local=JSON.parse(`{\"box\":{\"item\":{\"payload\":{\"node\":{\"value\":7,\"next\":{\"value\":8}}}}}}`);"
+                + "if(model.read(local.box)!==15){throw {code:\"TEST\",message:\"transitive private schema\"};}"
+                + "let original=local;let caught=false;"
+                + "try{local=JSON.parse(`{\"box\":{\"item\":{\"payload\":{\"node\":{\"value\":7,\"next\":{\"value\":\"bad\"}}}}}}`);}"
+                + "catch(e){if((e as Error).code!==\"E8001\"){throw e as Error;}caught=true;}"
+                + "if(!caught || local!==original || model.read(local.box)!==15){throw {code:\"TEST\",message:\"transitive rollback\"};}return null;}",
+                "", "", root.resolve("json-parse-transitive-private"), null,
+                List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM), Map.of(
+                    "model.deal", "import * as leaf from \"./leaf\";class Item{payload:leaf.Payload;}export class Box{item:Item;}"
+                        + "export function read(box:Box):number{return leaf.read(box.item.payload);}",
+                    "leaf.deal", "class Node{value:number;next?:Node;}export class Payload{node:Node;}"
+                        + "export function read(payload:Payload):number{return payload.node.value+(payload.node.next as Node).value;}"));
+            jsonDeclarationComposition(root);
+            execute(Files.readString(Path.of("skills/write-deal/examples/serialization/main.deal")),
+                "", "", root.resolve("json-serialization-example"), null,
+                List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM), Map.of(
+                    "settings.deal", Files.readString(Path.of("skills/write-deal/examples/serialization/settings.deal"))));
+            execute("import * as data from \"./data\";export function main():null{return data.exercise();}",
+                "", "", root.resolve("json-data-example"), null,
+                List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM), Map.of(
+                    "data.deal", Files.readString(Path.of("skills/write-deal/examples/src/data.deal")),
+                    "check.deal", Files.readString(Path.of("skills/write-deal/examples/src/check.deal"))));
+            // Large documents are source chunks rather than runtime-built
+            // strings: construction-loop tracing would measure repeated text
+            // rendering instead of reconstruction and boundary stack safety.
+            String opening = "{\"value\":1,\"next\":";
+            String classInput = "`" + opening.repeat(2500) + "`+\n`"
+                + opening.repeat(2500) + "null" + "}".repeat(5000) + "`";
+            String arrayInput = "`" + "[".repeat(20000) + "-0" + "]".repeat(20000) + "`";
+            String deepParse = "class Node{value:number;next:Node|null;} export function main():null{"
+                + "let text=" + classInput + ";\nlet node:Node|null=JSON.parse(text);"
+                + "if((JSON.stringify(node) as string)!==text){throw {code:\"TEST\",message:\"deep class\"};}"
+                + "\ntext=" + arrayInput + ";\nlet value:unknown=JSON.parse(text);"
+                + "let output=JSON.stringify(value) as string;"
+                + "if(output.length!==40001 || !output.includes(\"0\")){throw {code:\"TEST\",message:\"deep array\"};}"
+                + "return null;}";
+            execute(deepParse, "", "", root.resolve("json-parse-deep"), null,
+                List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM), Map.of(), true);
+            String failedClassInput = "`" + opening.repeat(2500) + "`+\n`"
+                + opening.repeat(2500) + "{\"value\":\"bad\",\"next\":null}" + "}".repeat(5000) + "`";
+            String deepFailure = "class Node{value:number;next:Node|null;} export function main():null{"
+                + "let original:Node={value:7,next:null};let destination=original;let rejected=false;"
+                + "try{destination=JSON.parse(" + failedClassInput + ");}catch(e){"
+                + "if(e instanceof Error){rejected=e.code===\"E8001\" && e.message===\"expected number\";}}"
+                + "if(!rejected || destination!==original || destination.value!==7 || destination.next!==null){"
+                + "throw {code:\"TEST\",message:\"deep parse failure lost rollback or leaf\"};}return null;}";
+            execute(deepFailure, "", "", root.resolve("json-parse-deep-failure"), null,
+                List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM), Map.of(), true);
+            execute("export function main():null{try{JSON.parse(`bad`);}catch(e){}return null;}",
+                "", root.resolve("json-parse-builtin-only"), null,
+                List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             String jsonFixture = "stdlib/json/builtin-stringify.deal";
             execute(ConformanceHarnessMetadata.productionCorpusSource(Files.readString(
                 Path.of("test/conformance/backend-runtime").resolve(jsonFixture)), jsonFixture),
@@ -449,20 +610,23 @@ public final class CompositionProductionTest {
                     + "(e as Error).message=\"new\";}"
                     + "state=state+" + delta + ";"
                     + "if(original.message!==\"new\"){throw {code:\"TEST\",message:\"identity\"};}"
-                    + "let text=json.stringify({value:captured(),drop:captured});"
+                    + "let text=JSON.stringify({value:captured(),drop:captured});"
                     + "if(text===undefined){throw {code:\"TEST\",message:\"json\"};}"
-                    + "let parsed=json.parse(text as string) as Record<string,unknown>;"
+                    + "let parsed:Record<string,unknown>=JSON.parse(text as string);"
                     + "if(Object.hasOwn(parsed,\"drop\")){throw {code:\"TEST\",message:\"omission\"};}"
                     + "return parsed.value as number;";
                 for (int i = 0; i < depth; i++)
                     body = "let f:()=>number=function():number{" + body + "};return f();";
-                String source = "import * as c from \"std/console\";import * as json from \"std/json\";"
+                String source = "import * as c from \"std/console\";"
                     + "function run():number{let state:number=" + base + ";" + body + "}"
                     + "export function main():null{if(run()!==" + (base + delta)
                     + "){throw {code:\"TEST\",message:\"value\"};}c.log(\"COMPOSE_OK\");return null;}";
                 execute(source, "COMPOSE_OK\n", root.resolve("seed" + seed), null);
             }
-            System.out.println("Composition production: 15 composition lanes and 215 revised-syntax executions passed");
+            knownSkips.remaining("composition", skippedCompositions);
+            System.out.println("Composition production: " + subjects.size()
+                + " source subjects and " + executions + " verdict-checked executions passed; "
+                + skippedCompositions.size() + " LLVM compositions omitted (no execution credit)");
         } finally { remove(root); }
     }
 }

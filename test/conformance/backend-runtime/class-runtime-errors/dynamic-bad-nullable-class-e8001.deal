@@ -3,12 +3,12 @@
 // @expected: runtime-error E8001
 // @features: classes, nullable, runtime-errors
 
-import * as json from "std/json";
+
 
 class Box { value: number; }
 
 export function test_dynamic_bad_nullable_class(): Box | null {
-  let holder: Record<string, unknown> = { item: json.parse("{\"value\":\"bad\"}") };
+  let holder: Record<string, unknown> = { item: JSON.parse("{\"value\":\"bad\"}") };
   let b: Box | null = holder.item as Box | null;
   return b;
 }

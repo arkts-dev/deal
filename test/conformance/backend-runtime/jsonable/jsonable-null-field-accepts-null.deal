@@ -1,13 +1,14 @@
-// @spec: Classes
-// @description: fromJson accepts the JSON null literal for a null-typed field.
+// @spec: Standard library builtins — JSON decoding
+// @description: Contextual decoding accepts explicit JSON null for a required null-typed field and retains presence.
 // @expected: runtime-ok
-// @features: jsonable, null, fromJson
+// @features: json, null, classes
 
-// @jsonable
 export class Marker { value: null; }
 
 export function main(): null {
-  let m: Marker | null = Marker$fromJson("{\"value\":null}");
-  if (m === null) { throw { code: "TEST_FAIL", message: "null field rejected" }; }
+  let m: Marker = JSON.parse("{\"value\":null}");
+  if (m.value !== null || !Object.hasOwn(m, "value") || !(m instanceof Marker)) {
+    throw {code: "TEST_FAIL", message: "null field or nominal identity lost"};
+  }
   return null;
 }

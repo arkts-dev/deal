@@ -62,9 +62,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 /**
- * ISSUE-0698: the {@code @jsonable} helper family's production drive
- * ({@code dispatched-corpus-production-realization} R3 and the helper
- * contract; ISSUE-0698's criteria).
+ * Contextual JSON reconstruction, encoding and ordinary module-function drive.
  *
  * <p>One drive compiles every fixture of the family through the
  * release-owned production invocation on LuaJIT and JVM and executes each
@@ -82,26 +80,17 @@ import java.util.stream.Stream;
  * {@code expected}/{@code actual} byte-exact, with the materialized line
  * rebased to the raw corpus coordinate.</p>
  *
- * <p>The drive also pins the helper surface in the produced unit: exactly
- * one closure identity and one {@code LoweredBody} binding per class
- * helper, one {@code EXPORT_PUBLISH} and one recorded
- * {@code EXTERNAL_ENTRY} per exported helper, the same-module call that
- * resolves the declaration's generated closure identity through the
- * landed {@code LoweredBody} call shape, and the cross-module call bound
- * through {@code EXPORT_READ} plus the closed {@code ExternalFunction}
- * shape to the callee's recorded entry. A declared class that is not
- * {@code @jsonable} gains no helper, and a user identifier near a helper
- * name changes no outcome.</p>
+ * <p>Ordinary encoders and decoders retain one closure, publication and
+ * recorded entry each. Saved same-module and imported functions resolve
+ * exact module entries with entry-owned body and return boundaries.
+ * Class declarations do not synthesize callable helpers.</p>
  *
  * <p>The three-consumer regressions close the walk's remaining arms: a
- * function-parameter invocation of a helper ({@code f(w)} inside the
- * callee body) must render the pinned JSON failure at the {@code f(w)}
- * call expression in the oracle, the LuaJIT artifact, and the JVM
- * artifact alike; a class instance inside an array nested in a table
- * field must be rejected by all three consumers (the table-content walk
- * stays JSON-shaped); a nested class's table field must spell its keys in
- * first-insertion order and its int/number leaves by their own variant
- * (the exact text compared on all three consumers); the recursive
+ * function-parameter invocation of an ordinary encoder must render a
+ * builtin failure at its {@code JSON.stringify(w)} expression in the
+ * oracle, LuaJIT and JVM alike. Nominal values nested in Records and arrays
+ * serialize their public fields. Record keys retain creation order and
+ * numeric leaves retain ECMAScript binary64 spelling. The recursive
  * nested-class walk has no fixed depth cap (511 and 1200 chain links both
  * succeed with the exact text; there is no
  * container's token and path); the oracle's array executor view must stay
@@ -111,14 +100,11 @@ import java.util.stream.Stream;
  * as another class's declared field or as an array element must be
  * serialized by the parent's helper call as the committed state (exact
  * text on all three consumers, including a second parent alias of the same
- * child identity); a null element in {@code (int | null)[]} must
- * roundtrip on all three consumers while the same document stays rejected
- * by {@code int[]}; a read-derived numeric variant carrier must
- * serialize at a declared {@code number} field and array element with its
- * own variant's spelling, and the same carrier produced by an omitted
- * nested-class default must conform at its declared {@code number},
- * {@code number | null}, and {@code number[]} positions (with its
- * explicit-value control). The pinned-failure leg's comparison is itself
+ * child identity); nullable numeric arrays accept null while strict numeric
+ * arrays reject it without changing the destination or saved descendants.
+ * Read-derived binary64 values and explicitly parsed nested values serialize
+ * at declared numeric positions; missing required fields reject rather than
+ * running defaults. The pinned-failure leg's comparison is itself
  * covered by negative controls: unexpected process stdout, an incorrect
  * process exit status, or wrong stderr is rejected, and the exact-text
  * artifact leg is only credited when the process completes its tested body
@@ -139,12 +125,12 @@ import java.util.stream.Stream;
  * {@code main} exactly once — the artifact probes' sequence) before the
  * export leg's ordered non-main export loop, and a main-only control
  * proves the leg captures a deliberate main failure. The inconsistent-fact
- * negatives cover the missing generated helper export and the missing
+ * negatives cover a missing ordinary decoder export and the missing
  * recorded callee entry: the hand-built checked-project fact fails the
  * real production arm closed with one E6005 through the producer guard and
  * stages nothing on both targets, a checker-valid cross-module call to an
  * entry-delegation-owned export fails the arm closed the same way, and the
- * same helper facts at the lowered-IR level (a removed
+ * same ordinary function facts at the lowered-IR level (a removed
  * {@code EXPORT_PUBLISH} publication and a removed recorded
  * {@code EXTERNAL_ENTRY}) are rejected by both production emitters with
  * the named producer defect and stage nothing.</p>
@@ -804,7 +790,7 @@ public class JsonableHelperProductionDriveTest {
 
     private static void testProductionDrive(List<String> discovered,
             Map<String, CorpusObservation> observations) throws Exception {
-        System.out.println("-- the @jsonable helper family production drive: "
+        System.out.println("-- the contextual JSON family production drive: "
             + discovered.size() + " discovered fixtures on both targets --");
         List<String> driven = new ArrayList<>(discovered);
         driven.add(NEAR_COLLISION);
@@ -1295,7 +1281,7 @@ public class JsonableHelperProductionDriveTest {
             }
             ExecutableLoweredProject unit = lowered.project();
             ModuleId entry = lowered.entryModule();
-            ModuleId lib = new ModuleId("jsonable_lib");
+            ModuleId lib = new ModuleId("jsonable_helper_lib");
             LoweredModuleUnit entryUnit = unit.modules().get(entry);
             LoweredModuleUnit libUnit = unit.modules().get(lib);
             check(entryUnit != null && libUnit != null,
@@ -1303,10 +1289,8 @@ public class JsonableHelperProductionDriveTest {
             if (entryUnit == null || libUnit == null) {
                 return;
             }
-            // The declaring unit: exactly one CLOSURE_NEW per generated
-            // helper signature, exactly one LoweredBody binding per closure
-            // identity, and exactly one publication and entry per helper
-            // export.
+            // Each ordinary declared encoder/decoder has one closure binding,
+            // one publication and one recorded entry.
             Map<String, ValueId> closuresByHelper = new LinkedHashMap<>();
             for (SemanticOp op : libUnit.ops()) {
                 if (op.kind() != SemanticOpKind.CLOSURE_NEW) {
@@ -1315,7 +1299,7 @@ public class JsonableHelperProductionDriveTest {
                 KindPayload.ClosureNewPayload closure =
                     (KindPayload.ClosureNewPayload) op.payload();
                 String text = closure.signature().canonicalSpecText();
-                String helper = text.contains("?@") ? "Widget$fromJson" : "Widget$toJson";
+                String helper = text.startsWith("(string)") ? "decode" : "encode";
                 check(closuresByHelper.put(helper, (ValueId) op.result()) == null,
                     "exactly one " + helper + " closure identity per class");
                 check(libUnit.functions().containsKey(closure.function()),
@@ -1337,14 +1321,12 @@ public class JsonableHelperProductionDriveTest {
             for (SemanticOp op : libUnit.ops()) {
                 if (op.kind() == SemanticOpKind.EXPORT_PUBLISH
                         && op.payload() instanceof KindPayload.ExportPublishPayload p
-                        && (p.name().equals("Widget$fromJson")
-                            || p.name().equals("Widget$toJson"))) {
+                        && Set.of("encode", "decode").contains(p.name())) {
                     publications++;
                 }
                 if (op.kind() == SemanticOpKind.EXTERNAL_ENTRY
                         && op.payload() instanceof KindPayload.ExternalEntryPayload p
-                        && (p.exportName().equals("Widget$fromJson")
-                            || p.exportName().equals("Widget$toJson"))) {
+                        && Set.of("encode", "decode").contains(p.exportName())) {
                     entries++;
                     entryOf.put(p.exportName(), op.opId());
                     entryFunctionOf.put(p.exportName(), p.function());
@@ -1360,7 +1342,7 @@ public class JsonableHelperProductionDriveTest {
                     "the recorded entry of " + entryRow.getKey()
                         + " resolves the helper's own lowered body");
                 check(libUnit.functions().get(function).descriptor()
-                        .canonicalSpecText().contains("Widget"),
+                        .canonicalSpecText().contains("Model"),
                     "the recorded entry of " + entryRow.getKey()
                         + " names the class's generated body");
             }
@@ -1374,8 +1356,7 @@ public class JsonableHelperProductionDriveTest {
                 if (op.kind() == SemanticOpKind.EXPORT_READ
                         && op.payload() instanceof KindPayload.ExportReadPayload p
                         && p.module().equals(lib)
-                        && (p.name().equals("Widget$fromJson")
-                            || p.name().equals("Widget$toJson"))) {
+                        && Set.of("encode", "decode").contains(p.name())) {
                     exportRead = true;
                 }
                 if (op.kind() == SemanticOpKind.CALL
@@ -1399,12 +1380,9 @@ public class JsonableHelperProductionDriveTest {
             check(externalCall, "the cross-module helper call binds the closed "
                 + "ExternalFunction(SHARED_BODY) shape to the callee's recorded entry");
         }
-        // The same-module call shape (R3(b)): a same-module reference
-        // resolves the class's generated closure identity (the
-        // declaration-position CLOSURE_NEW result) and calls it through the
-        // landed LoweredBody call shape — one recorded EXTERNAL_ENTRY per
-        // helper export remains for the cross-module callers, and no
-        // same-module call resolves the ExternalFunction shape.
+        // Saved same-module exported functions remain module-function values:
+        // their calls resolve the exact recorded entry, which owns the body
+        // and return boundary. Closure allocation identities remain distinct.
         {
             Lowered sameLowered = sameModule;
             if (sameLowered == null) {
@@ -1421,7 +1399,7 @@ public class JsonableHelperProductionDriveTest {
             for (SemanticOp op : roundtrip.ops()) {
                 if (op.kind() == SemanticOpKind.EXTERNAL_ENTRY
                         && op.payload() instanceof KindPayload.ExternalEntryPayload p
-                        && p.exportName().startsWith("Person$")) {
+                        && Set.of("encode", "decode").contains(p.exportName())) {
                     entryFunctionOf.put(p.exportName(), p.function());
                     entryReturnBoundaryByFunction.put(p.function(),
                         p.returnBoundaryOpId());
@@ -1463,7 +1441,7 @@ public class JsonableHelperProductionDriveTest {
                         "the same-module callee load publishes the declaration's "
                             + "generated closure identity " + identity);
                     check(helper != null && helper.descriptor().canonicalSpecText()
-                            .contains("Person"),
+                            .contains("Model"),
                         "the same-module helper body is the class's generated body");
                     checkEq(entryReturnBoundaryByFunction.get(body.functionId()),
                         call.returnBoundaryOpId(),
@@ -1474,15 +1452,20 @@ public class JsonableHelperProductionDriveTest {
                         && external.executionOwner()
                             == deal.semantic.ir.ExternalExecutionOwner.SHARED_BODY) {
                     sameModuleExternalCalls++;
+                    SemanticOp entryOp = roundtrip.ops().stream()
+                        .filter(candidate -> candidate.opId().equals(call.externalEntryRef()))
+                        .findFirst().orElse(null);
+                    check(entryOp != null
+                            && entryOp.payload() instanceof KindPayload.ExternalEntryPayload recorded
+                            && recorded.exportName().equals(external.exportName())
+                            && recorded.signature().equals(external.descriptor()),
+                        "saved same-module function resolves the exact declaration entry");
                 }
             }
             checkEq(2, entryFunctionOf.size(),
-                "exactly one recorded entry per same-module helper export");
-            checkEq(2, directHelperCalls, "the same-module helper calls are direct "
-                + "LoweredBody calls to the declaration's closure (got "
-                + directHelperCalls + ")");
-            checkEq(0, sameModuleExternalCalls, "no same-module call resolves the "
-                + "ExternalFunction shape (the entry stays the cross-module record)");
+                "exactly one recorded entry per declared encoder/decoder export");
+            checkEq(0, directHelperCalls, "ordinary exported functions retain module-function subjects");
+            checkEq(2, sameModuleExternalCalls, "both saved same-module functions resolve their recorded entries");
         }
     }
 
@@ -1491,16 +1474,13 @@ public class JsonableHelperProductionDriveTest {
     // =========================================================================
 
     private static void testNegatives() throws Exception {
-        System.out.println("-- the negatives: the near-collision identifier, the "
-            + "non-@jsonable class, and the E2004 frontend missing-helper "
-            + "reference --");
-        // The near-collision fixture: a local identifier `User_fromJson`
-        // next to the helper `User$fromJson` changes no outcome (its leg
-        // already reproduced the pinned runtime-ok sidecar byte-exact).
+        System.out.println("-- the negatives: ordinary helper-like names, explicit "
+            + "class declarations, and an absent helper-shaped export --");
+        // The ordinary User_fromJson identifier remains valid and executes
+        // its independent runtime-ok transcript without synthetic exports.
         String leg = RECORD.get(NEAR_COLLISION).get(Target.LUAJIT);
         checkEq("ok", leg, "the near-collision identifier changes no outcome");
-        // A declared class that is not @jsonable gains no helper: the
-        // non-jsonable fixture lowers no JSON closure and no JSON op.
+        // A plain class declaration gains no JSON helper operations.
         Path root = Files.createTempDirectory("jsonable-negative-");
         try {
             Path src = root.resolve("src");
@@ -1515,13 +1495,13 @@ public class JsonableHelperProductionDriveTest {
                 StandardCharsets.UTF_8);
             Project project = new Project(root, src, src.resolve("plain.deal"), "plain",
                 Map.of(), root.resolve("out"));
-            Lowered lowered = lower(project, "non-jsonable negative");
+            Lowered lowered = lower(project, "plain class declaration");
             if (lowered != null) {
                 for (LoweredModuleUnit moduleUnit : lowered.project().modules().values()) {
                     for (SemanticOp op : moduleUnit.ops()) {
-                        check(op.kind() != SemanticOpKind.JSON_FROM_CLASS
-                                && op.kind() != SemanticOpKind.JSON_TO_CLASS,
-                            "a non-@jsonable class lowers no JSON helper op (got "
+                        check(!op.kind().name().equals("JSON_FROM_CLASS")
+                                && !op.kind().name().equals("JSON_TO_CLASS"),
+                            "a class lowers no legacy JSON helper op (got "
                                 + op.kind() + ")");
                     }
                 }
@@ -1529,8 +1509,8 @@ public class JsonableHelperProductionDriveTest {
         } finally {
             deleteRecursively(root);
         }
-        // A helper reference on a non-@jsonable imported class fails closed
-        // and stages nothing: the checker's declared-export fact is the
+        // An absent helper-shaped export fails closed and stages nothing:
+        // the checker's declared-export fact is the
         // resolution authority, so no lowering arm fabricates a helper.
         Path missing = Files.createTempDirectory("jsonable-missing-export-");
         try {
@@ -1555,7 +1535,7 @@ public class JsonableHelperProductionDriveTest {
             List<String> diagnostics = new ArrayList<>();
             boolean compiled = compile(project, "missing-helper-export", Target.LUAJIT,
                 diagnostics);
-            check(!compiled, "a helper reference on a non-@jsonable class fails closed: "
+            check(!compiled, "an absent helper-shaped class export fails closed: "
                 + diagnostics);
             check(diagnostics.stream().anyMatch(d -> d.startsWith("E2004 ")),
                 "the missing-helper reference fails closed with the checker's "
@@ -1569,9 +1549,8 @@ public class JsonableHelperProductionDriveTest {
 
     /**
      * The declaring module's checked export list without one export name:
-     * the hand-built inconsistent "missing helper export" fact (no
-     * checker-valid program produces it — the checker's synthetic export
-     * is the generated helper's authority).
+     * a hand-built inconsistent fact. The unchanged caller must still
+     * consume the ordinary declared export being removed.
      */
     private static CheckedProjectInput withoutExport(CheckedProjectInput project,
             ModuleId module, String export) {
@@ -1587,6 +1566,8 @@ public class JsonableHelperProductionDriveTest {
                     exports.add(candidate);
                 }
             }
+            check(exports.size() + 1 == entry.exports().size(),
+                "the missing-export mutation removes exactly one existing export: " + export);
             modules.add(new CheckedModuleInput(entry.moduleId(), entry.sourceId(),
                 entry.sourcePath(), entry.ast(), entry.checks(), entry.imports(),
                 exports, entry.kind()));
@@ -1598,8 +1579,8 @@ public class JsonableHelperProductionDriveTest {
     /**
      * The lowered project with one module's matching ops removed from the
      * produced-op list <em>and</em> from its block-membership table: the
-     * hand-built inconsistent fact an "otherwise valid generated helper"
-     * with a missing export or a missing recorded callee entry is (no
+     * hand-built inconsistent fact for an ordinary declared function
+     * with a missing export or recorded callee entry (no
      * checker-valid program produces it, and the removal is complete — the
      * block walk never resolves a removed id).
      */
@@ -1759,12 +1740,11 @@ public class JsonableHelperProductionDriveTest {
                     || manifests.manifests() == null || surface == null) {
                 return;
             }
-            // (a) The missing helper export through the real production arm:
-            // the declaring module's checked export list lacks
-            // Widget$fromJson while the cross-module caller still reads it.
-            ModuleId lib = new ModuleId("jsonable_lib");
+            // Remove the real ordinary decoder's checked export while its
+            // unchanged imported binding and invocation remain reachable.
+            ModuleId lib = new ModuleId("jsonable_helper_lib");
             CheckedProjectInput missingExport = withoutExport(built.input(), lib,
-                "Widget$fromJson");
+                "decode");
             for (Target target : Target.values()) {
                 Path out = project.root().resolve("out-missing-export-"
                     + target.laneName());
@@ -1790,7 +1770,7 @@ public class JsonableHelperProductionDriveTest {
                     "the missing helper export merges exactly one E6005 ["
                         + target.laneName() + "]");
                 check(first != null && first.message().contains("CONSTRUCT_UNLOWERED")
-                        && first.message().contains("Widget$fromJson")
+                        && first.message().contains("decode")
                         && first.message().contains("no recorded EXTERNAL_ENTRY"),
                     "the missing helper export fails through the CONSTRUCT_UNLOWERED "
                         + "guard naming the helper's absent entry ["
@@ -1799,15 +1779,9 @@ public class JsonableHelperProductionDriveTest {
                 check(staged.isEmpty(), "the missing helper export stages nothing ["
                     + target.laneName() + "] (staged " + staged + ")");
             }
-            // (b) The missing recorded callee entry through the real
-            // production arm: the callee-side counterpart of (a). The
-            // declaring module publishes an export whose invocation the
-            // module records no EXTERNAL_ENTRY for — the generated
-            // helpers' own entry mechanism consumes exactly this relation
-            // (the reference's externalEntryRef and the emitter's
-            // resolveExternalEntry), and the entry function's
-            // entry-delegation-owned export is the checker-valid shape of
-            // the fact.
+            // Separately exercise a published entry-delegation-owned export
+            // with no callable EXTERNAL_ENTRY. Successful source checking
+            // must not let emission invent an ordinary callable entry.
             for (Target target : Target.values()) {
                 Path entryRoot = Files.createTempDirectory(
                     "jsonable-missing-entry-");
@@ -1854,11 +1828,8 @@ public class JsonableHelperProductionDriveTest {
                     deleteRecursively(entryRoot);
                 }
             }
-            // (c) The same facts at the lowered-IR mechanism level: the
-            // otherwise valid project's generated helper loses its
-            // EXPORT_PUBLISH publication (a missing helper export), and,
-            // separately, its recorded EXTERNAL_ENTRY (a missing callee
-            // entry while the export stays published).
+            // Independently remove the ordinary decoder's lowered publication
+            // and recorded entry; keep the caller and all other facts intact.
             Lowered lowered = observation.lowered();
             if (lowered == null) {
                 return;
@@ -1874,7 +1845,8 @@ public class JsonableHelperProductionDriveTest {
             SemanticOp removedEntry = null;
             for (SemanticOp op : lowered.project().modules().get(lib).ops()) {
                 if (op.kind() == SemanticOpKind.EXTERNAL_ENTRY
-                        && op.payload().toString().contains("Widget$fromJson")) {
+                        && op.payload() instanceof KindPayload.ExternalEntryPayload entry
+                        && entry.exportName().equals("decode")) {
                     removedEntry = op;
                 }
             }
@@ -1883,7 +1855,7 @@ public class JsonableHelperProductionDriveTest {
                 if (op.kind() == SemanticOpKind.EXPORT_READ
                         && op.payload() instanceof KindPayload.ExportReadPayload read
                         && read.module().equals(lib)
-                        && read.name().equals("Widget$fromJson")) {
+                        && read.name().equals("decode")) {
                     readsHelperExport = true;
                 }
                 if (op.kind() == SemanticOpKind.CALL
@@ -1902,12 +1874,14 @@ public class JsonableHelperProductionDriveTest {
             assertEmitterRejectsMissingFact("the missing helper export",
                 withoutUnitOps(lowered, lib,
                     op -> op.kind() == SemanticOpKind.EXPORT_PUBLISH
-                        && op.payload().toString().contains("Widget$fromJson")),
-                surface, "Widget$fromJson", "never publishes");
+                        && op.payload() instanceof KindPayload.ExportPublishPayload publication
+                        && publication.name().equals("decode")),
+                surface, "decode", "never publishes");
             assertEmitterRejectsMissingFact("the missing recorded callee entry",
                 withoutUnitOps(lowered, lib,
                     op -> op.kind() == SemanticOpKind.EXTERNAL_ENTRY
-                        && op.payload().toString().contains("Widget$fromJson")),
+                        && op.payload() instanceof KindPayload.ExternalEntryPayload entry
+                        && entry.exportName().equals("decode")),
                 surface, "externalEntryRef",
                 "does not resolve to a recorded EXTERNAL_ENTRY");
         }
@@ -2032,23 +2006,19 @@ public class JsonableHelperProductionDriveTest {
         return origin.substring(prevColon + 1);
     }
 
-    /**
-     * The function-parameter helper invocation (the three-consumer
-     * regression): a helper passed to a function-typed parameter and
-     * invoked dynamically ({@code f(w)}) renders its pinned JSON failure
-     * at the {@code f(w)} call expression in the oracle, the LuaJIT
-     * artifact, and the JVM artifact alike — never at an enclosing static
-     * call or the generated declaration anchor.
-     */
+    /** An ordinary encoder passed through a function parameter retains the
+     * dynamic call, while its builtin failure belongs to the encoding expression. */
     private static void testDynamicHelperOrigin() throws Exception {
-        System.out.println("-- the function-parameter helper invocation: the f(w) "
-            + "origin on all three consumers --");
+        System.out.println("-- dynamic encoder invocation and builtin-owned failure origin --");
         String source = """
-            // @jsonable
+
             export class Wrapper {
               data: Record<string, unknown>;
             }
 
+            export function encode(w: Wrapper): string {
+              return JSON.stringify(w) as string;
+            }
             function apply(f: (w: Wrapper) => string, w: Wrapper): string {
               return f(w);
             }
@@ -2056,14 +2026,14 @@ public class JsonableHelperProductionDriveTest {
             export function test_dynamic_helper_origin(): string {
               let w: Wrapper = { data: {} };
               w.data.self = w.data;
-              return apply(Wrapper$toJson, w);
+              return apply(encode, w);
             }
 
             export function main(): null {
               return null;
             }
             """;
-        Lowered lowered = driveHelperFailure("dynamic-helper-origin", source, "f(w)",
+        Lowered lowered = driveHelperFailure("dynamic-encoder-origin", source, "JSON.stringify(w)",
             "cyclic value cannot be encoded as JSON", null);
         check(lowered != null && lowered.project().modules().values().stream()
             .flatMap(unit -> unit.ops().stream()).anyMatch(op ->
@@ -2074,39 +2044,31 @@ public class JsonableHelperProductionDriveTest {
             "the f(w) call lowers as a dynamic DEAL-body invocation");
     }
 
-    /**
-     * The first-class helper binding (the three-consumer regression): each
-     * generated helper stored in a function-typed binding and invoked
-     * through that binding is a same-module reference, so the checker-valid
-     * project lowers with zero E6005 and the declaration's real helper
-     * result on all three consumers — the binding-carried call resolves the
-     * declaration's generated {@code LoweredBody} and its single return
-     * cell while the helper's one reserved {@code EXTERNAL_ENTRY} stays the
-     * cross-module record.
-     */
+    /** Ordinary declared encoders and contextual decoders remain first-class
+     * module functions, unlike the direct-call-only JSON builtins they invoke. */
     private static void testHelperFunctionBindingInvocation() throws Exception {
-        System.out.println("-- the first-class helper binding: each generated helper "
-            + "stored in a function-typed binding and invoked through it "
-            + "(zero E6005, the real result on all three consumers) --");
+        System.out.println("-- first-class declared encoder and contextual decoder bindings --");
         String source = """
-            // @jsonable
+
             export class Box {
               x: number;
             }
+            export function encode(v: Box): string { return JSON.stringify(v) as string; }
+            export function decode(s: string): Box { return JSON.parse(s); }
 
             export function test_helper_binding(): null {
               let b: Box = { x: 2 };
-              let f: (v: Box) => string = Box$toJson;
+              let f: (v: Box) => string = encode;
               let json: string = f(b);
-              let expected: string = "{\\"x\\":2.0}";
+              let expected: string = "{\\"x\\":2}";
               if (json !== expected) {
                 throw { code: "MISMATCH", message: json };
               }
-              let g: (s: string) => Box | null = Box$fromJson;
+              let g: (s: string) => Box = decode;
               let parsed: Box | null = g(expected);
               let reparsed: string = "";
               if (parsed === null) {
-                throw { code: "MISMATCH", message: "fromJson binding returned null" };
+                throw { code: "MISMATCH", message: "decoder binding returned null" };
               } else {
                 reparsed = f(parsed);
               }
@@ -2121,12 +2083,9 @@ public class JsonableHelperProductionDriveTest {
             }
             """;
         Compilation compilation = driveExactHelperProgram("helper-function-binding", source);
-        // The reserved shape survives the carrier-carried call: each
-        // helper keeps exactly one CLOSURE_NEW and one reserved
-        // EXTERNAL_ENTRY, and every binding-invoked helper CALL resolves
-        // that declaration's LoweredBody, its body block, and its single
-        // return cell without replacing the reserved shape (no
-        // same-module CALL(EXTERNAL) and no second entry).
+        // Each exported ordinary declaration keeps one closure and external
+        // entry. Calls through these saved values retain the declared module
+        // function subject and resolve that exact recorded entry and return cell.
         {
             ExecutableLoweredProject produced = compilation == null ? null
                 : compilation.producedProject();
@@ -2139,7 +2098,7 @@ public class JsonableHelperProductionDriveTest {
             for (SemanticOp op : unit.ops()) {
                 if (op.kind() == SemanticOpKind.EXTERNAL_ENTRY
                         && op.payload() instanceof KindPayload.ExternalEntryPayload entry
-                        && entry.exportName().startsWith("Box$")) {
+                        && Set.of("encode", "decode").contains(entry.exportName())) {
                     entryReturnBoundary.put(entry.function(), entry.returnBoundaryOpId());
                 }
             }
@@ -2193,14 +2152,26 @@ public class JsonableHelperProductionDriveTest {
                         && staticCallee.binding()
                             instanceof FunctionExecutionBinding.ExternalFunction external
                         && external.moduleId().equals(produced.entryModule())
-                        && external.exportName().startsWith("Box$")) {
+                        && Set.of("encode", "decode").contains(external.exportName())) {
                     externalHelperCalls++;
+                    SemanticOp entryOp = unit.ops().stream()
+                        .filter(candidate -> candidate.opId().equals(call.externalEntryRef()))
+                        .findFirst().orElse(null);
+                    check(entryOp != null
+                            && entryOp.payload() instanceof KindPayload.ExternalEntryPayload entry
+                            && entry.exportName().equals(external.exportName())
+                            && entry.signature().equals(external.descriptor()),
+                        "saved module function resolves its exact declared entry");
+                    if (entryOp != null && entryOp.payload() instanceof KindPayload.ExternalEntryPayload entry) {
+                        checkEq(entryReturnBoundary.get(entry.function()), entry.returnBoundaryOpId(),
+                            "resolved module entry retains its declaration's single return cell");
+                        check(call.returnBoundaryOpId() == null && call.bodyBlock() == null,
+                            "module call delegates return and body ownership to its entry");
+                    }
                 }
             }
-            checkEq(3, bindingHelperCalls, "every helper binding invocation resolves "
-                + "the declaration's LoweredBody (got " + bindingHelperCalls + ")");
-            checkEq(0, externalHelperCalls, "no same-module helper call resolves the "
-                + "ExternalFunction shape (the entry stays the cross-module record)");
+            checkEq(0, bindingHelperCalls, "ordinary exported functions do not use generated-helper body binding");
+            checkEq(3, externalHelperCalls, "all three saved module-function calls retain their exact entry subject");
         }
     }
 
@@ -2211,12 +2182,12 @@ public class JsonableHelperProductionDriveTest {
     private static void testTableClassInstanceEncoding() throws Exception {
         System.out.println("-- nested Record class content encodes on every consumer --");
         String source = """
-            // @jsonable
+
             export class Child {
               value: number;
             }
 
-            // @jsonable
+
             export class Wrapper {
               data: Record<string, unknown>;
             }
@@ -2225,7 +2196,7 @@ public class JsonableHelperProductionDriveTest {
               let child: Child = { value: 7 };
               let w: Wrapper = { data: {} };
               w.data.children = [child];
-              return Wrapper$toJson(w);
+              return JSON.stringify(w) as string;
             }
 
             export function main(): null {
@@ -2376,8 +2347,8 @@ public class JsonableHelperProductionDriveTest {
 
     /** The shared nested-class fixture: {@code Wrapper.child.data} is the table field. */
     private static String nestedTableFixtureSource(String function) {
-        return "// @jsonable\nexport class Child {\n  data: Record<string, unknown>;\n}\n\n"
-            + "// @jsonable\nexport class Wrapper {\n  child: Child;\n}\n\n"
+        return "\nexport class Child {\n  data: Record<string, unknown>;\n}\n\n"
+            + "\nexport class Wrapper {\n  child: Child;\n}\n\n"
             + function
             + "\nexport function main(): null {\n  return null;\n}\n";
     }
@@ -2397,7 +2368,7 @@ public class JsonableHelperProductionDriveTest {
             + "  let w: Wrapper = { child: { data: {} } };\n"
             + "  w.child.data.z = \"first\";\n"
             + "  w.child.data.a = \"second\";\n"
-            + "  let json: string = Wrapper$toJson(w);\n"
+            + "  let json: string = JSON.stringify(w) as string;\n"
             + "  let expected: string = " + dealStringLiteral(expected) + ";\n"
             + "  if (json !== expected) {\n"
             + "    throw { code: \"MISMATCH\", message: json };\n"
@@ -2407,36 +2378,29 @@ public class JsonableHelperProductionDriveTest {
     }
 
     /**
-     * The numeric-variant regression (the three-consumer exact text): an
-     * int-variant leaf inside a nested class's table field and array spells
-     * its integer text and a number-variant leaf its closed decimal text on
-     * every consumer — the shared carrier's {@code __nK} marks and
-     * {@code __jn} variant carriers (and the JVM's boxed variants) decide
-     * the spelling, never the walk's own default.
+     * Binary64 values nested in nominal Record fields and arrays retain
+     * ECMAScript spelling on every consumer, including read-derived values.
      */
     private static void testNestedTableNumericVariants() throws Exception {
         System.out.println("-- the nested-class table field's numeric variants: "
             + "number and number leaves in tables and arrays, exact text on all "
             + "three consumers --");
-        String expected = "{\"child\":{\"data\":{\"i\":3.0,\"n\":2.5,"
-            + "\"ai\":[7.0],\"an\":[1.5],\"ri\":1.0,\"rn\":6.5}}}";
+        String expected = "{\"child\":{\"data\":{\"i\":3,\"n\":2.5,"
+            + "\"ai\":[7],\"an\":[1.5],\"ri\":1,\"rn\":6.5}}}";
         String function = "export function test_nested_table_numbers(): null {\n"
             + "  let w: Wrapper = { child: { data: {} } };\n"
             + "  w.child.data.i = 3;\n"
             + "  w.child.data.n = 2.5;\n"
             + "  w.child.data.ai = [7];\n"
             + "  w.child.data.an = [1.5];\n"
-            // The read-side variant carriers: an int-variant slot read at a
-            // number position and a number-variant slot read at a number
-            // position both travel as carriers and must keep their own
-            // variant's spelling.
+            // Container reads preserve integral and fractional binary64 values.
             + "  let t: Record<string, unknown> = { x: 1 };\n"
             + "  let n: number = t.x as number;\n"
             + "  w.child.data.ri = n;\n"
             + "  let nums: number[] = [6.5];\n"
             + "  let fromNum: number = nums[0];\n"
             + "  w.child.data.rn = fromNum;\n"
-            + "  let json: string = Wrapper$toJson(w);\n"
+            + "  let json: string = JSON.stringify(w) as string;\n"
             + "  let expected: string = " + dealStringLiteral(expected) + ";\n"
             + "  if (json !== expected) {\n"
             + "    throw { code: \"MISMATCH\", message: json };\n"
@@ -2461,17 +2425,17 @@ public class JsonableHelperProductionDriveTest {
             .append(") {\n");
         body.append("    cur = linkAppend(cur); i = i + 1;\n  }\n");
         if (expectedText != null) {
-            body.append("  let json: string = Wrapper$toJson(w);\n");
+            body.append("  let json: string = JSON.stringify(w) as string;\n");
             body.append("  let expected: string = ")
                 .append(dealStringLiteral(expectedText)).append(";\n");
             body.append("  if (json !== expected) {\n");
             body.append("    throw { code: \"MISMATCH\", message: json };\n  }\n");
             body.append("  return null;\n");
         } else {
-            body.append("  return Wrapper$toJson(w);\n");
+            body.append("  return JSON.stringify(w) as string;\n");
         }
-        return "// @jsonable\nexport class Child {\n  data: Record<string, unknown>;\n}\n\n"
-            + "// @jsonable\nexport class Wrapper {\n  child: Child;\n}\n\n"
+        return "\nexport class Child {\n  data: Record<string, unknown>;\n}\n\n"
+            + "\nexport class Wrapper {\n  child: Child;\n}\n\n"
             + "export function linkAppend(cur: Record<string, unknown>): Record<string, unknown> {\n"
             + "  let n: Record<string, unknown> = {};\n"
             + "  cur.next = n;\n"
@@ -2508,19 +2472,17 @@ public class JsonableHelperProductionDriveTest {
     private static void testDeepRecordDecode() throws Exception {
         testJvmDeepProjection();
         driveExactHelperProgram("deep-record-decode", """
-            // @jsonable
+
             export class Box { data: Record<string,unknown>; }
-            // @jsonable
+
             export class Required { data: Record<string,unknown>; required:number; }
             export function test_decode():null {
                 let text="{\\"leaf\\":null,\\"n\\":3,\\"s\\":\\"🌍\\",\\"b\\":true}";
                 let i=0;
                 while(i<5000) { text="{\\"v\\":["+text+"]}"; i=i+1; }
                 text="{\\"data\\":{\\"deep\\":"+text+",\\"leaf\\":null,\\"n\\":3,\\"s\\":\\"🌍\\",\\"b\\":true}}";
-                let decoded=Box$fromJson(text);
-                if(decoded===null) { throw {code:"TEST_FAIL",message:"deep object rejected"}; }
-                let current:Record<string,unknown>={};
-                if(decoded!==null) { current=decoded.data; }
+                let decoded:Box=JSON.parse(text);
+                let current:Record<string,unknown>=decoded.data;
                 if(!Object.hasOwn(current,"deep")) {
                     throw {code:"TEST_FAIL",message:"deep member lost"};
                 }
@@ -2529,8 +2491,17 @@ public class JsonableHelperProductionDriveTest {
                 if((current.n as number)!==3) { throw {code:"TEST_FAIL",message:"number changed"}; }
                 if((current.s as string)!=="🌍") { throw {code:"TEST_FAIL",message:"string changed"}; }
                 if((current.b as boolean)!==true) { throw {code:"TEST_FAIL",message:"boolean changed"}; }
-                if(Required$fromJson(text)!==null) {
-                    throw {code:"TEST_FAIL",message:"missing required field admitted"};
+                let prior:Required={data:decoded.data,required:7};
+                let destination:Required=prior;
+                let rejected=false;
+                try { destination=JSON.parse(text); }
+                catch(e) {
+                    let failure:Error=e as Error;
+                    if(failure.code!=="E8001") { throw failure; }
+                    rejected=true;
+                }
+                if(!rejected || destination!==prior || destination.data!==current || destination.required!==7) {
+                    throw {code:"TEST_FAIL",message:"missing required field changed destination"};
                 }
                 return null;
             }
@@ -2551,13 +2522,18 @@ public class JsonableHelperProductionDriveTest {
                 public void delete(String name) { values.remove(name); }
             };
         };
-        var data = new deal.codegen.jvm.JvmJson.Field("data", "table", false, "table");
+        var data = new deal.codegen.jvm.JvmJson.Field("data", "record", false, "table", "record");
         var plan = new deal.codegen.jvm.JvmJson.Plan("@projection/Box",
             new deal.codegen.jvm.JvmJson.Field[]{data}, supplier);
         String text = "{\"leaf\":null,\"n\":3,\"s\":\"🌍\",\"b\":true,\"empty\":[]}";
         text = "{\"data\":" + "{\"v\":[".repeat(5000) + text + "]}".repeat(5000) + "}";
+        var origin = new deal.semantic.ir.SourceOrigin("projection.deal",
+            new deal.semantic.ir.SourceSpan("projection.deal", 7, 3, 7, 21),
+            deal.semantic.ir.SourceOriginKind.USER,
+            new deal.semantic.ir.AnchorId(7), null);
         var instance = (deal.codegen.jvm.JvmRuntime.ClassInstance)
-            deal.codegen.jvm.JvmJson.fromClass(plan, text);
+            deal.codegen.jvm.JvmJson.decode(text, "@projection/Box", origin,
+                "projection.deal:7:3", Map.of("@projection/Box", plan));
         check(instance != null && publications[0] == 1, "deep JVM projection publishes once");
         if (instance == null) return;
         var current = (deal.codegen.jvm.JvmRuntime.Table) instance.read("data");
@@ -2577,9 +2553,16 @@ public class JsonableHelperProductionDriveTest {
             "deep empty array retains descriptor");
         var required = new deal.codegen.jvm.JvmJson.Plan("@projection/Required",
             new deal.codegen.jvm.JvmJson.Field[]{data,
-                new deal.codegen.jvm.JvmJson.Field("required", "number", false, "number")}, supplier);
-        check(deal.codegen.jvm.JvmJson.fromClass(required, text) == null && publications[0] == 1,
-            "deep missing-required rejection never publishes an instance");
+                new deal.codegen.jvm.JvmJson.Field("required", "number", false, "number", "number")}, supplier);
+        deal.codegen.jvm.JvmRuntime.DealError failure = null;
+        try {
+            deal.codegen.jvm.JvmJson.decode(text, "@projection/Required", origin,
+                "projection.deal:7:3", Map.of("@projection/Required", required));
+        } catch (deal.codegen.jvm.JvmRuntime.DealError rejected) {
+            failure = rejected;
+        }
+        check(failure != null && failure.code.equals("E8001") && publications[0] == 1,
+            "deep missing-required rejection throws without publishing an instance");
     }
 
     // =========================================================================
@@ -2651,8 +2634,8 @@ public class JsonableHelperProductionDriveTest {
     private static String arrayExecutorViewSyncSource() {
         System.out.println("-- the oracle's live array view: replacement and "
             + "append serialize on all three consumers --");
-        String source = "// @jsonable\nexport class Box {\n  xs: number[];\n}\n\n"
-            + "// @jsonable\nexport class Wrapper {\n  data: Record<string, unknown>;\n}\n\n"
+        String source = "\nexport class Box {\n  xs: number[];\n}\n\n"
+            + "\nexport class Wrapper {\n  data: Record<string, unknown>;\n}\n\n"
             + "export function test_array_mutation(): null {\n"
             + "  let b: Box = { xs: [1] };\n"
             + "  b.xs[0] = 2;\n"
@@ -2662,8 +2645,8 @@ public class JsonableHelperProductionDriveTest {
             // first instance's view (the live view is identity-keyed).
             + "  let c: Box = { xs: b.xs };\n"
             + "  c.xs[0] = 9;\n"
-            + "  let json: string = Box$toJson(b);\n"
-            + "  let expected: string = " + dealStringLiteral("{\"xs\":[9.0,3.0]}")
+            + "  let json: string = JSON.stringify(b) as string;\n"
+            + "  let expected: string = " + dealStringLiteral("{\"xs\":[9,3]}")
             + ";\n"
             + "  if (json !== expected) {\n"
             + "    throw { code: \"MISMATCH\", message: json };\n"
@@ -2679,9 +2662,9 @@ public class JsonableHelperProductionDriveTest {
             + "  let arr: number[] = w.data.xs as number[];\n"
             + "  arr[0] = 2;\n"
             + "  arr[1] = 3;\n"
-            + "  let json: string = Wrapper$toJson(w);\n"
+            + "  let json: string = JSON.stringify(w) as string;\n"
             + "  let expected: string = "
-            + dealStringLiteral("{\"data\":{\"xs\":[2.0,3.0]}}") + ";\n"
+            + dealStringLiteral("{\"data\":{\"xs\":[2,3]}}") + ";\n"
             + "  if (json !== expected) {\n"
             + "    throw { code: \"MISMATCH\", message: json };\n"
             + "  }\n"
@@ -2691,35 +2674,26 @@ public class JsonableHelperProductionDriveTest {
         return source;
     }
 
-    /**
-     * The oracle's live view on deletion (the three-consumer agreement):
-     * an element deleted from a class field's array is observed by the
-     * helper walk on the oracle and both artifacts with the same outcome —
-     * the live view reads the deleted slot as the missing element, never
-     * the stale pre-delete value.
-     */
+    /** The live encoder observes replaced array elements through both class
+     * fields and nested Record aliases, never a stale pre-write value. */
     private static void testArrayExecutorViewDeleteParity() throws Exception {
-        System.out.println("-- the oracle's live array view: a deleted element "
-            + "agrees on all three consumers --");
-        String source = "// @jsonable\nexport class Box {\n  xs: number[];\n}\n\n"
+        System.out.println("-- live array element replacement agrees on all three consumers --");
+        String source = "\nexport class Box {\n  xs: number[];\n}\n\n"
             + "export function test_array_delete(): string {\n"
             + "  let b: Box = { xs: [1.0, 2] };\n"
             + "  b.xs[0] = 9;\n"
-            + "  return Box$toJson(b);\n"
+            + "  return JSON.stringify(b) as string;\n"
             + "}\n\n"
             + "export function main(): null {\n  return null;\n}\n";
         driveThreeConsumerParity("array-executor-view-delete", source);
-        // The same missing-slot semantics in the descriptor-free table
-        // walk (an array nested in a table field): the deleted slot is the
-        // internal missing element on every consumer, never a serialized
-        // null or the stale pre-delete value.
-        String tableSource = "// @jsonable\nexport class Wrapper {\n"
+        // The same replacement is visible through a Record-held array alias.
+        String tableSource = "\nexport class Wrapper {\n"
             + "  data: Record<string, unknown>;\n}\n\n"
             + "export function test_table_array_delete(): string {\n"
             + "  let w: Wrapper = { data: { xs: [1.0, 2] } };\n"
             + "  let arr: number[] = w.data.xs as number[];\n"
             + "  arr[0] = 9;\n"
-            + "  return Wrapper$toJson(w);\n"
+            + "  return JSON.stringify(w) as string;\n"
             + "}\n\n"
             + "export function main(): null {\n  return null;\n}\n";
         driveThreeConsumerParity("table-array-view-delete", tableSource);
@@ -2993,9 +2967,9 @@ public class JsonableHelperProductionDriveTest {
     private static String nestedClassFieldViewSyncSource() {
         System.out.println("-- the committed nested-class view: a field write "
             + "through the parent serializes on all three consumers --");
-        String expected = dealStringLiteral("{\"child\":{\"x\":2.0},\"y\":0}");
-        String source = "// @jsonable\nexport class Child {\n  x: number;\n}\n\n"
-            + "// @jsonable\nexport class Box {\n  child: Child;\n"
+        String expected = dealStringLiteral("{\"child\":{\"x\":2},\"y\":0}");
+        String source = "\nexport class Child {\n  x: number;\n}\n\n"
+            + "\nexport class Box {\n  child: Child;\n"
             + "  y: number;\n}\n\n"
             + "export function test_nested_class_intervening_commit(): null {\n"
             + "  let c: Child = { x: 1 };\n"
@@ -3003,9 +2977,9 @@ public class JsonableHelperProductionDriveTest {
             + "  c.x = 2;\n"
             + "  b.y = 1;\n"
             + "  c.x = 3;\n"
-            + "  let json: string = Box$toJson(b);\n"
+            + "  let json: string = JSON.stringify(b) as string;\n"
             + "  let expected: string = "
-            + dealStringLiteral("{\"child\":{\"x\":3.0},\"y\":1.0}") + ";\n"
+            + dealStringLiteral("{\"child\":{\"x\":3},\"y\":1}") + ";\n"
             + "  if (json !== expected) {\n"
             + "    throw { code: \"MISMATCH\", message: json };\n"
             + "  }\n"
@@ -3014,7 +2988,7 @@ public class JsonableHelperProductionDriveTest {
             + "export function test_nested_class_mutation(): null {\n"
             + "  let b: Box = { child: { x: 1 }, y: 0 };\n"
             + "  b.child.x = 2;\n"
-            + "  let json: string = Box$toJson(b);\n"
+            + "  let json: string = JSON.stringify(b) as string;\n"
             + "  let expected: string = " + expected + ";\n"
             + "  if (json !== expected) {\n"
             + "    throw { code: \"MISMATCH\", message: json };\n"
@@ -3027,11 +3001,11 @@ public class JsonableHelperProductionDriveTest {
             + "  let q: Box = { child: c, y: 0 };\n"
             + "  p.child.x = 2;\n"
             + "  let expected: string = " + expected + ";\n"
-            + "  let jsonP: string = Box$toJson(p);\n"
+            + "  let jsonP: string = JSON.stringify(p) as string;\n"
             + "  if (jsonP !== expected) {\n"
             + "    throw { code: \"MISMATCH\", message: jsonP };\n"
             + "  }\n"
-            + "  let jsonQ: string = Box$toJson(q);\n"
+            + "  let jsonQ: string = JSON.stringify(q) as string;\n"
             + "  if (jsonQ !== expected) {\n"
             + "    throw { code: \"MISMATCH\", message: jsonQ };\n"
             + "  }\n"
@@ -3054,8 +3028,8 @@ public class JsonableHelperProductionDriveTest {
     private static String arrayHeldClassViewSyncSource() {
         System.out.println("-- the committed array-held class view: a field write "
             + "through b.children[0].x serializes on all three consumers --");
-        String source = "// @jsonable\nexport class Child {\n  x: number;\n}\n\n"
-            + "// @jsonable\nexport class Box {\n  children: Child[];\n"
+        String source = "\nexport class Child {\n  x: number;\n}\n\n"
+            + "\nexport class Box {\n  children: Child[];\n"
             + "  y: number;\n}\n\n"
             + "export function test_array_held_intervening_commit(): null {\n"
             + "  let c: Child = { x: 1 };\n"
@@ -3063,9 +3037,9 @@ public class JsonableHelperProductionDriveTest {
             + "  b.children[0].x = 2;\n"
             + "  b.y = 1;\n"
             + "  b.children[0].x = 3;\n"
-            + "  let json: string = Box$toJson(b);\n"
+            + "  let json: string = JSON.stringify(b) as string;\n"
             + "  let expected: string = "
-            + dealStringLiteral("{\"children\":[{\"x\":3.0}],\"y\":1.0}") + ";\n"
+            + dealStringLiteral("{\"children\":[{\"x\":3}],\"y\":1}") + ";\n"
             + "  if (json !== expected) {\n"
             + "    throw { code: \"MISMATCH\", message: json };\n"
             + "  }\n"
@@ -3075,9 +3049,9 @@ public class JsonableHelperProductionDriveTest {
             + "  let c: Child = { x: 1 };\n"
             + "  let b: Box = { children: [c], y: 0 };\n"
             + "  b.children[0].x = 2;\n"
-            + "  let json: string = Box$toJson(b);\n"
+            + "  let json: string = JSON.stringify(b) as string;\n"
             + "  let expected: string = "
-            + dealStringLiteral("{\"children\":[{\"x\":2.0}],\"y\":0}") + ";\n"
+            + dealStringLiteral("{\"children\":[{\"x\":2}],\"y\":0}") + ";\n"
             + "  if (json !== expected) {\n"
             + "    throw { code: \"MISMATCH\", message: json };\n"
             + "  }\n"
@@ -3097,17 +3071,17 @@ public class JsonableHelperProductionDriveTest {
     private static String nullableArrayElementsSource() {
         System.out.println("-- the nullable-array element admission: the element "
             + "descriptor decides a null element on all three consumers --");
-        String source = "// @jsonable\nexport class Box {\n"
+        String source = "\nexport class Box {\n"
             + "  xs: (number | null)[];\n}\n\n"
-            + "// @jsonable\nexport class StrictBox {\n"
+            + "\nexport class StrictBox {\n"
             + "  xs: number[];\n}\n\n"
             + "export function test_nullable_array_roundtrip(): null {\n"
-            + "  let maybe: Box | null = Box$fromJson(\"{\\\"xs\\\":[1.0,null]}\");\n"
+            + "  let maybe: Box | null = JSON.parse(\"{\\\"xs\\\":[1.0,null]}\");\n"
             + "  if (maybe !== null) {\n"
             + "    let b: Box = maybe;\n"
-            + "    let json: string = Box$toJson(b);\n"
+            + "    let json: string = JSON.stringify(b) as string;\n"
             + "    let expected: string = "
-            + dealStringLiteral("{\"xs\":[1.0,null]}") + ";\n"
+            + dealStringLiteral("{\"xs\":[1,null]}") + ";\n"
             + "    if (json !== expected) {\n"
             + "      throw { code: \"MISMATCH\", message: json };\n"
             + "    }\n"
@@ -3117,11 +3091,14 @@ public class JsonableHelperProductionDriveTest {
             + "array document was rejected\" };\n"
             + "}\n\n"
             + "export function test_strict_array_rejected(): null {\n"
-            + "  let maybe: StrictBox | null = StrictBox$fromJson("
-            + "\"{\\\"xs\\\":[1.0,null]}\");\n"
-            + "  if (maybe !== null) {\n"
-            + "    throw { code: \"MISMATCH\", message: \"the non-nullable "
-            + "element was admitted\" };\n"
+            + "  let prior: StrictBox = {xs:[7]};\n"
+            + "  let destination: StrictBox = prior;\n"
+            + "  let saved: number[] = prior.xs;\n"
+            + "  let rejected=false;\n"
+            + "  try { destination=JSON.parse(\"{\\\"xs\\\":[1.0,null]}\"); }\n"
+            + "  catch(e) { let failure:Error=e as Error; if(failure.code!==\"E8001\") {throw failure;} rejected=true; }\n"
+            + "  if (!rejected || destination!==prior || destination.xs!==saved || saved[0]!==7) {\n"
+            + "    throw { code: \"MISMATCH\", message: \"nullable element rejection changed destination\" };\n"
             + "  }\n"
             + "  return null;\n"
             + "}\n\n"
@@ -3130,28 +3107,25 @@ public class JsonableHelperProductionDriveTest {
     }
 
     /**
-     * The read-derived numeric carrier at declared positions (the
-     * three-consumer regression): a numeric value read from a container slot
-     * travels as the read-side variant carrier ({@code __jn}), and a declared
-     * {@code number} field or array element admits it with its own variant's
-     * spelling — never a rejection of the carrier representation.
+     * Read-derived numbers remain admissible in declared fields and arrays
+     * and retain their binary64 values through generic encoding.
      */
     private static String readDerivedNumericCarriersSource() {
         System.out.println("-- read-derived numeric carriers in declared fields and "
             + "array elements: the own-variant spelling on all three consumers --");
-        String source = "// @jsonable\nexport class Child {\n"
+        String source = "\nexport class Child {\n"
             + "  n: number;\n"
             + "  xs: number[];\n}\n\n"
-            + "// @jsonable\nexport class Box {\n"
+            + "\nexport class Box {\n"
             + "  child: Child;\n}\n\n"
             + "export function test_read_derived_numbers(): null {\n"
             + "  let t: Record<string, unknown> = { i: 1, n: 2.5 };\n"
             + "  let i: number = t.i as number;\n"
             + "  let n: number = t.n as number;\n"
             + "  let b: Box = { child: { n: i, xs: [i, n] } };\n"
-            + "  let json: string = Box$toJson(b);\n"
+            + "  let json: string = JSON.stringify(b) as string;\n"
             + "  let expected: string = "
-            + dealStringLiteral("{\"child\":{\"n\":1.0,\"xs\":[1.0,2.5]}}")
+            + dealStringLiteral("{\"child\":{\"n\":1,\"xs\":[1,2.5]}}")
             + ";\n"
             + "  if (json !== expected) {\n"
             + "    throw { code: \"MISMATCH\", message: json };\n"
@@ -3163,28 +3137,16 @@ public class JsonableHelperProductionDriveTest {
     }
 
     /**
-     * The declared-array numeric variant (the three-consumer regression): an
-     * array admitted through a dynamic table read keeps each slot's own
-     * recorded numeric variant — the array carrier's {@code __nK} mark — and
-     * the declared {@code number[]} walk spells an int-variant slot with its
-     * integer text and a number-variant slot with the closed decimal
-     * spelling, exactly the oracle's and the shared JVM runtime's Long/Double
-     * split, never the declared descriptor's text. The nullable element
-     * position and the nested array position keep the same rule through
-     * their recursion. The controls pin both variants in one comparison: the
-     * all-number array keeps the decimal spelling ([1.0, 1.5]) and the mixed
-     * array built through an index write spells each slot by its own variant
-     * ([2.5, 2]); the int-variant slot is the reported LuaJIT defect.
+     * Dynamically extracted numeric arrays preserve integral, fractional,
+     * nullable and nested binary64 values. Index writes remain visible to
+     * the encoder through the original aliases.
      */
     private static void testDeclaredArrayNumericVariants() throws Exception {
         System.out.println("-- the declared-array numeric variant: the slot's "
             + "own recorded variant spells the number[] elements on all three "
             + "consumers --");
-        // The reported defect: an int-variant array admitted through a
-        // dynamic table read spells its int slots with the integer text at
-        // the declared number[] walk (and through the nullable and nested
-        // array positions), never the closed decimal spelling.
-        String deficient = "// @jsonable\nexport class Box {\n"
+        // Integral-valued binary64 elements extracted from a dynamic Record.
+        String deficient = "\nexport class Box {\n"
             + "  xs: number[];\n"
             + "  ns: (number | null)[];\n"
             + "  grid: number[][];\n}\n\n"
@@ -3192,9 +3154,9 @@ public class JsonableHelperProductionDriveTest {
             + "  let t: Record<string, unknown> = { xs: [1.0, 2] };\n"
             + "  let xs: number[] = t.xs as number[];\n"
             + "  let b: Box = { xs: xs, ns: [], grid: [] };\n"
-            + "  let json: string = Box$toJson(b);\n"
+            + "  let json: string = JSON.stringify(b) as string;\n"
             + "  let expected: string = "
-            + dealStringLiteral("{\"xs\":[1.0,2.0],\"ns\":[],\"grid\":[]}") + ";\n"
+            + dealStringLiteral("{\"xs\":[1,2],\"ns\":[],\"grid\":[]}") + ";\n"
             + "  if (json !== expected) {\n"
             + "    throw { code: \"MISMATCH\", message: json };\n"
             + "  }\n"
@@ -3206,9 +3168,9 @@ public class JsonableHelperProductionDriveTest {
             + "  let ns: (number | null)[] = t.ns as (number | null)[];\n"
             + "  ns[1] = null;\n"
             + "  let b: Box = { xs: [], ns: ns, grid: [] };\n"
-            + "  let json: string = Box$toJson(b);\n"
+            + "  let json: string = JSON.stringify(b) as string;\n"
             + "  let expected: string = "
-            + dealStringLiteral("{\"xs\":[],\"ns\":[1.0,null],\"grid\":[]}") + ";\n"
+            + dealStringLiteral("{\"xs\":[],\"ns\":[1,null],\"grid\":[]}") + ";\n"
             + "  if (json !== expected) {\n"
             + "    throw { code: \"MISMATCH\", message: json };\n"
             + "  }\n"
@@ -3219,9 +3181,9 @@ public class JsonableHelperProductionDriveTest {
             + "  let grid: number[][] = t.grid as number[][];\n"
             + "  grid[1] = [2.5];\n"
             + "  let b: Box = { xs: [], ns: [], grid: grid };\n"
-            + "  let json: string = Box$toJson(b);\n"
+            + "  let json: string = JSON.stringify(b) as string;\n"
             + "  let expected: string = "
-            + dealStringLiteral("{\"xs\":[],\"ns\":[],\"grid\":[[1.0],[2.5]]}")
+            + dealStringLiteral("{\"xs\":[],\"ns\":[],\"grid\":[[1],[2.5]]}")
             + ";\n"
             + "  if (json !== expected) {\n"
             + "    throw { code: \"MISMATCH\", message: json };\n"
@@ -3234,15 +3196,15 @@ public class JsonableHelperProductionDriveTest {
         // spelling (the all-number literal), and one mixed array built
         // through an index write that marks only the number slot spells the
         // marked slot decimally and the int slot as its integer text.
-        String controls = "// @jsonable\nexport class Box {\n"
+        String controls = "\nexport class Box {\n"
             + "  xs: number[];\n}\n\n"
             + "export function test_number_variant_elements(): null {\n"
             + "  let t: Record<string, unknown> = { xs: [1.0, 1.5] };\n"
             + "  let xs: number[] = t.xs as number[];\n"
             + "  let b: Box = { xs: xs };\n"
-            + "  let json: string = Box$toJson(b);\n"
+            + "  let json: string = JSON.stringify(b) as string;\n"
             + "  let expected: string = "
-            + dealStringLiteral("{\"xs\":[1.0,1.5]}") + ";\n"
+            + dealStringLiteral("{\"xs\":[1,1.5]}") + ";\n"
             + "  if (json !== expected) {\n"
             + "    throw { code: \"MISMATCH\", message: json };\n"
             + "  }\n"
@@ -3253,9 +3215,9 @@ public class JsonableHelperProductionDriveTest {
             + "  let xs: number[] = t.xs as number[];\n"
             + "  xs[0] = 2.5;\n"
             + "  let b: Box = { xs: xs };\n"
-            + "  let json: string = Box$toJson(b);\n"
+            + "  let json: string = JSON.stringify(b) as string;\n"
             + "  let expected: string = "
-            + dealStringLiteral("{\"xs\":[2.5,2.0]}") + ";\n"
+            + dealStringLiteral("{\"xs\":[2.5,2]}") + ";\n"
             + "  if (json !== expected) {\n"
             + "    throw { code: \"MISMATCH\", message: json };\n"
             + "  }\n"
@@ -3267,28 +3229,20 @@ public class JsonableHelperProductionDriveTest {
     }
 
     /**
-     * The omitted nested-class numeric default (the three-consumer
-     * regression): the nested class's decode runs the declared CLASS_DEFAULT
-     * children, and a default that produces the read-side numeric variant
-     * carrier must conform at its declared {@code number} position (and at
-     * the recursive {@code number | null} and {@code number[]} positions)
-     * exactly as the oracle's and the JVM's own variants do — the document
-     * is admitted and the instance serializes with the carrier's own
-     * variant's spelling. The explicit-value control supplies the same
-     * values in the document, so the two legs prove the default path and the
-     * provided path independently; a LuaJIT rejection of the carrier is the
-     * reported defect.
+     * Ordinary construction and contextual reconstruction both preserve
+     * nested numeric/nullish/array fields. Missing required descendants
+     * reject without publishing or changing the original graph; no defaults
+     * run. Explicit parsed values independently exercise the successful path.
      */
     private static void testNestedClassDefaultNumericCarrier() throws Exception {
-        System.out.println("-- the omitted nested-class numeric default: the "
-            + "read-derived carrier conforms at its declared positions on all "
-            + "three consumers, with the explicit-value control --");
+        System.out.println("-- nested numeric fields: construction, contextual parse "
+            + "and required-descendant rollback on all three consumers --");
         String expected = "{\"child\":{\"n\":2.5,\"o\":2.5,\"xs\":[2.5]}}";
-        String source = "// @jsonable\nexport class Child {\n"
+        String source = "\nexport class Child {\n"
             + "  n: number;\n"
             + "  o: number | null;\n"
             + "  xs: number[];\n}\n\n"
-            + "// @jsonable\nexport class Box {\n"
+            + "\nexport class Box {\n"
             + "  child: Child;\n}\n\n"
             + "function getNum(): number {\n"
             + "  let t: Record<string, unknown> = { n: 2.5 };\n"
@@ -3300,7 +3254,7 @@ public class JsonableHelperProductionDriveTest {
             + "export function test_provided_numeric_carriers(): null {\n"
             + "  let box: Box | null = {child: {n: getNum(), o: getNum(), xs: getNums()}};\n"
             + "  if (box !== null) {\n"
-            + "    let json: string = Box$toJson(box);\n"
+            + "    let json: string = JSON.stringify(box) as string;\n"
             + "    let expected: string = " + dealStringLiteral(expected) + ";\n"
             + "    if (json !== expected) {\n"
             + "      throw { code: \"MISMATCH\", message: json };\n"
@@ -3309,14 +3263,20 @@ public class JsonableHelperProductionDriveTest {
             + "  }\n"
             + "  throw { code: \"MISMATCH\", message: \"the provided numeric carrier was rejected\" };\n}\n\n"
             + "export function test_missing_nested_field(): null {\n"
-            + "  let missing: Box | null = Box$fromJson(\"{\\\"child\\\":{}}\");\n"
-            + "  if (missing !== null) {throw {code:\"MISMATCH\",message:\"missing nested fields accepted\"};}\n"
+            + "  let prior:Box={child:{n:7,o:null,xs:[8]}};\n"
+            + "  let destination:Box=prior;\n"
+            + "  let child:Child=prior.child;\n"
+            + "  let values:number[]=child.xs;\n"
+            + "  let rejected=false;\n"
+            + "  try { destination=JSON.parse(\"{\\\"child\\\":{}}\"); }\n"
+            + "  catch(e) { let failure:Error=e as Error; if(failure.code!==\"E8001\") {throw failure;} rejected=true; }\n"
+            + "  if(!rejected || destination!==prior || destination.child!==child || child.xs!==values || child.n!==7 || child.o!==null || values[0]!==8) {throw {code:\"MISMATCH\",message:\"missing nested fields changed destination\"};}\n"
             + "  return null;\n}\n\n"
             + "export function test_explicit_value_control(): null {\n"
-            + "  let box: Box | null = Box$fromJson("
+            + "  let box: Box | null = JSON.parse("
             + dealStringLiteral(expected) + ");\n"
             + "  if (box !== null) {\n"
-            + "    let json: string = Box$toJson(box);\n"
+            + "    let json: string = JSON.stringify(box) as string;\n"
             + "    let expected: string = " + dealStringLiteral(expected) + ";\n"
             + "    if (json !== expected) {\n"
             + "      throw { code: \"MISMATCH\", message: json };\n"
@@ -3453,9 +3413,9 @@ public class JsonableHelperProductionDriveTest {
             Map<String, CorpusObservation> observations) throws Exception {
         System.out.println("-- determinism and the verbatim export key --");
         List<String> fixtures = List.of(
-            FAMILY_DIR + "/jsonable-helper-exports",
-            FAMILY_DIR + "/jsonable-cross-module-nested-class-array");
-        List<String> keys = List.of("User$fromJson", "Parent$fromJson");
+            FAMILY_DIR + "/jsonable-same-module-helpers",
+            FAMILY_DIR + "/jsonable-same-module-helpers");
+        List<String> keys = List.of("encode", "decode");
         for (int index = 0; index < fixtures.size(); index++) {
             String fixtureRel = fixtures.get(index);
             String helper = keys.get(index);
@@ -3525,10 +3485,10 @@ public class JsonableHelperProductionDriveTest {
             testCorpusInventory(discovered);
             testProductionDrive(discovered, observations);
             testOracleAgreement(discovered, observations);
-            testHelperSurface(observations.get(CROSS_MODULE_FIXTURE).lowered(),
-                observations.get(FAMILY_DIR + "/jsonable-roundtrip").lowered());
+            testHelperSurface(observations.get(FAMILY_DIR + "/jsonable-imported-helpers").lowered(),
+                observations.get(FAMILY_DIR + "/jsonable-same-module-helpers").lowered());
             testNegatives();
-            testMissingHelperFactsFailClosed(observations.get(CROSS_MODULE_FIXTURE));
+            testMissingHelperFactsFailClosed(observations.get(FAMILY_DIR + "/jsonable-imported-helpers"));
             cyclicPin = observations.get(CYCLIC_FIXTURE).pinned();
             testDeterminismAndExportKey(observations);
         } finally {
@@ -3544,34 +3504,44 @@ public class JsonableHelperProductionDriveTest {
             function nameDefault(): string { return "anon"; }
             function ageDefault(): number { return 0; }
             function homeDefault(): Owner.Address { return {city: "seed", zip: 10115}; }
-            // @jsonable
+
             export class Person {
               name: string;
               age: number;
               home: Owner.Address;
             }
+            function reject(text:string, prior:Person):null {
+              let destination:Person=prior;
+              let home:Owner.Address=prior.home;
+              let rejected=false;
+              try { destination=JSON.parse(text); }
+              catch(e) {
+                let failure:Error=e as Error;
+                if(failure.code!=="E8001") {throw failure;}
+                rejected=true;
+              }
+              if(!rejected || destination!==prior || destination.home!==home || home.city!=="seed" || home.zip!==10115 || destination.name!=="anon" || destination.age!==42) {
+                throw {code:"MISMATCH",message:"failed reconstruction changed destination or descendant"};
+              }
+              return null;
+            }
             export function test_default_order(): null {
               let supplied: Person = {name: nameDefault(), age: 42, home: homeDefault()};
-              let p: Person | null = Person$fromJson(Person$toJson(supplied));
-              if (p === null) { throw {code: "MISMATCH", message: "partial rejected"}; }
-              else {
-                if (Person$toJson(p) !== "{\\"name\\":\\"anon\\",\\"age\\":42.0,\\"home\\":{\\"city\\":\\"seed\\",\\"zip\\":10115.0}}") {
-                  throw {code: "MISMATCH", message: "partial/default order"};
-                }
+              let p: Person = JSON.parse(JSON.stringify(supplied) as string);
+              if(p===supplied || p.home===supplied.home || !(p.home instanceof Owner.Address)) {
+                throw {code:"MISMATCH",message:"fresh exact provider reconstruction"};
               }
-              let nested: Person | null = Person$fromJson("{\\"name\\":\\"anon\\",\\"age\\":0,\\"home\\":{}}");
-              if (nested !== null) { throw {code: "MISMATCH", message: "nested omission accepted"}; }
-              let missing: Person | null = Person$fromJson("{\\"age\\":42}");
-              if (missing !== null) { throw {code: "MISMATCH", message: "outer omission accepted"}; }
-              let bad: Person | null = Person$fromJson("{\\"name\\":\\"anon\\",\\"age\\":\\"bad\\",\\"home\\":{\\"city\\":\\"seed\\",\\"zip\\":10115}}");
-              if (bad !== null) {
-                throw {code: "MISMATCH", message: "failure ran defaults"};
+              if ((JSON.stringify(p) as string) !== "{\\"name\\":\\"anon\\",\\"age\\":42,\\"home\\":{\\"city\\":\\"seed\\",\\"zip\\":10115}}") {
+                throw {code: "MISMATCH", message: "declaration order"};
               }
+              reject("{\\"name\\":\\"anon\\",\\"age\\":0,\\"home\\":{}}",supplied);
+              reject("{\\"age\\":42}",supplied);
+              reject("{\\"name\\":\\"anon\\",\\"age\\":\\"bad\\",\\"home\\":{\\"city\\":\\"seed\\",\\"zip\\":10115}}",supplied);
               return null;
             }
             export function main(): null { return null; }
             """, Map.of("owner", """
-                // @jsonable
+
                 export class Address { city: string; zip: number; }
                 """));
         testNestedTableNumericVariants();
@@ -3590,7 +3560,7 @@ public class JsonableHelperProductionDriveTest {
         testRuntimeOkNegativeControls();
         testRawProfileNegativeControl();
         System.out.println("");
-        System.out.println("Jsonable helper production drive: " + passed
+        System.out.println("Contextual JSON production drive: " + passed
             + " passed, " + failed + " failed");
         if (failed > 0) {
             System.exit(1);

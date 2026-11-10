@@ -1,9 +1,9 @@
-// @spec: Classes — @jsonable optional nullable fields
-// @description: @jsonable preserves missing, explicit null, and non-null optional nullable states
+// @spec: Standard library builtins — JSON
+// @description: Class JSON roundtrips preserve missing, explicit null, and non-null optional states
 // @expected: runtime-ok
 // @features: jsonable, optional, nullable, roundtrip
 
-// @jsonable
+
 export class User {
   name: string;
   nick?: string | null;
@@ -11,8 +11,8 @@ export class User {
 
 export function test_jsonable_optional_nullable_three_state(): null {
   let missing: User = { name: "A" };
-  let missingJson: string = User$toJson(missing);
-  let missing2: User | null = User$fromJson(missingJson);
+  let missingJson: string = JSON.stringify(missing) as string;
+  let missing2: User | null = JSON.parse(missingJson);
   if (missing2 !== null) {
     if (Object.hasOwn(missing2, "nick")) {
       throw { code: "TEST_FAIL", message: "missing optional field not preserved" };
@@ -22,8 +22,8 @@ export function test_jsonable_optional_nullable_three_state(): null {
   }
 
   let explicitNull: User = { name: "B", nick: null };
-  let nullJson: string = User$toJson(explicitNull);
-  let null2: User | null = User$fromJson(nullJson);
+  let nullJson: string = JSON.stringify(explicitNull) as string;
+  let null2: User | null = JSON.parse(nullJson);
   if (null2 !== null) {
     if (!Object.hasOwn(null2, "nick") || null2.nick !== null) {
       throw { code: "TEST_FAIL", message: "explicit null optional field not preserved" };
@@ -33,8 +33,8 @@ export function test_jsonable_optional_nullable_three_state(): null {
   }
 
   let value: User = { name: "C", nick: "cee" };
-  let valueJson: string = User$toJson(value);
-  let value2: User | null = User$fromJson(valueJson);
+  let valueJson: string = JSON.stringify(value) as string;
+  let value2: User | null = JSON.parse(valueJson);
   if (value2 !== null) {
     if (!Object.hasOwn(value2, "nick")) {
       throw { code: "TEST_FAIL", message: "optional field value not present" };

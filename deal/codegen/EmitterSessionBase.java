@@ -65,19 +65,11 @@ public abstract class EmitterSessionBase {
     protected final Map<ModuleId, ClassFactoryRegistry> registries = new LinkedHashMap<>();
 
     protected final Map<ClassId, ClassLayout> classLayouts = new LinkedHashMap<>();
-    /**
-     * The generated JSON plan entries of the session closure keyed by the
-     * canonical class identity: the plan table carries exactly one
-     * declaration's plan under the key, so a multiple-declaration
-     * identity resolves the unique plan-bearing declaration when one
-     * exists (the emission order's last declaration otherwise) — never a
-     * first declaration and never an order-dependent sibling. The plan
-     * emission and the plan's default-op lookup consume these records;
-     * the construction/field layout context stays {@link #classLayouts}.
-     */
+    /** Structural schemas with one exact declaring unit in this closure. */
     protected final Map<ClassId, ClassLayout> jsonPlanLayouts = new LinkedHashMap<>();
     /** The declaring module of each {@link #jsonPlanLayouts} entry. */
     protected final Map<ClassId, ModuleId> jsonPlanOwners = new LinkedHashMap<>();
+    private final Set<ClassId> ambiguousSchemaIds = new java.util.HashSet<>();
     /**
      * The generated carrier classes' layouts keyed by the canonical class
      * identity: two declarations of one identity (a harness-synthesized
@@ -362,12 +354,15 @@ public abstract class EmitterSessionBase {
                 : moduleUnit.classLayouts().entrySet()) {
             ClassId classId = entry.getKey();
             ModuleId previous = jsonPlanOwners.get(classId);
-            if (previous == null
-                    || jsonPlanBearing(moduleUnit, classId)
-                    || !jsonPlanBearing(units.get(previous), classId)) {
-                jsonPlanLayouts.put(classId, entry.getValue());
-                jsonPlanOwners.put(classId, moduleUnit.moduleId());
+            if (ambiguousSchemaIds.contains(classId)) continue;
+            if (previous != null && !previous.equals(moduleUnit.moduleId())) {
+                ambiguousSchemaIds.add(classId);
+                jsonPlanLayouts.remove(classId);
+                jsonPlanOwners.remove(classId);
+                continue;
             }
+            jsonPlanLayouts.put(classId, entry.getValue());
+            jsonPlanOwners.put(classId, moduleUnit.moduleId());
         }
         for (Map.Entry<ClassId, ClassLayout> entry
                 : moduleUnit.classLayouts().entrySet()) {
@@ -647,33 +642,6 @@ public abstract class EmitterSessionBase {
             }
         }
         return null;
-    }
-
-    /**
-     * Whether one unit's own declaration of a canonical class identity is
-     * plan-bearing (the unit generates the {@code JSON_FROM_CLASS} /
-     * {@code JSON_TO_CLASS} helper ops of the identity): a canonical
-     * identity can carry a second declaration only in a harness-synthesized
-     * carrier, and the generated plan table carries exactly one plan under
-     * the key — the unique plan-bearing declaration when one exists.
-     */
-    protected static boolean jsonPlanBearing(LoweredModuleUnit unit,
-                                             ClassId classId) {
-        if (unit == null) {
-            return false;
-        }
-        for (SemanticOp op : unit.ops()) {
-            KindPayload payload = op.payload();
-            if (payload instanceof KindPayload.JsonFromClassPayload from
-                    && from.layout().classId().equals(classId)) {
-                return true;
-            }
-            if (payload instanceof KindPayload.JsonToClassPayload to
-                    && to.layout().classId().equals(classId)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     /** True iff the value slot is an op result in this unit. */

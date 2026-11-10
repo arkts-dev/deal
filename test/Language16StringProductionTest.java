@@ -82,7 +82,7 @@ public final class Language16StringProductionTest {
             """);
         CompositionProductionTest.execute("""
             import * as host from "host/probe";
-            import * as console from "std/console";
+            import * as output from "std/console";
             function check(ok:boolean):void {
               if(!ok){throw {code:"TEST",message:"private nondata read"};}
             }
@@ -101,7 +101,7 @@ public final class Language16StringProductionTest {
                 host.repair();
                 check(graph===alias && (graph[0] as number)===7 && (graph[1] as number)===9);
               }
-              console.log("NONDATA_READ_OK");return null;
+              output.log("NONDATA_READ_OK");return null;
             }
             """, "NONDATA_READ_OK\n", root.resolve("products"), host, List.of(Backend.LLVM));
     }
@@ -113,7 +113,7 @@ public final class Language16StringProductionTest {
         Files.copy(Path.of(fixture + ".c"), host.resolve("probe.c"));
         CompositionProductionTest.execute("""
             import * as host from "host/probe";
-            import * as console from "std/console";
+            import * as output from "std/console";
             function check(ok:boolean):void {
               if(!ok){throw {code:"TEST",message:"retained opaque graph"};}
             }
@@ -133,7 +133,7 @@ public final class Language16StringProductionTest {
               destination=r;
               check(destination===r && (r.self as Record<string,unknown>)===r);
               check((r.good as number)===7 && !Object.hasOwn(r,"bad"));
-              console.log("OPAQUE_REPAIR_OK");return null;
+              output.log("OPAQUE_REPAIR_OK");return null;
             }
             """, "OPAQUE_REPAIR_OK\n", root.resolve("products"), host, List.of(Backend.LLVM));
     }
@@ -148,7 +148,7 @@ public final class Language16StringProductionTest {
             .replace("DEAL_HOST_SPECIFIER_BAD_STRING", "DEAL_HOST_SPECIFIER_PROBE"));
         CompositionProductionTest.execute("""
             import * as host from "host/probe";
-            import * as console from "std/console";
+            import * as output from "std/console";
             function check(ok:boolean):void {
               if(!ok){throw {code:"TEST",message:"native text transport"};}
             }
@@ -177,7 +177,7 @@ public final class Language16StringProductionTest {
               check(shared[0]===shared[1]);
               shared[0][0]="changed";
               check(shared[1][0]==="changed");
-              console.log("HOST_TEXT_OK");return null;
+              output.log("HOST_TEXT_OK");return null;
             }
             """, "HOST_TEXT_OK\n", root.resolve("products"), host, List.of(Backend.LLVM));
     }
@@ -185,7 +185,7 @@ public final class Language16StringProductionTest {
     private static final String SOURCE = """
         import * as c from "std/console";
         import * as s from "std/string";
-        import * as json from "std/json";
+
         function require(ok:boolean, label:string):void {
           if (!ok) { throw {code:"TEST",message:label}; }
         }
@@ -248,14 +248,17 @@ public final class Language16StringProductionTest {
           count=0;
           for(let part of low+high){count=count+1;require(s.length(part)===1,"lone iteration");}
           require(count===2,"lone iteration count");
-          require((json.parse(`{"value":"\\\\ud83d"}`).value as string)===high,"parse lone high");
-          require((json.parse(`{"value":"\\\\ude00"}`).value as string)===low,"parse lone low");
-          require((json.stringify(high) as string)===`"\\\\ud83d"`,"encode lone high");
-          require((json.stringify(low) as string)===`"\\\\ude00"`,"encode lone low");
-          require((json.parse(json.stringify({value:"😀"}) as string).value as string)==="😀","JSON pair");
+          let parsedHigh:Record<string,unknown>=JSON.parse(`{"value":"\\\\ud83d"}`);
+          let parsedLow:Record<string,unknown>=JSON.parse(`{"value":"\\\\ude00"}`);
+          require((parsedHigh.value as string)===high,"parse lone high");
+          require((parsedLow.value as string)===low,"parse lone low");
+          require((JSON.stringify(high) as string)===`"\\\\ud83d"`,"encode lone high");
+          require((JSON.stringify(low) as string)===`"\\\\ude00"`,"encode lone low");
+          let parsedPair:Record<string,unknown>=JSON.parse(JSON.stringify({value:"😀"}) as string);
+          require((parsedPair.value as string)==="😀","JSON pair");
           let record:Record<string,unknown>={};
           record[high]=low;
-          let decoded=json.parse(json.stringify(record) as string);
+          let decoded:Record<string,unknown>=JSON.parse(JSON.stringify(record) as string);
           require((decoded[high] as string)===low,"JSON lone key");
           c.log(`A\\ud800😀\\udc00B`);
           c.error(`E\\ud800😀\\udc00F`);

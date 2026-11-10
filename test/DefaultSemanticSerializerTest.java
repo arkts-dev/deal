@@ -334,7 +334,7 @@ public class DefaultSemanticSerializerTest {
             for (String misplaced : List.of("function bad(): null { class Local { n: number; } return null; }",
                     "function bad(): null { import * as L from \"./lib\"; return null; }")) {
                 LexResult lex = new Lexer(misplaced, "placement.deal").tokenize();
-                ParseResult parsed = new Parser(lex.tokens(), "placement.deal", lex.directiveEvents()).parse();
+                ParseResult parsed = new Parser(lex.tokens(), "placement.deal").parse();
                 check(!deal.module.ModuleShapeValidator.validate(parsed.program(), "placement.deal", false).isEmpty(),
                     "invalid local declaration placement remains rejected");
             }
@@ -541,19 +541,25 @@ public class DefaultSemanticSerializerTest {
             export function main(): null {
               let e: cfg.Endpoint = {};
               let d: string = cfg.describe(e);
-              let p: L.Point | null = L.Point$fromJson("{\\\"x\\\":1}");
-              let text: string = L.Point$toJson({x: 2});
+              let p: L.Point = L.decode("{\\\"x\\\":1}");
+              let text: string = L.encode({x: 2});
               return null;
             }
-            """, "src/lib.deal", "// @jsonable\nexport class Point {x: number;}",
+            """, "src/lib.deal", "// @jsonable\nexport class Point {x: number;}\n"
+                + "export function decode(text:string):Point{return JSON.parse(text);}\n"
+                + "export function encode(point:Point):string{return JSON.stringify(point) as string;}",
             "bindings/cfg.d.deal", "export class Endpoint {path?: string;}\nexport function describe(e: Endpoint): string;"), "src/main.deal");
         try {
             successful(compile);
-            for (String name : List.of("Point$fromJson", "Point$toJson")) {
+            for (String name : List.of("decode", "encode")) {
                 String content = compile.providerContentOf("lib.deal", name);
-                check(content != null && content.contains("SYNTHETIC_JSONABLE_EXPORT_SIGNATURE"),
-                    "synthetic JSON helper carries its exact generated signature: " + name);
+                check(content != null && content.contains("@src/lib.deal/Point")
+                        && !content.contains("SYNTHETIC_JSONABLE_EXPORT_SIGNATURE"),
+                    "ordinary JSON function carries its typed body and exact nominal signature: " + name);
             }
+            check(compile.providerContentOf("lib.deal", "Point$fromJson") == null
+                    && compile.providerContentOf("lib.deal", "Point$toJson") == null,
+                "class comments manufacture no provider functions");
             String content = compile.providerContentOf("cfg.d.deal", "describe");
             check(content != null && content.contains("DECLARED_FUNCTION_SIGNATURE")
                     && content.contains("semanticResourceIdentityDigest"), "host wrapper carries exact declared identity");

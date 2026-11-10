@@ -1,55 +1,47 @@
-// @spec: Classes — JSON serialization (@jsonable)
-// @description: Nested malformed JSON returns null atomically and does not poison a later valid decode; the nullable Batch result is narrowed inside `if (x !== null) {}` true-branches before every field access and comparison (the corpus nullable-narrowing form)
+// @spec: Standard library builtins — JSON decoding
+// @description: Failed nested reconstruction leaves the destination and descendants unchanged; a later valid decode preserves optional states.
 // @expected: runtime-ok
-// @features: jsonable, classes, arrays, nullable, optional, errors
+// @features: json, classes, arrays, nullable, optional, errors
 
-// @jsonable
 export class Item {
   id: number;
   note?: string | null;
 }
 
-// @jsonable
 export class Batch {
   name: string;
   items: Item[];
 }
 
 export function main(): null {
-  let badType: Batch | null = Batch$fromJson("{\"name\":\"bad\",\"items\":[{\"id\":1},{\"id\":\"x\"}]}");
-  if (badType !== null) {
-    throw { code: "TEST_FAIL", message: "nested malformed element accepted" };
+  let original: Batch = {name: "original", items: [{id: 7}]};
+  let destination: Batch = original;
+  let originalItems = original.items;
+  let originalItem = original.items[0];
+  let badType: boolean = false;
+  try { destination = JSON.parse("{\"name\":\"bad\",\"items\":[{\"id\":1},{\"id\":\"x\"}]}"); }
+  catch (e) { let error = e as Error; badType = error.code === "E8001" && error.message === "expected number"; }
+  if (!badType || destination !== original || destination.items !== originalItems || destination.items[0] !== originalItem || destination.items[0].id !== 7) {
+    throw {code: "TEST_FAIL", message: "nested malformed element changed the destination"};
   }
-  let extraKey: Batch | null = Batch$fromJson("{\"name\":\"extra\",\"items\":[{\"id\":1,\"unknown\":true}]}");
-  if (extraKey !== null) {
-    throw { code: "TEST_FAIL", message: "nested extra key accepted" };
+  let extraKey: boolean = false;
+  try { destination = JSON.parse("{\"name\":\"extra\",\"items\":[{\"id\":1,\"unknown\":true}]}"); }
+  catch (e) { let error = e as Error; extraKey = error.code === "E8007" && error.message.includes("extra field 'unknown'"); }
+  if (!extraKey || destination !== original || destination.items !== originalItems || destination.items[0] !== originalItem) {
+    throw {code: "TEST_FAIL", message: "nested extra key changed the destination"};
   }
-  let valid: Batch | null = Batch$fromJson("{\"name\":\"ok\",\"items\":[{\"id\":1},{\"id\":2,\"note\":null},{\"id\":3,\"note\":\"n\"}]}");
-  if (valid !== null) {
-    if (valid.name !== "ok" || valid.items.length !== 3) {
-      throw { code: "TEST_FAIL", message: "valid decode failed after rejected inputs" };
-    }
-    if (Object.hasOwn(valid.items[0], "note")) {
-      throw { code: "TEST_FAIL", message: "missing optional state lost" };
-    }
-    if (!Object.hasOwn(valid.items[1], "note")) {
-      throw { code: "TEST_FAIL", message: "explicit-null state lost" };
-    }
-    let explicitNote: string | null | undefined = valid.items[1].note;
-    if (explicitNote !== null) {
-      throw { code: "TEST_FAIL", message: "explicit-null state lost" };
-    }
-    if (!Object.hasOwn(valid.items[2], "note")) {
-      throw { code: "TEST_FAIL", message: "present optional state lost" };
-    }
-    let note: string | null | undefined = valid.items[2].note;
-    if (note !== null) {
-      if ((note as string) !== "n") {
-        throw { code: "TEST_FAIL", message: "present optional value changed" };
-      }
-      return null;
-    }
-    throw { code: "TEST_FAIL", message: "present optional value is null" };
+  let valid: Batch = JSON.parse("{\"name\":\"ok\",\"items\":[{\"id\":1},{\"id\":2,\"note\":null},{\"id\":3,\"note\":\"n\"}]}");
+  if (valid.name !== "ok" || valid.items.length !== 3 || valid === original) {
+    throw {code: "TEST_FAIL", message: "valid decode failed after rejected inputs"};
   }
-  throw { code: "TEST_FAIL", message: "valid decode rejected" };
+  if (Object.hasOwn(valid.items[0], "note")) {
+    throw {code: "TEST_FAIL", message: "missing optional state lost"};
+  }
+  if (!Object.hasOwn(valid.items[1], "note") || valid.items[1].note !== null) {
+    throw {code: "TEST_FAIL", message: "explicit-null state lost"};
+  }
+  if (!Object.hasOwn(valid.items[2], "note") || (valid.items[2].note as string) !== "n") {
+    throw {code: "TEST_FAIL", message: "present optional value changed"};
+  }
+  return null;
 }

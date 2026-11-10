@@ -1,5 +1,4 @@
 import * as check from "./check";
-import * as json from "std/json";
 
 function readCount(data: Record<string, unknown>): number {
   let count: number = data.count as number;
@@ -21,13 +20,13 @@ function wrongTypeRejected(): boolean {
 
 export function exercise(): null {
   check.require(wrongTypeRejected(), "table read validates type");
-  let data: Record<string, unknown> = json.parse("{\"name\":\"Ada\",\"count\":3}");
+  let data: Record<string, unknown> = JSON.parse("{\"name\":\"Ada\",\"count\":3}");
   let name: string = data.name as string;
   check.require(name === "Ada", "typed JSON field");
   check.require(readCount(data) === 3, "typed count read");
   data.enabled = true;
-  let encoded: string = json.stringify(data) as string;
-  let restored: Record<string, unknown> = json.parse(encoded);
+  let encoded: string = JSON.stringify(data) as string;
+  let restored: Record<string, unknown> = JSON.parse(encoded);
   let enabled: boolean = restored.enabled as boolean;
   check.require(enabled, "table JSON roundtrip");
   data.note = null;
