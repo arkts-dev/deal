@@ -1357,7 +1357,7 @@ A contextual target determines the call's result type and decoding schema. It co
 
 Without a target, or with target `unknown`, the result has type `unknown` and contains ordinary parsed data: Records, arrays with unknown element descriptors, primitives or null.
 
-A decoding target containing function types or Error is a compile-time error, including within optional fields; `unknown` stops schema traversal. Recursive class schemas are allowed; encoding follows [runtime cycle rejection](#json-encoding).
+A decoding target containing function types is a compile-time error, including within optional fields; `unknown` stops schema traversal. Recursive class schemas are allowed; encoding follows [runtime cycle rejection](#json-encoding).
 
 Decode recursively without coercion. Records require objects; arrays require arrays and receive fresh storage with validated target descriptors. Classes require objects and follow [construction](#construction) field validation, decoding fields in declaration order into fresh nominal instances.
 
