@@ -12,7 +12,8 @@ ECMAScript references apply within DEAL's grammar and type rules.
 
 ## Lexical elements
 
-- Tokens and property-name rules are defined by the [lexical grammar](#lexical-grammar-normative). Follow TypeScript module identifier rules by position: `switch`/`enum` cannot name bindings.
+- Tokens/property names follow the [lexical grammar](#lexical-grammar-normative); TypeScript module identifier rules: `switch`/`enum` cannot name bindings.
+- User-declared identifiers must not contain `$`.
 - `Record`, `Promise`, `Object`, `Array`, `String`, `Number`, `JSON`, `Math`, `Date`, `console`, `undefined` are unshadowable builtins.
 
 ### Comment semantics
