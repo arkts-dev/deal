@@ -1024,12 +1024,13 @@ Evaluate the `T[]` or `string` iterable once. Arrays visit successive indexes fr
 
 ### Error type
 
-Error values come from runtime exceptions or builtin `Error(message: string): Error`, which creates a fresh instance with name `"Error"` and the supplied message.
+Error requires `name: string` and `message: string` fields. Typed literals construct fresh instances.
 
 ### throw
 
 ```ts
-throw Error("capacity exceeded");
+let e: Error = { name: "Error", message: "capacity exceeded" };
+throw e;
 ```
 
 The thrown expression must have type `Error`. Execution transfers to the nearest dynamically enclosing `catch` block. Uncaught Errors follow [Host error and debugging](#host-error-and-debugging).
