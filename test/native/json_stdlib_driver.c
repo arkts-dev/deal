@@ -912,6 +912,14 @@ static void observe_stdlib(void) {
     }
 
     /* std/math. */
+    {
+        deal_check_input pair[2] = {number_argument(-0.0), number_argument(0.0)};
+        observe_std("min-signed-zero", DEAL_STDLIB_MATH_MIN, pair, 2u);
+        observe_std("max-signed-zero", DEAL_STDLIB_MATH_MAX, pair, 2u);
+    }
+    observe_number_operation("round-negative-half", DEAL_STDLIB_MATH_ROUND, -0.5);
+    observe_number_operation("finite-infinity", DEAL_STDLIB_NUMBER_IS_FINITE, 1.0 / 0.0);
+    observe_number_operation("isnan-nan", DEAL_STDLIB_NUMBER_IS_NAN, 0.0 / 0.0);
     observe_number_operation("floor-positive", DEAL_STDLIB_MATH_FLOOR, 1.5);
     observe_number_operation("floor-negative", DEAL_STDLIB_MATH_FLOOR, -0.5);
     observe_number_operation("floor-integral", DEAL_STDLIB_MATH_FLOOR, 3.0);

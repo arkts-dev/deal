@@ -2550,6 +2550,17 @@ case "NUMBER_ADD" -> {
                 }
 
 
+                case "MATH_MIN" -> { return Math.min(numberOf(args[0]), numberOf(args[1])); }
+                case "MATH_MAX" -> { return Math.max(numberOf(args[0]), numberOf(args[1])); }
+                case "MATH_ROUND" -> {
+                    double value = numberOf(args[0]);
+                    double floor = Math.floor(value);
+                    if (!Double.isFinite(value) || value == floor) return value;
+                    double rounded = value - floor < 0.5 ? floor : floor + 1.0;
+                    return rounded == 0 ? Math.copySign(0.0, value) : rounded;
+                }
+                case "NUMBER_IS_FINITE" -> { return args[0] instanceof Number n && Double.isFinite(n.doubleValue()); }
+                case "NUMBER_IS_NAN" -> { return args[0] instanceof Number n && Double.isNaN(n.doubleValue()); }
                 case "TIME_NOW_MILLIS" -> {
                     // The K7 target-clock read: the declared number
                     // STDLIB_RETURN boundary (descriptor-kind rule) admits

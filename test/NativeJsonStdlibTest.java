@@ -44,7 +44,7 @@ import java.util.Map;
  *       undefined result, a path-local cycle versus shared acyclic children and
  *       the closed builtin encoding rejection arm — against the specification's rules
  *       and the failure-arm authority;</li>
- *   <li>every one of the eighteen merged {@code StdlibFunctionId} operations
+ *   <li>every one of the twenty-three merged {@code StdlibFunctionId} operations
  *       against {@link SharedStdlibSemantics}, with the UTF-16 code-unit
  *       positions and clamped substring bounds of the string family, the parameter
  *       and return crossings through the typed-boundary arm and a positive
@@ -131,8 +131,8 @@ public final class NativeJsonStdlibTest {
             StandardCharsets.UTF_8);
         deal.semantic.ir.StdlibFunctionId[] operations =
             deal.semantic.ir.StdlibFunctionId.values();
-        checkEq(18, operations.length,
-            "the merged registry carries the closed eighteen operations");
+        checkEq(23, operations.length,
+            "the merged registry carries the closed twenty-three operations");
         Map<String, Integer> published = new LinkedHashMap<>();
         java.util.regex.Matcher matcher = java.util.regex.Pattern.compile(
             "#define\\s+DEAL_STDLIB_([A-Z0-9_]+)\\s+(\\d+)[uU]").matcher(header);
@@ -718,6 +718,11 @@ public final class NativeJsonStdlibTest {
             "stringify-number"), "stringify-number")));
 
         // 14. std/math: IEEE results, including NaN for negative sqrt.
+        expected.add(stdNumber("min-signed-zero", -0.0));
+        expected.add(stdNumber("max-signed-zero", 0.0));
+        expected.add(stdNumber("round-negative-half", -0.0));
+        expected.add(stdBoolean("finite-infinity", false));
+        expected.add(stdBoolean("isnan-nan", true));
         expected.add(numberExpectation("floor-positive",
             SharedStdlibSemantics.mathFloor(origin(), 1.5)));
         expected.add(numberExpectation("floor-negative",

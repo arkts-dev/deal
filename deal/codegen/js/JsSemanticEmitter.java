@@ -741,7 +741,8 @@ public final class JsSemanticEmitter {
             java.util.Set<ModuleId> builtinAlgorithms = new java.util.LinkedHashSet<>();
             for (SemanticOp operation : unit.ops()) {
                 if (operation.payload() instanceof KindPayload.StdlibCallPayload algorithm
-                        && algorithm.function() != StdlibFunctionId.JSON_STRINGIFY) {
+                        && algorithm.function() != StdlibFunctionId.JSON_STRINGIFY
+                        && !algorithm.function().isBuiltinOnly()) {
                     ModuleId dependency = new ModuleId(stdlibRowOf(operation, algorithm.function()).modulePath());
                     if (!stdlibSurfaces.containsKey(dependency)) builtinAlgorithms.add(dependency);
                 }
@@ -3080,6 +3081,13 @@ private void emitBindingLoad(SemanticOp op) {
             if (payload.function() == StdlibFunctionId.JSON_STRINGIFY) {
                 emit(slotOf(op) + " = $rt.jsonStringifyText("
                     + callArguments.getFirst() + ", [], " + spanArgs(op) + ");");
+            } else if (payload.function().isBuiltinOnly()) {
+                String namespace = switch (payload.function()) {
+                    case NUMBER_IS_FINITE, NUMBER_IS_NAN -> "Number";
+                    default -> "Math";
+                };
+                emit(slotOf(op) + " = " + namespace + "." + row.exportName() + "("
+                    + String.join(", ", callArguments.subList(0, parameterBoundaries.size())) + ");");
             } else {
                 ModuleId stdlibModule = new ModuleId(row.modulePath());
                 emit(slotOf(op) + " = " + stdlibSurface(op, stdlibModule) + "["

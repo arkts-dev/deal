@@ -16,7 +16,7 @@ Data: null, undefined, unknown, boolean, number, string, Record<string, unknown>
 
 Unknown requires checked extraction or typeof/instanceof refinement. Unlike TypeScript's erased as, DEAL assertions check once without coercion, preserving identity; mismatch raises E8001.
 
-Numbers are binary64, preserving signed zero, infinities and NaN; division is nontrapping. Literals admit decimal fractions/exponents, trailing decimal points, 0x/0b/0o radix prefixes and underscores between digits (for example 0xff, 0b10_01 and 1_234.5). Radix integers round once to binary64. The % operator is ECMAScript remainder, retaining the dividend's sign (including signed zero), not floor modulo. Array indexes require finite whole numbers. Round deliberately through Math.floor/ceil; use String(n) for ECMAScript decimal text. Conditions require boolean. String concatenation requires strings; template interpolations accept strings or numbers and format numbers with ECMAScript decimal conversion (including NaN and infinities, with either zero rendered as 0). Use ===/!== with compatible types or admitted nullish comparisons.
+Numbers are binary64, preserving signed zero, infinities and NaN; division is nontrapping. Literals admit decimal fractions/exponents, trailing decimal points, 0x/0b/0o radix prefixes and underscores between digits (for example 0xff, 0b10_01 and 1_234.5). Radix integers round once to binary64. The % operator is ECMAScript remainder, retaining the dividend's sign (including signed zero), not floor modulo. Array indexes require finite whole numbers. Round deliberately through Math.floor/ceil/round; use String(n) for ECMAScript decimal text. Conditions require boolean. String concatenation requires strings; template interpolations accept strings or numbers and format numbers with ECMAScript decimal conversion (including NaN and infinities, with either zero rendered as 0). Use ===/!== with compatible types or admitted nullish comparisons.
 
 ## Classes
 
@@ -58,7 +58,7 @@ Use s.length (read-only UTF-16 unit count), s.substring(start, end), s.includes(
 
 ## Builtin calls
 
-Math.floor(x), Math.ceil(x), Math.sqrt(x), and Math.abs(x) take numbers and follow ECMAScript. Date.now() returns epoch milliseconds. console.log(text) and console.error(text) write strings to the respective streams. These builtin namespaces require no imports and support direct calls only; builtin names cannot be shadowed.
+Math.floor(x), Math.ceil(x), Math.sqrt(x), Math.abs(x), Math.round(x), Math.min(a,b) and Math.max(a,b) take numbers and follow ECMAScript, including NaN and signed zero. Round breaks ties toward positive infinity and returns a number, not a bounded integer. Number.isFinite(value) and Number.isNaN(value) accept unknown without coercion or type narrowing; nonnumbers return false. Date.now() returns epoch milliseconds. console.log(text) and console.error(text) write strings to the respective streams. These builtin namespaces require no imports and support direct calls only; builtin names cannot be shadowed.
 
 ## Standard library declarations
 

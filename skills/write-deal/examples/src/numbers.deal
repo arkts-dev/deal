@@ -41,6 +41,11 @@ export function exercise(): null {
   check.require(5 / 2 === 2.5, "binary64 division");
   check.require(fraction(1, 4) === 0.25, "numeric fraction");
   check.require(math.floor(3.9) === 3, "deliberate rounding");
+  let input: unknown = 0.75;
+  check.require(Number.isFinite(input) && !Number.isNaN(input), "numeric input predicate");
+  check.require(!Number.isFinite("0.75"), "noncoercing predicate");
+  check.require(Math.min(1, Math.max(0, fraction(3, 4))) === 0.75, "clamped fraction");
+  check.require(Math.round(2.5) === 3 && Math.round(-1.5) === -1, "ties toward positive infinity");
   check.require(denominatorRejected(), "zero denominator");
   check.require(decimal(0) === "0" && decimal(2048) === "2048", "explicit integer formatting");
   return null;

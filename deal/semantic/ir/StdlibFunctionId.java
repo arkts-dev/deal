@@ -21,13 +21,25 @@ public enum StdlibFunctionId implements ClosedSelector {
     MATH_CEIL,
     MATH_SQRT,
     MATH_ABS_NUMBER,
-    TIME_NOW_MILLIS;
+    TIME_NOW_MILLIS,
+    MATH_MIN,
+    MATH_MAX,
+    MATH_ROUND,
+    NUMBER_IS_FINITE,
+    NUMBER_IS_NAN;
+
+    /** Direct namespace algorithms with no callable stdlib module export. */
+    public boolean isBuiltinOnly() {
+        return switch (this) {
+            case MATH_MIN, MATH_MAX, MATH_ROUND, NUMBER_IS_FINITE, NUMBER_IS_NAN -> true;
+            default -> false;
+        };
+    }
 
     /**
      * The reserved stdlib selector names, invalid as
      * {@code StdlibFunctionId} values in {@code deal.semantic-ir/2}. They
-     * are not enum members. The list is empty since
-     * {@code TIME_NOW_MILLIS} became the 21st member (K7); the guard
+     * are not enum members. The list is empty; the guard
      * (deny-by-default: no reserved name is ever a valid selector) stays
      * as the closed-set machinery, exercised by the reserved
      * {@link FailurePolicyId} names.

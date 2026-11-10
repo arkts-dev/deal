@@ -500,11 +500,21 @@ public class SemanticIrValidatorTest {
             StdlibFunctionId.MATH_FLOOR, FailurePolicyId.NO_DEAL_FAILURE);
         for (var entry : stdlib.entrySet()) {
             assertAdmission("stdlib policy " + entry.getKey(), List.of(
-                op(SemanticOpKind.STDLIB_CALL,
-                    new KindPayload.StdlibCallPayload(entry.getKey(), List.of(),
-                        SemanticCapability.STDLIB_SEMANTICS),
-                    nextValue(), INT, entry.getValue(), null)), Map.of());
+                stdlibOp(entry.getKey(), entry.getValue())), Map.of());
         }
+    }
+
+    private static SemanticOp stdlibOp(StdlibFunctionId function, FailurePolicyId policy) {
+        var row = deal.semantic.StdlibFunctionCatalog.entries().stream()
+            .filter(entry -> entry.function() == function).findFirst().orElseThrow();
+        List<ValueId> args = row.parameterDescriptors().stream().map(ignored -> nextValue()).toList();
+        var payload = new KindPayload.StdlibCallPayload(function, args, SemanticCapability.STDLIB_SEMANTICS);
+        var contract = contractFor(SemanticOpKind.STDLIB_CALL, payload, row.returnDescriptor(),
+            row.parameterDescriptors(), policy, "placeholder");
+        contract = contractFor(SemanticOpKind.STDLIB_CALL, payload, row.returnDescriptor(),
+            row.parameterDescriptors(), policy, ContractSnapshotCanonicalizer.digest(contract));
+        return new SemanticOp(nextOpId(), SemanticOpKind.STDLIB_CALL, origin(null), nextValue(),
+            row.returnDescriptor(), args, row.parameterDescriptors(), payload, policy, contract);
     }
 
     private static void assertAdmission(String what, List<SemanticOp> ops,
@@ -807,11 +817,7 @@ public class SemanticIrValidatorTest {
         // battery).
         {
             LoweredModuleUnit base = unit(List.of(
-                op(SemanticOpKind.STDLIB_CALL,
-                    new KindPayload.StdlibCallPayload(StdlibFunctionId.CONSOLE_LOG, List.of(),
-                        SemanticCapability.STDLIB_SEMANTICS),
-                    nextValue(), RuntimeDescriptor.Null.INSTANCE,
-                    FailurePolicyId.INFRASTRUCTURE_ONLY, null)));
+                stdlibOp(StdlibFunctionId.CONSOLE_LOG, FailurePolicyId.INFRASTRUCTURE_ONLY)));
             assertPass(SemanticIrValidator.validate(base, FACTS), "stdlib injection base");
             String text = substituteStdlibFunction(SemanticIrValidator.toUnitText(base),
                 "CONSOLE_LOG", "NOT_A_STDLIB_ID");
@@ -1189,11 +1195,7 @@ public class SemanticIrValidatorTest {
 
     private static void testTimeAdmission() {
         LoweredModuleUnit base = unit(List.of(
-            op(SemanticOpKind.STDLIB_CALL,
-                new KindPayload.StdlibCallPayload(StdlibFunctionId.CONSOLE_LOG, List.of(),
-                    SemanticCapability.STDLIB_SEMANTICS),
-                nextValue(), RuntimeDescriptor.Null.INSTANCE,
-                FailurePolicyId.INFRASTRUCTURE_ONLY, null)));
+            stdlibOp(StdlibFunctionId.CONSOLE_LOG, FailurePolicyId.INFRASTRUCTURE_ONLY)));
         String timeName = substituteStdlibFunction(SemanticIrValidator.toUnitText(base),
             "CONSOLE_LOG", "TIME_NOW_MILLIS");
         assertE6005(SemanticIrValidator.validateText(timeName, FACTS),

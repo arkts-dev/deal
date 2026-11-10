@@ -1010,7 +1010,7 @@ public class SharedStdlibSemanticsTest {
     // =========================================================================
 
     static void testMath() {
-        System.out.println("-- Math: IEEE floor/ceil/sqrt/abs and signed32 min/max --");
+        System.out.println("-- Math: binary64 floor/ceil/sqrt/abs --");
 
         expectSuccess(SharedStdlibSemantics.mathFloor(origin(), 1.5),
             new Value.Number(1.0), "floor(1.5) = 1.0");
@@ -1422,7 +1422,12 @@ public class SharedStdlibSemanticsTest {
             seed(StdlibFunctionId.MATH_ABS_NUMBER, new Value.Number(-1.5),
                 new Value.Number(1.5)),
             new Seed(StdlibFunctionId.TIME_NOW_MILLIS, List.of(),
-                new Value.Number((double) FIXED_CLOCK_MILLIS)));
+                new Value.Number((double) FIXED_CLOCK_MILLIS)),
+            new Seed(StdlibFunctionId.MATH_MIN, List.of(new Value.Number(1), new Value.Number(2)), new Value.Number(1)),
+            new Seed(StdlibFunctionId.MATH_MAX, List.of(new Value.Number(1), new Value.Number(2)), new Value.Number(2)),
+            seed(StdlibFunctionId.MATH_ROUND, new Value.Number(-0.5), new Value.Number(-0.0)),
+            seed(StdlibFunctionId.NUMBER_IS_FINITE, new Value.Table(table), new Value.Bool(false)),
+            seed(StdlibFunctionId.NUMBER_IS_NAN, new Value.Number(Double.NaN), new Value.Bool(true)));
     }
 
     static LoweredModuleUnit testCombinedT2T1() throws Exception {
@@ -1465,6 +1470,11 @@ public class SharedStdlibSemanticsTest {
                       let f14: number = math.sqrt(4.0);
                       let f16: number = math.absNumber(-1.5);
                       let now: number = time.nowMillis();
+                      let min: number = Math.min(1,2);
+                      let max: number = Math.max(1,2);
+                      let round: number = Math.round(-0.5);
+                      let finite: boolean = Number.isFinite(t);
+                      let nan: boolean = Number.isNaN(0/0);
                       return null;
                     }
 
@@ -1492,8 +1502,8 @@ public class SharedStdlibSemanticsTest {
                     stdlibOps.add(op);
                 }
             }
-            check(stdlibOps.size() == 17,
-                "exactly one STDLIB_CALL per algorithm except contextual JSON_PARSE: 17 ops; got "
+            check(stdlibOps.size() == 22,
+                "exactly one STDLIB_CALL per algorithm except contextual JSON_PARSE: 22 ops; got "
                     + stdlibOps.size());
             EnumSet<StdlibFunctionId> produced = EnumSet.noneOf(StdlibFunctionId.class);
             for (SemanticOp op : stdlibOps) {
@@ -1766,6 +1776,44 @@ public class SharedStdlibSemanticsTest {
             "sqrt(-4.0) through execute yields NaN");
     }
 
+    private static void testNumericBuiltins(LoweredModuleUnit unit) {
+        double[] numbers = {Double.NaN, Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY,
+            -0.0, 0.0, -Double.MIN_VALUE, Double.MIN_VALUE, -2.5, -1.5, -0.5,
+            -0.5000000000000001, 0.49999999999999994, 0.5, 1.5, 2.5,
+            4503599627370495.5, 4503599627370497.0};
+        double[] rounded = {Double.NaN, Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY,
+            -0.0, 0.0, -0.0, 0.0, -2, -1, -0.0, -1, 0, 1, 2, 3,
+            4503599627370496.0, 4503599627370497.0};
+        for (int i = 0; i < numbers.length; i++) {
+            var value = new Value.Number(numbers[i]);
+            expectNumberBits(SharedStdlibSemantics.execute(stdlibOpBy(unit, StdlibFunctionId.MATH_ROUND),
+                List.of(value), null), rounded[i], "round " + Double.toHexString(numbers[i]));
+            expectSuccess(SharedStdlibSemantics.execute(stdlibOpBy(unit, StdlibFunctionId.NUMBER_IS_FINITE),
+                List.of(value), null), new Value.Bool(Double.isFinite(numbers[i])), "finite number " + i);
+            expectSuccess(SharedStdlibSemantics.execute(stdlibOpBy(unit, StdlibFunctionId.NUMBER_IS_NAN),
+                List.of(value), null), new Value.Bool(Double.isNaN(numbers[i])), "NaN number " + i);
+            for (double other : numbers) {
+                var arguments = List.<Value>of(value, new Value.Number(other));
+                expectNumberBits(SharedStdlibSemantics.execute(stdlibOpBy(unit, StdlibFunctionId.MATH_MIN),
+                    arguments, null), Math.min(numbers[i], other), "min binary64 pair");
+                expectNumberBits(SharedStdlibSemantics.execute(stdlibOpBy(unit, StdlibFunctionId.MATH_MAX),
+                    arguments, null), Math.max(numbers[i], other), "max binary64 pair");
+            }
+        }
+        for (Value value : List.<Value>of(Value.Null.INSTANCE, Value.Undefined.INSTANCE,
+                new Value.Bool(true), Value.string("1"), new Value.Table(new SemanticTable<>()))) {
+            for (var function : List.of(StdlibFunctionId.NUMBER_IS_FINITE, StdlibFunctionId.NUMBER_IS_NAN))
+                expectSuccess(SharedStdlibSemantics.execute(stdlibOpBy(unit, function), List.of(value), null),
+                    new Value.Bool(false), function + " does not coerce " + value.actualKind());
+        }
+    }
+
+    private static void expectNumberBits(Outcome<Value> outcome, double expected, String message) {
+        check(outcome instanceof Outcome.Success<Value> success
+            && success.value() instanceof Value.Number number
+            && Double.doubleToLongBits(number.value()) == Double.doubleToLongBits(expected), message + ": " + outcome);
+    }
+
     public static void main(String[] args) throws Exception {
         System.out.println("=== Shared Stdlib Semantics Tests (ISSUE-0495) ===\n");
 
@@ -1785,6 +1833,7 @@ public class SharedStdlibSemanticsTest {
         testMath();
         testConsoleEffects();
         LoweredModuleUnit unit = testCombinedT2T1();
+        testNumericBuiltins(unit);
         testBoundaryPrecedence(unit);
         testFailClosedDefects(unit);
 

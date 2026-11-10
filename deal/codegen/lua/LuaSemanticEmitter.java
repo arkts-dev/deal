@@ -11500,6 +11500,34 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
     local v = __args[1]
     if v == 0 then return 0 end
     return math.abs(v)
+  elseif fn == "MATH_MIN" or fn == "MATH_MAX" then
+    local a, b = __args[1], __args[2]
+    if a ~= a then return a end
+    if b ~= b then return b end
+    if a == 0 and b == 0 then
+      if fn == "MATH_MIN" then
+        if 1/a < 0 or 1/b < 0 then return -0.0 end
+        return 0
+      end
+      if 1/a > 0 or 1/b > 0 then return 0 end
+      return -0.0
+    end
+    if fn == "MATH_MIN" then return math.min(a,b) end
+    return math.max(a,b)
+  elseif fn == "MATH_ROUND" then
+    local v = __args[1]
+    local base = math.floor(v)
+    if v ~= v or v == base then return v end
+    local result = base
+    if v - base >= 0.5 then result = base + 1 end
+    if result == 0 and v < 0 then return -0.0 end
+    return result
+  elseif fn == "NUMBER_IS_FINITE" then
+    local v = __args[1]
+    return type(v) == "number" and v == v and v ~= math.huge and v ~= -math.huge
+  elseif fn == "NUMBER_IS_NAN" then
+    local v = __args[1]
+    return type(v) == "number" and v ~= v
   elseif fn == "TIME_NOW_MILLIS" then
     return os.time() * 1000
   end

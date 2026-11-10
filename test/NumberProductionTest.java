@@ -83,7 +83,63 @@ public final class NumberProductionTest {
         return result;
     }
 
+    private static void numericBuiltins() throws Exception {
+        Path fixture = Path.of("test/conformance/backend-runtime/arithmetic/number-predicates-math.deal");
+        Path corpus = Path.of("test/conformance");
+        var discovery = deal.test.conformance.CorpusDiscovery.discover(corpus);
+        require(discovery.failures().isEmpty(), "numeric corpus discovery: " + discovery.failures());
+        var subject = discovery.corpusByPath().get("backend-runtime/arithmetic/number-predicates-math.deal");
+        require(subject != null && subject.runtimeClassified(), "numeric fixture must be runtime-classified");
+        var context = new deal.test.conformance.SidecarSchemaValidator.ValidationContext(
+            subject.corpusPath(), subject.expected(),
+            deal.test.conformance.CorpusDiscovery.compilationSet(subject, discovery.corpusByPath(), corpus),
+            discovery.corpusModuleIndex());
+        require(deal.test.conformance.SidecarSchemaValidator.validate(context,
+            Files.readString(subject.sidecarPath(corpus))).isEmpty(), "numeric fixture sidecar must validate");
+        Path root = Files.createTempDirectory("deal-numeric-builtins-");
+        try {
+            String source = ConformanceHarnessMetadata.productionCorpusSource(
+                Files.readString(fixture), fixture.toString());
+            Path entry = Files.createDirectories(root.resolve("oracle/src")).resolve("main.deal");
+            Files.writeString(entry, source.replace("export function main()", "export function run()")
+                + "\nexport function main():null{return null;}\n");
+            Files.writeString(root.resolve("oracle/deal.json"),
+                "{\"languageVersion\":\"1.6\",\"stdlib\":\"1.6\",\"moduleRoots\":[\"src\"]}");
+            var invocation = deal.semantic.CompilerProfileProvider.resolve(
+                deal.semantic.ReleaseConfiguration.CURRENT_RELEASE_STATE,
+                deal.semantic.ReleaseConfiguration.releaseCapabilityRegistry());
+            var compiler = new deal.module.CompilationOrchestrator(entry, root.resolve("oracle/out"),
+                false, false, false, false, deal.codegen.Backend.JS, null,
+                List.of(entry.getParent()), Path.of("").toAbsolutePath(), null, invocation);
+            require(compiler.compile(), "numeric builtin Oracle source rejected: " + compiler.diagnostics());
+            var project = compiler.producedProject();
+            var tables = new java.util.LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.StructuredBodyTable>();
+            var factories = new java.util.LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.ClassFactoryRegistry>();
+            project.modules().forEach((id, unit) -> { tables.put(id, unit.bodyTable()); factories.put(id, unit.classFactories()); });
+            var result = deal.semantic.SemanticOracle.invokeSyncEntry(project, tables, factories,
+                new deal.semantic.SemanticOracle.HostResponder() {}, project.entryModule(), "run", List.of());
+            require(result.terminal() instanceof deal.semantic.SemanticRuntimeModel.Terminal.Success
+                && result.effects().isEmpty(), "numeric builtin Oracle: " + result.comparisonReport());
+            CompositionProductionTest.execute(source, "", root, null, List.of(
+                deal.codegen.Backend.JS, deal.codegen.Backend.LUAJIT,
+                deal.codegen.Backend.JVM, deal.codegen.Backend.LLVM));
+            for (int level : new int[] {0, 2}) {
+                Path product = root.resolve("numeric-sanitized-o" + level);
+                NativeCompiler.build(new deal.toolchain.NativeBuildRequest(root.resolve("LLVM/out"),
+                    product, level, List.of(), null), NativeCompiler.SANITIZER_FLAGS);
+                for (boolean stress : new boolean[] {false, true}) {
+                    var environment = new java.util.HashMap<>(NativeCompiler.sanitizerEnvironment());
+                    environment.put("DEAL_GC_STRESS", stress ? "1" : "0");
+                    var observed = NativeCompiler.runSanitized(product, root, environment).result();
+                    require(observed.exitCode() == 0 && observed.stdout().isEmpty() && observed.stderr().isEmpty(),
+                        "numeric builtins LLVM O" + level + " sanitized stress=" + stress + ": " + observed.describe());
+                }
+            }
+        } finally { CompositionProductionTest.remove(root); }
+    }
+
     public static void main(String[] args) throws Exception {
+        numericBuiltins();
         Path home = Path.of("").toAbsolutePath();
         Path project = Files.createTempDirectory("deal-number-production-");
         Path source = project.resolve("src/main.deal");
@@ -121,6 +177,6 @@ public final class NumberProductionTest {
             require(result.stdout().equals("number-ok\n"), backend + ": wrong transcript");
             require(result.stderr().isEmpty(), backend + ": unexpected stderr");
         }
-        System.out.println("Number production tests passed on js, luajit, jvm");
+        System.out.println("Number production tests passed; numeric builtins on Oracle, JS, LuaJIT, JVM and LLVM O0/O2 normal/stress/plain/sanitized");
     }
 }

@@ -328,8 +328,8 @@ public class StdlibCallLoweringTest {
     static void testPolicyTableSingleSource() {
         System.out.println("-- Single source: SemanticIrValidator.stdlibPolicy --");
 
-        check(StdlibFunctionId.values().length == 18,
-            "the closed StdlibFunctionId enum has exactly 18 values");
+        check(StdlibFunctionId.values().length == 23,
+            "the closed StdlibFunctionId enum has exactly 23 values");
         for (StdlibFunctionId function : StdlibFunctionId.values()) {
             check(SemanticIrValidator.stdlibPolicy(function) == expectedPolicy(function),
                 "stdlibPolicy(" + function + ") = "
@@ -345,6 +345,14 @@ public class StdlibCallLoweringTest {
                 && StdlibFunctionCatalog.callableEntries().stream().noneMatch(
                     row -> row.modulePath().equals("std.json")),
             "only the sixteen ordinary functions populate the five module namespaces");
+        for (var row : StdlibFunctionCatalog.entries()) {
+            if (!row.function().isBuiltinOnly()) continue;
+            check(StdlibFunctionCatalog.lookup(row.modulePath(), row.exportName()).isEmpty()
+                && StdlibFunctionCatalog.lookup("std.math", row.exportName()).isEmpty()
+                && StdlibFunctionCatalog.lookup("std.number", row.exportName()).isEmpty()
+                && !StdlibFunctionCatalog.callableEntries().contains(row),
+                row.function() + " cannot be imported or extracted as a callable catalog export");
+        }
         check(StdlibFunctionId.RESERVED_NAMES.isEmpty(),
             "RESERVED_NAMES is empty (the superseded D8 reservation is retired) while the "
                 + "reserved-name guard stays");
@@ -410,6 +418,11 @@ public class StdlibCallLoweringTest {
                       let f14: number = math.sqrt(4.0);
                       let f16: number = math.absNumber(-1.5);
                       let now: number = time.nowMillis();
+                      let min: number = Math.min(1,2);
+                      let max: number = Math.max(1,2);
+                      let round: number = Math.round(-0.5);
+                      let finite: boolean = Number.isFinite(t);
+                      let nan: boolean = Number.isNaN(0/0);
                       return null;
                     }
 
@@ -430,10 +443,54 @@ public class StdlibCallLoweringTest {
                 return;
             }
             LoweredModuleUnit unit = lowering.unit();
+            SemanticIrValidator.ComparisonFacts facts = factsOf(checked);
+            RawUnit raw = RawUnit.fromTyped(unit);
+            check(SemanticIrValidator.validate(unit, facts).isEmpty(), "all-id typed admission");
+            check(SemanticIrValidator.validate(deal.semantic.ir.RawUnitMaterializer.materialize(raw), facts).isEmpty(),
+                "all-id raw materialization admission");
+            check(SemanticIrValidator.validateText(SemanticIrValidator.toUnitText(unit), facts).isEmpty(),
+                "all-id text admission");
+            for (StdlibFunctionId function : StdlibFunctionId.values()) {
+                if (!function.isBuiltinOnly()) continue;
+                var changedOps = raw.ops().stream().map(op -> op.kind().equals("STDLIB_CALL") && function.name().equals(
+                    ContractSnapshotCanonicalizer.optionalString(op.payload(), "function"))
+                        ? withStampedPolicy(op, "JSON_TO_ERROR") : op).toList();
+                RawUnit changed = new RawUnit(raw.modulePath(), raw.semanticProfile(), raw.interfaceHash(),
+                    raw.loweringContextHash(), raw.requiredCapabilities(), raw.coverage(), raw.classLayouts(),
+                    raw.functions(), raw.moduleInit(), raw.exportPlan(), raw.bindings(), changedOps,
+                    raw.bodyTable(), raw.classFactories(), raw.classBindingFacts());
+                check(!changed.equals(raw), function + " policy mutation reaches its subject");
+                var typedFailure = SemanticIrValidator.validate(deal.semantic.ir.RawUnitMaterializer.materialize(changed), facts);
+                var textFailure = SemanticIrValidator.validateText(ContractSnapshotCanonicalizer.serializeText(
+                    ContractSnapshotCanonicalizer.toJson(changed)), facts);
+                check(typedFailure.isPresent() && typedFailure.equals(textFailure)
+                    && typedFailure.get().message().contains("R-POLICY-KIND")
+                    && typedFailure.get().message().contains(function.name()),
+                    function + " wrong-policy typed/raw/text first-failure parity: " + typedFailure + " / " + textFailure);
+                RawOp subject = raw.ops().stream().filter(op -> op.kind().equals("STDLIB_CALL")
+                    && function.name().equals(ContractSnapshotCanonicalizer.optionalString(op.payload(), "function")))
+                    .findFirst().orElseThrow();
+                for (String mutation : List.of("arity", "parameter", "result", "arguments")) {
+                    RawOp bad = withStdlibSignatureMutation(subject, mutation);
+                    RawUnit invalid = new RawUnit(raw.modulePath(), raw.semanticProfile(), raw.interfaceHash(),
+                        raw.loweringContextHash(), raw.requiredCapabilities(), raw.coverage(), raw.classLayouts(),
+                        raw.functions(), raw.moduleInit(), raw.exportPlan(), raw.bindings(),
+                        raw.ops().stream().map(op -> op == subject ? bad : op).toList(),
+                        raw.bodyTable(), raw.classFactories(), raw.classBindingFacts());
+                    var typed = SemanticIrValidator.validate(deal.semantic.ir.RawUnitMaterializer.materialize(invalid), facts);
+                    var text = SemanticIrValidator.validateText(ContractSnapshotCanonicalizer.serializeText(
+                        ContractSnapshotCanonicalizer.toJson(invalid)), facts);
+                    check(typed.isPresent() && typed.equals(text)
+                        && typed.get().message().contains("STDLIB_SIGNATURE")
+                        && typed.get().message().contains(function.name())
+                        && typed.get().range().equals(subject.origin().diagnosticRange()),
+                        function + " " + mutation + " typed/raw/text signature rejection: " + typed + " / " + text);
+                }
+            }
 
             List<SemanticOp> stdlibOps = stdlibOps(unit);
-            check(stdlibOps.size() == 17,
-                "one STDLIB_CALL per callable algorithm plus builtin stringify: 17 ops; got "
+            check(stdlibOps.size() == 22,
+                "one STDLIB_CALL per algorithm except contextual parse: 22 ops; got "
                     + stdlibOps.size());
             EnumSet<StdlibFunctionId> produced = EnumSet.noneOf(StdlibFunctionId.class);
             for (SemanticOp op : stdlibOps) {
@@ -472,7 +529,7 @@ public class StdlibCallLoweringTest {
                 StdlibFunctionCatalog.Entry row = catalogEntryOf(function);
                 Optional<StdlibFunctionCatalog.Entry> entry =
                     StdlibFunctionCatalog.lookup(row.modulePath(), row.exportName());
-                check(function == StdlibFunctionId.JSON_STRINGIFY
+                check(function == StdlibFunctionId.JSON_STRINGIFY || function.isBuiltinOnly()
                         ? entry.isEmpty() : entry.isPresent() && entry.get().equals(row),
                     "the produced " + function + " retains its signature without exposing builtin callables");
 
@@ -591,9 +648,9 @@ public class StdlibCallLoweringTest {
                         }
                     }
                 }
-                if (function == StdlibFunctionId.JSON_STRINGIFY) {
+                if (function == StdlibFunctionId.JSON_STRINGIFY || function.isBuiltinOnly()) {
                     check(exportReads == 0 && !registered,
-                        "direct-only builtin stringify has no callable export read or binding");
+                        function + " direct-only builtin has no callable export read or binding");
                 } else {
                     check(exportReads == 1 && registered,
                         function + " emits exactly one EXPORT_READ of the cataloged export "
@@ -1145,6 +1202,39 @@ public class StdlibCallLoweringTest {
         } finally {
             deleteRecursively(tmp);
         }
+    }
+
+    /** Coherent transport mutations must reach signature admission, not stale-digest rejection. */
+    private static RawOp withStdlibSignatureMutation(RawOp op, String mutation) {
+        List<ValueId> operands = new ArrayList<>(op.operands());
+        List<String> types = new ArrayList<>(op.operandTypes());
+        String result = op.resultType();
+        CanonicalJson.Obj payload = op.payload();
+        if (mutation.equals("arity")) {
+            operands.removeLast();
+            types.removeLast();
+            payload = (CanonicalJson.Obj) ContractSnapshotCanonicalizer.payloadJson(new KindPayload.StdlibCallPayload(
+                StdlibFunctionId.valueOf(op.selector()), operands, SemanticCapability.STDLIB_SEMANTICS));
+        } else if (mutation.equals("parameter")) {
+            types.set(0, "string");
+        } else if (mutation.equals("result")) {
+            result = "string";
+        } else {
+            payload = (CanonicalJson.Obj) ContractSnapshotCanonicalizer.payloadJson(new KindPayload.StdlibCallPayload(
+                StdlibFunctionId.valueOf(op.selector()), List.of(), SemanticCapability.STDLIB_SEMANTICS));
+        }
+        List<CanonicalJson.Entry> entries = new ArrayList<>();
+        for (var entry : op.snapshot().entries()) entries.add(switch (entry.key()) {
+            case "resultType" -> CanonicalJson.e(entry.key(), CanonicalJson.str(result));
+            case "operandTypes" -> CanonicalJson.e(entry.key(), CanonicalJson.arr(
+                types.stream().map(CanonicalJson::str).map(value -> (CanonicalJson.Value) value).toList()));
+            case "payload" -> CanonicalJson.e(entry.key(), payload);
+            default -> entry;
+        });
+        CanonicalJson.Obj snapshot = CanonicalJson.obj(entries);
+        return new RawOp(op.opId(), op.kind(), op.failurePolicy(), op.parentOpId(), op.resultValue(),
+            op.resultToken(), result, operands, types, payload, op.selector(),
+            ContractSnapshotCanonicalizer.recomputeSnapshotDigest(snapshot), snapshot, op.origin());
     }
 
     /** One raw op with its stamped policy (op + snapshot) replaced and the digest recomputed. */

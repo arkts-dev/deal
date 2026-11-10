@@ -1,20 +1,22 @@
 /*
  * deal/native/std.c — the `std` service group implementation.
  *
- * The closed 18-operation dispatch of `std.h` (`llvm-native-runtime-value-model`
+ * The closed native-backend algorithm dispatch of `std.h` (`llvm-native-runtime-value-model`
  * R7, R8, R10; `StdlibInvoke`). Every operation is enumerated from the merged
  * v1.6 `StdlibFunctionId` registry, its parameter and result descriptors are the
- * declared `std/` signatures, and every crossing runs the delivered
+ * checked algorithm signatures, and every crossing runs the delivered
  * descriptor-driven check, so this unit authors no failure text and no second
  * check authority.
  *
- * Math without libm. The pinned D4 flag list links no `-lm`, so the four `math`
- * operations are computed inside this unit: `absNumber` clears the sign bit,
+ * Math algorithms are computed inside this native-backend unit without libm:
+ * `absNumber` clears the sign bit,
  * `floor`/`ceil` truncate the significand through the binary64 bit pattern and
  * correct one step, and `sqrt` uses the restoring integer square root on the
  * normalized 53-bit significand with the exact remainder as its rounding sticky
  * bit, which is the correctly rounded (round-to-nearest, ties-to-even) IEEE 754
- * result for every finite input.
+ * result for every finite input. Min/max explicitly propagate NaN and select
+ * signed zero; round compares the fractional part with one half and preserves
+ * binary64 nonfinite, integral and negative-zero results.
  */
 #include "deal/native/std.h"
 
@@ -49,6 +51,7 @@ static const char *const deal_std_parameters_substring[3] =
 static const char *const deal_std_parameters_record[1] = {"record"};
 static const char *const deal_std_parameters_unknown[1] = {"unknown"};
 static const char *const deal_std_parameters_number[1] = {"number"};
+static const char *const deal_std_parameters_numbers[2] = {"number", "number"};
 
 /* One operation's declared crossing: its parameter descriptors in declared
  * order and its declared result descriptor. A result-only `void` operation
@@ -79,11 +82,16 @@ static const deal_std_operation deal_std_operations[DEAL_STDLIB_OPERATION_COUNT]
     { deal_std_parameters_number, 1u, "number" },            /* MATH_CEIL */
     { deal_std_parameters_number, 1u, "number" },            /* MATH_SQRT */
     { deal_std_parameters_number, 1u, "number" },            /* MATH_ABS_NUMBER */
-    { NULL, 0u, "number" }                                   /* TIME_NOW_MILLIS */
+    { NULL, 0u, "number" },                                  /* TIME_NOW_MILLIS */
+    { deal_std_parameters_numbers, 2u, "number" },           /* MATH_MIN */
+    { deal_std_parameters_numbers, 2u, "number" },           /* MATH_MAX */
+    { deal_std_parameters_number, 1u, "number" },            /* MATH_ROUND */
+    { deal_std_parameters_unknown, 1u, "boolean" },          /* NUMBER_IS_FINITE */
+    { deal_std_parameters_unknown, 1u, "boolean" }           /* NUMBER_IS_NAN */
 };
 
 /* =========================================================================
- * The four math operations (R7), computed without libm
+ * Binary64 math primitives, computed without libm
  * ========================================================================= */
 
 /* The IEEE absolute value: the sign bit cleared, so `-0.0` is `+0.0` and a NaN
@@ -546,6 +554,33 @@ static deal_data deal_std_evaluate(uint32_t operation_id,
     case DEAL_STDLIB_MATH_ABS_NUMBER:
         return deal_data_of_number(deal_std_abs(
             deal_std_number_argument(&arguments[0])));
+    case DEAL_STDLIB_MATH_MIN:
+    case DEAL_STDLIB_MATH_MAX: {
+        double a = deal_std_number_argument(&arguments[0]);
+        double b = deal_std_number_argument(&arguments[1]);
+        if (isnan(a)) return deal_data_of_number(a);
+        if (isnan(b)) return deal_data_of_number(b);
+        if (a == 0.0 && b == 0.0) {
+            int negative = operation_id == DEAL_STDLIB_MATH_MIN
+                ? signbit(a) || signbit(b) : signbit(a) && signbit(b);
+            return deal_data_of_number(negative ? -0.0 : 0.0);
+        }
+        return deal_data_of_number(operation_id == DEAL_STDLIB_MATH_MIN
+            ? (a < b ? a : b) : (a > b ? a : b));
+    }
+    case DEAL_STDLIB_MATH_ROUND: {
+        double value = deal_std_number_argument(&arguments[0]);
+        double base = deal_std_floor(value);
+        if (!isfinite(value) || value == base) return deal_data_of_number(value);
+        double rounded = value - base < 0.5 ? base : base + 1.0;
+        return deal_data_of_number(rounded == 0.0 && value < 0.0 ? -0.0 : rounded);
+    }
+    case DEAL_STDLIB_NUMBER_IS_FINITE:
+        return deal_data_of_boolean(arguments[0].datum.tag == DEAL_DATA_NUMBER
+            && isfinite(arguments[0].datum.number));
+    case DEAL_STDLIB_NUMBER_IS_NAN:
+        return deal_data_of_boolean(arguments[0].datum.tag == DEAL_DATA_NUMBER
+            && isnan(arguments[0].datum.number));
     case DEAL_STDLIB_TIME_NOW_MILLIS:
         return deal_data_of_number(deal_std_now_millis());
     default:

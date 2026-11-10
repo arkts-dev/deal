@@ -470,6 +470,17 @@ public final class SharedStdlibSemantics {
                 mathAbsNumber(origin, numberOf(argv, 0, function));
 
 
+            case MATH_MIN -> new Outcome.Success<>(new Value.Number(Math.min(numberOf(argv, 0, function), numberOf(argv, 1, function))));
+            case MATH_MAX -> new Outcome.Success<>(new Value.Number(Math.max(numberOf(argv, 0, function), numberOf(argv, 1, function))));
+            case MATH_ROUND -> {
+                double value = numberOf(argv, 0, function);
+                double floor = Math.floor(value);
+                double rounded = value - floor < 0.5 ? floor : floor + 1.0;
+                yield new Outcome.Success<>(new Value.Number(!Double.isFinite(value) || value == floor ? value
+                    : rounded == 0 ? Math.copySign(0.0, value) : rounded));
+            }
+            case NUMBER_IS_FINITE -> new Outcome.Success<>(new Value.Bool(argv.get(0) instanceof Value.Number n && Double.isFinite(n.value())));
+            case NUMBER_IS_NAN -> new Outcome.Success<>(new Value.Bool(argv.get(0) instanceof Value.Number n && Double.isNaN(n.value())));
             case TIME_NOW_MILLIS -> timeNowMillis(origin, clock);
         };
     }
@@ -481,8 +492,8 @@ public final class SharedStdlibSemantics {
     private static int declaredArity(StdlibFunctionId function) {
         return switch (function) {
             case TIME_NOW_MILLIS -> 0;
-            case CONSOLE_LOG, CONSOLE_ERROR, STRING_LENGTH, STRING_TRIM, TABLE_KEYS, JSON_PARSE, JSON_STRINGIFY, MATH_FLOOR, MATH_CEIL, MATH_SQRT, MATH_ABS_NUMBER -> 1;
-            case STRING_CONTAINS, STRING_STARTS_WITH, STRING_ENDS_WITH, STRING_SPLIT -> 2;
+            case CONSOLE_LOG, CONSOLE_ERROR, STRING_LENGTH, STRING_TRIM, TABLE_KEYS, JSON_PARSE, JSON_STRINGIFY, MATH_FLOOR, MATH_CEIL, MATH_SQRT, MATH_ABS_NUMBER, MATH_ROUND, NUMBER_IS_FINITE, NUMBER_IS_NAN -> 1;
+            case STRING_CONTAINS, STRING_STARTS_WITH, STRING_ENDS_WITH, STRING_SPLIT, MATH_MIN, MATH_MAX -> 2;
             case STRING_SUBSTRING, STRING_REPLACE -> 3;
         };
     }

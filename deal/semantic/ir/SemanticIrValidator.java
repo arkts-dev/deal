@@ -956,6 +956,8 @@ public final class SemanticIrValidator {
         if (failure.isPresent()) {
             return failure;
         }
+        failure = checkStdlibSignatures(unit, facts);
+        if (failure.isPresent()) return failure;
         failure = checkDynamicCellForms(unit, facts);
         if (failure.isPresent()) {
             return failure;
@@ -965,6 +967,31 @@ public final class SemanticIrValidator {
             return failure;
         }
         return checkPlans(unit, facts, ownInterface);
+    }
+
+    /** Closed algorithm signatures and operand wiring, shared by every admission surface. */
+    private static Optional<CompilerDiagnostic> checkStdlibSignatures(RawUnit unit, ComparisonFacts facts) {
+        for (RawOp op : unit.ops()) {
+            if (!"STDLIB_CALL".equals(op.kind())) continue;
+            StdlibFunctionId function = enumByName(StdlibFunctionId.class,
+                optionalString(op.payload(), "function"));
+            if (function == null) continue; // The closed enum rule owns this defect.
+            var row = deal.semantic.StdlibFunctionCatalog.entries().stream()
+                .filter(entry -> entry.function() == function).findFirst().orElseThrow();
+            List<String> parameters = row.parameterDescriptors().stream()
+                .map(RuntimeDescriptor::canonicalSpecText).toList();
+            if (!function.name().equals(op.selector())
+                    || !parameters.equals(op.operandTypes())
+                    || !row.returnDescriptor().canonicalSpecText().equals(op.resultType())
+                    || !ContractSnapshotCanonicalizer.payloadJson(new KindPayload.StdlibCallPayload(
+                        function, op.operands(), SemanticCapability.STDLIB_SEMANTICS)).equals(op.payload())
+                    || op.operands().size() != parameters.size()) {
+                return fail(op, unit, facts, "STDLIB_SIGNATURE", SemanticCapability.STDLIB_SEMANTICS,
+                    origin("STDLIB_SIGNATURE", function.name()
+                        + " requires its declared parameter/result descriptors and ordered arguments"));
+            }
+        }
+        return Optional.empty();
     }
 
     /**
@@ -2494,7 +2521,8 @@ public final class SemanticIrValidator {
             case CONSOLE_LOG, CONSOLE_ERROR -> FailurePolicyId.INFRASTRUCTURE_ONLY;
             case STRING_LENGTH -> FailurePolicyId.NO_DEAL_FAILURE;
             case STRING_SUBSTRING -> FailurePolicyId.NO_DEAL_FAILURE;
-            case STRING_CONTAINS, STRING_STARTS_WITH, STRING_ENDS_WITH, STRING_REPLACE, STRING_SPLIT, STRING_TRIM, TABLE_KEYS, MATH_FLOOR, MATH_CEIL, MATH_SQRT, MATH_ABS_NUMBER, TIME_NOW_MILLIS ->
+            case STRING_CONTAINS, STRING_STARTS_WITH, STRING_ENDS_WITH, STRING_REPLACE, STRING_SPLIT, STRING_TRIM, TABLE_KEYS, MATH_FLOOR, MATH_CEIL, MATH_SQRT, MATH_ABS_NUMBER, TIME_NOW_MILLIS,
+                 MATH_MIN, MATH_MAX, MATH_ROUND, NUMBER_IS_FINITE, NUMBER_IS_NAN ->
                 FailurePolicyId.NO_DEAL_FAILURE;
             case JSON_PARSE -> FailurePolicyId.JSON_PARSE_SYNTAX;
             case JSON_STRINGIFY -> FailurePolicyId.JSON_TO_ERROR;

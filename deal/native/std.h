@@ -1,16 +1,16 @@
 /*
  * deal/native/std.h — the `std` service group.
  *
- * Exactly the 18 closed operations of `StdlibFunctionId`
+ * The closed operations of `StdlibFunctionId`
  * (`llvm-native-runtime-value-model` R7/R8): console log and error, the string
- * operations over Unicode scalar values, record keys, JSON parse and stringify,
- * the four `math` operations and `time.nowMillis`. Generated code dispatches
+ * operations over UTF-16 units, record keys, JSON parse and stringify,
+ * numeric predicates, Math operations and `time.nowMillis`. Generated code dispatches
  * from the emitted `STDLIB_CALL` operation id, and this group owns the
  * operation's `STDLIB_PARAMETER` and `STDLIB_RETURN` crossings.
  *
- * The six spec-listed stdlib modules are realized by this one closed operation
- * surface; the `std/` declaration modules stay the compile-time type authority
- * and the descriptor texts below are exactly their declared signatures.
+ * The five callable stdlib modules and direct-only builtin algorithms use this
+ * native-backend dispatch. Builtin-only selectors grant no module exports;
+ * their parameter/result descriptors are the checked algorithm signatures.
  *
  * Crossings. Every parameter is checked left to right through the delivered
  * `deal_check_value` at the descriptor-kind rule's typed boundary before the
@@ -54,7 +54,12 @@
 #define DEAL_STDLIB_MATH_SQRT         15u
 #define DEAL_STDLIB_MATH_ABS_NUMBER   16u
 #define DEAL_STDLIB_TIME_NOW_MILLIS   17u
-#define DEAL_STDLIB_OPERATION_COUNT   18u
+#define DEAL_STDLIB_MATH_MIN          18u
+#define DEAL_STDLIB_MATH_MAX          19u
+#define DEAL_STDLIB_MATH_ROUND        20u
+#define DEAL_STDLIB_NUMBER_IS_FINITE  21u
+#define DEAL_STDLIB_NUMBER_IS_NAN     22u
+#define DEAL_STDLIB_OPERATION_COUNT   23u
 
 /*
  * One `STDLIB_CALL`: the closed operation id, the already evaluated argument

@@ -122,13 +122,20 @@ public final class StdlibFunctionCatalog {
             List.of(NUMBER), NUMBER),
         // std.time (K7)
         new Entry(StdlibFunctionId.TIME_NOW_MILLIS, "std.time", "nowMillis",
-            List.of(), NUMBER)
+            List.of(), NUMBER),
+        // Direct namespace algorithms, not additional stdlib exports.
+        new Entry(StdlibFunctionId.MATH_MIN, "builtin.math", "min", List.of(NUMBER, NUMBER), NUMBER),
+        new Entry(StdlibFunctionId.MATH_MAX, "builtin.math", "max", List.of(NUMBER, NUMBER), NUMBER),
+        new Entry(StdlibFunctionId.MATH_ROUND, "builtin.math", "round", List.of(NUMBER), NUMBER),
+        new Entry(StdlibFunctionId.NUMBER_IS_FINITE, "builtin.number", "isFinite", List.of(UNKNOWN), BOOLEAN),
+        new Entry(StdlibFunctionId.NUMBER_IS_NAN, "builtin.number", "isNaN", List.of(UNKNOWN), BOOLEAN)
     );
 
     /** The ordinary callable subset of the closed algorithm signatures. */
     private static final List<Entry> CALLABLE_ENTRIES = ENTRIES.stream()
         .filter(entry -> entry.function() != StdlibFunctionId.JSON_PARSE
-            && entry.function() != StdlibFunctionId.JSON_STRINGIFY).toList();
+            && entry.function() != StdlibFunctionId.JSON_STRINGIFY
+            && !entry.function().isBuiltinOnly()).toList();
     /** Immutable lookup of callable exports only, keyed by module then name. */
     private static final Map<String, Map<String, Entry>> BY_MODULE = index();
 
