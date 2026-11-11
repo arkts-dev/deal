@@ -1995,14 +1995,16 @@ public final class TypeChecker {
                 return intrinsic.signature(directBuiltinCall.args().size());
             }
         }
-        if (objType instanceof Type.Array array && (field.equals("pop") || field.equals("splice"))) {
+        if (objType instanceof Type.Array array && (field.equals("pop") || field.equals("splice") || field.equals("push"))) {
             if (directBuiltinCall == null || mae != directBuiltinCall.callee()) {
                 error(DiagnosticCode.E3001, "Receiver intrinsics support direct calls only", mae.span());
                 return Type.Error.INSTANCE;
             }
-            return field.equals("pop")
-                ? new Type.Func(List.of(), Types.optionalRead(array.element()), false)
-                : new Type.Func(List.of(Type.Number.INSTANCE, Type.Number.INSTANCE), array, false);
+            return switch (field) {
+                case "push" -> new Type.Func(List.of(array.element()), Type.Number.INSTANCE, false);
+                case "pop" -> new Type.Func(List.of(), Types.optionalRead(array.element()), false);
+                default -> new Type.Func(List.of(Type.Number.INSTANCE, Type.Number.INSTANCE), array, false);
+            };
         }
         if ((objType instanceof Type.Array || objType instanceof Type.String) && field.equals("length")) {
             return Type.Number.INSTANCE;

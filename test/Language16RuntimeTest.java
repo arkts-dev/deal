@@ -96,6 +96,7 @@ public final class Language16RuntimeTest {
         fixtureAdmission("tables/builtin-has-own.deal", deal.semantic.ir.SemanticOpKind.HAS_FIELD, 17);
         fixtureAdmission("control-flow/conditional-expression.deal", deal.semantic.ir.SemanticOpKind.BRANCH, 102);
         fixtureAdmission("arrays/from-live.deal", deal.semantic.ir.SemanticOpKind.FOR_EACH, 17);
+        fixtureAdmission("arrays/push.deal", deal.semantic.ir.SemanticOpKind.INDEX_WRITE, -1);
         fixtureAdmission("stdlib/json/contextual-parse.deal", deal.semantic.ir.SemanticOpKind.JSON_PARSE, -1);
         fixtureAdmission("stdlib/string/substring-omitted-end.deal", deal.semantic.ir.SemanticOpKind.STDLIB_CALL, 12);
         fixtureAdmission("stdlib/string/slice.deal", deal.semantic.ir.SemanticOpKind.STDLIB_CALL, 26);
@@ -392,6 +393,7 @@ public final class Language16RuntimeTest {
             var project = Objects.requireNonNull(compiler.producedProject());
             if (fixture.contains("conditional")) conditionalAdmission(project, invocation);
             if (fixture.contains("from-live")) arrayFromAdmission(project, invocation);
+            if (fixture.equals("arrays/push.deal")) arrayPushAdmission(project, invocation);
             if (fixture.contains("contextual-parse")) jsonParseAdmission(project, invocation);
             var tables = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.StructuredBodyTable>();
             var registries = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.ClassFactoryRegistry>();
@@ -995,6 +997,69 @@ public final class Language16RuntimeTest {
         }
         if (parses == 0 || mutations != parses * defects.size())
             throw new AssertionError("JSON.parse mutation population: " + mutations + " for " + parses + " parses");
+    }
+
+    private static void arrayPushAdmission(deal.semantic.ir.ExecutableLoweredProject project,
+            deal.semantic.CompilerInvocation invocation) {
+        var facts = new deal.semantic.ir.SemanticIrValidator.ComparisonFacts(
+            project.interfaceIndex().interfaceIndexDigest(), project.semanticProfile(), invocation.capabilityRegistryHash());
+        if (deal.semantic.ir.SemanticIrValidator.validateText(
+                deal.semantic.ir.SemanticIrValidator.toProjectText(project), facts).isPresent())
+            throw new AssertionError("push project transport");
+        int mutations = 0;
+        for (var unit : project.modules().values()) {
+            var rebuilt = deal.semantic.ir.RawUnitMaterializer.materialize(deal.semantic.ir.RawUnit.fromTyped(unit));
+            if (!deal.semantic.ir.SemanticIrValidator.toUnitText(unit).equals(deal.semantic.ir.SemanticIrValidator.toUnitText(rebuilt)))
+                throw new AssertionError("push raw round trip");
+            for (int arity : List.of(7, 8)) {
+                var chain = unit.ops().stream().filter(op -> op.payload() instanceof deal.semantic.ir.KindPayload.AssignPayload p
+                    && p.targetKind() == deal.semantic.ir.AssignTargetKind.ARRAY_SLOT && p.childOps().size() == arity)
+                    .findFirst().orElseThrow();
+                var original = (deal.semantic.ir.KindPayload.AssignPayload) chain.payload();
+                for (String defect : List.of("length", "order", "commit")) {
+                    var children = new ArrayList<>(original.childOps());
+                    if (defect.equals("length")) children.remove(arity - 4);
+                    if (defect.equals("order")) java.util.Collections.swap(children, arity - 3, arity - 2);
+                    if (defect.equals("commit")) children.set(arity - 1, children.getFirst());
+                    var payload = new deal.semantic.ir.KindPayload.AssignPayload(original.targetKind(), children);
+                    var old = chain.contract();
+                    var provisional = new deal.semantic.ir.OperationContractSnapshot(old.version(), old.opKind(), chain.resultType(),
+                        chain.operandTypes(), old.selector(), payload, chain.failurePolicy(), old.referencedSemanticIds(), "pending");
+                    var contract = new deal.semantic.ir.OperationContractSnapshot(old.version(), old.opKind(), chain.resultType(),
+                        chain.operandTypes(), old.selector(), payload, chain.failurePolicy(), old.referencedSemanticIds(),
+                        deal.semantic.ir.ContractSnapshotCanonicalizer.digest(provisional));
+                    var changed = new deal.semantic.ir.SemanticOp(chain.opId(), chain.kind(), chain.origin(), chain.result(),
+                        chain.resultType(), chain.operands(), chain.operandTypes(), payload, chain.failurePolicy(), contract);
+                    var ops = unit.ops().stream().map(op -> op == chain ? changed : op).toList();
+                    var malformed = new deal.semantic.ir.LoweredModuleUnit(unit.formatVersion(),unit.semanticProfile(),unit.moduleId(),
+                        unit.interfaceHash(),unit.loweringContextHash(),unit.requiredCapabilities(),unit.constructCoverage(),unit.classLayouts(),
+                        unit.functions(),unit.moduleInit(),unit.exportPlan(),unit.functionBindings(),ops,unit.bodyTable(),unit.classFactories(),unit.classBindingFacts());
+                    var typed = deal.semantic.ir.AddressChainProtocol.validate(malformed);
+                    var raw = deal.semantic.ir.AddressChainProtocol.validate(deal.semantic.ir.RawUnitMaterializer.materialize(
+                        deal.semantic.ir.RawUnit.fromTyped(malformed)));
+                    var transported = deal.semantic.ir.ContractSnapshotCanonicalizer.parseUnit((deal.semantic.ir.CanonicalJson.Obj)
+                        deal.semantic.ir.ContractSnapshotCanonicalizer.parseValidationText(
+                            deal.semantic.ir.SemanticIrValidator.toUnitText(malformed)));
+                    var text = deal.semantic.ir.AddressChainProtocol.validate(deal.semantic.ir.RawUnitMaterializer.materialize(transported));
+                    String rule = defect.equals("commit") ? "SINGLE_EVALUATION" : "ADDRESS_CHAIN_SHAPE";
+                    String detail = defect.equals("commit") ? "listed more than once in chain"
+                        : defect.equals("order") ? "must be INDEX_NORMALIZE, got BOUNDARY"
+                        : arity == 7 ? "no closed ASSIGN ARRAY_SLOT chain shape with 6 children"
+                        : "the length child at position 3 must be ARRAY_LENGTH, got FUNCTION_ADAPT";
+                    var subject = defect.equals("order") ? unit.ops().stream().filter(op ->
+                        op.opId().equals(original.childOps().get(arity - 2))).findFirst().orElseThrow()
+                        : defect.equals("length") && arity == 8 ? unit.ops().stream().filter(op ->
+                            op.opId().equals(original.childOps().get(3))).findFirst().orElseThrow() : chain;
+                    if (typed.isEmpty() || !typed.equals(raw) || !typed.equals(text)
+                            || !typed.get().message().contains("validatorRule " + rule + ",")
+                            || !typed.get().message().contains(detail)
+                            || !typed.get().range().equals(subject.origin().span().range()))
+                        throw new AssertionError("push " + arity + "/" + defect + ": " + typed + " / " + raw + " / " + text);
+                    mutations++;
+                }
+            }
+        }
+        if (mutations != 6) throw new AssertionError("push mutation population " + mutations);
     }
 
     private static void arrayFromAdmission(deal.semantic.ir.ExecutableLoweredProject project,

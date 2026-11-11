@@ -18,7 +18,8 @@ function activeNames(contacts: Contact[]): string[] {
   let names: string[] = [];
   for (let contact of contacts) {
     if (contact.active) {
-      names[names.length] = displayName(contact);
+      let length: number = names.push(displayName(contact));
+      check.require(length === names.length, "push returns the new length");
     }
   }
   return names;

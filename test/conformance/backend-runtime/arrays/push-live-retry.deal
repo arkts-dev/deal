@@ -1,0 +1,35 @@
+// @spec: Arrays
+// @description: Push validates affected live elements before appending, preserves storage on rejection and readmits repaired graphs
+// @expected: runtime-ok
+// @features: arrays, host-abi
+import * as host from "host/probe";
+class Item {x:number;stable:number;}
+function check(ok:boolean):void {if(!ok){throw {code:"PUSH",message:"live mismatch"};}}
+export function main():null {
+  let xs=host.make();let alias=xs;
+  check(xs.push(11)===3 && host.size()===3 && alias[2]===11);
+  let item:Item={x:9,stable:4};let items:Item[]=[];let itemAlias=items;
+  host.damage(item,false);let destination=17;let caught=false;
+  try {destination=items.push(item);} catch(e) {
+    check((e as Error).code==="E8001");caught=true;
+  }
+  check(caught && destination===17 && items===itemAlias && itemAlias.length===0);
+  host.damage(null,true);check(items.push(item)===1 && items[0]===item && item.stable===4);
+  let retained:number[]=[4,9,11];let retainedAlias=retained;
+  let nested:number[][]=[];host.keep(retained);host.corrupt();caught=false;
+  try {destination=nested.push(retained);} catch(e){check((e as Error).code==="E8003");caught=true;}
+  check(caught && destination===17 && nested.length===0 && retainedAlias.length===3 && retained[0]===4);
+  host.repair();check(nested.push(retained)===1 && nested[0]===retainedAlias && retainedAlias[1]===9);
+  let calls=0;let callback=():number=>{calls=calls+1;return 7;};
+  let functions:(()=>number)[]=[];
+  for(let signature of [false,true]) {
+    if(signature){host.poisonSignature(callback);}else{host.poison(callback);}
+    caught=false;let before=calls;
+    try {destination=functions.push(callback);} catch(e){if((e as Error).code!=="E8001"){throw e as Error;}caught=true;}
+    check(caught && destination===17 && functions.length===0 && calls===before);
+    host.restoreFunction();check(functions.push(callback)===1 && functions[0]()===7);
+    check((functions.pop() as ()=>number)===callback && functions.length===0);
+  }
+  check(calls===2);
+  return null;
+}

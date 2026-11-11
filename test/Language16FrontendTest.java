@@ -126,6 +126,14 @@ public final class Language16FrontendTest {
             check("function f(xs:number[]):void{" + expression + ";}", false);
         check("function f(xs:number[]|null):void{xs.splice(0,1);}", false);
         check("function f():number{let r:Record<string,unknown>={splice:():number=>4};return (r.splice as ()=>number)();}", true);
+        check("function f(xs:number[]):number{return xs.push(1);}", true);
+        check("function f(xs:(number|null)[]):number{return xs.push(null);}", true);
+        check("function f(xs:unknown[]):number{return xs.push(\"value\");}", true);
+        check("class Item{x:number;} function f(xs:Item[]):number{return xs.push({x:1});}", true);
+        check("function f(xs:((x:number)=>number)[]):number{return xs.push(():number=>7);}", true);
+        for (String expression : List.of("xs.push", "xs.push()", "xs.push(1,2)", "xs.push(\"bad\")", "xs.push(undefined)"))
+            check("function f(xs:number[]):void{" + expression + ";}", false);
+        check("function f(xs:number[]|null):void{xs.push(1);}", false);
         check("function f(xs:number[]):number|undefined{return xs.pop();}", true);
         check("function f(xs:unknown[]):unknown{return xs.pop();}", true);
         check("function f(xs:(number|null)[]):number|null|undefined{return xs.pop();}", true);

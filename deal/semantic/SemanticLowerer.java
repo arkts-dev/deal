@@ -8116,6 +8116,11 @@ public final class SemanticLowerer {
         private ValueId lowerCallSite(CallExpr call, ValueId slot) {
             if (call.callee() instanceof MemberAccessExpr member
                     && checkedType(member.object()) instanceof Type.Array array
+                    && member.field().equals("push")) {
+                return lowerArrayPush(call, member, array, slot);
+            }
+            if (call.callee() instanceof MemberAccessExpr member
+                    && checkedType(member.object()) instanceof Type.Array array
                     && member.field().equals("splice")) {
                 ValueId receiver = lowerOperand(member.object());
                 ValueId start = lowerOperand(call.args().get(0));
@@ -8814,6 +8819,75 @@ public final class SemanticLowerer {
             // dynamic materialization keyed by the call's result identity.
             registerDynamicMaterialization(result, callOpId, resultType);
             return result;
+        }
+
+        /** Push evaluates both source operands before reading the current append position. */
+        private ValueId lowerArrayPush(CallExpr call, MemberAccessExpr member, Type.Array array, ValueId slot) {
+            Span span = call.span();
+            RuntimeDescriptor.Array descriptor = (RuntimeDescriptor.Array) valueDescriptorOf(array);
+            ValueId receiver = lowerOperand(member.object());
+            ExpressionNode argument = call.args().getFirst();
+            ValueId original = lowerOperand(argument);
+            BindingId receiverBinding = ids.nextBindingId(module, nextOrdinal++, 0);
+            BindingId valueBinding = ids.nextBindingId(module, nextOrdinal++, 0);
+            RuntimeDescriptor sourceDescriptor = valueDescriptorOf(producedType(argument));
+            for (BindingId binding : List.of(receiverBinding, valueBinding))
+                emitUserNullOp(SemanticOpKind.BINDING_ALLOC,
+                    new KindPayload.BindingAllocPayload(binding, currentBlock(), true, BindingCellKind.DIRECT, 0),
+                    span, FailurePolicyId.NO_DEAL_FAILURE);
+            emitUserNullOp(SemanticOpKind.BINDING_INIT,
+                new KindPayload.BindingInitPayload(receiverBinding, 0, receiver), span, FailurePolicyId.NO_DEAL_FAILURE);
+            emitUserNullOp(SemanticOpKind.BINDING_INIT,
+                new KindPayload.BindingInitPayload(valueBinding, 0, original), span, FailurePolicyId.NO_DEAL_FAILURE);
+            OpId chain = ids.nextOpId(module, nextOrdinal++, 0);
+            List<OpId> children = new ArrayList<>();
+            ValueId container, value, yielded;
+            OpId boundary;
+            chainParents.push(chain);
+            try {
+                container = emitBuiltinLoad(receiverBinding, descriptor, span, null);
+                children.add(producerOpId(container));
+                ValueId index = emitChainChildOp(SemanticOpKind.ARRAY_LENGTH,
+                    new KindPayload.ArrayLengthPayload(container), span, RuntimeDescriptor.Number.INSTANCE,
+                    FailurePolicyId.NO_DEAL_FAILURE);
+                children.add(producerOpId(index));
+                value = emitBuiltinLoad(valueBinding, sourceDescriptor, argument.span(), null);
+                yielded = value;
+                children.add(producerOpId(value));
+                if (positionAdapts(argument, descriptor.element())) {
+                    ValueId source = value;
+                    value = lowerPositionAdapter(argument, (RuntimeDescriptor.Func) descriptor.element(), () -> source, true);
+                    children.add(producerOpId(value));
+                }
+                ValueId length = emitChainChildOp(SemanticOpKind.ARRAY_LENGTH,
+                    new KindPayload.ArrayLengthPayload(container), span, RuntimeDescriptor.Number.INSTANCE,
+                    FailurePolicyId.NO_DEAL_FAILURE);
+                children.add(producerOpId(length));
+                ValueId position = emitChainChildOp(SemanticOpKind.INDEX_NORMALIZE,
+                    new KindPayload.IndexNormalizePayload(IndexMode.ARRAY_WRITE, index, length), span,
+                    RuntimeDescriptor.Number.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE);
+                children.add(producerOpId(position));
+                boundary = emitNullOp(SemanticOpKind.BOUNDARY,
+                    new KindPayload.BoundaryPayload(BoundaryKind.ARRAY_ELEMENT_ASSIGNMENT, descriptor.element(), value,
+                        new BoundaryRealization.RuntimeValidation(CANONICAL_RUNTIME_VALIDATION_ID)),
+                    span, FailurePolicyId.ARRAY_WRITE_BOUNDS_THEN_ELEMENT, SourceOriginKind.SYNTHETIC, chain);
+                children.add(boundary);
+                recordPositionAdapterAt(value, boundary, BoundaryKind.ARRAY_ELEMENT_ASSIGNMENT);
+                children.add(emitNullOp(SemanticOpKind.INDEX_WRITE,
+                    new KindPayload.IndexWritePayload(container, position, value), span,
+                    FailurePolicyId.NO_DEAL_FAILURE, SourceOriginKind.SYNTHETIC, chain));
+            } finally { chainParents.pop(); }
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            emit(buildOp(chain, SemanticOpKind.ASSIGN,
+                new KindPayload.AssignPayload(AssignTargetKind.ARRAY_SLOT, children), yielded, sourceDescriptor,
+                FailurePolicyId.NO_DEAL_FAILURE,
+                new SourceOrigin(sourceId, toSourceSpan(span), SourceOriginKind.SYNTHETIC, anchor, currentParent())));
+            if (creationRuleAnalysis) {
+                recordPositionClassification(BoundaryKind.ARRAY_ELEMENT_ASSIGNMENT,
+                    producedType(argument), array.element(), value, boundary);
+            }
+            return emitValueOp(SemanticOpKind.ARRAY_LENGTH, new KindPayload.ArrayLengthPayload(container),
+                span, RuntimeDescriptor.Number.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE, slot);
         }
 
         /** Expand Array.from into ordinary live iteration, calls and checked append chains. */

@@ -1,0 +1,46 @@
+// @spec: Arrays
+// @description: Push appends after argument effects, preserves aliases and adapts function elements
+// @expected: runtime-ok
+// @features: arrays, closures, evaluation-order
+class Item {x:number;}
+function check(ok:boolean):void {if(!ok){throw {code:"PUSH",message:"mismatch"};}}
+export function main():null {
+  let xs:number[]=[]; let alias=xs;
+  check(xs.push(4)===1 && xs.push(9)===2 && alias===xs && alias[1]===9);
+  let order="";
+  let receiver=():number[]=>{order=order+"r";return xs;};
+  let argument=():number=>{order=order+"v";xs[xs.length]=7;return 8;};
+  check(receiver().push(argument())===4 && order==="rv" && xs[2]===7 && xs[3]===8);
+  let old=xs;
+  let replace=():number=>{xs=[100];return 11;};
+  check(receiver().push(replace())===5 && old[4]===11 && xs.length===1 && xs[0]===100);
+  let destination=17; let caught=false; order="";
+  let fail=():number=>{order=order+"v";throw {code:"VALUE",message:"stop"};};
+  try {destination=receiver().push(fail());} catch(e){check((e as Error).code==="VALUE");caught=true;}
+  check(caught && destination===17 && order==="rv" && xs.length===1);
+  let failReceiver=():number[]=>{order=order+"r";throw {code:"RECEIVER",message:"stop"};};
+  order="";caught=false;
+  try {destination=failReceiver().push(argument());} catch(e){check((e as Error).code==="RECEIVER");caught=true;}
+  check(caught && order==="r" && destination===17 && xs.length===1);
+  let nullable:(number|null|undefined)[]=[];
+  check(nullable.push(null)===1 && nullable.push(undefined)===2 && nullable[0]===null && nullable[1]===undefined);
+  let numbers:number[]=[];
+  check(numbers.push(-0)===1 && 1/numbers[0]===-1/0);
+  check(numbers.push(0/0)===2 && Number.isNaN(numbers[1]));
+  let text:string[]=[];check(text.push("\uD800\0\uDC00")===1 && text[0]==="\uD800\0\uDC00");
+  let items:Item[]=[];check(items.push({x:3})===1 && items[0].x===3);
+  let item:Item={x:9};check(items.push(item)===2 && items[1]===item);
+  let functions:((x:number)=>number)[]=[];
+  let captured=7;let source=():number=>captured;
+  check(functions.push(source)===1);source=():number=>99;captured=8;
+  check(functions[0](100)===8 && functions.push((x:number):number=>x+1)===2 && functions[1](4)===5);
+  let nested:number[][]=[];check(nested.push(old)===1 && nested[0]===old);
+  let decoded:number[]=JSON.parse("[1]");check(decoded.push(2)===2 && decoded[1]===2);
+  let recursive:number[]=[];check(recursive.push(recursive.push(3))===2 && recursive[0]===3 && recursive[1]===1);
+  let results:number[]=[];results[results.length]=true ? recursive.push(4) : recursive.push(99);
+  check(results[0]===3 && recursive.length===3 && recursive[2]===4);
+  let stale:number[]|null=[1];let clear=():number=>{stale=null;return 2;};
+  if(stale!==null){check(stale.push(clear())===2);}check(stale===null);
+  let literals:number[][]=[];check(literals.push(true ? [1] : [2])===1 && literals[0][0]===1);
+  return null;
+}
