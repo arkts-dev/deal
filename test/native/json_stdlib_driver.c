@@ -821,6 +821,10 @@ static void observe_stdlib(void) {
     observe_string_range("slice-nonfinite", DEAL_STDLIB_STRING_SLICE, "hello", -1.0 / 0.0, 0.0 / 0.0);
     observe_string_range("slice-astral", DEAL_STDLIB_STRING_SLICE, "\xf0\x9d\x84\x9e" "ab", 1.0, -1.0);
 
+    observe_string_operation("case-upper-expansion", DEAL_STDLIB_STRING_TO_UPPER_CASE, "Stra\xc3\x9f" "e \xef\xac\x83", NULL, NULL);
+    observe_string_operation("case-lower-sigma", DEAL_STDLIB_STRING_TO_LOWER_CASE, "\xce\x9f\xce\xa3'\xce\x91 \xce\x9f\xce\xa3'", NULL, NULL);
+    observe_string_operation("case-lower-pair", DEAL_STDLIB_STRING_TO_LOWER_CASE, "\xf0\x90\x90\x80", NULL, NULL);
+    observe_string_operation("case-lower-lone", DEAL_STDLIB_STRING_TO_LOWER_CASE, "\xed\xa0\x80" "A", NULL, NULL);
     observe_search("index-position", DEAL_STDLIB_STRING_INDEX_OF, "ababa", "ba", 2.9);
     observe_search("last-index-nan", DEAL_STDLIB_STRING_LAST_INDEX_OF, "ababa", "ba", 0.0 / 0.0);
     observe_search("index-unit", DEAL_STDLIB_STRING_INDEX_OF, "\xf0\x9d\x84\x9e" "ab", "\xed\xb4\x9e", 0.0);

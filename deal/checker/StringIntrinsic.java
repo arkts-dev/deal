@@ -7,6 +7,8 @@ import java.util.List;
 public enum StringIntrinsic {
     SUBSTRING("substring", List.of(Type.Number.INSTANCE, Type.Number.INSTANCE), Type.String.INSTANCE),
     SLICE("slice", List.of(Type.Number.INSTANCE, Type.Number.INSTANCE), Type.String.INSTANCE),
+    TO_LOWER_CASE("toLowerCase", List.of(), Type.String.INSTANCE),
+    TO_UPPER_CASE("toUpperCase", List.of(), Type.String.INSTANCE),
     INDEX_OF("indexOf", List.of(Type.String.INSTANCE), Type.Number.INSTANCE),
     LAST_INDEX_OF("lastIndexOf", List.of(Type.String.INSTANCE), Type.Number.INSTANCE),
     INCLUDES("includes", List.of(Type.String.INSTANCE), Type.Boolean.INSTANCE),

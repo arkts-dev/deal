@@ -32,14 +32,16 @@ public enum StdlibFunctionId implements ClosedSelector {
     STRING_STARTS_WITH_POSITION,
     STRING_ENDS_WITH_POSITION,
     STRING_INDEX_OF,
-    STRING_LAST_INDEX_OF;
+    STRING_LAST_INDEX_OF,
+    STRING_TO_LOWER_CASE,
+    STRING_TO_UPPER_CASE;
 
     /** Direct builtin algorithms with no callable stdlib module export. */
     public boolean isBuiltinOnly() {
         return switch (this) {
             case MATH_MIN, MATH_MAX, MATH_ROUND, NUMBER_IS_FINITE, NUMBER_IS_NAN, STRING_SLICE,
                  STRING_INCLUDES_POSITION, STRING_STARTS_WITH_POSITION, STRING_ENDS_WITH_POSITION,
-                 STRING_INDEX_OF, STRING_LAST_INDEX_OF -> true;
+                 STRING_INDEX_OF, STRING_LAST_INDEX_OF, STRING_TO_LOWER_CASE, STRING_TO_UPPER_CASE -> true;
             default -> false;
         };
     }

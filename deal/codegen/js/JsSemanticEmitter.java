@@ -3081,6 +3081,10 @@ private void emitBindingLoad(SemanticOp op) {
             if (payload.function() == StdlibFunctionId.JSON_STRINGIFY) {
                 emit(slotOf(op) + " = $rt.jsonStringifyText("
                     + callArguments.getFirst() + ", [], " + spanArgs(op) + ");");
+            } else if (payload.function() == StdlibFunctionId.STRING_TO_LOWER_CASE
+                    || payload.function() == StdlibFunctionId.STRING_TO_UPPER_CASE) {
+                emit(slotOf(op) + " = $rt.stringChangeCase(" + callArguments.getFirst() + ", "
+                    + (payload.function() == StdlibFunctionId.STRING_TO_UPPER_CASE) + ");");
             } else if (payload.function() == StdlibFunctionId.STRING_SLICE) {
                 emit(slotOf(op) + " = " + callArguments.getFirst() + ".slice("
                     + callArguments.get(1) + ", " + callArguments.get(2) + ");");

@@ -8173,6 +8173,8 @@ public final class SemanticLowerer {
                     String algorithm = switch (intrinsic) {
                         case SUBSTRING -> "substring";
                         case SLICE -> "slice";
+                        case TO_LOWER_CASE -> "toLowerCase";
+                        case TO_UPPER_CASE -> "toUpperCase";
                         case INDEX_OF -> "indexOf";
                         case LAST_INDEX_OF -> "lastIndexOf";
                         case INCLUDES -> "contains";
@@ -8184,6 +8186,8 @@ public final class SemanticLowerer {
                     };
                     StdlibFunctionId direct = switch (intrinsic) {
                         case SLICE -> StdlibFunctionId.STRING_SLICE;
+                        case TO_LOWER_CASE -> StdlibFunctionId.STRING_TO_LOWER_CASE;
+                        case TO_UPPER_CASE -> StdlibFunctionId.STRING_TO_UPPER_CASE;
                         case INDEX_OF -> StdlibFunctionId.STRING_INDEX_OF;
                         case LAST_INDEX_OF -> StdlibFunctionId.STRING_LAST_INDEX_OF;
                         case INCLUDES -> call.args().size() == 2 ? StdlibFunctionId.STRING_INCLUDES_POSITION : null;

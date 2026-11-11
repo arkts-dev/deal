@@ -11005,6 +11005,9 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
     local first, last = relative(__args[2]), relative(__args[3])
     return strings.substring.f(__args[1], first, math.max(first, last))
   end
+  if fn == "STRING_TO_LOWER_CASE" or fn == "STRING_TO_UPPER_CASE" then
+    return require("deal.runtime").string_change_case(__args[1], fn == "STRING_TO_UPPER_CASE")
+  end
   if fn == "STRING_INCLUDES_POSITION" or fn == "STRING_STARTS_WITH_POSITION"
       or fn == "STRING_ENDS_WITH_POSITION" or fn == "STRING_INDEX_OF" or fn == "STRING_LAST_INDEX_OF" then
     local rt = require("deal.runtime")

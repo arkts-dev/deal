@@ -100,6 +100,7 @@ public final class Language16RuntimeTest {
         fixtureAdmission("stdlib/string/substring-omitted-end.deal", deal.semantic.ir.SemanticOpKind.STDLIB_CALL, 12);
         fixtureAdmission("stdlib/string/slice.deal", deal.semantic.ir.SemanticOpKind.STDLIB_CALL, 26);
         fixtureAdmission("stdlib/string/search-positions.deal", deal.semantic.ir.SemanticOpKind.STDLIB_CALL, 94);
+        fixtureAdmission("stdlib/string/unicode-case.deal", deal.semantic.ir.SemanticOpKind.STDLIB_CALL, 14);
         stringifyDeclaredFields();
         stringifyOracleDeclaredFields();
         jsonOperationOriginsAcrossCalls();

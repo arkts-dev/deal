@@ -31,5 +31,7 @@ export function exercise(): null {
   check.require("item: Ada".startsWith("Ada", 6), "label at position");
   check.require("item: Ada".endsWith("item", 4), "prefix end position");
   check.require(!"Ada Ada".includes("Ada", 5), "search after position");
+  check.require("Straße".toUpperCase() === "STRASSE", "uppercase label");
+  check.require("ΟΣ".toLowerCase() === "ος", "lowercase label");
   return null;
 }

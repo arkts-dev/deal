@@ -17,7 +17,7 @@ public final class Language16StringProductionTest {
             nativeNondataRead(root.resolve("nondata-read"));
             Path corpus = Path.of("test/conformance").toAbsolutePath().normalize();
             var fixtures = CorpusConformanceTest.nativeCorpusFixtures(corpus);
-            for (String name : List.of("substring-omitted-end", "slice", "search-positions")) {
+            for (String name : List.of("substring-omitted-end", "slice", "search-positions", "unicode-case")) {
                 var fixture = fixtures.stream().filter(f -> f.corpusPath().equals(
                     "backend-runtime/stdlib/string/" + name + ".deal")).findFirst().orElseThrow();
                 CompositionProductionTest.execute(ConformanceHarnessMetadata.productionCorpusSource(

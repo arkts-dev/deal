@@ -65,6 +65,54 @@ public final class StringSemantics {
         return search.length() <= end && text.startsWith(search, end - search.length());
     }
 
+    /** Locale-independent Unicode default casing, retaining isolated UTF-16 units. */
+    public static String changeCase(String text, boolean upper) {
+        StringBuilder result = new StringBuilder(text.length());
+        boolean precededByCased = false;
+        int[][] mappings = upper ? UnicodeCaseData.UPPER : UnicodeCaseData.LOWER;
+        for (int i = 0; i < text.length();) {
+            int cp = text.codePointAt(i);
+            i += Character.charCount(cp);
+            if (!upper && cp == 0x03a3 && precededByCased && !followedByCased(text, i)) {
+                result.appendCodePoint(0x03c2);
+            } else {
+                int low = 0, high = mappings.length - 1;
+                int[] mapping = null;
+                while (low <= high) {
+                    int mid = (low + high) >>> 1;
+                    if (mappings[mid][0] < cp) low = mid + 1;
+                    else if (mappings[mid][0] > cp) high = mid - 1;
+                    else { mapping = mappings[mid]; break; }
+                }
+                if (mapping == null) result.appendCodePoint(cp);
+                else for (int j = 1; j < mapping.length; j++) result.appendCodePoint(mapping[j]);
+            }
+            if (!caseProperty(cp, UnicodeCaseData.IGNORABLE))
+                precededByCased = caseProperty(cp, UnicodeCaseData.CASED);
+        }
+        return result.toString();
+    }
+
+    private static boolean followedByCased(String text, int start) {
+        for (int i = start; i < text.length();) {
+            int cp = text.codePointAt(i);
+            i += Character.charCount(cp);
+            if (!caseProperty(cp, UnicodeCaseData.IGNORABLE)) return caseProperty(cp, UnicodeCaseData.CASED);
+        }
+        return false;
+    }
+
+    private static boolean caseProperty(int cp, int[] ranges) {
+        int low = 0, high = ranges.length / 2 - 1;
+        while (low <= high) {
+            int mid = (low + high) >>> 1;
+            if (ranges[2 * mid] > cp) high = mid - 1;
+            else if (ranges[2 * mid + 1] < cp) low = mid + 1;
+            else return true;
+        }
+        return false;
+    }
+
     public static String replace(String text, String search, String replacement) {
         int at = text.indexOf(search);
         if (at < 0) return text;

@@ -1438,6 +1438,8 @@ public class SharedStdlibSemanticsTest {
                 List.of(Value.string("abc"), Value.string("b"), new Value.Number(1)), new Value.Number(1)),
             new Seed(StdlibFunctionId.STRING_LAST_INDEX_OF,
                 List.of(Value.string("abc"), Value.string("b"), new Value.Number(2)), new Value.Number(1)),
+            seed(StdlibFunctionId.STRING_TO_LOWER_CASE, Value.string("ΟΣ"), Value.string("ος")),
+            seed(StdlibFunctionId.STRING_TO_UPPER_CASE, Value.string("ß"), Value.string("SS")),
             new Seed(StdlibFunctionId.STRING_SLICE,
                 List.of(Value.string("abc"), new Value.Number(-2), new Value.Number(3)), Value.string("bc")));
     }
@@ -1493,6 +1495,8 @@ public class SharedStdlibSemanticsTest {
                       let end: boolean = "abc".endsWith("b",2);
                       let first: number = "abc".indexOf("b",1);
                       let last: number = "abc".lastIndexOf("b",2);
+                      let lower: string = "ΟΣ".toLowerCase();
+                      let upper: string = "ß".toUpperCase();
                       return null;
                     }
 
@@ -1520,8 +1524,8 @@ public class SharedStdlibSemanticsTest {
                     stdlibOps.add(op);
                 }
             }
-            check(stdlibOps.size() == 28,
-                "exactly one STDLIB_CALL per algorithm except contextual JSON_PARSE: 28 ops; got "
+            check(stdlibOps.size() == 30,
+                "exactly one STDLIB_CALL per algorithm except contextual JSON_PARSE: 30 ops; got "
                     + stdlibOps.size());
             EnumSet<StdlibFunctionId> produced = EnumSet.noneOf(StdlibFunctionId.class);
             for (SemanticOp op : stdlibOps) {
@@ -1794,6 +1798,31 @@ public class SharedStdlibSemanticsTest {
             "sqrt(-4.0) through execute yields NaN");
     }
 
+    private static void testUnicodeCase(LoweredModuleUnit unit) throws Exception {
+        // Independent whole-domain Node Unicode 17.0 observations, UTF-16LE bytes.
+        String[] expected = {
+            "60b8242c37f07a7d0870d50d43d138ea561c567646bae6daa6403d8869e79f69",
+            "6427a1afd29cf3686562a728443b280cf70df26baa4a0dd5046493d3521c781e"};
+        for (int mode = 0; mode < 2; mode++) {
+            var hash = java.security.MessageDigest.getInstance("SHA-256");
+            for (int cp = 0; cp <= 0x10ffff; cp++) {
+                String result = deal.semantic.ir.StringSemantics.changeCase(new String(Character.toChars(cp)), mode == 1);
+                for (int i = 0; i < result.length(); i++) {
+                    hash.update((byte) result.charAt(i));
+                    hash.update((byte) (result.charAt(i) >>> 8));
+                }
+            }
+            check(java.util.HexFormat.of().formatHex(hash.digest()).equals(expected[mode]),
+                "Unicode 17.0 whole-domain " + (mode == 1 ? "upper" : "lower"));
+        }
+        String[][] contextual = {{"ΟΣ", "ος"}, {"ΟΣΑ", "οσα"}, {"Σ", "σ"},
+            {"ΑΣ'Α", "ασ'α"}, {"ΑΣ'", "ας'"}, {"ΑΣ\u0301", "ας\u0301"}, {"ΣΣ", "σς"},
+            {"ΑΣ\uD800Α", "ας\uD800α"}, {"ΑΣ\u200dΑ", "ασ\u200dα"}};
+        for (String[] pair : contextual)
+            expectSuccess(SharedStdlibSemantics.execute(stdlibOpBy(unit, StdlibFunctionId.STRING_TO_LOWER_CASE),
+                List.of(Value.string(pair[0])), null), Value.string(pair[1]), "contextual sigma");
+    }
+
     private static void testStringSearch(LoweredModuleUnit unit) {
         double[] positions = {Double.NEGATIVE_INFINITY, -1e300, -1.9, -0.9,
             -Double.MIN_VALUE, -0.0, 0, Double.MIN_VALUE, 0.9, 1.9, 4, 5,
@@ -1914,6 +1943,7 @@ public class SharedStdlibSemanticsTest {
         testNumericBuiltins(unit);
         testStringSlice(unit);
         testStringSearch(unit);
+        testUnicodeCase(unit);
         testBoundaryPrecedence(unit);
         testFailClosedDefects(unit);
 

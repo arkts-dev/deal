@@ -514,7 +514,7 @@ deal/native/container.c deal/native/container.h \
 deal/native/descriptor.c deal/native/descriptor.h \
 deal/native/error.c deal/native/error.h \
 deal/native/json.c deal/native/json.h \
-deal/native/std.c deal/native/std.h \
+deal/native/std.c deal/native/std.h deal/native/unicode_case.h \
 deal/native/host.c deal/native/host.h \
 deal/native/async.c deal/native/async.h \
 deal/native/entry.c deal/native/entry.h \

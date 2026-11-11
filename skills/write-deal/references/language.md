@@ -54,7 +54,7 @@ Import namespaces and qualify exported classes; keep state inside function-owned
 
 ## String operations
 
-Use s.length (read-only UTF-16 unit count), s.substring(start) for the remaining suffix or s.substring(start, end), s.slice(start) or s.slice(start, end) for relative bounds (negative offsets count from the end), s.includes(part, position), s.startsWith(part, position), s.endsWith(part, endPosition), s.indexOf(search, position) and s.lastIndexOf(search, position) (each search position may be omitted), s.replace(search, replacement), s.split(separator), and s.trim(). These receiver intrinsics require direct calls, not detached method values. Arguments follow ECMAScript string semantics; for-of combines valid surrogate pairs while length/slicing/splitting retain individual units.
+Use s.length (read-only UTF-16 unit count), s.substring(start) for the remaining suffix or s.substring(start, end), s.slice(start) or s.slice(start, end) for relative bounds (negative offsets count from the end), s.includes(part, position), s.startsWith(part, position), s.endsWith(part, endPosition), s.indexOf(search, position) and s.lastIndexOf(search, position) (each search position may be omitted), s.replace(search, replacement), s.split(separator), s.trim(), s.toLowerCase() and s.toUpperCase(). Casing uses locale-independent Unicode default mappings, including expansions such as "ß".toUpperCase() === "SS" and contextual final sigma. These receiver intrinsics require direct calls, not detached method values. Arguments follow ECMAScript string semantics; for-of combines valid surrogate pairs while length/slicing/splitting retain individual units.
 
 ## Builtin calls
 

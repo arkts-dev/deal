@@ -31,6 +31,7 @@
 #include "deal/native/platform.h"
 #include "deal/native/text.h"
 #include "deal/native/value.h"
+#include "deal/native/unicode_case.h"
 
 /* Holds one freshly created managed object for the invocation (M5). */
 static void deal_std_hold(void *referent) {
@@ -95,7 +96,9 @@ static const deal_std_operation deal_std_operations[DEAL_STDLIB_OPERATION_COUNT]
     { deal_std_parameters_search, 3u, "boolean" },           /* STRING_STARTS_WITH_POSITION */
     { deal_std_parameters_search, 3u, "boolean" },           /* STRING_ENDS_WITH_POSITION */
     { deal_std_parameters_search, 3u, "number" },            /* STRING_INDEX_OF */
-    { deal_std_parameters_search, 3u, "number" }             /* STRING_LAST_INDEX_OF */
+    { deal_std_parameters_search, 3u, "number" },            /* STRING_LAST_INDEX_OF */
+    { deal_std_parameters_string, 1u, "string" },            /* STRING_TO_LOWER_CASE */
+    { deal_std_parameters_string, 1u, "string" }             /* STRING_TO_UPPER_CASE */
 };
 
 /* =========================================================================
@@ -384,6 +387,89 @@ static deal_data deal_std_slice(deal_string *text, double start, double end) {
     return deal_std_string_result(deal_text_new(deal_text_bytes(text) + from, to - from));
 }
 
+static int deal_std_case_property(uint32_t cp, const uint32_t ranges[][2], size_t count) {
+    size_t low = 0u, high = count;
+    while (low < high) {
+        size_t mid = low + (high - low) / 2u;
+        if (cp < ranges[mid][0]) high = mid;
+        else if (cp > ranges[mid][1]) low = mid + 1u;
+        else return 1;
+    }
+    return 0;
+}
+
+/* Canonical storage contains at most three bytes per UTF-16 unit. */
+static uint32_t deal_std_case_point(const unsigned char *bytes, size_t length, size_t *cursor) {
+    unsigned char first = bytes[(*cursor)++];
+    uint32_t cp = first;
+    unsigned count = first < 128u ? 0u : first < 224u ? 1u : 2u;
+    if (count != 0u) cp = first & (count == 1u ? 31u : 15u);
+    for (unsigned i = 0; i < count; i++) cp = cp * 64u + (bytes[(*cursor)++] & 63u);
+    if (cp >= 0xd800u && cp <= 0xdbffu && length - *cursor >= 3u
+            && bytes[*cursor] == 0xedu && bytes[*cursor + 1u] >= 0xb0u) {
+        uint32_t tail = ((uint32_t)(bytes[*cursor] & 15u) << 12u)
+            | ((uint32_t)(bytes[*cursor + 1u] & 63u) << 6u) | (bytes[*cursor + 2u] & 63u);
+        cp = 0x10000u + (cp - 0xd800u) * 1024u + tail - 0xdc00u;
+        *cursor += 3u;
+    }
+    return cp;
+}
+
+static void deal_std_case_append(unsigned char *output, size_t *length, uint32_t cp) {
+    if (cp > 0xffffu) {
+        cp -= 0x10000u;
+        deal_std_case_append(output, length, 0xd800u + cp / 1024u);
+        deal_std_case_append(output, length, 0xdc00u + cp % 1024u);
+    } else if (cp < 128u) output[(*length)++] = (unsigned char)cp;
+    else if (cp < 2048u) {
+        output[(*length)++] = (unsigned char)(192u + cp / 64u);
+        output[(*length)++] = (unsigned char)(128u + cp % 64u);
+    } else {
+        output[(*length)++] = (unsigned char)(224u + cp / 4096u);
+        output[(*length)++] = (unsigned char)(128u + cp / 64u % 64u);
+        output[(*length)++] = (unsigned char)(128u + cp % 64u);
+    }
+}
+
+static deal_data deal_std_change_case(deal_string *text, int upper) {
+    const unsigned char *bytes = deal_text_bytes(text);
+    size_t length = deal_text_byte_length(text), cursor = 0u, written = 0u;
+    size_t capacity = deal_platform_checked_multiply(deal_text_unit_length(text), 18u);
+    unsigned char *output = deal_platform_allocate(capacity == 0u ? 1u : capacity);
+    const deal_case_mapping *mapping = upper ? deal_case_upper : deal_case_lower;
+    size_t mapping_count = upper ? sizeof(deal_case_upper) / sizeof(deal_case_upper[0])
+        : sizeof(deal_case_lower) / sizeof(deal_case_lower[0]);
+    int preceded = 0;
+    while (cursor < length) {
+        uint32_t cp = deal_std_case_point(bytes, length, &cursor);
+        int final = 0;
+        if (!upper && cp == 0x03a3u && preceded) {
+            size_t look = cursor;
+            final = 1;
+            while (look < length) {
+                uint32_t next = deal_std_case_point(bytes, length, &look);
+                if (deal_std_case_property(next, deal_case_ignorable, sizeof(deal_case_ignorable) / sizeof(deal_case_ignorable[0]))) continue;
+                final = !deal_std_case_property(next, deal_case_cased, sizeof(deal_case_cased) / sizeof(deal_case_cased[0]));
+                break;
+            }
+        }
+        size_t low = 0u, high = mapping_count;
+        while (low < high) {
+            size_t mid = low + (high - low) / 2u;
+            if (mapping[mid].source < cp) low = mid + 1u; else high = mid;
+        }
+        if (final) deal_std_case_append(output, &written, 0x03c2u);
+        else if (low < mapping_count && mapping[low].source == cp) {
+            for (unsigned i = 0; i < mapping[low].count; i++) deal_std_case_append(output, &written, mapping[low].mapped[i]);
+        } else deal_std_case_append(output, &written, cp);
+        if (!deal_std_case_property(cp, deal_case_ignorable, sizeof(deal_case_ignorable) / sizeof(deal_case_ignorable[0])))
+            preceded = deal_std_case_property(cp, deal_case_cased, sizeof(deal_case_cased) / sizeof(deal_case_cased[0]));
+    }
+    deal_string *result = deal_text_new(output, written);
+    deal_platform_release(output);
+    return deal_std_string_result(result);
+}
+
 static size_t deal_std_search_bound(double value, size_t length) {
     if (!(value > 0.0)) return 0u;
     return value >= (double)length ? length : (size_t)value;
@@ -562,6 +648,10 @@ static deal_data deal_std_evaluate(uint32_t operation_id,
     case DEAL_STDLIB_STRING_SLICE:
         return deal_std_slice(deal_std_string_argument(&arguments[0]),
             deal_std_number_argument(&arguments[1]), deal_std_number_argument(&arguments[2]));
+    case DEAL_STDLIB_STRING_TO_LOWER_CASE:
+    case DEAL_STDLIB_STRING_TO_UPPER_CASE:
+        return deal_std_change_case(deal_std_string_argument(&arguments[0]),
+            operation_id == DEAL_STDLIB_STRING_TO_UPPER_CASE);
     case DEAL_STDLIB_STRING_INCLUDES_POSITION:
     case DEAL_STDLIB_STRING_STARTS_WITH_POSITION:
     case DEAL_STDLIB_STRING_ENDS_WITH_POSITION:

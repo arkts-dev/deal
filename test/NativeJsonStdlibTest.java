@@ -44,7 +44,7 @@ import java.util.Map;
  *       undefined result, a path-local cycle versus shared acyclic children and
  *       the closed builtin encoding rejection arm — against the specification's rules
  *       and the failure-arm authority;</li>
- *   <li>every one of the twenty-nine merged {@code StdlibFunctionId} operations
+ *   <li>every one of the thirty-one merged {@code StdlibFunctionId} operations
  *       against {@link SharedStdlibSemantics}, with the UTF-16 code-unit
  *       positions and clamped substring bounds of the string family, the parameter
  *       and return crossings through the typed-boundary arm and a positive
@@ -131,8 +131,8 @@ public final class NativeJsonStdlibTest {
             StandardCharsets.UTF_8);
         deal.semantic.ir.StdlibFunctionId[] operations =
             deal.semantic.ir.StdlibFunctionId.values();
-        checkEq(29, operations.length,
-            "the merged registry carries the closed twenty-nine operations");
+        checkEq(31, operations.length,
+            "the merged registry carries the closed thirty-one operations");
         Map<String, Integer> published = new LinkedHashMap<>();
         java.util.regex.Matcher matcher = java.util.regex.Pattern.compile(
             "#define\\s+DEAL_STDLIB_([A-Z0-9_]+)\\s+(\\d+)[uU]").matcher(header);
@@ -622,6 +622,10 @@ public final class NativeJsonStdlibTest {
         expected.add(stdText("slice-nonfinite", ""));
         expected.add(stdText("slice-astral", "\uDD1Ea"));
 
+        expected.add(stdText("case-upper-expansion", "STRASSE FFI"));
+        expected.add(stdText("case-lower-sigma", "οσ'α ος'"));
+        expected.add(stdText("case-lower-pair", "\uD801\uDC28"));
+        expected.add(stdText("case-lower-lone", "\uD800a"));
         expected.add(stdNumber("index-position", 3));
         expected.add(stdNumber("last-index-nan", 3));
         expected.add(stdNumber("index-unit", 1));
