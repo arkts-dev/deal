@@ -6,6 +6,7 @@ import java.util.List;
 /** Direct receiver operations selected solely by the checked string type. */
 public enum StringIntrinsic {
     SUBSTRING("substring", List.of(Type.Number.INSTANCE, Type.Number.INSTANCE), Type.String.INSTANCE),
+    SLICE("slice", List.of(Type.Number.INSTANCE, Type.Number.INSTANCE), Type.String.INSTANCE),
     INCLUDES("includes", List.of(Type.String.INSTANCE), Type.Boolean.INSTANCE),
     STARTS_WITH("startsWith", List.of(Type.String.INSTANCE), Type.Boolean.INSTANCE),
     ENDS_WITH("endsWith", List.of(Type.String.INSTANCE), Type.Boolean.INSTANCE),
@@ -22,7 +23,7 @@ public enum StringIntrinsic {
     }
 
     public Type.Func signature(int arity) {
-        if (this == SUBSTRING && arity == 1)
+        if ((this == SUBSTRING || this == SLICE) && arity == 1)
             return new Type.Func(List.of(Type.Number.INSTANCE), Type.String.INSTANCE);
         return signature;
     }

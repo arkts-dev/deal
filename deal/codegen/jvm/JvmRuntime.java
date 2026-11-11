@@ -2482,6 +2482,10 @@ case "NUMBER_ADD" -> {
                     return deal.semantic.ir.StringSemantics.substring((String) args[0],
                         ((Number) args[1]).doubleValue(), ((Number) args[2]).doubleValue());
                 }
+                case "STRING_SLICE" -> {
+                    return deal.semantic.ir.StringSemantics.slice((String) args[0],
+                        ((Number) args[1]).doubleValue(), ((Number) args[2]).doubleValue());
+                }
                 case "STRING_CONTAINS" -> {
                     return ((String) args[0]).contains((String) args[1]);
                 }

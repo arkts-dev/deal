@@ -1427,7 +1427,9 @@ public class SharedStdlibSemanticsTest {
             new Seed(StdlibFunctionId.MATH_MAX, List.of(new Value.Number(1), new Value.Number(2)), new Value.Number(2)),
             seed(StdlibFunctionId.MATH_ROUND, new Value.Number(-0.5), new Value.Number(-0.0)),
             seed(StdlibFunctionId.NUMBER_IS_FINITE, new Value.Table(table), new Value.Bool(false)),
-            seed(StdlibFunctionId.NUMBER_IS_NAN, new Value.Number(Double.NaN), new Value.Bool(true)));
+            seed(StdlibFunctionId.NUMBER_IS_NAN, new Value.Number(Double.NaN), new Value.Bool(true)),
+            new Seed(StdlibFunctionId.STRING_SLICE,
+                List.of(Value.string("abc"), new Value.Number(-2), new Value.Number(3)), Value.string("bc")));
     }
 
     static LoweredModuleUnit testCombinedT2T1() throws Exception {
@@ -1475,6 +1477,7 @@ public class SharedStdlibSemanticsTest {
                       let round: number = Math.round(-0.5);
                       let finite: boolean = Number.isFinite(t);
                       let nan: boolean = Number.isNaN(0/0);
+                      let tail: string = "abc".slice(-2,3);
                       return null;
                     }
 
@@ -1502,8 +1505,8 @@ public class SharedStdlibSemanticsTest {
                     stdlibOps.add(op);
                 }
             }
-            check(stdlibOps.size() == 22,
-                "exactly one STDLIB_CALL per algorithm except contextual JSON_PARSE: 22 ops; got "
+            check(stdlibOps.size() == 23,
+                "exactly one STDLIB_CALL per algorithm except contextual JSON_PARSE: 23 ops; got "
                     + stdlibOps.size());
             EnumSet<StdlibFunctionId> produced = EnumSet.noneOf(StdlibFunctionId.class);
             for (SemanticOp op : stdlibOps) {
@@ -1776,6 +1779,24 @@ public class SharedStdlibSemanticsTest {
             "sqrt(-4.0) through execute yields NaN");
     }
 
+    private static void testStringSlice(LoweredModuleUnit unit) {
+        double[] bounds = {Double.NEGATIVE_INFINITY, -1e300, -5, -4, -3.9, -1.9,
+            -1, -0.9, -Double.MIN_VALUE, -0.0, 0, Double.MIN_VALUE, 0.9, 1.9,
+            4, 5, 1e300, Double.POSITIVE_INFINITY, Double.NaN};
+        int[] relative = {0, 0, 0, 0, 1, 3, 3, 0, 0, 0, 0, 0, 0, 1, 4, 4, 4, 4, 0};
+        var op = stdlibOpBy(unit, StdlibFunctionId.STRING_SLICE);
+        for (String source : List.of("abcd", "a\uD83D\uDE00b", "\uD800\0x\uDC00")) {
+            for (int i = 0; i < bounds.length; i++) {
+                for (int j = 0; j < bounds.length; j++) {
+                    String expected = source.substring(relative[i], Math.max(relative[i], relative[j]));
+                    expectSuccess(SharedStdlibSemantics.execute(op, List.of(Value.string(source),
+                        new Value.Number(bounds[i]), new Value.Number(bounds[j])), null),
+                        Value.string(expected), "slice relative UTF-16 pair " + i + "/" + j);
+                }
+            }
+        }
+    }
+
     private static void testNumericBuiltins(LoweredModuleUnit unit) {
         double[] numbers = {Double.NaN, Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY,
             -0.0, 0.0, -Double.MIN_VALUE, Double.MIN_VALUE, -2.5, -1.5, -0.5,
@@ -1834,6 +1855,7 @@ public class SharedStdlibSemanticsTest {
         testConsoleEffects();
         LoweredModuleUnit unit = testCombinedT2T1();
         testNumericBuiltins(unit);
+        testStringSlice(unit);
         testBoundaryPrecedence(unit);
         testFailClosedDefects(unit);
 

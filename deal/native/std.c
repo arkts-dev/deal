@@ -87,7 +87,8 @@ static const deal_std_operation deal_std_operations[DEAL_STDLIB_OPERATION_COUNT]
     { deal_std_parameters_numbers, 2u, "number" },           /* MATH_MAX */
     { deal_std_parameters_number, 1u, "number" },            /* MATH_ROUND */
     { deal_std_parameters_unknown, 1u, "boolean" },          /* NUMBER_IS_FINITE */
-    { deal_std_parameters_unknown, 1u, "boolean" }           /* NUMBER_IS_NAN */
+    { deal_std_parameters_unknown, 1u, "boolean" },          /* NUMBER_IS_NAN */
+    { deal_std_parameters_substring, 3u, "string" }          /* STRING_SLICE */
 };
 
 /* =========================================================================
@@ -354,6 +355,28 @@ static deal_outcome_data deal_std_substring(deal_string *text, double start,
     return outcome;
 }
 
+/* Slice truncates towards zero before resolving negative offsets. Clamp before
+ * converting to size_t, including infinities and numbers outside its range. */
+static size_t deal_std_relative_bound(double value, size_t length) {
+    double limit = (double)length;
+    if (value <= -1.0) {
+        if (value <= -limit) return 0u;
+        return length - (size_t)(-deal_std_ceil(value));
+    }
+    if (!(value > 0.0)) return 0u;
+    return value >= limit ? length : (size_t)value;
+}
+
+static deal_data deal_std_slice(deal_string *text, double start, double end) {
+    size_t length = deal_text_unit_length(text);
+    size_t first = deal_std_relative_bound(start, length);
+    size_t last = deal_std_relative_bound(end, length);
+    if (last <= first) return deal_std_string_result(deal_text_new(NULL, 0u));
+    size_t from = deal_text_unit_offset(text, first);
+    size_t to = deal_text_unit_offset(text, last);
+    return deal_std_string_result(deal_text_new(deal_text_bytes(text) + from, to - from));
+}
+
 /* First literal match, with ECMAScript replacement substitutions. */
 static void deal_std_replace_append(unsigned char *scratch, size_t *length,
                                      const unsigned char *piece, size_t count) {
@@ -494,6 +517,9 @@ static deal_data deal_std_evaluate(uint32_t operation_id,
         *error = outcome.error;
         return outcome.value;
     }
+    case DEAL_STDLIB_STRING_SLICE:
+        return deal_std_slice(deal_std_string_argument(&arguments[0]),
+            deal_std_number_argument(&arguments[1]), deal_std_number_argument(&arguments[2]));
     case DEAL_STDLIB_STRING_CONTAINS: {
         deal_string *text = deal_std_string_argument(&arguments[0]);
         deal_string *part = deal_std_string_argument(&arguments[1]);

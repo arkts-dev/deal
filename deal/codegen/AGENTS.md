@@ -2,6 +2,8 @@
 
 Contextual JSON reconstruction emits plans for validated declaration registration layouts, including private recursive descendants reachable from host classes. An exported class value is not the complete declaration schema. Plans grant no source construction/export authority and never execute host hooks. JVM declaration plans instantiate the exact typed host records used by crossings; field writers qualify storage names so a field named value cannot shadow their input parameter.
 
+String.slice consumes a direct-only three-operand selector. Resolve truncated relative UTF-16 bounds, including negative fractions that truncate to zero, clamp before native casts, and return empty rather than swapping reversed bounds. No callable std/string export is introduced.
+
 Numeric namespace algorithms stay backend-specific behind validated STDLIB_CALL selectors. Number predicates test the numeric kind without coercion. Min/max propagate NaN and preserve signed-zero selection; round keeps binary64, ties toward positive infinity, negative zero and nonfinite inputs, never a host integer-returning rounding routine. Direct-only selectors create no module export or dependency.
 
 Render NUMBER_TO_STRING with ECMAScript shortest decimal and exponent thresholds, never a host default formatter. Finite JSON leaves share this spelling; nonfinite JSON leaves substitute null. JavaScript uses primitive String(number); JVM shares NumberSemantics; Lua and native round exact decimal expansions with ties to even and round-trip interval checks. Conversion precedes later interpolation effects; concatenation consumes strings only.

@@ -59,7 +59,8 @@
 #define DEAL_STDLIB_MATH_ROUND        20u
 #define DEAL_STDLIB_NUMBER_IS_FINITE  21u
 #define DEAL_STDLIB_NUMBER_IS_NAN     22u
-#define DEAL_STDLIB_OPERATION_COUNT   23u
+#define DEAL_STDLIB_STRING_SLICE      23u
+#define DEAL_STDLIB_OPERATION_COUNT   24u
 
 /*
  * One `STDLIB_CALL`: the closed operation id, the already evaluated argument

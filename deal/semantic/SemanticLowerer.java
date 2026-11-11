@@ -8172,6 +8172,7 @@ public final class SemanticLowerer {
                 if (intrinsic != null) {
                     String algorithm = switch (intrinsic) {
                         case SUBSTRING -> "substring";
+                        case SLICE -> "slice";
                         case INCLUDES -> "contains";
                         case STARTS_WITH -> "startsWith";
                         case ENDS_WITH -> "endsWith";
@@ -8179,11 +8180,15 @@ public final class SemanticLowerer {
                         case SPLIT -> "split";
                         case TRIM -> "trim";
                     };
-                    StdlibFunctionCatalog.Entry entry = StdlibFunctionCatalog.lookup("std.string", algorithm).orElseThrow();
+                    StdlibFunctionCatalog.Entry entry = intrinsic == deal.checker.StringIntrinsic.SLICE
+                        ? StdlibFunctionCatalog.entries().stream()
+                            .filter(row -> row.function() == StdlibFunctionId.STRING_SLICE).findFirst().orElseThrow()
+                        : StdlibFunctionCatalog.lookup("std.string", algorithm).orElseThrow();
                     List<ValueId> arguments = new ArrayList<>();
                     arguments.add(lowerOperand(member.object()));
                     for (ExpressionNode argument : call.args()) arguments.add(lowerOperand(argument));
-                    if (intrinsic == deal.checker.StringIntrinsic.SUBSTRING && call.args().size() == 1) {
+                    if ((intrinsic == deal.checker.StringIntrinsic.SUBSTRING
+                            || intrinsic == deal.checker.StringIntrinsic.SLICE) && call.args().size() == 1) {
                         arguments.add(emitValueOp(SemanticOpKind.CONST,
                             new KindPayload.ConstPayload(new ScalarValue.Number(Double.POSITIVE_INFINITY)),
                             call.span(), RuntimeDescriptor.Number.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE, null));

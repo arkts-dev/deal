@@ -28,6 +28,20 @@ public final class StringSemantics {
         return text.substring(Math.min(a, b), Math.max(a, b));
     }
 
+    public static String slice(String text, double start, double end) {
+        int a = relativeBound(start, text.length());
+        int b = relativeBound(end, text.length());
+        return text.substring(a, Math.max(a, b));
+    }
+
+    private static int relativeBound(double value, int length) {
+        if (value <= -1) {
+            if (value <= -length) return 0;
+            return length + (int) value;
+        }
+        return bound(value, length);
+    }
+
     private static int bound(double value, int length) {
         if (Double.isNaN(value) || value <= 0) return 0;
         return value >= length ? length : (int) value;

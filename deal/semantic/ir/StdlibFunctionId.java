@@ -26,12 +26,13 @@ public enum StdlibFunctionId implements ClosedSelector {
     MATH_MAX,
     MATH_ROUND,
     NUMBER_IS_FINITE,
-    NUMBER_IS_NAN;
+    NUMBER_IS_NAN,
+    STRING_SLICE;
 
-    /** Direct namespace algorithms with no callable stdlib module export. */
+    /** Direct builtin algorithms with no callable stdlib module export. */
     public boolean isBuiltinOnly() {
         return switch (this) {
-            case MATH_MIN, MATH_MAX, MATH_ROUND, NUMBER_IS_FINITE, NUMBER_IS_NAN -> true;
+            case MATH_MIN, MATH_MAX, MATH_ROUND, NUMBER_IS_FINITE, NUMBER_IS_NAN, STRING_SLICE -> true;
             default -> false;
         };
     }

@@ -24,5 +24,7 @@ export function exercise(): null {
   check.require(initials === "AG", "string iteration");
   check.require(strings.length("Ada") === 3, "string module length");
   check.require("item: Ada".substring(6) === "Ada", "label suffix");
+  check.require("item: Ada".slice(-3) === "Ada", "relative suffix");
+  check.require("item: Ada".slice(0, -5) === "item", "relative end");
   return null;
 }

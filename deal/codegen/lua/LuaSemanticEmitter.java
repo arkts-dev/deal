@@ -10989,6 +10989,22 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
     end
     return list
   end
+  if fn == "STRING_SLICE" then
+    local strings = require("std.string")
+    local length = strings.length.f(__args[1])
+    local function relative(value)
+      if value ~= value then return 0 end
+      if value <= -1 then
+        if value <= -length then return 0 end
+        return length + math.ceil(value)
+      end
+      if value <= 0 then return 0 end
+      if value >= length then return length end
+      return math.floor(value)
+    end
+    local first, last = relative(__args[2]), relative(__args[3])
+    return strings.substring.f(__args[1], first, math.max(first, last))
+  end
   if string.sub(fn, 1, 7) == "STRING_" then
     local names = {STRING_LENGTH="length", STRING_SUBSTRING="substring",
       STRING_CONTAINS="contains", STRING_STARTS_WITH="startsWith", STRING_ENDS_WITH="endsWith",

@@ -2520,7 +2520,7 @@ public final class SemanticIrValidator {
         return switch (function) {
             case CONSOLE_LOG, CONSOLE_ERROR -> FailurePolicyId.INFRASTRUCTURE_ONLY;
             case STRING_LENGTH -> FailurePolicyId.NO_DEAL_FAILURE;
-            case STRING_SUBSTRING -> FailurePolicyId.NO_DEAL_FAILURE;
+            case STRING_SUBSTRING, STRING_SLICE -> FailurePolicyId.NO_DEAL_FAILURE;
             case STRING_CONTAINS, STRING_STARTS_WITH, STRING_ENDS_WITH, STRING_REPLACE, STRING_SPLIT, STRING_TRIM, TABLE_KEYS, MATH_FLOOR, MATH_CEIL, MATH_SQRT, MATH_ABS_NUMBER, TIME_NOW_MILLIS,
                  MATH_MIN, MATH_MAX, MATH_ROUND, NUMBER_IS_FINITE, NUMBER_IS_NAN ->
                 FailurePolicyId.NO_DEAL_FAILURE;

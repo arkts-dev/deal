@@ -128,7 +128,8 @@ public final class StdlibFunctionCatalog {
         new Entry(StdlibFunctionId.MATH_MAX, "builtin.math", "max", List.of(NUMBER, NUMBER), NUMBER),
         new Entry(StdlibFunctionId.MATH_ROUND, "builtin.math", "round", List.of(NUMBER), NUMBER),
         new Entry(StdlibFunctionId.NUMBER_IS_FINITE, "builtin.number", "isFinite", List.of(UNKNOWN), BOOLEAN),
-        new Entry(StdlibFunctionId.NUMBER_IS_NAN, "builtin.number", "isNaN", List.of(UNKNOWN), BOOLEAN)
+        new Entry(StdlibFunctionId.NUMBER_IS_NAN, "builtin.number", "isNaN", List.of(UNKNOWN), BOOLEAN),
+        new Entry(StdlibFunctionId.STRING_SLICE, "builtin.string", "slice", List.of(STRING, NUMBER, NUMBER), STRING)
     );
 
     /** The ordinary callable subset of the closed algorithm signatures. */

@@ -264,7 +264,7 @@ public final class LlvmStageClassifier {
                  STRING_REPLACE, STRING_SPLIT, STRING_TRIM, TABLE_KEYS,
                  JSON_PARSE, JSON_STRINGIFY, MATH_FLOOR, MATH_CEIL, MATH_SQRT,
                  MATH_ABS_NUMBER, TIME_NOW_MILLIS, MATH_MIN, MATH_MAX, MATH_ROUND,
-                 NUMBER_IS_FINITE, NUMBER_IS_NAN -> STAGED;
+                 NUMBER_IS_FINITE, NUMBER_IS_NAN, STRING_SLICE -> STAGED;
         };
     }
 

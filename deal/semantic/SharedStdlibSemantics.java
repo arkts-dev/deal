@@ -447,6 +447,8 @@ public final class SharedStdlibSemantics {
             case STRING_SUBSTRING -> stringSubstring(origin,
                 validTextOf(argv, 0, function), numberOf(argv, 1, function),
                 numberOf(argv, 2, function));
+            case STRING_SLICE -> new Outcome.Success<>(Value.string(deal.semantic.ir.StringSemantics.slice(
+                validTextOf(argv, 0, function).carrier(), numberOf(argv, 1, function), numberOf(argv, 2, function))));
             case STRING_CONTAINS -> stringContains(origin,
                 validTextOf(argv, 0, function), validTextOf(argv, 1, function));
             case STRING_STARTS_WITH -> stringStartsWith(origin,
@@ -494,7 +496,7 @@ public final class SharedStdlibSemantics {
             case TIME_NOW_MILLIS -> 0;
             case CONSOLE_LOG, CONSOLE_ERROR, STRING_LENGTH, STRING_TRIM, TABLE_KEYS, JSON_PARSE, JSON_STRINGIFY, MATH_FLOOR, MATH_CEIL, MATH_SQRT, MATH_ABS_NUMBER, MATH_ROUND, NUMBER_IS_FINITE, NUMBER_IS_NAN -> 1;
             case STRING_CONTAINS, STRING_STARTS_WITH, STRING_ENDS_WITH, STRING_SPLIT, MATH_MIN, MATH_MAX -> 2;
-            case STRING_SUBSTRING, STRING_REPLACE -> 3;
+            case STRING_SUBSTRING, STRING_SLICE, STRING_REPLACE -> 3;
         };
     }
 

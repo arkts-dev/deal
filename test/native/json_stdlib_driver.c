@@ -733,9 +733,9 @@ static void observe_number_operation(const char *label, uint32_t operation_id,
     observe_std(label, operation_id, arguments, 1u);
 }
 
-/* One `substring` call. */
-static void observe_substring(const char *label, const char *text,
-                              double start, double end) {
+/* One three-argument string range operation. */
+static void observe_string_range(const char *label, uint32_t operation_id,
+                                  const char *text, double start, double end) {
     deal_string *value = deal_text_new(text, strlen(text));
     deal_root_scope_push();
     (void)deal_root_scope_hold(value);
@@ -743,8 +743,13 @@ static void observe_substring(const char *label, const char *text,
     arguments[0] = string_argument(value);
     arguments[1] = number_argument(start);
     arguments[2] = number_argument(end);
-    observe_std(label, DEAL_STDLIB_STRING_SUBSTRING, arguments, 3u);
+    observe_std(label, operation_id, arguments, 3u);
     deal_root_scope_pop();
+}
+
+static void observe_substring(const char *label, const char *text,
+                              double start, double end) {
+    observe_string_range(label, DEAL_STDLIB_STRING_SUBSTRING, text, start, end);
 }
 
 static void observe_stdlib(void) {
@@ -797,6 +802,12 @@ static void observe_stdlib(void) {
     observe_substring("substring-negative-huge-start", "hello", -1e300, 3.0);
     observe_substring("substring-negative-huge-end", "\xf0\x9d\x84\x9e" "ab",
                       1.0, -1e300);
+
+    observe_string_range("slice-relative", DEAL_STDLIB_STRING_SLICE, "hello", -4.9, -1.9);
+    observe_string_range("slice-negative-subunit", DEAL_STDLIB_STRING_SLICE, "hello", -0.9, 1.0 / 0.0);
+    observe_string_range("slice-reversed", DEAL_STDLIB_STRING_SLICE, "hello", 4.0, 2.0);
+    observe_string_range("slice-nonfinite", DEAL_STDLIB_STRING_SLICE, "hello", -1.0 / 0.0, 0.0 / 0.0);
+    observe_string_range("slice-astral", DEAL_STDLIB_STRING_SLICE, "\xf0\x9d\x84\x9e" "ab", 1.0, -1.0);
 
     /* std/string contains / startsWith / endsWith. */
     observe_string_operation("contains-hit", DEAL_STDLIB_STRING_CONTAINS,

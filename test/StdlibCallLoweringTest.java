@@ -317,7 +317,7 @@ public class StdlibCallLoweringTest {
         return switch (function) {
             case CONSOLE_LOG, CONSOLE_ERROR -> FailurePolicyId.INFRASTRUCTURE_ONLY;
             case STRING_LENGTH -> FailurePolicyId.NO_DEAL_FAILURE;
-            case STRING_SUBSTRING -> FailurePolicyId.NO_DEAL_FAILURE;
+            case STRING_SUBSTRING, STRING_SLICE -> FailurePolicyId.NO_DEAL_FAILURE;
             case JSON_PARSE -> FailurePolicyId.JSON_PARSE_SYNTAX;
             case JSON_STRINGIFY -> FailurePolicyId.JSON_TO_ERROR;
             case MATH_SQRT -> FailurePolicyId.NO_DEAL_FAILURE;
@@ -328,8 +328,8 @@ public class StdlibCallLoweringTest {
     static void testPolicyTableSingleSource() {
         System.out.println("-- Single source: SemanticIrValidator.stdlibPolicy --");
 
-        check(StdlibFunctionId.values().length == 23,
-            "the closed StdlibFunctionId enum has exactly 23 values");
+        check(StdlibFunctionId.values().length == 24,
+            "the closed StdlibFunctionId enum has exactly 24 values");
         for (StdlibFunctionId function : StdlibFunctionId.values()) {
             check(SemanticIrValidator.stdlibPolicy(function) == expectedPolicy(function),
                 "stdlibPolicy(" + function + ") = "
@@ -423,6 +423,7 @@ public class StdlibCallLoweringTest {
                       let round: number = Math.round(-0.5);
                       let finite: boolean = Number.isFinite(t);
                       let nan: boolean = Number.isNaN(0/0);
+                      let tail: string = "abc".slice(-2,3);
                       return null;
                     }
 
@@ -489,8 +490,8 @@ public class StdlibCallLoweringTest {
             }
 
             List<SemanticOp> stdlibOps = stdlibOps(unit);
-            check(stdlibOps.size() == 22,
-                "one STDLIB_CALL per algorithm except contextual parse: 22 ops; got "
+            check(stdlibOps.size() == 23,
+                "one STDLIB_CALL per algorithm except contextual parse: 23 ops; got "
                     + stdlibOps.size());
             EnumSet<StdlibFunctionId> produced = EnumSet.noneOf(StdlibFunctionId.class);
             for (SemanticOp op : stdlibOps) {
@@ -1216,9 +1217,9 @@ public class StdlibCallLoweringTest {
             payload = (CanonicalJson.Obj) ContractSnapshotCanonicalizer.payloadJson(new KindPayload.StdlibCallPayload(
                 StdlibFunctionId.valueOf(op.selector()), operands, SemanticCapability.STDLIB_SEMANTICS));
         } else if (mutation.equals("parameter")) {
-            types.set(0, "string");
+            types.set(0, types.getFirst().equals("string") ? "boolean" : "string");
         } else if (mutation.equals("result")) {
-            result = "string";
+            result = result.equals("string") ? "boolean" : "string";
         } else {
             payload = (CanonicalJson.Obj) ContractSnapshotCanonicalizer.payloadJson(new KindPayload.StdlibCallPayload(
                 StdlibFunctionId.valueOf(op.selector()), List.of(), SemanticCapability.STDLIB_SEMANTICS));

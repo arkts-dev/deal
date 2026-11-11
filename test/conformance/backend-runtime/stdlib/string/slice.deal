@@ -1,0 +1,59 @@
+// @spec: Standard library builtins — String
+// @description: Slice resolves truncated relative UTF-16 bounds without swapping and evaluates receiver and arguments once in order.
+// @expected: runtime-ok
+// @features: string, builtin, utf16
+
+function check(ok:boolean):void {
+  if(!ok){throw {code:"TEST",message:"string slice"};}
+}
+
+export function main():null {
+  check("abcd".slice(1)==="bcd");
+  check("abcd".slice(-2)==="cd");
+  check("abcd".slice(-1.9)==="d");
+  check("abcd".slice(-0.9)==="abcd");
+  check("abcd".slice(1.9,3.9)==="bc");
+  check("abcd".slice(-3.9,-1.9)==="bc");
+  check("abcd".slice(3,1)==="");
+  check("abcd".slice(-1,-3)==="");
+  check("abcd".slice(-9,9)==="abcd");
+  check("abcd".slice(0/0)==="abcd");
+  check("abcd".slice(0,0/0)==="");
+  check("abcd".slice(-0)==="abcd");
+  check("abcd".slice(1/0)==="");
+  check("abcd".slice(-1/0)==="abcd");
+  check("abcd".slice(-1/0,1/0)==="abcd");
+  check("abcd".slice(0,-1/0)==="");
+  check("abcd".slice(9007199254740992)==="");
+  check("abcd".slice(-9007199254740992)==="abcd");
+  check("abcd".slice(5e-324,-5e-324)==="");
+  check("abcd".slice(-5e-324)==="abcd");
+  check("".slice(-1)==="");
+  check("a😀b".slice(2,-1)===`\ude00`);
+  check("a😀b".slice(-3,-2)===`\ud83d`);
+  check(`\ud800\0x\udc00`.slice(1,-1)===`\0x`);
+  let events="";
+  let receiver=():string=>{events=events+"r";return "abcd";};
+  let start=():number=>{events=events+"s";return 1;};
+  let end=():number=>{events=events+"e";return 3;};
+  check(receiver().slice(start(),end())==="bc" && events==="rse");
+  events="";
+  check(receiver().slice(start())==="bcd" && events==="rs");
+  let destination="kept";
+  let failReceiver=():string=>{events=events+"f";throw {code:"TEST",message:"receiver"};};
+  events="";
+  try {destination=failReceiver().slice(start(),end());}
+  catch(e){check((e as Error).message==="receiver");}
+  check(events==="f" && destination==="kept");
+  let failStart=():number=>{events=events+"t";throw {code:"TEST",message:"start"};};
+  events="";
+  try {destination=receiver().slice(failStart(),end());}
+  catch(e){check((e as Error).message==="start");}
+  check(events==="rt" && destination==="kept");
+  let failEnd=():number=>{events=events+"u";throw {code:"TEST",message:"end"};};
+  events="";
+  try {destination=receiver().slice(start(),failEnd());}
+  catch(e){check((e as Error).message==="end");}
+  check(events==="rsu" && destination==="kept");
+  return null;
+}

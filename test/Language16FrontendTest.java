@@ -139,6 +139,11 @@ public final class Language16FrontendTest {
         check("function f(s:string):boolean{return s.includes(\"a\") && s.startsWith(\"a\") && s.endsWith(\"a\");}", true);
         check("function f(s:string):string[]{return s.split(\"\");}", true);
         check("function f(s:string):string{return s.substring(1);}", true);
+        check("function f(s:string):string{return s.slice(-2).slice(0,1);}", true);
+        for (String expression : List.of("s.slice()", "s.slice(1,2,3)", "s.slice(true)",
+                "s.slice(undefined)", "s.slice(1,undefined)", "s.slice"))
+            check("function f(s:string):void{" + expression + ";}", false);
+        check("import * as text from \"std/string\"; function f():void{text.slice;}", false);
         for (String expression : List.of("s.substring()", "s.substring(1,2,3)", "s.substring(true)",
                 "s.substring(undefined)", "s.substring(1,undefined)", "s.substring", "s.trim", "s.includes", "s.length=1",
                 "s.trim(1)", "s.includes(1)", "s.contains(\"a\")")) {

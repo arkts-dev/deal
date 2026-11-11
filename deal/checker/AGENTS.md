@@ -24,7 +24,7 @@ Template interpolations accept checked string or number values only; they grant 
 
 Expression-bodied arrows check their expression against the declared result, including requiring a void expression for void-result arrows. Their blocks, captures, recursion and async checks otherwise follow ordinary function expressions.
 
-String receiver length is read-only and number-typed. Resolve receiver methods from the checked string type, not member spelling alone; require direct calls and exact declared argument types/arity. Substring accepts one or two number arguments; omitted end is distinct from an explicit undefined argument. Record/class function fields remain ordinary callable values.
+String receiver length is read-only and number-typed. Resolve receiver methods from the checked string type, not member spelling alone; require direct calls and exact declared argument types/arity. Substring and slice accept one or two number arguments; omitted end is distinct from an explicit undefined argument. Record/class function fields remain ordinary callable values.
 
 Array pop and splice are direct-call-only receiver intrinsics selected by checked array type. Pop takes no arguments and returns the optional element type, including independent null/undefined flags. Splice takes exactly two numbers and returns the same array element type in fresh storage. Class/Record callable fields with these names remain ordinary values.
 
