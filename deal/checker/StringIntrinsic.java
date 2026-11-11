@@ -21,7 +21,11 @@ public enum StringIntrinsic {
         this.signature = new Type.Func(arguments, result);
     }
 
-    public Type.Func signature() { return signature; }
+    public Type.Func signature(int arity) {
+        if (this == SUBSTRING && arity == 1)
+            return new Type.Func(List.of(Type.Number.INSTANCE), Type.String.INSTANCE);
+        return signature;
+    }
 
     public static StringIntrinsic forMember(String member) {
         for (StringIntrinsic intrinsic : values()) if (intrinsic.member.equals(member)) return intrinsic;

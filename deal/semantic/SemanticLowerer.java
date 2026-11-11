@@ -8183,6 +8183,11 @@ public final class SemanticLowerer {
                     List<ValueId> arguments = new ArrayList<>();
                     arguments.add(lowerOperand(member.object()));
                     for (ExpressionNode argument : call.args()) arguments.add(lowerOperand(argument));
+                    if (intrinsic == deal.checker.StringIntrinsic.SUBSTRING && call.args().size() == 1) {
+                        arguments.add(emitValueOp(SemanticOpKind.CONST,
+                            new KindPayload.ConstPayload(new ScalarValue.Number(Double.POSITIVE_INFINITY)),
+                            call.span(), RuntimeDescriptor.Number.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE, null));
+                    }
                     return emitStdlibAlgorithm(entry, arguments, call.span(), slot);
                 }
             }

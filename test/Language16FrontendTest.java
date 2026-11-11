@@ -138,7 +138,9 @@ public final class Language16FrontendTest {
         check("function f(s:string):string{return s.substring(1,2).trim().replace(\"a\",\"b\");}", true);
         check("function f(s:string):boolean{return s.includes(\"a\") && s.startsWith(\"a\") && s.endsWith(\"a\");}", true);
         check("function f(s:string):string[]{return s.split(\"\");}", true);
-        for (String expression : List.of("s.trim", "s.includes", "s.length=1", "s.substring(1)",
+        check("function f(s:string):string{return s.substring(1);}", true);
+        for (String expression : List.of("s.substring()", "s.substring(1,2,3)", "s.substring(true)",
+                "s.substring(undefined)", "s.substring(1,undefined)", "s.substring", "s.trim", "s.includes", "s.length=1",
                 "s.trim(1)", "s.includes(1)", "s.contains(\"a\")")) {
             check("function f(s:string):void{" + expression + ";}", false);
         }

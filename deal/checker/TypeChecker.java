@@ -123,7 +123,7 @@ public final class TypeChecker {
     // -- Async/await tracking --
     private boolean insideAsyncFunction = false;
     private CallExpr directAwaitCallee = null;
-    private ExpressionNode directBuiltinCallee = null;
+    private CallExpr directBuiltinCall = null;
 
     // -- Current function return type (for return checking) --
     private Type currentReturnType = null;
@@ -1658,11 +1658,11 @@ public final class TypeChecker {
             for (ExpressionNode arg : call.args()) checkExpression(arg);
             return Type.Error.INSTANCE;
         }
-        ExpressionNode savedBuiltinCallee = directBuiltinCallee;
-        directBuiltinCallee = call.callee();
+        CallExpr savedBuiltinCall = directBuiltinCall;
+        directBuiltinCall = call;
         Type calleeType;
         try { calleeType = checkExpression(call.callee()); }
-        finally { directBuiltinCallee = savedBuiltinCallee; }
+        finally { directBuiltinCall = savedBuiltinCall; }
         if (calleeType == Type.Error.INSTANCE) {
             for (ExpressionNode arg : call.args()) checkExpression(arg);
             return Type.Error.INSTANCE;
@@ -1957,7 +1957,7 @@ public final class TypeChecker {
         if (mae.object() instanceof IdentifierExpr builtinNamespace) {
             BuiltinCall builtin = BuiltinCall.resolve(builtinNamespace.name(), mae.field());
             if (builtin != null) {
-                if (mae != directBuiltinCallee) {
+                if (directBuiltinCall == null || mae != directBuiltinCall.callee()) {
                     error(DiagnosticCode.E3001, "Builtin operations support direct calls only", mae.span());
                     return Type.Error.INSTANCE;
                 }
@@ -1988,15 +1988,15 @@ public final class TypeChecker {
         if (objType instanceof Type.String) {
             StringIntrinsic intrinsic = StringIntrinsic.forMember(field);
             if (intrinsic != null) {
-                if (mae != directBuiltinCallee) {
+                if (directBuiltinCall == null || mae != directBuiltinCall.callee()) {
                     error(DiagnosticCode.E3001, "Receiver intrinsics support direct calls only", mae.span());
                     return Type.Error.INSTANCE;
                 }
-                return intrinsic.signature();
+                return intrinsic.signature(directBuiltinCall.args().size());
             }
         }
         if (objType instanceof Type.Array array && (field.equals("pop") || field.equals("splice"))) {
-            if (mae != directBuiltinCallee) {
+            if (directBuiltinCall == null || mae != directBuiltinCall.callee()) {
                 error(DiagnosticCode.E3001, "Receiver intrinsics support direct calls only", mae.span());
                 return Type.Error.INSTANCE;
             }

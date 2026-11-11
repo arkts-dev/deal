@@ -17,6 +17,13 @@ public final class Language16StringProductionTest {
             nativeNondataRead(root.resolve("nondata-read"));
             Path corpus = Path.of("test/conformance").toAbsolutePath().normalize();
             var fixtures = CorpusConformanceTest.nativeCorpusFixtures(corpus);
+            var substring = fixtures.stream().filter(f -> f.corpusPath().equals(
+                "backend-runtime/stdlib/string/substring-omitted-end.deal")).findFirst().orElseThrow();
+            CompositionProductionTest.execute(ConformanceHarnessMetadata.productionCorpusSource(
+                Files.readString(corpus.resolve(substring.corpusPath())), substring.corpusPath()),
+                "", root.resolve("substring-omitted-end"), null,
+                List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
+            LlvmConformanceTest.runInstrumented(corpus, substring);
             for (String host : List.of("language16", "audit16")) {
                 var fixture = fixtures.stream()
                     .filter(f -> f.corpusPath().equals("backend-runtime/host-abi/host-" + host + ".deal"))

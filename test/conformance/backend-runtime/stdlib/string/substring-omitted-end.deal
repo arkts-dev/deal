@@ -1,0 +1,39 @@
+// @spec: Standard library builtins — String
+// @description: One-argument substring clamps binary64 positions, retains UTF-16 units, and evaluates receiver then start once.
+// @expected: runtime-ok
+// @features: string, builtin, utf16
+
+function check(ok:boolean):void {
+  if(!ok){throw {code:"TEST",message:"substring omitted end"};}
+}
+
+export function main():null {
+  check("abcd".substring(1)==="bcd");
+  check("abcd".substring(1.9)==="bcd");
+  check("abcd".substring(-1.9)==="abcd");
+  check("abcd".substring(0/0)==="abcd");
+  check("abcd".substring(-0)==="abcd");
+  check("abcd".substring(1/0)==="");
+  check("abcd".substring(-1/0)==="abcd");
+  check("abcd".substring(9007199254740992)==="");
+  check("".substring(1)==="");
+  check("a😀b".substring(2)===`\ude00b`);
+  check(`\ud800x\udc00`.substring(1)===`x\udc00`);
+  let events="";
+  let receiver=():string=>{ events=events+"r";return "abc"; };
+  let start=():number=>{ events=events+"s";return 1; };
+  check(receiver().substring(start())==="bc");
+  check(events==="rs");
+  let fail=():string=>{ events=events+"f";throw {code:"TEST",message:"receiver"}; };
+  events="";
+  let destination="kept";
+  try { destination=fail().substring(start()); }
+  catch(e) { check((e as Error).message==="receiver"); }
+  check(events==="f" && destination==="kept");
+  events="";
+  let failStart=():number=>{ events=events+"t";throw {code:"TEST",message:"start"}; };
+  try { destination=receiver().substring(failStart()); }
+  catch(e) { check((e as Error).message==="start"); }
+  check(events==="rt" && destination==="kept");
+  return null;
+}

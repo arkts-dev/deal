@@ -54,7 +54,7 @@ Import namespaces and qualify exported classes; keep state inside function-owned
 
 ## String operations
 
-Use s.length (read-only UTF-16 unit count), s.substring(start, end), s.includes(part), s.startsWith(part), s.endsWith(part), s.replace(search, replacement), s.split(separator), and s.trim(). These receiver intrinsics require direct calls, not detached method values. Arguments follow ECMAScript string semantics; for-of combines valid surrogate pairs while length/slicing/splitting retain individual units.
+Use s.length (read-only UTF-16 unit count), s.substring(start) for the remaining suffix or s.substring(start, end), s.includes(part), s.startsWith(part), s.endsWith(part), s.replace(search, replacement), s.split(separator), and s.trim(). These receiver intrinsics require direct calls, not detached method values. Arguments follow ECMAScript string semantics; for-of combines valid surrogate pairs while length/slicing/splitting retain individual units.
 
 ## Builtin calls
 
