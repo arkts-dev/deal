@@ -1428,6 +1428,16 @@ public class SharedStdlibSemanticsTest {
             seed(StdlibFunctionId.MATH_ROUND, new Value.Number(-0.5), new Value.Number(-0.0)),
             seed(StdlibFunctionId.NUMBER_IS_FINITE, new Value.Table(table), new Value.Bool(false)),
             seed(StdlibFunctionId.NUMBER_IS_NAN, new Value.Number(Double.NaN), new Value.Bool(true)),
+            new Seed(StdlibFunctionId.STRING_INCLUDES_POSITION,
+                List.of(Value.string("abc"), Value.string("b"), new Value.Number(1)), new Value.Bool(true)),
+            new Seed(StdlibFunctionId.STRING_STARTS_WITH_POSITION,
+                List.of(Value.string("abc"), Value.string("b"), new Value.Number(1)), new Value.Bool(true)),
+            new Seed(StdlibFunctionId.STRING_ENDS_WITH_POSITION,
+                List.of(Value.string("abc"), Value.string("b"), new Value.Number(2)), new Value.Bool(true)),
+            new Seed(StdlibFunctionId.STRING_INDEX_OF,
+                List.of(Value.string("abc"), Value.string("b"), new Value.Number(1)), new Value.Number(1)),
+            new Seed(StdlibFunctionId.STRING_LAST_INDEX_OF,
+                List.of(Value.string("abc"), Value.string("b"), new Value.Number(2)), new Value.Number(1)),
             new Seed(StdlibFunctionId.STRING_SLICE,
                 List.of(Value.string("abc"), new Value.Number(-2), new Value.Number(3)), Value.string("bc")));
     }
@@ -1478,6 +1488,11 @@ public class SharedStdlibSemanticsTest {
                       let finite: boolean = Number.isFinite(t);
                       let nan: boolean = Number.isNaN(0/0);
                       let tail: string = "abc".slice(-2,3);
+                      let inc: boolean = "abc".includes("b",1);
+                      let start: boolean = "abc".startsWith("b",1);
+                      let end: boolean = "abc".endsWith("b",2);
+                      let first: number = "abc".indexOf("b",1);
+                      let last: number = "abc".lastIndexOf("b",2);
                       return null;
                     }
 
@@ -1505,8 +1520,8 @@ public class SharedStdlibSemanticsTest {
                     stdlibOps.add(op);
                 }
             }
-            check(stdlibOps.size() == 23,
-                "exactly one STDLIB_CALL per algorithm except contextual JSON_PARSE: 23 ops; got "
+            check(stdlibOps.size() == 28,
+                "exactly one STDLIB_CALL per algorithm except contextual JSON_PARSE: 28 ops; got "
                     + stdlibOps.size());
             EnumSet<StdlibFunctionId> produced = EnumSet.noneOf(StdlibFunctionId.class);
             for (SemanticOp op : stdlibOps) {
@@ -1779,6 +1794,48 @@ public class SharedStdlibSemanticsTest {
             "sqrt(-4.0) through execute yields NaN");
     }
 
+    private static void testStringSearch(LoweredModuleUnit unit) {
+        double[] positions = {Double.NEGATIVE_INFINITY, -1e300, -1.9, -0.9,
+            -Double.MIN_VALUE, -0.0, 0, Double.MIN_VALUE, 0.9, 1.9, 4, 5,
+            1e300, Double.POSITIVE_INFINITY, Double.NaN};
+        int[] clamped = {0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 4, 4, 4, 4, 0};
+        for (String source : List.of("abab", "a\uD83D\uDE00b", "\uD800\0x\uDC00")) {
+            List<String> searches = new ArrayList<>(List.of("", "z", "ab", source, source + "x"));
+            for (int i = 0; i < source.length(); i++) searches.add(source.substring(i, i + 1));
+            for (String search : searches) {
+                for (int i = 0; i < positions.length; i++) {
+                    int first = -1, last = -1;
+                    int reverse = Double.isNaN(positions[i]) ? source.length() : clamped[i];
+                    for (int at = 0; at <= source.length() - search.length(); at++) {
+                        boolean match = true;
+                        for (int j = 0; j < search.length(); j++)
+                            match &= source.charAt(at + j) == search.charAt(j);
+                        if (match && at >= clamped[i] && first < 0) first = at;
+                        if (match && at <= reverse) last = at;
+                    }
+                    int endStart = clamped[i] - search.length();
+                    boolean prefix = search.length() <= source.length() - clamped[i];
+                    boolean suffix = endStart >= 0;
+                    for (int j = 0; j < search.length(); j++) {
+                        if (prefix) prefix = source.charAt(clamped[i] + j) == search.charAt(j);
+                        if (suffix) suffix = source.charAt(endStart + j) == search.charAt(j);
+                    }
+                    List<Value> arguments = List.of(Value.string(source), Value.string(search), new Value.Number(positions[i]));
+                    expectSuccess(SharedStdlibSemantics.execute(stdlibOpBy(unit, StdlibFunctionId.STRING_INDEX_OF), arguments, null),
+                        new Value.Number(first), "indexOf UTF-16 positions");
+                    expectSuccess(SharedStdlibSemantics.execute(stdlibOpBy(unit, StdlibFunctionId.STRING_LAST_INDEX_OF), arguments, null),
+                        new Value.Number(last), "lastIndexOf UTF-16 positions");
+                    expectSuccess(SharedStdlibSemantics.execute(stdlibOpBy(unit, StdlibFunctionId.STRING_INCLUDES_POSITION), arguments, null),
+                        new Value.Bool(first >= 0), "includes UTF-16 positions");
+                    expectSuccess(SharedStdlibSemantics.execute(stdlibOpBy(unit, StdlibFunctionId.STRING_STARTS_WITH_POSITION), arguments, null),
+                        new Value.Bool(prefix), "startsWith UTF-16 positions");
+                    expectSuccess(SharedStdlibSemantics.execute(stdlibOpBy(unit, StdlibFunctionId.STRING_ENDS_WITH_POSITION), arguments, null),
+                        new Value.Bool(suffix), "endsWith UTF-16 positions");
+                }
+            }
+        }
+    }
+
     private static void testStringSlice(LoweredModuleUnit unit) {
         double[] bounds = {Double.NEGATIVE_INFINITY, -1e300, -5, -4, -3.9, -1.9,
             -1, -0.9, -Double.MIN_VALUE, -0.0, 0, Double.MIN_VALUE, 0.9, 1.9,
@@ -1856,6 +1913,7 @@ public class SharedStdlibSemanticsTest {
         LoweredModuleUnit unit = testCombinedT2T1();
         testNumericBuiltins(unit);
         testStringSlice(unit);
+        testStringSearch(unit);
         testBoundaryPrecedence(unit);
         testFailClosedDefects(unit);
 

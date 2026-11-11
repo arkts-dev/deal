@@ -129,7 +129,12 @@ public final class StdlibFunctionCatalog {
         new Entry(StdlibFunctionId.MATH_ROUND, "builtin.math", "round", List.of(NUMBER), NUMBER),
         new Entry(StdlibFunctionId.NUMBER_IS_FINITE, "builtin.number", "isFinite", List.of(UNKNOWN), BOOLEAN),
         new Entry(StdlibFunctionId.NUMBER_IS_NAN, "builtin.number", "isNaN", List.of(UNKNOWN), BOOLEAN),
-        new Entry(StdlibFunctionId.STRING_SLICE, "builtin.string", "slice", List.of(STRING, NUMBER, NUMBER), STRING)
+        new Entry(StdlibFunctionId.STRING_SLICE, "builtin.string", "slice", List.of(STRING, NUMBER, NUMBER), STRING),
+        new Entry(StdlibFunctionId.STRING_INCLUDES_POSITION, "builtin.string", "includes", List.of(STRING, STRING, NUMBER), BOOLEAN),
+        new Entry(StdlibFunctionId.STRING_STARTS_WITH_POSITION, "builtin.string", "startsWith", List.of(STRING, STRING, NUMBER), BOOLEAN),
+        new Entry(StdlibFunctionId.STRING_ENDS_WITH_POSITION, "builtin.string", "endsWith", List.of(STRING, STRING, NUMBER), BOOLEAN),
+        new Entry(StdlibFunctionId.STRING_INDEX_OF, "builtin.string", "indexOf", List.of(STRING, STRING, NUMBER), NUMBER),
+        new Entry(StdlibFunctionId.STRING_LAST_INDEX_OF, "builtin.string", "lastIndexOf", List.of(STRING, STRING, NUMBER), NUMBER)
     );
 
     /** The ordinary callable subset of the closed algorithm signatures. */

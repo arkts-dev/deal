@@ -317,7 +317,8 @@ public class StdlibCallLoweringTest {
         return switch (function) {
             case CONSOLE_LOG, CONSOLE_ERROR -> FailurePolicyId.INFRASTRUCTURE_ONLY;
             case STRING_LENGTH -> FailurePolicyId.NO_DEAL_FAILURE;
-            case STRING_SUBSTRING, STRING_SLICE -> FailurePolicyId.NO_DEAL_FAILURE;
+            case STRING_SUBSTRING, STRING_SLICE, STRING_INCLUDES_POSITION, STRING_STARTS_WITH_POSITION,
+                 STRING_ENDS_WITH_POSITION, STRING_INDEX_OF, STRING_LAST_INDEX_OF -> FailurePolicyId.NO_DEAL_FAILURE;
             case JSON_PARSE -> FailurePolicyId.JSON_PARSE_SYNTAX;
             case JSON_STRINGIFY -> FailurePolicyId.JSON_TO_ERROR;
             case MATH_SQRT -> FailurePolicyId.NO_DEAL_FAILURE;
@@ -328,8 +329,8 @@ public class StdlibCallLoweringTest {
     static void testPolicyTableSingleSource() {
         System.out.println("-- Single source: SemanticIrValidator.stdlibPolicy --");
 
-        check(StdlibFunctionId.values().length == 24,
-            "the closed StdlibFunctionId enum has exactly 24 values");
+        check(StdlibFunctionId.values().length == 29,
+            "the closed StdlibFunctionId enum has exactly 29 values");
         for (StdlibFunctionId function : StdlibFunctionId.values()) {
             check(SemanticIrValidator.stdlibPolicy(function) == expectedPolicy(function),
                 "stdlibPolicy(" + function + ") = "
@@ -424,6 +425,11 @@ public class StdlibCallLoweringTest {
                       let finite: boolean = Number.isFinite(t);
                       let nan: boolean = Number.isNaN(0/0);
                       let tail: string = "abc".slice(-2,3);
+                      let inc: boolean = "abc".includes("b",1);
+                      let start: boolean = "abc".startsWith("b",1);
+                      let end: boolean = "abc".endsWith("b",2);
+                      let first: number = "abc".indexOf("b",1);
+                      let last: number = "abc".lastIndexOf("b",2);
                       return null;
                     }
 
@@ -490,8 +496,8 @@ public class StdlibCallLoweringTest {
             }
 
             List<SemanticOp> stdlibOps = stdlibOps(unit);
-            check(stdlibOps.size() == 23,
-                "one STDLIB_CALL per algorithm except contextual parse: 23 ops; got "
+            check(stdlibOps.size() == 28,
+                "one STDLIB_CALL per algorithm except contextual parse: 28 ops; got "
                     + stdlibOps.size());
             EnumSet<StdlibFunctionId> produced = EnumSet.noneOf(StdlibFunctionId.class);
             for (SemanticOp op : stdlibOps) {

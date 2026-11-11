@@ -47,6 +47,24 @@ public final class StringSemantics {
         return value >= length ? length : (int) value;
     }
 
+    public static int indexOf(String text, String search, double position) {
+        return text.indexOf(search, bound(position, text.length()));
+    }
+
+    public static int lastIndexOf(String text, String search, double position) {
+        return text.lastIndexOf(search, bound(Double.isNaN(position)
+            ? Double.POSITIVE_INFINITY : position, text.length()));
+    }
+
+    public static boolean startsWith(String text, String search, double position) {
+        return text.startsWith(search, bound(position, text.length()));
+    }
+
+    public static boolean endsWith(String text, String search, double position) {
+        int end = bound(position, text.length());
+        return search.length() <= end && text.startsWith(search, end - search.length());
+    }
+
     public static String replace(String text, String search, String replacement) {
         int at = text.indexOf(search);
         if (at < 0) return text;

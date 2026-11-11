@@ -752,6 +752,18 @@ static void observe_substring(const char *label, const char *text,
     observe_string_range(label, DEAL_STDLIB_STRING_SUBSTRING, text, start, end);
 }
 
+static void observe_search(const char *label, uint32_t operation_id,
+                           const char *text, const char *part, double position) {
+    deal_root_scope_push();
+    deal_string *value = deal_text_new(text, strlen(text));
+    (void)deal_root_scope_hold(value);
+    deal_string *search = deal_text_new(part, strlen(part));
+    (void)deal_root_scope_hold(search);
+    deal_check_input arguments[3] = {string_argument(value), string_argument(search), number_argument(position)};
+    observe_std(label, operation_id, arguments, 3u);
+    deal_root_scope_pop();
+}
+
 static void observe_stdlib(void) {
     /* console: the exact bytes plus one newline on the channel. */
     printf("BEFORE\tconsole-log\n");
@@ -808,6 +820,15 @@ static void observe_stdlib(void) {
     observe_string_range("slice-reversed", DEAL_STDLIB_STRING_SLICE, "hello", 4.0, 2.0);
     observe_string_range("slice-nonfinite", DEAL_STDLIB_STRING_SLICE, "hello", -1.0 / 0.0, 0.0 / 0.0);
     observe_string_range("slice-astral", DEAL_STDLIB_STRING_SLICE, "\xf0\x9d\x84\x9e" "ab", 1.0, -1.0);
+
+    observe_search("index-position", DEAL_STDLIB_STRING_INDEX_OF, "ababa", "ba", 2.9);
+    observe_search("last-index-nan", DEAL_STDLIB_STRING_LAST_INDEX_OF, "ababa", "ba", 0.0 / 0.0);
+    observe_search("index-unit", DEAL_STDLIB_STRING_INDEX_OF, "\xf0\x9d\x84\x9e" "ab", "\xed\xb4\x9e", 0.0);
+    observe_search("includes-position", DEAL_STDLIB_STRING_INCLUDES_POSITION, "ababa", "aba", 3.0);
+    observe_search("starts-position", DEAL_STDLIB_STRING_STARTS_WITH_POSITION, "ababa", "ba", 1.9);
+    observe_search("ends-position", DEAL_STDLIB_STRING_ENDS_WITH_POSITION, "ababa", "ba", 3.9);
+    observe_search("starts-wide-unit", DEAL_STDLIB_STRING_STARTS_WITH_POSITION, "a\xc3\xa9", "\xe0\xa0\x80", 1.0);
+    observe_search("last-wide-unit", DEAL_STDLIB_STRING_LAST_INDEX_OF, "a\xc3\xa9", "\xe0\xa0\x80", 2.0);
 
     /* std/string contains / startsWith / endsWith. */
     observe_string_operation("contains-hit", DEAL_STDLIB_STRING_CONTAINS,

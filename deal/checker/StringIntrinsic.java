@@ -7,6 +7,8 @@ import java.util.List;
 public enum StringIntrinsic {
     SUBSTRING("substring", List.of(Type.Number.INSTANCE, Type.Number.INSTANCE), Type.String.INSTANCE),
     SLICE("slice", List.of(Type.Number.INSTANCE, Type.Number.INSTANCE), Type.String.INSTANCE),
+    INDEX_OF("indexOf", List.of(Type.String.INSTANCE), Type.Number.INSTANCE),
+    LAST_INDEX_OF("lastIndexOf", List.of(Type.String.INSTANCE), Type.Number.INSTANCE),
     INCLUDES("includes", List.of(Type.String.INSTANCE), Type.Boolean.INSTANCE),
     STARTS_WITH("startsWith", List.of(Type.String.INSTANCE), Type.Boolean.INSTANCE),
     ENDS_WITH("endsWith", List.of(Type.String.INSTANCE), Type.Boolean.INSTANCE),
@@ -25,6 +27,9 @@ public enum StringIntrinsic {
     public Type.Func signature(int arity) {
         if ((this == SUBSTRING || this == SLICE) && arity == 1)
             return new Type.Func(List.of(Type.Number.INSTANCE), Type.String.INSTANCE);
+        if (arity == 2 && (this == INCLUDES || this == STARTS_WITH || this == ENDS_WITH
+                || this == INDEX_OF || this == LAST_INDEX_OF))
+            return new Type.Func(List.of(Type.String.INSTANCE, Type.Number.INSTANCE), signature.returnType());
         return signature;
     }
 

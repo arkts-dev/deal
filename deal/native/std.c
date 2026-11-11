@@ -46,6 +46,8 @@ static const char *const deal_std_parameters_string_string[2] =
     {"string", "string"};
 static const char *const deal_std_parameters_string_string_string[3] =
     {"string", "string", "string"};
+static const char *const deal_std_parameters_search[3] =
+    {"string", "string", "number"};
 static const char *const deal_std_parameters_substring[3] =
     {"string", "number", "number"};
 static const char *const deal_std_parameters_record[1] = {"record"};
@@ -88,7 +90,12 @@ static const deal_std_operation deal_std_operations[DEAL_STDLIB_OPERATION_COUNT]
     { deal_std_parameters_number, 1u, "number" },            /* MATH_ROUND */
     { deal_std_parameters_unknown, 1u, "boolean" },          /* NUMBER_IS_FINITE */
     { deal_std_parameters_unknown, 1u, "boolean" },          /* NUMBER_IS_NAN */
-    { deal_std_parameters_substring, 3u, "string" }          /* STRING_SLICE */
+    { deal_std_parameters_substring, 3u, "string" },         /* STRING_SLICE */
+    { deal_std_parameters_search, 3u, "boolean" },           /* STRING_INCLUDES_POSITION */
+    { deal_std_parameters_search, 3u, "boolean" },           /* STRING_STARTS_WITH_POSITION */
+    { deal_std_parameters_search, 3u, "boolean" },           /* STRING_ENDS_WITH_POSITION */
+    { deal_std_parameters_search, 3u, "number" },            /* STRING_INDEX_OF */
+    { deal_std_parameters_search, 3u, "number" }             /* STRING_LAST_INDEX_OF */
 };
 
 /* =========================================================================
@@ -377,6 +384,41 @@ static deal_data deal_std_slice(deal_string *text, double start, double end) {
     return deal_std_string_result(deal_text_new(deal_text_bytes(text) + from, to - from));
 }
 
+static size_t deal_std_search_bound(double value, size_t length) {
+    if (!(value > 0.0)) return 0u;
+    return value >= (double)length ? length : (size_t)value;
+}
+
+/* Canonical storage encodes each UTF-16 unit independently. Translate the
+ * matched byte offset back to a unit index; never report a UTF-8 byte index. */
+static double deal_std_search(deal_string *text, deal_string *part, size_t position, int backwards) {
+    size_t length = deal_text_unit_length(text);
+    size_t part_length = deal_text_unit_length(part);
+    if (part_length > length) return -1.0;
+    const unsigned char *bytes = deal_text_bytes(text);
+    const unsigned char *needle = deal_text_bytes(part);
+    size_t needle_length = deal_text_byte_length(part);
+    if (backwards) {
+        size_t index = position < length - part_length ? position : length - part_length;
+        for (;;) {
+            size_t offset = deal_text_unit_offset(text, index);
+            if (needle_length <= deal_text_byte_length(text) - offset
+                    && memcmp(bytes + offset, needle, needle_length) == 0) return (double)index;
+            if (index == 0u) return -1.0;
+            index -= 1u;
+        }
+    }
+    size_t offset = deal_text_unit_offset(text, position);
+    size_t found = deal_std_find(bytes, deal_text_byte_length(text), needle, needle_length, offset);
+    if (found == SIZE_MAX) return -1.0;
+    size_t index = position;
+    while (offset < found) {
+        offset += bytes[offset] < 128u ? 1u : (bytes[offset] < 224u ? 2u : 3u);
+        index += 1u;
+    }
+    return (double)index;
+}
+
 /* First literal match, with ECMAScript replacement substitutions. */
 static void deal_std_replace_append(unsigned char *scratch, size_t *length,
                                      const unsigned char *piece, size_t count) {
@@ -520,6 +562,35 @@ static deal_data deal_std_evaluate(uint32_t operation_id,
     case DEAL_STDLIB_STRING_SLICE:
         return deal_std_slice(deal_std_string_argument(&arguments[0]),
             deal_std_number_argument(&arguments[1]), deal_std_number_argument(&arguments[2]));
+    case DEAL_STDLIB_STRING_INCLUDES_POSITION:
+    case DEAL_STDLIB_STRING_STARTS_WITH_POSITION:
+    case DEAL_STDLIB_STRING_ENDS_WITH_POSITION:
+    case DEAL_STDLIB_STRING_INDEX_OF:
+    case DEAL_STDLIB_STRING_LAST_INDEX_OF: {
+        deal_string *text = deal_std_string_argument(&arguments[0]);
+        deal_string *part = deal_std_string_argument(&arguments[1]);
+        double requested = deal_std_number_argument(&arguments[2]);
+        size_t length = deal_text_unit_length(text);
+        size_t position = operation_id == DEAL_STDLIB_STRING_LAST_INDEX_OF && isnan(requested)
+            ? length : deal_std_search_bound(requested, length);
+        size_t part_length = deal_text_unit_length(part);
+        if (operation_id == DEAL_STDLIB_STRING_ENDS_WITH_POSITION) {
+            if (part_length > position) return deal_data_of_boolean(0);
+            position -= part_length;
+        }
+        if (operation_id == DEAL_STDLIB_STRING_STARTS_WITH_POSITION
+                || operation_id == DEAL_STDLIB_STRING_ENDS_WITH_POSITION) {
+            if (part_length > length - position) return deal_data_of_boolean(0);
+            size_t offset = deal_text_unit_offset(text, position);
+            size_t byte_length = deal_text_byte_length(part);
+            return deal_data_of_boolean(byte_length <= deal_text_byte_length(text) - offset
+                && memcmp(deal_text_bytes(text) + offset, deal_text_bytes(part), byte_length) == 0);
+        }
+        double found = deal_std_search(text, part, position,
+            operation_id == DEAL_STDLIB_STRING_LAST_INDEX_OF);
+        return operation_id == DEAL_STDLIB_STRING_INCLUDES_POSITION
+            ? deal_data_of_boolean(found >= 0.0) : deal_data_of_number(found);
+    }
     case DEAL_STDLIB_STRING_CONTAINS: {
         deal_string *text = deal_std_string_argument(&arguments[0]);
         deal_string *part = deal_std_string_argument(&arguments[1]);

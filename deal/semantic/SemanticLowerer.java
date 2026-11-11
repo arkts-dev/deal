@@ -8173,6 +8173,8 @@ public final class SemanticLowerer {
                     String algorithm = switch (intrinsic) {
                         case SUBSTRING -> "substring";
                         case SLICE -> "slice";
+                        case INDEX_OF -> "indexOf";
+                        case LAST_INDEX_OF -> "lastIndexOf";
                         case INCLUDES -> "contains";
                         case STARTS_WITH -> "startsWith";
                         case ENDS_WITH -> "endsWith";
@@ -8180,9 +8182,18 @@ public final class SemanticLowerer {
                         case SPLIT -> "split";
                         case TRIM -> "trim";
                     };
-                    StdlibFunctionCatalog.Entry entry = intrinsic == deal.checker.StringIntrinsic.SLICE
+                    StdlibFunctionId direct = switch (intrinsic) {
+                        case SLICE -> StdlibFunctionId.STRING_SLICE;
+                        case INDEX_OF -> StdlibFunctionId.STRING_INDEX_OF;
+                        case LAST_INDEX_OF -> StdlibFunctionId.STRING_LAST_INDEX_OF;
+                        case INCLUDES -> call.args().size() == 2 ? StdlibFunctionId.STRING_INCLUDES_POSITION : null;
+                        case STARTS_WITH -> call.args().size() == 2 ? StdlibFunctionId.STRING_STARTS_WITH_POSITION : null;
+                        case ENDS_WITH -> call.args().size() == 2 ? StdlibFunctionId.STRING_ENDS_WITH_POSITION : null;
+                        default -> null;
+                    };
+                    StdlibFunctionCatalog.Entry entry = direct != null
                         ? StdlibFunctionCatalog.entries().stream()
-                            .filter(row -> row.function() == StdlibFunctionId.STRING_SLICE).findFirst().orElseThrow()
+                            .filter(row -> row.function() == direct).findFirst().orElseThrow()
                         : StdlibFunctionCatalog.lookup("std.string", algorithm).orElseThrow();
                     List<ValueId> arguments = new ArrayList<>();
                     arguments.add(lowerOperand(member.object()));
@@ -8191,6 +8202,14 @@ public final class SemanticLowerer {
                             || intrinsic == deal.checker.StringIntrinsic.SLICE) && call.args().size() == 1) {
                         arguments.add(emitValueOp(SemanticOpKind.CONST,
                             new KindPayload.ConstPayload(new ScalarValue.Number(Double.POSITIVE_INFINITY)),
+                            call.span(), RuntimeDescriptor.Number.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE, null));
+                    }
+                    if ((intrinsic == deal.checker.StringIntrinsic.INDEX_OF
+                            || intrinsic == deal.checker.StringIntrinsic.LAST_INDEX_OF) && call.args().size() == 1) {
+                        double position = intrinsic == deal.checker.StringIntrinsic.LAST_INDEX_OF
+                            ? Double.POSITIVE_INFINITY : 0.0;
+                        arguments.add(emitValueOp(SemanticOpKind.CONST,
+                            new KindPayload.ConstPayload(new ScalarValue.Number(position)),
                             call.span(), RuntimeDescriptor.Number.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE, null));
                     }
                     return emitStdlibAlgorithm(entry, arguments, call.span(), slot);

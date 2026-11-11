@@ -99,6 +99,7 @@ public final class Language16RuntimeTest {
         fixtureAdmission("stdlib/json/contextual-parse.deal", deal.semantic.ir.SemanticOpKind.JSON_PARSE, -1);
         fixtureAdmission("stdlib/string/substring-omitted-end.deal", deal.semantic.ir.SemanticOpKind.STDLIB_CALL, 12);
         fixtureAdmission("stdlib/string/slice.deal", deal.semantic.ir.SemanticOpKind.STDLIB_CALL, 26);
+        fixtureAdmission("stdlib/string/search-positions.deal", deal.semantic.ir.SemanticOpKind.STDLIB_CALL, 94);
         stringifyDeclaredFields();
         stringifyOracleDeclaredFields();
         jsonOperationOriginsAcrossCalls();

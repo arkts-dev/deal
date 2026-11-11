@@ -449,6 +449,16 @@ public final class SharedStdlibSemantics {
                 numberOf(argv, 2, function));
             case STRING_SLICE -> new Outcome.Success<>(Value.string(deal.semantic.ir.StringSemantics.slice(
                 validTextOf(argv, 0, function).carrier(), numberOf(argv, 1, function), numberOf(argv, 2, function))));
+            case STRING_INCLUDES_POSITION -> new Outcome.Success<>(new Value.Bool(deal.semantic.ir.StringSemantics.indexOf(
+                validTextOf(argv, 0, function).carrier(), validTextOf(argv, 1, function).carrier(), numberOf(argv, 2, function)) >= 0));
+            case STRING_STARTS_WITH_POSITION -> new Outcome.Success<>(new Value.Bool(deal.semantic.ir.StringSemantics.startsWith(
+                validTextOf(argv, 0, function).carrier(), validTextOf(argv, 1, function).carrier(), numberOf(argv, 2, function))));
+            case STRING_ENDS_WITH_POSITION -> new Outcome.Success<>(new Value.Bool(deal.semantic.ir.StringSemantics.endsWith(
+                validTextOf(argv, 0, function).carrier(), validTextOf(argv, 1, function).carrier(), numberOf(argv, 2, function))));
+            case STRING_INDEX_OF -> new Outcome.Success<>(new Value.Number(deal.semantic.ir.StringSemantics.indexOf(
+                validTextOf(argv, 0, function).carrier(), validTextOf(argv, 1, function).carrier(), numberOf(argv, 2, function))));
+            case STRING_LAST_INDEX_OF -> new Outcome.Success<>(new Value.Number(deal.semantic.ir.StringSemantics.lastIndexOf(
+                validTextOf(argv, 0, function).carrier(), validTextOf(argv, 1, function).carrier(), numberOf(argv, 2, function))));
             case STRING_CONTAINS -> stringContains(origin,
                 validTextOf(argv, 0, function), validTextOf(argv, 1, function));
             case STRING_STARTS_WITH -> stringStartsWith(origin,
@@ -496,7 +506,8 @@ public final class SharedStdlibSemantics {
             case TIME_NOW_MILLIS -> 0;
             case CONSOLE_LOG, CONSOLE_ERROR, STRING_LENGTH, STRING_TRIM, TABLE_KEYS, JSON_PARSE, JSON_STRINGIFY, MATH_FLOOR, MATH_CEIL, MATH_SQRT, MATH_ABS_NUMBER, MATH_ROUND, NUMBER_IS_FINITE, NUMBER_IS_NAN -> 1;
             case STRING_CONTAINS, STRING_STARTS_WITH, STRING_ENDS_WITH, STRING_SPLIT, MATH_MIN, MATH_MAX -> 2;
-            case STRING_SUBSTRING, STRING_SLICE, STRING_REPLACE -> 3;
+            case STRING_SUBSTRING, STRING_SLICE, STRING_REPLACE, STRING_INCLUDES_POSITION,
+                 STRING_STARTS_WITH_POSITION, STRING_ENDS_WITH_POSITION, STRING_INDEX_OF, STRING_LAST_INDEX_OF -> 3;
         };
     }
 

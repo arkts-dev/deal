@@ -1,0 +1,64 @@
+// @spec: Standard library builtins — String
+// @expected: runtime-ok
+// @tags: string,builtin,utf16
+function check(ok:boolean):void {
+  if(!ok){throw {code:"TEST",message:"string search positions"};}
+}
+export function main():null {
+  let text="ababa";
+  check(text.indexOf("ba")===1);
+  check(text.indexOf("ba",2)===3);
+  check(text.lastIndexOf("ba")===3);
+  check(text.lastIndexOf("ba",2)===1);
+  check(text.lastIndexOf("ba",0/0)===3);
+  for(let position of [-1/0,-1e100,-1,-0.9,-5e-324,-0,0,5e-324,0.9,0/0]) {
+    check(text.indexOf("ba",position)===1);
+    check(!text.startsWith("ba",position));
+    check(text.includes("ab",position));
+    check(!text.endsWith("a",position));
+  }
+  for(let position of [5,5.9,1e100,1/0]) {
+    check(text.indexOf("a",position)===-1);
+    check(text.indexOf("",position)===5);
+    check(text.lastIndexOf("ba",position)===3);
+    check(!text.includes("a",position));
+    check(text.includes("",position));
+    check(text.endsWith("ba",position));
+    check(text.startsWith("",position));
+  }
+  check(text.startsWith("ba",1.9));
+  check(text.endsWith("ba",3.9));
+  check(text.lastIndexOf("ba",-1/0)===-1);
+  check(text.lastIndexOf("",-0.9)===0);
+  check(text.lastIndexOf("",0/0)===5);
+  check(text.lastIndexOf("",1.9)===1);
+  check(text.indexOf("aba",1)===2);
+  check(text.lastIndexOf("aba",1)===0);
+  check(text.lastIndexOf("longer",1/0)===-1);
+  check("".indexOf("")===0);
+  check("".lastIndexOf("",0/0)===0);
+  check("".lastIndexOf("x")===-1);
+  check("a\uD83D\uDE00b\uD800\0\uDC00".indexOf("\uDE00",1)===2);
+  check("a\uD83D\uDE00b\uD800\0\uDC00".lastIndexOf("\uD800\0")===4);
+  check("a\uD83D\uDE00b".startsWith("\uDE00",2));
+  check("a\uD83D\uDE00b".endsWith("\uD83D",2));
+  check("\u00E9a".indexOf("a")===1);
+  check(!"a\u00E9".startsWith("\u0800",1));
+  check("a\u00E9".lastIndexOf("\u0800")===-1);
+  let order="";
+  let receiver=():string=>{order=order+"r";return text;};
+  let search=():string=>{order=order+"s";return "ba";};
+  let position=():number=>{order=order+"p";return 2;};
+  check(receiver().indexOf(search(),position())===3);check(order==="rsp");
+  order="";check(receiver().lastIndexOf(search())===3);check(order==="rs");
+  let failText=():string=>{order=order+"x";throw {code:"STOP",message:"text"};};
+  let failPosition=():number=>{order=order+"x";throw {code:"STOP",message:"position"};};
+  let destination=17;
+  order="";try{destination=failText().indexOf(search(),position());}catch(e){}
+  check(destination===17&&order==="x");
+  order="";try{destination=receiver().lastIndexOf(failText(),position());}catch(e){}
+  check(destination===17&&order==="rx");
+  order="";try{destination=receiver().indexOf(search(),failPosition());}catch(e){}
+  check(destination===17&&order==="rsx");
+  return null;
+}

@@ -3084,6 +3084,21 @@ private void emitBindingLoad(SemanticOp op) {
             } else if (payload.function() == StdlibFunctionId.STRING_SLICE) {
                 emit(slotOf(op) + " = " + callArguments.getFirst() + ".slice("
                     + callArguments.get(1) + ", " + callArguments.get(2) + ");");
+            } else if (switch (payload.function()) {
+                    case STRING_INCLUDES_POSITION, STRING_STARTS_WITH_POSITION, STRING_ENDS_WITH_POSITION,
+                         STRING_INDEX_OF, STRING_LAST_INDEX_OF -> true;
+                    default -> false;
+                }) {
+                String method = switch (payload.function()) {
+                    case STRING_INCLUDES_POSITION -> "includes";
+                    case STRING_STARTS_WITH_POSITION -> "startsWith";
+                    case STRING_ENDS_WITH_POSITION -> "endsWith";
+                    case STRING_INDEX_OF -> "indexOf";
+                    case STRING_LAST_INDEX_OF -> "lastIndexOf";
+                    default -> throw new IllegalStateException();
+                };
+                emit(slotOf(op) + " = " + callArguments.getFirst() + "." + method + "("
+                    + callArguments.get(1) + ", " + callArguments.get(2) + ");");
             } else if (payload.function().isBuiltinOnly()) {
                 String namespace = switch (payload.function()) {
                     case NUMBER_IS_FINITE, NUMBER_IS_NAN -> "Number";

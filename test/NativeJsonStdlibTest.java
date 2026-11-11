@@ -44,7 +44,7 @@ import java.util.Map;
  *       undefined result, a path-local cycle versus shared acyclic children and
  *       the closed builtin encoding rejection arm — against the specification's rules
  *       and the failure-arm authority;</li>
- *   <li>every one of the twenty-four merged {@code StdlibFunctionId} operations
+ *   <li>every one of the twenty-nine merged {@code StdlibFunctionId} operations
  *       against {@link SharedStdlibSemantics}, with the UTF-16 code-unit
  *       positions and clamped substring bounds of the string family, the parameter
  *       and return crossings through the typed-boundary arm and a positive
@@ -131,8 +131,8 @@ public final class NativeJsonStdlibTest {
             StandardCharsets.UTF_8);
         deal.semantic.ir.StdlibFunctionId[] operations =
             deal.semantic.ir.StdlibFunctionId.values();
-        checkEq(24, operations.length,
-            "the merged registry carries the closed twenty-four operations");
+        checkEq(29, operations.length,
+            "the merged registry carries the closed twenty-nine operations");
         Map<String, Integer> published = new LinkedHashMap<>();
         java.util.regex.Matcher matcher = java.util.regex.Pattern.compile(
             "#define\\s+DEAL_STDLIB_([A-Z0-9_]+)\\s+(\\d+)[uU]").matcher(header);
@@ -621,6 +621,15 @@ public final class NativeJsonStdlibTest {
         expected.add(stdText("slice-reversed", ""));
         expected.add(stdText("slice-nonfinite", ""));
         expected.add(stdText("slice-astral", "\uDD1Ea"));
+
+        expected.add(stdNumber("index-position", 3));
+        expected.add(stdNumber("last-index-nan", 3));
+        expected.add(stdNumber("index-unit", 1));
+        expected.add(stdBoolean("includes-position", false));
+        expected.add(stdBoolean("starts-position", true));
+        expected.add(stdBoolean("ends-position", true));
+        expected.add(stdBoolean("starts-wide-unit", false));
+        expected.add(stdNumber("last-wide-unit", -1));
 
         // 8. The literal searches and the replacement rules.
         expected.add(stringExpectation("contains-hit",

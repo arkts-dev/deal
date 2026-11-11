@@ -11005,6 +11005,33 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
     local first, last = relative(__args[2]), relative(__args[3])
     return strings.substring.f(__args[1], first, math.max(first, last))
   end
+  if fn == "STRING_INCLUDES_POSITION" or fn == "STRING_STARTS_WITH_POSITION"
+      or fn == "STRING_ENDS_WITH_POSITION" or fn == "STRING_INDEX_OF" or fn == "STRING_LAST_INDEX_OF" then
+    local rt = require("deal.runtime")
+    local text, part = rt.string_units(__args[1]), rt.string_units(__args[2])
+    local position = __args[3]
+    if position ~= position then position = fn == "STRING_LAST_INDEX_OF" and #text or 0 end
+    position = position <= 0 and 0 or (position >= #text and #text or math.floor(position))
+    local function matches(at)
+      if at < 0 or #part > #text - at then return false end
+      for i = 1, #part do if text[at + i] ~= part[i] then return false end end
+      return true
+    end
+    if fn == "STRING_STARTS_WITH_POSITION" then return matches(position) end
+    if fn == "STRING_ENDS_WITH_POSITION" then return matches(position - #part) end
+    if fn == "STRING_LAST_INDEX_OF" then
+      for at = math.min(position, #text - #part), 0, -1 do if matches(at) then return at end end
+    else
+      for at = position, #text - #part do
+        if matches(at) then
+          if fn == "STRING_INCLUDES_POSITION" then return true end
+          return at
+        end
+      end
+    end
+    if fn == "STRING_INCLUDES_POSITION" then return false end
+    return -1
+  end
   if string.sub(fn, 1, 7) == "STRING_" then
     local names = {STRING_LENGTH="length", STRING_SUBSTRING="substring",
       STRING_CONTAINS="contains", STRING_STARTS_WITH="startsWith", STRING_ENDS_WITH="endsWith",

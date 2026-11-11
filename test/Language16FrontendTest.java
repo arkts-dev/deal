@@ -140,6 +140,13 @@ public final class Language16FrontendTest {
         check("function f(s:string):string[]{return s.split(\"\");}", true);
         check("function f(s:string):string{return s.substring(1);}", true);
         check("function f(s:string):string{return s.slice(-2).slice(0,1);}", true);
+        for (String method : List.of("includes", "startsWith", "endsWith", "indexOf", "lastIndexOf")) {
+            check("function f(s:string):void{s." + method + "(\"a\");s." + method + "(\"a\",1.9);}", true);
+            for (String arguments : List.of("", "1", "\"a\",undefined", "\"a\",null", "\"a\",true", "\"a\",1,2"))
+                check("function f(s:string):void{s." + method + "(" + arguments + ");}", false);
+            check("function f(s:string):void{s." + method + ";}", false);
+        }
+        check("import * as text from \"std/string\"; function f():void{text.indexOf;}", false);
         for (String expression : List.of("s.slice()", "s.slice(1,2,3)", "s.slice(true)",
                 "s.slice(undefined)", "s.slice(1,undefined)", "s.slice"))
             check("function f(s:string):void{" + expression + ";}", false);

@@ -26,5 +26,10 @@ export function exercise(): null {
   check.require("item: Ada".substring(6) === "Ada", "label suffix");
   check.require("item: Ada".slice(-3) === "Ada", "relative suffix");
   check.require("item: Ada".slice(0, -5) === "item", "relative end");
+  check.require("item: Ada".indexOf(": ") === 4, "label separator");
+  check.require("Ada Ada".lastIndexOf("Ada") === 4, "last label");
+  check.require("item: Ada".startsWith("Ada", 6), "label at position");
+  check.require("item: Ada".endsWith("item", 4), "prefix end position");
+  check.require(!"Ada Ada".includes("Ada", 5), "search after position");
   return null;
 }

@@ -2486,6 +2486,21 @@ case "NUMBER_ADD" -> {
                     return deal.semantic.ir.StringSemantics.slice((String) args[0],
                         ((Number) args[1]).doubleValue(), ((Number) args[2]).doubleValue());
                 }
+                case "STRING_INCLUDES_POSITION" -> {
+                    return deal.semantic.ir.StringSemantics.indexOf((String) args[0], (String) args[1], ((Number) args[2]).doubleValue()) >= 0;
+                }
+                case "STRING_STARTS_WITH_POSITION" -> {
+                    return deal.semantic.ir.StringSemantics.startsWith((String) args[0], (String) args[1], ((Number) args[2]).doubleValue());
+                }
+                case "STRING_ENDS_WITH_POSITION" -> {
+                    return deal.semantic.ir.StringSemantics.endsWith((String) args[0], (String) args[1], ((Number) args[2]).doubleValue());
+                }
+                case "STRING_INDEX_OF" -> {
+                    return (double) deal.semantic.ir.StringSemantics.indexOf((String) args[0], (String) args[1], ((Number) args[2]).doubleValue());
+                }
+                case "STRING_LAST_INDEX_OF" -> {
+                    return (double) deal.semantic.ir.StringSemantics.lastIndexOf((String) args[0], (String) args[1], ((Number) args[2]).doubleValue());
+                }
                 case "STRING_CONTAINS" -> {
                     return ((String) args[0]).contains((String) args[1]);
                 }
