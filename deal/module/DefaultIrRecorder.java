@@ -358,7 +358,7 @@ final class DefaultIrRecorder {
                     List.of(
                         recordExpression(bin.left(), scope, List.of(),
                             evaluatorScope),
-                        recordExpression(bin.right(), scope, List.of(),
+                        recordExpression(bin.right(), scope, bin.op() == deal.ast.BinaryOp.COALESCE ? contexts : List.of(),
                             evaluatorScope)),
                     null, null, null, bin, bin.span());
             }

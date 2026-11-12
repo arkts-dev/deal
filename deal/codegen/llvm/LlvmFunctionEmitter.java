@@ -803,6 +803,18 @@ final class LlvmFunctionEmitter {
                 yield emitTemporary(op, arm.instruction().replace("%s)",
                     loadRepresentation(input, operandDescriptor, op) + ")"));
             }
+            case NULLISH_TEST -> {
+                String datum = emitDatum(operandDescriptor, LlvmTypeMapper.isStaticSingleton(operandDescriptor)
+                    ? "" : loadRepresentation(input, operandDescriptor, op), op);
+                String tag = emitTemporary(op, "extractvalue " + LlvmTypeMapper.DATA + " " + datum + ", 0");
+                String isNull = emitTemporary(op, "icmp eq i32 " + tag + ", " + LlvmTypeMapper.DATA_NULL);
+                String isUndefined = emitTemporary(op, "icmp eq i32 " + tag + ", " + LlvmTypeMapper.DATA_UNDEFINED);
+                yield emitTemporary(op, "or i1 " + isNull + ", " + isUndefined);
+            }
+            case NON_NULLISH_PROJECT -> {
+                String datum = emitDatum(operandDescriptor, loadRepresentation(input, operandDescriptor, op), op);
+                yield LlvmDataValues.unbox(session, sink, (RuntimeDescriptor) op.resultType(), datum);
+            }
             case TYPE_NAME -> emitTypeName(op, input, operandDescriptor);
             case CLASS_TAG -> emitInstanceOf(op, payload, input,
                 operandDescriptor);

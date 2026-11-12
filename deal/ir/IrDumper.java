@@ -1019,7 +1019,7 @@ public final class IrDumper implements Visitor<String> {
             case ADD -> "+"; case SUB -> "-"; case MUL -> "*"; case DIV -> "/"; case REM -> "%";
             case POW -> "**"; case EQ -> "==="; case NEQ -> "!==";
             case LT -> "<"; case LTE -> "<="; case GT -> ">"; case GTE -> ">=";
-            case AND -> "&&"; case OR -> "||";
+            case AND -> "&&"; case OR -> "||"; case COALESCE -> "??";
         };
     }
 

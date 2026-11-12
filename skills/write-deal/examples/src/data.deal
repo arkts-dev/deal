@@ -33,7 +33,9 @@ export function exercise(): null {
   let labels: string[] = counts.map((value: number, index: number): string => `${index}: ${value}`);
   check.require(labels.join("; ") === "0: 1; 1: 2; 2: 3", "map typed values in source order");
   let selected: number | undefined = counts.find((value: number): boolean => value > 1);
-  check.require((selected as number) === 2, "find the first matching value");
+  check.require((selected ?? 0) === 2, "find the first matching value");
+  let absent: number | undefined = counts.find((value: number): boolean => value > 10);
+  check.require((absent ?? 0) === 0, "default only a nullish result");
   check.require(counts.findIndex((value: number): boolean => value > 2) === 2, "find the first matching index");
   let larger: number[] = counts.filter((value: number): boolean => value > 1);
   check.require(larger.length === 2 && larger[0] === 2, "filter selected values into fresh storage");

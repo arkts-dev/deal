@@ -1937,6 +1937,9 @@ record NumValue(double value) implements Value {
             KindPayload.UnaryPayload payload = (KindPayload.UnaryPayload) op.payload();
             Value input = valueOf(op.operands().get(0));
             return switch (payload.selector()) {
+                case IS_NULLISH -> publish(op, new Value.BoolValue(input instanceof Value.NullValue
+                    || input instanceof Value.UndefinedValue || input instanceof Value.MissingValue));
+                case NON_NULLISH -> publish(op, input);
                 case TYPEOF -> publish(op, new Value.StrValue(sourceTypeof(input)));
                 case INSTANCEOF -> publish(op, new Value.BoolValue(
                     payload.target() instanceof RuntimeDescriptor.Class target

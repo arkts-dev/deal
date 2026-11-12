@@ -13055,6 +13055,7 @@ public final class SemanticLowerer {
 
         private ValueId lowerBinary(BinaryExpr binary, ValueId slot) {
             Type type = checkedType(binary);
+            if (binary.op() == BinaryOp.COALESCE) return lowerCoalesce(binary, slot);
             if (binary.op() == BinaryOp.ADD && type instanceof Type.String) {
                 return lowerStringConcat(binary, slot);
             }
@@ -13079,7 +13080,7 @@ public final class SemanticLowerer {
         private static boolean isComparisonOperator(BinaryOp op) {
             return switch (op) {
                 case EQ, NEQ, LT, LTE, GT, GTE -> true;
-                case ADD, SUB, MUL, DIV, REM, POW, AND, OR -> false;
+                case ADD, SUB, MUL, DIV, REM, POW, AND, OR, COALESCE -> false;
             };
         }
 
@@ -13116,6 +13117,62 @@ public final class SemanticLowerer {
             }
             emit(comparison);
             return (ValueId) comparison.result();
+        }
+
+        /** Coalescing owns the saved left value and two lazy conditional arms. */
+        private ValueId lowerCoalesce(BinaryExpr binary, ValueId slot) {
+            ValueId saved = lowerOperand(binary.left());
+            RuntimeDescriptor source = valueDescriptorOf(checkedType(binary.left()));
+            if (source instanceof RuntimeDescriptor.Null || source instanceof RuntimeDescriptor.Undefined
+                    || source instanceof RuntimeDescriptor.Nullable n
+                        && (n.inner() instanceof RuntimeDescriptor.Null || n.inner() instanceof RuntimeDescriptor.Undefined)) {
+                return lowerOperand(binary.right(), slot);
+            }
+            ValueId condition = emitOperandOp(SemanticOpKind.UNARY,
+                new KindPayload.UnaryPayload(UnarySelector.IS_NULLISH), List.of(saved), List.of(source),
+                binary.left().span(), RuntimeDescriptor.Boolean.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE, null);
+            BlockId selected = allocateBlock(), alternate = allocateBlock();
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            OpId owner = ids.nextOpId(module, nextOrdinal++, 0);
+            ValueId result = slot != null ? slot : ids.nextValueId(module, nextOrdinal++, 0);
+            RuntimeDescriptor target = valueDescriptorOf(checkedType(binary));
+            int mark = emitTarget().size();
+            ValueId right, left;
+            pushBlockParent(owner);
+            pushBlock(selected);
+            try { right = lowerConditionalArm(binary.right(), checkedType(binary), owner); }
+            finally { popBlock(); }
+            pushBlock(alternate);
+            try {
+                RuntimeDescriptor base = source instanceof RuntimeDescriptor.Nullable n ? n.inner() : source;
+                left = ids.nextValueId(module, nextOrdinal++, 0);
+                OpId projection = ids.nextOpId(module, nextOrdinal++, 0);
+                SourceOrigin projectionOrigin = new SourceOrigin(sourceId, toSourceSpan(binary.left().span()),
+                    SourceOriginKind.USER, ids.nextAnchorId(module, nextOrdinal++, 0), owner);
+                emit(buildOp(projection, SemanticOpKind.UNARY, new KindPayload.UnaryPayload(UnarySelector.NON_NULLISH),
+                    left, base, List.of(saved), List.of(source), FailurePolicyId.NO_DEAL_FAILURE, projectionOrigin));
+                registerDynamicMaterialization(left, producerOpId(left), base);
+                if (base instanceof RuntimeDescriptor.Func signature && target instanceof RuntimeDescriptor.Func destination
+                        && AdapterCreationRule.assignableButNotExact(signature, destination)) {
+                    AdaptSourceRef sourceRef = new AdaptSourceRef.Value(left);
+                    EmittedAdapter adapter = emitFunctionAdapt(CaptureMode.VALUE, sourceRef,
+                        signature, destination, null, List.of(left), List.of(signature), binary.left().span());
+                    left = adapter.identity();
+                    positionAdapterFacts.put(left.id(), new PositionAdapterFacts(adapter.opId(), CaptureMode.VALUE,
+                        sourceRef, signature, destination, null));
+                    OpId boundary = emitNullOp(SemanticOpKind.BOUNDARY,
+                        new KindPayload.BoundaryPayload(BoundaryKind.CONDITIONAL_BRANCH, target, left,
+                            new BoundaryRealization.RuntimeValidation(CANONICAL_RUNTIME_VALIDATION_ID)),
+                        binary.left().span(), FailurePolicyId.FUNCTION_SIGNATURE, SourceOriginKind.SYNTHETIC, owner);
+                    recordPositionAdapterAt(left, boundary, BoundaryKind.CONDITIONAL_BRANCH);
+                }
+            } finally { popBlock(); popBlockParent(); }
+            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(binary.span()), SourceOriginKind.USER, anchor, currentParent());
+            emitAt(mark, buildOp(owner, SemanticOpKind.BRANCH,
+                new KindPayload.BranchPayload(ControlSelector.CONDITIONAL, condition, selected, alternate, right, left),
+                result, target, FailurePolicyId.NO_DEAL_FAILURE, origin));
+            registerDynamicMaterialization(result, owner, target);
+            return result;
         }
 
         /** Evaluates one condition and publishes only its selected contextual arm. */
@@ -13221,7 +13278,7 @@ public final class SemanticLowerer {
         private static boolean isArithmeticOperator(BinaryOp op) {
             return switch (op) {
                 case ADD, SUB, MUL, DIV, REM, POW -> true;
-                case EQ, NEQ, LT, LTE, GT, GTE, AND, OR -> false;
+                case EQ, NEQ, LT, LTE, GT, GTE, AND, OR, COALESCE -> false;
             };
         }
 

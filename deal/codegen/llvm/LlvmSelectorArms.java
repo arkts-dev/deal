@@ -110,7 +110,9 @@ public final class LlvmSelectorArms {
         FNEG,
         NUMBER_TEXT,
         TYPE_NAME,
-        CLASS_TAG
+        CLASS_TAG,
+        NULLISH_TEST,
+        NON_NULLISH_PROJECT
     }
 
     /** One unary arm: the selector, its form and the emitted instruction. */
@@ -179,6 +181,8 @@ public final class LlvmSelectorArms {
     public static UnaryArm unary(UnarySelector selector) {
         Objects.requireNonNull(selector, "selector must not be null");
         return switch (selector) {
+            case IS_NULLISH -> new UnaryArm(selector, UnaryForm.NULLISH_TEST, "");
+            case NON_NULLISH -> new UnaryArm(selector, UnaryForm.NON_NULLISH_PROJECT, "");
             case BOOL_NOT -> new UnaryArm(selector, UnaryForm.XOR_TRUE,
                 "xor i1 %s, true");
             case NUMBER_NEG -> new UnaryArm(selector, UnaryForm.FNEG,

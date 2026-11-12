@@ -24,6 +24,8 @@ ARRAY_JOIN consumes a saved string-array receiver and required string separator,
 
 ARRAY_SEARCH snapshots the saved receiver's post-argument length, normalizes relative fromIndex and visits ascending reached positions only. Admit present slots with original source-index E8003/leaf causes before comparison. Includes uses SameValueZero and holes as undefined; indexOf uses strict equality and skips holes. Return immediately on a match, preserving aggregate/function identities and source storage. Native storage remains dense.
 
+Nullish unary tests distinguish null/undefined from falsy data. NON_NULLISH is an identity-preserving representation projection authorized by shared structural admission, never an unchecked source narrowing or substitute for a typed boundary. Lua tests both nil and its private null sentinel; native unboxing retains managed roots.
+
 CONDITIONAL enters only the chosen arm after consuming its once-evaluated boolean condition. Publish the selected value explicitly, preserving false/null/undefined and reference identity. Contextual adapters execute only in that arm. Native joins convert actual to admitted joined representations and root managed results; void joins require no storage.
 
 OBJECT_KEYS snapshots presence/order without consuming unrelated values, including hostile callable fields and cycles. Use private class declaration metadata, not reflection or user-string tags; return fresh typed string arrays. Native emitted field readers accept a NULL value output for presence-only queries and must not load/classify those values.

@@ -970,7 +970,7 @@ public final class Parser {
     }
 
     private ExpressionNode parseConditional() {
-        ExpressionNode condition = parseBinary(PREC_OR);
+        ExpressionNode condition = parseShortCircuit();
         if (condition == null || !match(TokenType.QUESTION)) return condition;
         ExpressionNode consequent = parseAssignment();
         expect(TokenType.COLON, DiagnosticCode.E1007, "Expected ':' in conditional expression");
@@ -978,6 +978,31 @@ public final class Parser {
         if (consequent == null || alternate == null) return condition;
         return new ConditionalExpr(spanBetween(condition.span(), alternate.span()),
             condition, consequent, alternate);
+    }
+
+    private ExpressionNode parseShortCircuit() {
+        ExpressionNode left = parseBinary(PREC_EQUALITY);
+        if (left == null) return null;
+        if (match(TokenType.COALESCE)) {
+            do {
+                ExpressionNode right = parseBinary(PREC_EQUALITY);
+                if (right == null) return left;
+                left = new BinaryExpr(spanBetween(left.span(), right.span()), left, BinaryOp.COALESCE, right);
+            } while (match(TokenType.COALESCE));
+            return left;
+        }
+        // Resume the logical precedence levels after the first equality
+        // operand. A parenthesized expression is a primary and therefore
+        // may contain either short-circuit family independently.
+        while (peek().type() == TokenType.AND || peek().type() == TokenType.OR) {
+            Token operator = advance();
+            int precedence = getBinaryPrecedence(operator.type());
+            ExpressionNode right = parseBinary(precedence + 1);
+            if (right == null) return left;
+            left = new BinaryExpr(spanBetween(left.span(), right.span()), left,
+                tokenToBinaryOp(operator.type()), right);
+        }
+        return left;
     }
 
     private ExpressionNode parseBinary(int minPrec) {

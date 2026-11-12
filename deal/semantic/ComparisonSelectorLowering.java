@@ -147,7 +147,7 @@ public final class ComparisonSelectorLowering {
                 return relationalPayload(leftType, rightType, BinarySelector.STRING_GE,
                     BinarySelector.NUMBER_GE);
             }
-            case AND, OR -> throw new Defect(
+            case AND, OR, COALESCE -> throw new Defect(
                 "the logical operator " + op + " reached the comparison producer: '&&'/'||' "
                     + "never lower to BINARY (they lower to selector-bearing BRANCH — "
                     + "COMPARISON_SELECTOR)");

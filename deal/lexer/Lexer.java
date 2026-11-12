@@ -685,7 +685,11 @@ public final class Lexer {
             }
             case '/' -> { bump(); yield makeToken(TokenType.SLASH, "/"); }
             case '%' -> { bump(); yield makeToken(TokenType.PERCENT, "%"); }
-            case '?' -> { bump(); yield makeToken(TokenType.QUESTION, "?"); }
+            case '?' -> {
+                bump();
+                if (pos < source.length() && source.charAt(pos) == '?') { bump(); yield makeToken(TokenType.COALESCE, "??"); }
+                yield makeToken(TokenType.QUESTION, "?");
+            }
             case ':' -> { bump(); yield makeToken(TokenType.COLON, ":"); }
             case ';' -> { bump(); yield makeToken(TokenType.SEMICOLON, ";"); }
             case ',' -> { bump(); yield makeToken(TokenType.COMMA, ","); }

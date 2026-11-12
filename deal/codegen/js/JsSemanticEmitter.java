@@ -1142,6 +1142,8 @@ public final class JsSemanticEmitter {
                 (KindPayload.UnaryPayload) op.payload();
             String operand = slot(op.operands().get(0));
             String expression = switch (payload.selector()) {
+                case IS_NULLISH -> "(" + operand + " === null || " + operand + " === undefined)";
+                case NON_NULLISH -> operand;
                 case BOOL_NOT -> "!" + operand;
                 case TYPEOF -> "$rt.typeOf(" + operand + ")";
                 case INSTANCEOF -> "$rt.isInstance(" + operand + ", " + jsString(payload.target().canonicalSpecText()) + ")";

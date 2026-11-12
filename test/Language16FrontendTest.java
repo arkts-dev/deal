@@ -37,6 +37,36 @@ public final class Language16FrontendTest {
             throw new AssertionError(source + "\n" + diagnostics);
     }
     public static void main(String[] args) {
+        for (String expression : List.of("a??b", "a??b??true", "(a??b)||true", "a??(b&&true)",
+                "(true||false)??true", "true||false&&false", "false&&true||true", "a??b?true:false"))
+            check("function f(a:boolean|null,b:boolean):boolean{return " + expression + ";}", true);
+        for (String expression : List.of("a??b||true", "a??b&&true", "a||b??true", "a&&b??true",
+                "a??b??true||false", "a??"))
+            check("function f(a:boolean,b:boolean):boolean{return " + expression + ";}", false);
+        for(String expression:List.of("a??b||true","a??b&&true","a||b??true","a&&b??true")) {
+            String source="function f(a:boolean,b:boolean):boolean{return "+expression+";}";
+            String token=expression.startsWith("a??")?expression.contains("||")?"||":"&&":"??";
+            var first=diagnostics(source).getFirst();
+            if(!first.code().equals("E1053") || !first.toString().contains(":1:"+(source.indexOf(token)+1)+"-"))
+                throw new AssertionError(first);
+        }
+        for (String singleton : List.of("null", "undefined", "(true?null:undefined)")) {
+            check("function f():number{return " + singleton + "??7;}", true);
+            check("function noop():void{}function f():void{" + singleton + "??noop();}", false);
+        }
+        check("function noop():void{}function f():void{noop()??1;}", false);
+        check("function f(a:number|null|undefined):number{return a??7;}", true);
+        check("function f(a:number|undefined):number|null{return a??null;}", true);
+        check("function f(a:number|null):number|undefined{return a??undefined;}", true);
+        check("function f(a:unknown):unknown{return a??7;}", true);
+        check("function f(a:unknown):number{return a??7;}", false);
+        check("function f(a:number|null):string{return a??\"x\";}", false);
+        check("class Item{x:number;}function f(a:Item|null):Item{return a??{x:1};}", true);
+        check("class Item{x:number;}function f():Item{return {x:1}??{x:2};}", false);
+        check("class Item{x:number;}function f(a:Item|null):Item{return a??JSON.parse(\"{}\");}", true);
+        check("class Item{x:number;}function f(a:Item[]|null):Item[]{return a??[{x:1}];}", true);
+        check("function f(a:(()=>number)|null):(x:number)=>number{return a??((x:number):number=>x);}", true);
+        check("function f(a:number|null):number{let x=0;return x=a??2;}", true);
         for (int count = 0; count < 6; count++) {
             String slashes = "\\".repeat(count);
             for (String template : List.of("`🌍" + slashes + "`", "`${ `🌍" + slashes + "` }`")) {

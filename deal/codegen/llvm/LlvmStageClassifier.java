@@ -1028,7 +1028,7 @@ public final class LlvmStageClassifier {
                 ? Optional.empty()
                 : Optional.of(reject(op, "UNARY NUMBER_NEG over '"
                     + operand.canonicalSpecText() + "'"));
-            case TYPEOF -> LlvmTypeMapper.isStaticSingleton(operand)
+            case IS_NULLISH, NON_NULLISH, TYPEOF -> LlvmTypeMapper.isStaticSingleton(operand)
                 || LlvmTypeMapper.representationOf(operand).isPresent()
                 ? Optional.empty()
                 : Optional.of(reject(op, "UNARY TYPEOF over "

@@ -1844,7 +1844,13 @@ public final class LuaSemanticEmitter {
             KindPayload.UnaryPayload payload = (KindPayload.UnaryPayload) op.payload();
             ValueId input = op.operands().get(0);
             emitStart(op);
-            if (payload.selector() == deal.semantic.ir.UnarySelector.BOOL_NOT) {
+            if (payload.selector() == deal.semantic.ir.UnarySelector.IS_NULLISH) {
+                out.append(slot((ValueId) op.result())).append(" = (").append(slot(input))
+                    .append(" == nil or ").append(slot(input)).append(" == __NULL or ")
+                    .append(slot(input)).append(" == __UNDEFINED)\n");
+            } else if (payload.selector() == deal.semantic.ir.UnarySelector.NON_NULLISH) {
+                out.append(slot((ValueId) op.result())).append(" = ").append(slot(input)).append("\n");
+            } else if (payload.selector() == deal.semantic.ir.UnarySelector.BOOL_NOT) {
                 out.append(slot((ValueId) op.result())).append(" = not ")
                     .append(slot(input)).append("\n");
             } else if (payload.selector() == deal.semantic.ir.UnarySelector.TYPEOF) {

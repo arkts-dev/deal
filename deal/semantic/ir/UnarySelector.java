@@ -25,5 +25,11 @@ public enum UnarySelector implements ClosedSelector {
     TYPEOF,
 
     /** Nominal identity test against the payload's checked class target. */
-    INSTANCEOF
+    INSTANCEOF,
+
+    /** Pure null-or-undefined test without truthiness or descriptor admission. */
+    IS_NULLISH,
+
+    /** Identity-preserving projection in the non-nullish arm of its guard. */
+    NON_NULLISH
 }

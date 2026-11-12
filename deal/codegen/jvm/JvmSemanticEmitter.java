@@ -1843,7 +1843,14 @@ public final class JvmSemanticEmitter {
         private void emitUnary(SemanticOp op, int indent) {
             KindPayload.UnaryPayload payload = (KindPayload.UnaryPayload) op.payload();
             emitStart(op, indent);
-            if (payload.selector() == deal.semantic.ir.UnarySelector.BOOL_NOT) {
+            if (payload.selector() == deal.semantic.ir.UnarySelector.IS_NULLISH) {
+                String input = slot(op.operands().get(0));
+                out.append(indent(indent)).append(slot((ValueId) op.result())).append(" = (")
+                    .append(input).append(" == null || ").append(input).append(" == JvmRuntime.UNDEFINED);\n");
+            } else if (payload.selector() == deal.semantic.ir.UnarySelector.NON_NULLISH) {
+                out.append(indent(indent)).append(slot((ValueId) op.result())).append(" = ")
+                    .append(slot(op.operands().get(0))).append(";\n");
+            } else if (payload.selector() == deal.semantic.ir.UnarySelector.BOOL_NOT) {
                 out.append(indent(indent)).append(slot((ValueId) op.result()))
                     .append(" = !((Boolean) ").append(slot(op.operands().get(0)))
                     .append(");\n");

@@ -1493,6 +1493,7 @@ public final class TypeChecker {
     // =======================================================================
 
     private Type checkBinary(BinaryExpr bin) {
+        if (bin.op() == BinaryOp.COALESCE) return checkCoalesce(bin);
         // Composite operands do not inherit the enclosing storage type.
         // Record reads remain unknown and must be extracted or refined
         // before an operator consumes a concrete value.
@@ -2673,11 +2674,42 @@ public final class TypeChecker {
         selected.merge(narrowing);
         narrowing = selected;
         expectedType = context;
+        return conditionalResult(consequent, alternate, context, conditional.span());
+    }
+
+    private Type checkCoalesce(BinaryExpr binary) {
+        Type context = expectedType;
+        Symbol.ClassSymbol classContext = contextualClassDecl;
+        Type left;
+        Type right;
+        expectedType = null;
+        contextualClassDecl = null;
+        try {
+            left = checkExpression(binary.left());
+            NullNarrowing skipped = narrowing.branch();
+            expectedType = context;
+            contextualClassDecl = classContext;
+            right = checkExpression(binary.right());
+            skipped.merge(narrowing);
+            narrowing = skipped;
+        } finally { expectedType = context; contextualClassDecl = classContext; }
+        if (left == Type.Error.INSTANCE || right == Type.Error.INSTANCE) return Type.Error.INSTANCE;
+        if (left instanceof Type.Void || right instanceof Type.Void) {
+            error(DiagnosticCode.E3007, "Void results are not data",
+                left instanceof Type.Void ? binary.left().span() : binary.right().span());
+            return Type.Error.INSTANCE;
+        }
+        Type base = left instanceof Type.Nullable n ? n.inner() : left;
+        if (base instanceof Type.Null || base instanceof Type.Undefined) return right;
+        return conditionalResult(base, right, context, binary.span());
+    }
+
+    private Type conditionalResult(Type consequent, Type alternate, Type context, Span span) {
         if (consequent == Type.Error.INSTANCE || alternate == Type.Error.INSTANCE) return Type.Error.INSTANCE;
         if (context != null && isAssignable(context, consequent) && isAssignable(context, alternate)) return context;
         if (Types.equals(consequent, alternate)) return consequent;
         if (consequent instanceof Type.Void || alternate instanceof Type.Void) {
-            error(DiagnosticCode.E3006, "Void conditional branches must both return void", conditional.span());
+            error(DiagnosticCode.E3006, "Void conditional branches must both return void", span);
             return Type.Error.INSTANCE;
         }
         if (consequent instanceof Type.Null) return Types.withNullish(alternate, false, false);
@@ -2694,7 +2726,7 @@ public final class TypeChecker {
                     || (alternate instanceof Type.Nullable other && other.admitsUndefined())) result = Types.withNullish(result, true, false);
             return result;
         }
-        error(DiagnosticCode.E3006, "Incompatible conditional branches: " + typeName(consequent) + " and " + typeName(alternate), conditional.span());
+        error(DiagnosticCode.E3006, "Incompatible conditional branches: " + typeName(consequent) + " and " + typeName(alternate), span);
         return Type.Error.INSTANCE;
     }
 
@@ -3167,6 +3199,7 @@ public final class TypeChecker {
             case GTE -> ">=";
             case AND -> "&&";
             case OR -> "||";
+            case COALESCE -> "??";
         };
     }
 

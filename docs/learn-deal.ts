@@ -30,6 +30,12 @@ function selectedUser(enabled: boolean): User {
                  : { name: "Grace", bio: null, active: false };
 }
 
+// Coalescing evaluates the left once and the fallback only for null/undefined.
+// False, zero and empty strings are retained; parenthesize mixes with &&/||.
+function defaultUser(user: User | null | undefined): User {
+  return user ?? { name: "Ada", bio: null, active: true };
+}
+
 // Functions require parameter and return annotations. A caller may choose
 // to reject a zero divisor; ordinary division itself is nontrapping.
 function divide(a: number, b: number): number | null {

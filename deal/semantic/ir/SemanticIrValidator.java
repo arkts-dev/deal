@@ -1858,7 +1858,10 @@ public final class SemanticIrValidator {
                 }
                 String selector = optionalString(payload, "selector");
                 String operandType = op.operandTypes().getFirst();
-                String resultType = "NUMBER_NEG".equals(selector) ? "number"
+                RuntimeDescriptor operandDescriptor = parseDescriptorQuiet(operandType);
+                RuntimeDescriptor nonNullish = operandDescriptor instanceof RuntimeDescriptor.Nullable n ? n.inner() : operandDescriptor;
+                String resultType = "NON_NULLISH".equals(selector) && nonNullish != null ? nonNullish.canonicalSpecText()
+                    : "NUMBER_NEG".equals(selector) ? "number"
                     : "TYPEOF".equals(selector) || "NUMBER_TO_STRING".equals(selector) ? "string" : "boolean";
                 String requiredOperand = "BOOL_NOT".equals(selector) ? "boolean"
                     : "NUMBER_NEG".equals(selector) || "NUMBER_TO_STRING".equals(selector) ? "number" : null;
@@ -1867,6 +1870,42 @@ public final class SemanticIrValidator {
                         || !resultType.equals(op.resultType()) || op.resultValue() == null) {
                     return fail(op, unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
                         origin(R_ENUM, "UNARY operand/producer and selector result descriptors disagree"));
+                }
+                if (("IS_NULLISH".equals(selector) || "NON_NULLISH".equals(selector))
+                        && operandDescriptor instanceof RuntimeDescriptor.Void) {
+                    return fail(op, unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
+                        origin(R_ENUM, "Nullish operations require a data operand"));
+                }
+                if ("NON_NULLISH".equals(selector)) {
+                    RawOp owner = null, guard = null;
+                    for (RawOp candidate : unit.ops()) {
+                        if (candidate.opId().equals(op.parentOpId())) owner = candidate;
+                    }
+                    if (owner != null) {
+                        ValueId condition = parseValueIdQuiet(payloadValue(owner.payload(), "condition") instanceof CanonicalJson.Obj obj ? obj : null);
+                        for (RawOp candidate : unit.ops()) {
+                            if (candidate.opId().equals(owner.opId())) break;
+                            if (condition != null && condition.equals(candidate.resultValue())) guard = candidate;
+                        }
+                    }
+                    List<OpId> guardBlock = guard == null || unit.bodyTable() == null ? List.of() : unit.bodyTable().blockOps()
+                        .getOrDefault(unit.bodyTable().opBlocks().get(guard.opId()), List.of());
+                    if (owner == null || !"BRANCH".equals(owner.kind())
+                            || !"CONDITIONAL".equals(optionalString(owner.payload(), "selector"))
+                            || unit.bodyTable() == null || unit.bodyTable().opBlocks().get(op.opId()) == null
+                            || !Objects.equals(ContractSnapshotCanonicalizer.semanticIdJson(unit.bodyTable().opBlocks().get(op.opId())), payloadValue(owner.payload(), "alternateBlock"))
+                            || guard == null || !"UNARY".equals(guard.kind())
+                            || !"IS_NULLISH".equals(optionalString(guard.payload(), "selector"))
+                            || guardBlock.indexOf(guard.opId()) < 0
+                            || guardBlock.indexOf(owner.opId()) != guardBlock.indexOf(guard.opId()) + 1
+                            || unit.bodyTable().blockOps().getOrDefault(
+                                unit.bodyTable().opBlocks().get(op.opId()), List.of()).indexOf(op.opId()) != 0
+                            || !guard.operands().equals(op.operands()) || !guard.operandTypes().equals(op.operandTypes())
+                            || !Objects.equals(unit.bodyTable().opBlocks().get(guard.opId()), unit.bodyTable().opBlocks().get(owner.opId()))
+                            || nonNullish instanceof RuntimeDescriptor.Null || nonNullish instanceof RuntimeDescriptor.Undefined) {
+                        return fail(op, unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
+                            origin(R_ENUM, "NON_NULLISH requires its matching preceding IS_NULLISH guard and conditional alternate block"));
+                    }
                 }
                 CanonicalJson.Value rawTarget = payloadValue(payload, "target");
                 if (rawTarget != null && !(rawTarget instanceof CanonicalJson.Null)
