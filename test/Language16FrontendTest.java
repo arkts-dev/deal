@@ -131,6 +131,21 @@ public final class Language16FrontendTest {
         check("function f(xs:number[]|null):void{xs.map((x:number):number=>x);}", false);
         check("function f(xs:number[]):string[]{return xs.map((x:number):number=>x);}", false);
         check("class C{map:()=>number;}function f(c:C):number{return c.map();}", true);
+        for (String method : List.of("find", "findIndex")) {
+            check("function f(xs:number[]):void{xs."+method+"((x:number,i:number,a:number[]):boolean=>x+i===a.length);}", true);
+            check("function f(xs:number[]):void{xs."+method+"(():boolean=>true);}", true);
+            for (String parameters : List.of("", "1", "():number=>1", "(x:string):boolean=>true",
+                    "(x:number,i:string):boolean=>true", "(x:number,i:number,a:string[]):boolean=>true",
+                    "(x:number,i:number,a:number[],fourth:number):boolean=>true", "async(x:number):Promise<boolean>=>true",
+                    "(x:number):void=>console.log(String(x))", "():boolean=>true,1"))
+                check("function f(xs:number[]):void{xs."+method+"("+parameters+");}", false);
+            check("function f(xs:number[]):void{let detached=xs."+method+";}", false);
+            check("function f(xs:number[]|null):void{xs."+method+"(():boolean=>true);}", false);
+            check("class C{"+method+":()=>number;}function f(c:C):number{return c."+method+"();}", true);
+        }
+        check("function f(xs:number[]):number|undefined{return xs.find(():boolean=>true);}", true);
+        check("function f(xs:number[]):number{return xs.find(():boolean=>true);}", false);
+        check("function f(xs:number[]):number{return xs.findIndex(():boolean=>true);}", true);
         check("function f(xs:number[]):number[]{return xs.splice(1,2);}", true);
         check("function f(xs:(number|null)[]):(number|null)[]{return xs.splice(1,2);}", true);
         check("function f(xs:unknown[]):unknown[]{return xs.splice(1,2);}", true);

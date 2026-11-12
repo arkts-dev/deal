@@ -124,6 +124,8 @@ public final class Language16RuntimeTest {
         arrayRemovalAdmission("search-live-retry");
         arrayRemovalAdmission("join-live-retry");
         arrayRemovalAdmission("map-live-retry");
+        arrayRemovalAdmission("find-live-retry");
+        fixtureAdmission("arrays/find.deal", deal.semantic.ir.SemanticOpKind.ARRAY_ELEMENT_GET, -1);
         callableBodyAdmission();
         errorGraphAdmission();
         for (String fixture : List.of("core", "refinement", "assertion", "failures", "equality-loops", "json-values", "audit-scalars")) executeFixture(fixture);
@@ -521,16 +523,18 @@ public final class Language16RuntimeTest {
             long tests = result.trace().stream().filter(e -> e.kind()==kind
                 && e.phase()==deal.semantic.SemanticRuntimeModel.Phase.SUCCESS).count();
             if (expected >= 0 && tests!=expected) throw new AssertionError(fixture + " Oracle population: " + tests);
-            if (fixture.equals("arrays/map.deal")) {
+            if (fixture.equals("arrays/map.deal") || fixture.equals("arrays/find.deal")) {
                 var failures = result.trace().stream().filter(e -> e.kind()==deal.semantic.ir.SemanticOpKind.ARRAY_ELEMENT_GET
                     && e.phase()==deal.semantic.SemanticRuntimeModel.Phase.FAILURE).toList();
-                if(failures.size()!=1) throw new AssertionError("map shrink strict-read failure population: "+failures);
-                var event=failures.getFirst();var error=event.error();
-                var op=project.modules().get(event.op().module()).ops().stream().filter(o->o.opId().equals(event.op())).findFirst().orElseThrow();
-                String origin=op.origin().sourceId()+":"+op.origin().span().startLine()+":"+op.origin().span().startColumn();
-                if(!error.code().equals("E8002") || !error.message().equals("array index out of bounds")
-                        || error.expected()!=null || error.actual()!=null || error.cause()!=null
-                        || !error.origin().equals(origin) || error.frames().isEmpty()) throw new AssertionError(error);
+                if(failures.size()!=(fixture.equals("arrays/find.deal") ? 2 : 1)) throw new AssertionError("strict-read shrink failure population: "+failures);
+                for (var event : failures) {
+                    var error=event.error();
+                    var op=project.modules().get(event.op().module()).ops().stream().filter(o->o.opId().equals(event.op())).findFirst().orElseThrow();
+                    String origin=op.origin().sourceId()+":"+op.origin().span().startLine()+":"+op.origin().span().startColumn();
+                    if(!error.code().equals("E8002") || !error.message().equals("array index out of bounds")
+                            || error.expected()!=null || error.actual()!=null || error.cause()!=null
+                            || !error.origin().equals(origin) || error.frames().isEmpty()) throw new AssertionError(error);
+                }
             }
         } finally { CompositionProductionTest.remove(work); }
     }
@@ -1398,7 +1402,7 @@ public final class Language16RuntimeTest {
 
     /** Execute the same retained-mutation contract in the Oracle with genuine lowered bodies. */
     private static void arrayRemovalAdmission(String fixture) throws Exception {
-        boolean splice = fixture.startsWith("splice"), slice = fixture.startsWith("slice"), search = fixture.startsWith("search"), join = fixture.startsWith("join"), map = fixture.startsWith("map");
+        boolean splice = fixture.startsWith("splice"), slice = fixture.startsWith("slice"), search = fixture.startsWith("search"), join = fixture.startsWith("join"), map = fixture.startsWith("map") || fixture.startsWith("find");
         String operation = map ? "ARRAY_ELEMENT_GET" : join ? "ARRAY_JOIN" : search ? "ARRAY_SEARCH" : slice ? "ARRAY_SLICE" : splice ? "ARRAY_SPLICE" : "ARRAY_POP";
         Path work = Files.createTempDirectory(Path.of("build"), "pop-admission-").toAbsolutePath();
         try {
@@ -1407,7 +1411,8 @@ public final class Language16RuntimeTest {
                 Path.of("test/conformance/backend-runtime/arrays/" + fixture + ".deal")))
                 .replace("export function main():null", "export function run():null")
                 + "\nexport function main():null{return null;}\n"
-                + (map ? "export function hole():number{let xs:unknown[]=[undefined];host.keep(xs);host.corrupt();return xs.map((value:unknown):unknown=>value).length;}\n" : ""));
+                + (map ? "export function hole():number{let xs:unknown[]=[undefined];host.keep(xs);host.corrupt();return "
+                    + (fixture.startsWith("find") ? "xs.findIndex((value:unknown):boolean=>true);" : "xs.map((value:unknown):unknown=>value).length;") + "}\n" : ""));
             Path declaration = source.resolveSibling("probe.d.deal");
             Files.copy(Path.of("test/conformance/host-fixtures/" + (join ? "array_join" : "array_pop") + ".d.deal"), declaration);
             Files.writeString(work.resolve("deal.json"),
@@ -1536,7 +1541,7 @@ public final class Language16RuntimeTest {
                             || error.expected()!=null || error.actual()!=null || error.cause()!=null
                             || !error.origin().equals(origin) || error.frames().isEmpty()) throw new AssertionError(event);
                 } else if(!(hole.terminal() instanceof deal.semantic.SemanticRuntimeModel.Terminal.Success done)
-                        || !done.resultAtom().equals("num:0x1.0p0")) throw new AssertionError(hole.comparisonReport());
+                        || !done.resultAtom().equals(fixture.startsWith("find") ? "num:0x0.0p0" : "num:0x1.0p0")) throw new AssertionError(hole.comparisonReport());
             }
             int population = map || join ? 4 : slice || search ? 6 : 3;
             if (failures.size()!=population) throw new AssertionError(operation + " failure trace population: " + failures);

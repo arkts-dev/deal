@@ -94,6 +94,9 @@ function arrays(): number {
   let mapped: string[] = values.map((value: number, index: number, source: number[]): string =>
     `${index}/${source.length}: ${value}`);
   console.log(mapped.join("; "));
+  let selected: number | undefined = values.find((value: number): boolean => value > 1);
+  if (selected !== undefined) { console.log(String(selected)); }
+  console.log(String(values.findIndex((value: number): boolean => value > 1)));
   values[0] = 99;
   let maybe: (number | null)[] = [1, null, 3];
   let selected: number | null = maybe[1];

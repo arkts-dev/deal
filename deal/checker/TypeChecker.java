@@ -1639,9 +1639,12 @@ public final class TypeChecker {
                 && BuiltinCall.resolve(namespace.name(), member.field()) == BuiltinCall.ARRAY_FROM) {
             return checkArrayFrom(call, member);
         }
-        if (call.callee() instanceof MemberAccessExpr member && member.field().equals("map")) {
+        if (call.callee() instanceof MemberAccessExpr member && List.of("map", "find", "findIndex").contains(member.field())
+                && !(member.object() instanceof IdentifierExpr id
+                    && resolveVisibleBinding(id.name()) instanceof Symbol.ModuleSymbol)) {
             Type receiver = checkAddressOperand(member.object());
-            if (receiver instanceof Type.Array array) return checkArrayMap(call, member, array);
+            if (receiver instanceof Type.Array array) return member.field().equals("map")
+                ? checkArrayMap(call, member, array) : checkArrayFind(call, member, array);
         }
         if (call.callee() instanceof IdentifierExpr id && id.name().equals("String")
                 && resolveVisibleBinding(id.name()) instanceof Symbol.IntrinsicSymbol builtin) {
@@ -1805,6 +1808,25 @@ public final class TypeChecker {
         }
         recordExactClassDecl(call, target, declaration);
         return target;
+    }
+
+    private Type checkArrayFind(CallExpr call, MemberAccessExpr member, Type.Array source) {
+        Type.Func predicate = new Type.Func(List.of(source.element(), Type.Number.INSTANCE, source), Type.Boolean.INSTANCE);
+        Type result = member.field().equals("findIndex") ? Type.Number.INSTANCE : Types.optionalRead(source.element());
+        Type.Func signature = new Type.Func(List.of(predicate), result);
+        typeMap.put(member, signature);
+        List<Type> arguments = new ArrayList<>();
+        Type savedExpected = expectedType;
+        Symbol.ClassSymbol savedContext = contextualClassDecl;
+        expectedType = null;
+        contextualClassDecl = null;
+        try {
+            for (ExpressionNode argument : call.args()) arguments.add(checkExpression(argument));
+        } finally {
+            expectedType = savedExpected;
+            contextualClassDecl = savedContext;
+        }
+        return checkFunctionCall(call, signature, arguments);
     }
 
     private Type checkArrayMap(CallExpr call, MemberAccessExpr member, Type.Array source) {
@@ -2027,7 +2049,7 @@ public final class TypeChecker {
                 return intrinsic.signature(directBuiltinCall.args().size());
             }
         }
-        if (objType instanceof Type.Array && field.equals("map")) {
+        if (objType instanceof Type.Array && List.of("map", "find", "findIndex").contains(field)) {
             error(DiagnosticCode.E3001, "Receiver intrinsics support direct calls only", mae.span());
             return Type.Error.INSTANCE;
         }
