@@ -67,6 +67,7 @@ function counter(start: number): () => number {
 // includes(value, fromIndex?) tests membership (including NaN); indexOf uses
 // strict equality and returns the first zero-based match or -1. Negative
 // fromIndex counts from the end. Both stop at the first match.
+// string arrays join(separator) into one string; the separator is required.
 function sumAll(values: number[]): number {
   let total: number = 0;
   for (let value of values) { total = total + value; }
@@ -86,7 +87,7 @@ function arrays(): number {
   // Like for-of it observes live changes to the once-evaluated source.
   let labels: string[] = Array.from(values, (value: number, index: number): string =>
     `${index}: ${value}`);
-  console.log(labels[0]);
+  console.log(labels.join("; "));
   values[0] = 99;
   let maybe: (number | null)[] = [1, null, 3];
   let selected: number | null = maybe[1];

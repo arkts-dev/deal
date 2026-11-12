@@ -1,0 +1,26 @@
+// @spec: Arrays
+// @description: Join consumes current string slots in order, preserves rollback and readmits repaired storage
+// @expected: runtime-ok
+import * as host from "host/probe";
+function check(ok:boolean,detail:string):void{if(!ok){throw {code:detail,message:detail};}}
+export function main():null{
+  let xs:string[]=["a","b","c"];let alias=xs;host.keep(xs);
+  let result="unchanged";host.replace(2,undefined);host.replace(1,null);
+  try{result=xs.join("|");}catch(e){check((e as Error).code==="E8003" && (e as Error).message==="array element 2 type mismatch","first reached failure");}
+  check(result==="unchanged" && host.size()===3 && alias===xs,"first rollback");
+  host.replace(1,"b");
+  try{result=xs.join("|");}catch(e){check((e as Error).code==="E8003" && (e as Error).message==="array element 3 type mismatch","present undefined rejects");}
+  check(result==="unchanged" && xs===alias && host.size()===3,"second rollback");
+  host.replace(2,"c");check(xs.join("|")==="a|b|c" && xs===alias,"repair same storage");
+  let decoded:string[]=JSON.parse("[\"d\",\"e\"]");host.keep(decoded);host.replace(0,null);
+  try{result=decoded.join("-");}catch(e){check((e as Error).code==="E8003" && (e as Error).message==="array element 1 type mismatch","decoded live slot");}
+  check(result==="unchanged" && host.size()===2,"decoded rollback");
+  host.replace(0,"d");check(decoded.join("-")==="d-e","decoded repair");
+  let sep=():string=>{host.append("f");return "|";};
+  check(decoded.join(sep())==="d|e|f" && decoded.length===3,"host growth before snapshot");
+  let corruptSeparator=():string=>{host.replace(1,null);return "|";};
+  try{result=decoded.join(corruptSeparator());}catch(e){check((e as Error).message==="array element 2 type mismatch","separator mutation before reads");}
+  check(result==="unchanged" && host.size()===3,"separator corruption rollback");host.replace(1,"e");
+  check(decoded.join("|")==="d|e|f","final repair");
+  return null;
+}

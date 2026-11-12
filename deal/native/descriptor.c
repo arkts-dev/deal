@@ -1593,6 +1593,55 @@ deal_outcome_data deal_array_splice(deal_array *array, double from, double delet
     return result;
 }
 
+deal_outcome_data deal_array_join(deal_array *array, deal_string *separator, const deal_origin *origin) {
+    deal_outcome_data result = {0};
+    size_t length = deal_container_array_count(array);
+    size_t used = 0u, capacity = 0u;
+    unsigned char *bytes = NULL;
+    deal_root_scope_push();
+    (void)deal_root_scope_hold(array);
+    (void)deal_root_scope_hold(separator);
+    deal_descriptor *element = deal_descriptor_intern("string");
+    for (size_t i = 0u; i < length; i++) {
+        deal_check_input input = deal_live_element(array, i);
+        deal_check_context context = {0};
+        context.origin = origin;
+        deal_outcome checked = deal_check_live_value_core(element, input, DEAL_BOUNDARY_TYPE_DESCRIPTOR, &context, 0);
+        if (checked.error != NULL) {
+            char index_text[3u * sizeof(size_t) + 1u];
+            size_t end = sizeof(index_text) - 1u;
+            index_text[end] = '\0';
+            size_t index = i + 1u;
+            do { index_text[--end] = (char)('0' + index % 10u); index /= 10u; } while (index != 0u);
+            deal_arm_parameter parameter = {"oneBasedIndex", &index_text[end]};
+            result.error = deal_error_materialize(DEAL_ARM_ID_ARRAY_ELEMENT_KIND,
+                &parameter, 1u, "string", deal_check_token(&input), origin, checked.error);
+            break;
+        }
+        deal_string *value = (deal_string *)input.datum.reference;
+        size_t separator_bytes = i == 0u ? 0u : deal_text_byte_length(separator);
+        size_t value_bytes = deal_text_byte_length(value);
+        size_t needed = deal_platform_checked_add(used, deal_platform_checked_add(separator_bytes, value_bytes));
+        if (needed > capacity) {
+            size_t grown = capacity == 0u ? 64u : capacity;
+            while (grown < needed) grown = deal_platform_checked_multiply(grown, 2u);
+            unsigned char *next = deal_platform_allocate(grown);
+            if (used != 0u) memcpy(next, bytes, used);
+            deal_platform_release(bytes);
+            bytes = next;
+            capacity = grown;
+        }
+        if (separator_bytes != 0u) memcpy(bytes + used, deal_text_bytes(separator), separator_bytes);
+        used += separator_bytes;
+        if (value_bytes != 0u) memcpy(bytes + used, deal_text_bytes(value), value_bytes);
+        used += value_bytes;
+    }
+    if (result.error == NULL) result.value = deal_data_of_reference(DEAL_DATA_STRING, deal_text_new(bytes, used));
+    deal_platform_release(bytes);
+    deal_root_scope_pop();
+    return result;
+}
+
 deal_outcome_data deal_array_search(deal_array *array, const deal_data *needle, double from,
                                      uint32_t includes, deal_descriptor *element, const deal_origin *origin) {
     deal_outcome_data result = {0};

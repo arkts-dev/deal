@@ -1122,8 +1122,13 @@ public class CorpusConformanceTest {
                 if (!hostNames.equals(Set.of("probe"))) throw new HarnessFailure("hostFixture requires exactly host/probe");
                 hostRoot = projectRoot.resolve("host-fixtures");
                 Files.createDirectories(hostRoot);
-                for (String suffix : List.of(".d.deal", ".js", ".lua", ".java"))
-                    Files.copy(hostFixturesRoot.resolve(hostFixture + suffix), hostRoot.resolve("probe" + suffix));
+                for (String suffix : List.of(".d.deal", ".js", ".lua", ".java")) {
+                    String companion = Files.readString(hostFixturesRoot.resolve(hostFixture + suffix));
+                    if (suffix.equals(".java")) companion = companion.replace(
+                        deal.codegen.jvm.JvmNames.classNameFor("host/" + hostFixture),
+                        deal.codegen.jvm.JvmNames.classNameFor("host/probe"));
+                    Files.writeString(hostRoot.resolve("probe" + suffix), companion);
+                }
             }
             Map<String, String> externals =
                 writeProjectManifest(projectRoot, hostNames, hostRoot);

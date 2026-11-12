@@ -1850,6 +1850,7 @@ record NumValue(double value) implements Value {
                 case ARRAY_SPLICE -> executeArraySplice(op);
                 case ARRAY_SLICE -> executeArraySlice(op);
                 case ARRAY_SEARCH -> executeArraySearch(op);
+                case ARRAY_JOIN -> executeArrayJoin(op);
                 case MEMBER_READ -> executeMemberRead(op);
                 case MEMBER_WRITE, MEMBER_DELETE, INDEX_WRITE, INDEX_DELETE,
                      FIELD_WRITE, FIELD_DELETE -> executeCommit(op);
@@ -2122,6 +2123,26 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                 entries.put(entry.key(), valueOf(entry.value()));
             }
             return publish(op, new Value.TableValue(entries));
+        }
+
+        private String executeArrayJoin(SemanticOp op) {
+            KindPayload.ArrayJoinPayload payload = (KindPayload.ArrayJoinPayload) op.payload();
+            Value.ArrayValue array = (Value.ArrayValue) valueOf(payload.arrayValue());
+            String separator = ((Value.StrValue) valueOf(payload.separator())).value();
+            int length = array.elements().size();
+            StringBuilder text = new StringBuilder();
+            for (int i = 0; i < length; i++) {
+                if (i != 0) text.append(separator);
+                Value value = i < array.elements().size() ? array.elements().get(i) : Value.MissingValue.INSTANCE;
+                if (value instanceof Value.MissingValue) continue;
+                BoundaryOutcome outcome = BoundaryExecutor.execute(FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR,
+                    RuntimeDescriptor.String.INSTANCE, viewOfValue(value), BoundaryContext.element(i + 1),
+                    new deal.semantic.ir.BoundaryRealization.RuntimeValidation("array-join"));
+                if (outcome instanceof BoundaryOutcome.Fail fail)
+                    throw DealFailure.of(fail.failure(), op.origin(), List.copyOf(frames));
+                text.append(((Value.StrValue) valueOfView(((BoundaryOutcome.Pass) outcome).value(), value)).value());
+            }
+            return publish(op, new Value.StrValue(text.toString()));
         }
 
         private String executeArraySearch(SemanticOp op) {

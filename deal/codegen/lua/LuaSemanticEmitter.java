@@ -1572,6 +1572,7 @@ public final class LuaSemanticEmitter {
                 case ARRAY_SPLICE -> emitArraySplice(op);
                 case ARRAY_SLICE -> emitArraySlice(op);
                 case ARRAY_SEARCH -> emitArraySearch(op);
+                case ARRAY_JOIN -> emitArrayJoin(op);
                 case MEMBER_READ -> emitMemberRead(op);
                 case MEMBER_WRITE -> emitMemberWrite(op);
                 case MEMBER_DELETE -> emitMemberDelete(op);
@@ -1990,6 +1991,22 @@ public final class LuaSemanticEmitter {
                     .append(")\n");
             }
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
+        }
+
+        private void emitArrayJoin(SemanticOp op) {
+            KindPayload.ArrayJoinPayload payload = (KindPayload.ArrayJoinPayload) op.payload();
+            String target = slot((ValueId) op.result());
+            emitStart(op);
+            out.append("do local a=").append(slot(payload.arrayValue()))
+                .append("; local sep=").append(slot(payload.separator()))
+                .append("; local n=a[__dealCarrierKeys.n] or 0; while rawget(a,n+1) ~= nil do n=n+1 end; local parts={}\n")
+                .append("for i=1,n do local v=rawget(a,i); if v == nil then parts[i]=\"\" else __okB,__chkB=pcall(__bcheck,")
+                .append(bcheckArgs(RuntimeDescriptor.String.INSTANCE, "v")).append(")\n")
+                .append("if not __okB then local failure=__arm(\"ARRAY_ELEMENT_KIND\",{oneBasedIndex=i},")
+                .append(luaString(originOf(op))).append(",\"string\",__elemRefKind(\"string\",v)); ")
+                .append("failure.cause=(__chkB.code == \"E8003\" and __chkB.cause) or __chkB; error(failure,0) end; parts[i]=__chkB end end\n")
+                .append(target).append("=table.concat(parts,sep) end\n");
+            emitResultSuccess(op, target, RuntimeDescriptor.String.INSTANCE);
         }
 
         private void emitArraySearch(SemanticOp op) {

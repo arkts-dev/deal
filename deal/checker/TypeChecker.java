@@ -1995,12 +1995,19 @@ public final class TypeChecker {
                 return intrinsic.signature(directBuiltinCall.args().size());
             }
         }
-        if (objType instanceof Type.Array array && List.of("push", "pop", "splice", "slice", "includes", "indexOf").contains(field)) {
+        if (objType instanceof Type.Array array && List.of("push", "pop", "splice", "slice", "includes", "indexOf", "join").contains(field)) {
             if (directBuiltinCall == null || mae != directBuiltinCall.callee()) {
                 error(DiagnosticCode.E3001, "Receiver intrinsics support direct calls only", mae.span());
                 return Type.Error.INSTANCE;
             }
             return switch (field) {
+                case "join" -> {
+                    if (!array.element().equals(Type.String.INSTANCE)) {
+                        error(DiagnosticCode.E3001, "join requires a string array receiver", mae.span());
+                        yield Type.Error.INSTANCE;
+                    }
+                    yield new Type.Func(List.of(Type.String.INSTANCE), Type.String.INSTANCE, false);
+                }
                 case "push" -> new Type.Func(List.of(array.element()), Type.Number.INSTANCE, false);
                 case "pop" -> new Type.Func(List.of(), Types.optionalRead(array.element()), false);
                 case "includes", "indexOf" -> new Type.Func(

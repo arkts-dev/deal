@@ -2478,6 +2478,22 @@ const $rt = {
     return value;
   },
 
+  arrayJoin: function(v, separator, file, line, column) {
+    const length = $rt.arrayLength(v), parts = [];
+    for (let i = 0; i < length; i++) {
+      if (!$rt.arrayHas(v, i)) { parts.push(""); continue; }
+      const value = $rt.arrayAt(v, i);
+      try { parts.push($rt.checkType("string", value, file, line, column)); }
+      catch (cause) {
+        const failure = new $DEALError("E8003", "array element " + (i + 1) + " type mismatch",
+          file, line, column, "string", $elemKindOf(value));
+        failure.cause = cause.code === "E8003" && cause.cause ? cause.cause : cause;
+        throw failure;
+      }
+    }
+    return parts.join(separator);
+  },
+
   arraySearch: function(v, needle, from, includes, descriptor, file, line, column) {
     const length = $rt.arrayLength(v);
     const integer = Number.isNaN(from) ? 0 : Math.trunc(from);

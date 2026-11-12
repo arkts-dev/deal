@@ -1,0 +1,4 @@
+export function keep(value:unknown):void;
+export function replace(index:number,value:unknown):void;
+export function append(value:string):void;
+export function size():number;

@@ -14,6 +14,7 @@ public enum SemanticOpKind {
     ARRAY_SPLICE,
     ARRAY_SLICE,
     ARRAY_SEARCH,
+    ARRAY_JOIN,
     MEMBER_READ,
     MEMBER_WRITE,
     MEMBER_DELETE,
@@ -81,6 +82,7 @@ public enum SemanticOpKind {
             case ARRAY_SPLICE -> KindPayload.ArraySplicePayload.class;
             case ARRAY_SLICE -> KindPayload.ArraySlicePayload.class;
             case ARRAY_SEARCH -> KindPayload.ArraySearchPayload.class;
+            case ARRAY_JOIN -> KindPayload.ArrayJoinPayload.class;
             case MEMBER_READ -> KindPayload.MemberReadPayload.class;
             case MEMBER_WRITE -> KindPayload.MemberWritePayload.class;
             case MEMBER_DELETE -> KindPayload.MemberDeletePayload.class;

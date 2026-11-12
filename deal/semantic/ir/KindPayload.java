@@ -16,6 +16,7 @@ public sealed interface KindPayload
             KindPayload.ArraySplicePayload,
             KindPayload.ArraySlicePayload,
             KindPayload.ArraySearchPayload,
+            KindPayload.ArrayJoinPayload,
             KindPayload.MemberReadPayload,
             KindPayload.MemberWritePayload,
             KindPayload.MemberDeletePayload,
@@ -303,6 +304,14 @@ public sealed interface KindPayload
             Objects.requireNonNull(arrayValue, "arrayValue");
             Objects.requireNonNull(start, "start");
             Objects.requireNonNull(deleteCount, "deleteCount");
+        }
+    }
+
+    /** Ordered string-element reads from a post-argument length snapshot. */
+    record ArrayJoinPayload(ValueId arrayValue, ValueId separator) implements KindPayload {
+        public ArrayJoinPayload {
+            Objects.requireNonNull(arrayValue, "arrayValue");
+            Objects.requireNonNull(separator, "separator");
         }
     }
 

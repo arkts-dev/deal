@@ -3289,6 +3289,25 @@ case "NUMBER_ADD" -> {
     // Array read/bounds cells (shared slot-space context)
     // =========================================================================
 
+    public static String arrayJoin(Array array, String separator, String origin) {
+        int length = array.length();
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < length; i++) {
+            if (i != 0) text.append(separator);
+            Object value = i < array.elements.size() ? array.elements.get(i) : MISSING;
+            if (value == MISSING) continue;
+            try { text.append((String) bcheck("string", "unknown", value, "string")); }
+            catch (DealError cause) {
+                DealError outer = arm(deal.semantic.ir.FailureArmId.ARRAY_ELEMENT_KIND,
+                    java.util.Map.of("oneBasedIndex", Integer.toString(i + 1)), origin, "string",
+                    elementActualOf("unknown", value));
+                DealError leaf = cause.code.equals("E8003") && cause.cause != null ? cause.cause : cause;
+                throw new DealError(outer.code, outer.msg, outer.origin, outer.expected, outer.actual, outer.frames, leaf);
+            }
+        }
+        return text.toString();
+    }
+
     public static Object arraySearch(Array array, Object needle, double from, boolean includes,
                                      String descriptor, String canonical, String origin) {
         int length = array.length();

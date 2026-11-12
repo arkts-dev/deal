@@ -1503,6 +1503,7 @@ public final class JvmSemanticEmitter {
                 case ARRAY_SPLICE -> emitArraySplice(op, indent);
                 case ARRAY_SLICE -> emitArraySlice(op, indent);
                 case ARRAY_SEARCH -> emitArraySearch(op, indent);
+                case ARRAY_JOIN -> emitArrayJoin(op, indent);
                 case MEMBER_READ -> emitMemberRead(op, indent);
                 case MEMBER_WRITE -> emitMemberWrite(op, indent);
                 case MEMBER_DELETE -> emitMemberDelete(op, indent);
@@ -1999,6 +2000,16 @@ public final class JvmSemanticEmitter {
                     .append(slot(entry.value())).append(");\n");
             }
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType(), indent);
+        }
+
+        private void emitArrayJoin(SemanticOp op, int indent) {
+            KindPayload.ArrayJoinPayload payload = (KindPayload.ArrayJoinPayload) op.payload();
+            emitStart(op, indent);
+            out.append(indent(indent)).append(slot((ValueId) op.result()))
+                .append(" = JvmRuntime.arrayJoin((JvmRuntime.Array) ").append(slot(payload.arrayValue()))
+                .append(", (String) ").append(slot(payload.separator())).append(", ")
+                .append(javaString(originOf(op))).append(");\n");
+            emitResultSuccess(op, slot((ValueId) op.result()), RuntimeDescriptor.String.INSTANCE, indent);
         }
 
         private void emitArraySearch(SemanticOp op, int indent) {

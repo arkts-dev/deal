@@ -1048,6 +1048,7 @@ public final class JsSemanticEmitter {
                 case ARRAY_SPLICE -> emitArraySplice(op);
                 case ARRAY_SLICE -> emitArraySlice(op);
                 case ARRAY_SEARCH -> emitArraySearch(op);
+                case ARRAY_JOIN -> emitArrayJoin(op);
                 case MEMBER_READ -> emitMemberRead(op);
                 case MEMBER_WRITE -> emitMemberWrite(op);
                 case MEMBER_DELETE -> emitMemberDelete(op);
@@ -1320,6 +1321,12 @@ case NUMBER_ADD -> "(" + numeric(left) + " + "
             }
             expression.append("})");
             emit(slotOf(op) + " = " + expression + ";");
+        }
+
+        private void emitArrayJoin(SemanticOp op) {
+            KindPayload.ArrayJoinPayload payload = (KindPayload.ArrayJoinPayload) op.payload();
+            emit(slotOf(op) + " = $rt.arrayJoin(" + slot(payload.arrayValue()) + ", "
+                + slot(payload.separator()) + ", " + spanArgs(op) + ");");
         }
 
         private void emitArraySearch(SemanticOp op) {

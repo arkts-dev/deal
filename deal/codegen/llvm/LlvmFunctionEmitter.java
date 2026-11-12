@@ -653,6 +653,7 @@ final class LlvmFunctionEmitter {
             case ARRAY_SPLICE -> emitArraySplice(op);
             case ARRAY_SLICE -> emitArraySlice(op);
             case ARRAY_SEARCH -> emitArraySearch(op);
+            case ARRAY_JOIN -> emitArrayJoin(op);
             case MEMBER_READ -> emitMemberRead(op);
             case OPTIONAL_READ -> emitOptionalRead(op);
             case MEMBER_WRITE -> emitMemberWrite(op);
@@ -4982,6 +4983,20 @@ final class LlvmFunctionEmitter {
         emit("store " + LlvmTypeMapper.DATA + " " + datum + ", "
             + LlvmTypeMapper.DATA + "* " + slot);
         return slot;
+    }
+
+    private void emitArrayJoin(SemanticOp op) {
+        KindPayload.ArrayJoinPayload payload = (KindPayload.ArrayJoinPayload) op.payload();
+        session.referenceRuntimeEntry("deal_array_join");
+        String array = loadValue(payload.arrayValue(), LlvmTypeMapper.ARRAY, op);
+        String separator = loadValue(payload.separator(), LlvmTypeMapper.STRING, op);
+        String outcome = callRecord(op, "%struct.deal_outcome_data", "deal_array_join",
+            LlvmTypeMapper.ARRAY + " " + array + ", " + LlvmTypeMapper.STRING + " " + separator
+                + ", %struct.deal_origin* " + originValue(op));
+        String error = emitTemporary(op, "extractvalue %struct.deal_outcome_data " + outcome + ", 0");
+        branchOnFailure(op, error, "arrayjoin");
+        String result = emitTemporary(op, "extractvalue %struct.deal_outcome_data " + outcome + ", 1");
+        storeResult(op, LlvmTypeMapper.STRING, datumToRepresentation(RuntimeDescriptor.String.INSTANCE, result, op));
     }
 
     private void emitArraySearch(SemanticOp op) {

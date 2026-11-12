@@ -1345,6 +1345,43 @@ public class SemanticIrValidatorTest {
         }
         }
 
+        for (String defect : List.of("none", "receiver", "separator", "result", "operand", "type", "array-type", "policy", "forward")) {
+            var arrayType = new RuntimeDescriptor.Array(defect.equals("array-type") ? INT : STR);
+            SemanticOp array = op(SemanticOpKind.ARRAY_NEW, new KindPayload.ArrayNewPayload(arrayType.element(), List.of(), List.of()),
+                nextValue(), arrayType, FailurePolicyId.NO_DEAL_FAILURE, null);
+            SemanticOp separator = op(SemanticOpKind.CONST, new KindPayload.ConstPayload(new ScalarValue.String("|")),
+                nextValue(), STR, FailurePolicyId.NO_DEAL_FAILURE, null);
+            var payload = new KindPayload.ArrayJoinPayload(
+                defect.equals("receiver") ? nextValue() : (ValueId)array.result(),
+                defect.equals("separator") ? nextValue() : (ValueId)separator.result());
+            RuntimeDescriptor result = defect.equals("result") ? INT : STR;
+            List<ValueId> operands = List.of((ValueId)array.result(), defect.equals("operand") ? nextValue() : (ValueId)separator.result());
+            List<RuntimeDescriptor> types = List.of(arrayType, defect.equals("type") ? INT : STR);
+            FailurePolicyId policy = defect.equals("policy") ? FailurePolicyId.NO_DEAL_FAILURE : FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR;
+            var contract = contractFor(SemanticOpKind.ARRAY_JOIN, payload, result, types, policy, "placeholder");
+            contract = contractFor(SemanticOpKind.ARRAY_JOIN, payload, result, types, policy,
+                ContractSnapshotCanonicalizer.digest(contract));
+            SemanticOp join = new SemanticOp(nextOpId(), SemanticOpKind.ARRAY_JOIN, origin(null), nextValue(),
+                result, operands, types, payload, policy, contract);
+            var fixture = unit(defect.equals("forward") ? List.of(array, join, separator) : List.of(array, separator, join));
+            var rebuilt = deal.semantic.ir.RawUnitMaterializer.materialize(RawUnit.fromTyped(fixture));
+            if (defect.equals("none")) {
+                assertUnitPass(fixture, FACTS, "array join exact string descriptors");
+                assertUnitPass(rebuilt, FACTS, "array join raw admission");
+                checkEq(SemanticIrValidator.toUnitText(fixture), SemanticIrValidator.toUnitText(rebuilt), "join lossless transport");
+            } else {
+                var typed = SemanticIrValidator.validate(fixture, FACTS);
+                assertE6005(typed, defect.equals("policy") ? "R-POLICY-KIND" : "R-ENUM", "ARRAY_JOIN");
+                check(typed.orElseThrow().range().equals(join.origin().span().range()), "join rejection origin: " + defect);
+                if (!defect.equals("policy")) check(typed.orElseThrow().message().contains(
+                    "ARRAY_JOIN requires preceding string-array/string operands and a string result descriptor"),
+                    "join exact shape failure: " + defect);
+                check(typed.equals(SemanticIrValidator.validate(rebuilt, FACTS))
+                    && typed.equals(SemanticIrValidator.validateText(SemanticIrValidator.toUnitText(fixture), FACTS)),
+                    "join typed/raw/text rejection agrees: " + defect);
+            }
+        }
+
         for (String defect : List.of("none", "receiver", "result", "operand", "type", "policy", "forward")) {
             var tableType = RuntimeDescriptor.Table.INSTANCE;
             SemanticOp table = op(SemanticOpKind.TABLE_NEW, new KindPayload.TableNewPayload(List.of()),

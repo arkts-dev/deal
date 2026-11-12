@@ -1,0 +1,28 @@
+// @spec: Arrays
+// @description: String array join preserves units, saved receiver and post-argument length
+// @expected: runtime-ok
+function check(ok:boolean,detail:string):void{if(!ok){throw {code:"CHECK",message:detail};}}
+export function main():null{
+  let empty:string[]=[];check(empty.join("-")==="","empty");
+  let singleton:string[]=["one"];check(singleton.join("-")==="one","singleton");
+  let xs:string[]=["a","","b"];
+  check(xs.join("|")==="a||b" && xs.join("")==="ab","empty elements and separator");
+  let units:string[]=["\uD800","\uDC00","\0","\uDFFF"];
+  check(units.join("")==="\uD800\uDC00\0\uDFFF","code unit concatenation");
+  check(units.join("\0\uD800")==="\uD800\0\uD800\uDC00\0\uD800\0\0\uD800\uDFFF","separator units");
+  let decoded:string[]=JSON.parse("[\"a\",\"b\",\"\"]");
+  check(decoded.join("--")==="a--b--" && decoded.length===3,"decoded storage");
+  let log="";let original:string[]=["a"];let current:string[]=original;
+  let receiver=():string[]=>{log=log+"r";return current;};
+  let separator=():string=>{log=log+"s";original.push("b");current=["new"];return "|";};
+  let result="old";result=receiver().join(separator());
+  check(log==="rs" && result==="a|b" && original.length===2 && current[0]==="new","saved receiver and snapshot");
+  log="";let stop=():string=>{log=log+"s";throw {code:"STOP",message:"separator"};};
+  try{result=receiver().join(stop());}catch(e){check((e as Error).code==="STOP","abrupt error");}
+  check(log==="rs" && result==="a|b" && current.length===1,"abrupt rollback");
+  let text="";let many:string[]=[];
+  let i=0;while(i<1024){many.push("x\0\uD800");if(i!==0){text=text+"\uDC00";}text=text+"x\0\uD800";i=i+1;}
+  check(many.join("\uDC00")===text,"large lossless join");
+  check(xs[0]==="a" && xs[1]==="" && xs[2]==="b","source unchanged");
+  return null;
+}

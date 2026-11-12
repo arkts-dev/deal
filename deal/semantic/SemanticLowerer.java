@@ -8116,6 +8116,23 @@ public final class SemanticLowerer {
         private ValueId lowerCallSite(CallExpr call, ValueId slot) {
             if (call.callee() instanceof MemberAccessExpr member
                     && checkedType(member.object()) instanceof Type.Array array
+                    && member.field().equals("join")) {
+                RuntimeDescriptor descriptor = ContainerPayloadDescriptors.resultDescriptorOf(array);
+                ValueId receiver = lowerOperand(member.object());
+                BindingId saved = ids.nextBindingId(module, nextOrdinal++, 0);
+                emitUserNullOp(SemanticOpKind.BINDING_ALLOC, new KindPayload.BindingAllocPayload(saved,
+                    currentBlock(), true, BindingCellKind.DIRECT, 0), call.span(), FailurePolicyId.NO_DEAL_FAILURE);
+                emitUserNullOp(SemanticOpKind.BINDING_INIT, new KindPayload.BindingInitPayload(saved, 0, receiver),
+                    call.span(), FailurePolicyId.NO_DEAL_FAILURE);
+                ValueId separator = lowerOperand(call.args().getFirst());
+                receiver = emitBuiltinLoad(saved, descriptor, call.span(), null);
+                return emitOperandOp(SemanticOpKind.ARRAY_JOIN,
+                    new KindPayload.ArrayJoinPayload(receiver, separator), List.of(receiver, separator),
+                    List.of(descriptor, RuntimeDescriptor.String.INSTANCE), call.span(), RuntimeDescriptor.String.INSTANCE,
+                    FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, slot);
+            }
+            if (call.callee() instanceof MemberAccessExpr member
+                    && checkedType(member.object()) instanceof Type.Array array
                     && List.of("includes", "indexOf").contains(member.field())) {
                 RuntimeDescriptor.Array descriptor = (RuntimeDescriptor.Array) ContainerPayloadDescriptors.resultDescriptorOf(array);
                 ValueId receiver = lowerOperand(member.object());
