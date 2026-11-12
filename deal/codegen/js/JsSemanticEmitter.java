@@ -1047,6 +1047,7 @@ public final class JsSemanticEmitter {
                 case OBJECT_KEYS -> emit(slotOf(op) + " = $rt.objectKeys(" + slot(((KindPayload.ObjectKeysPayload) op.payload()).receiver()) + ");");
                 case ARRAY_SPLICE -> emitArraySplice(op);
                 case ARRAY_SLICE -> emitArraySlice(op);
+                case ARRAY_SEARCH -> emitArraySearch(op);
                 case MEMBER_READ -> emitMemberRead(op);
                 case MEMBER_WRITE -> emitMemberWrite(op);
                 case MEMBER_DELETE -> emitMemberDelete(op);
@@ -1319,6 +1320,14 @@ case NUMBER_ADD -> "(" + numeric(left) + " + "
             }
             expression.append("})");
             emit(slotOf(op) + " = " + expression + ";");
+        }
+
+        private void emitArraySearch(SemanticOp op) {
+            KindPayload.ArraySearchPayload payload = (KindPayload.ArraySearchPayload) op.payload();
+            RuntimeDescriptor element = ((RuntimeDescriptor.Array) op.operandTypes().getFirst()).element();
+            emit(slotOf(op) + " = $rt.arraySearch(" + slot(payload.arrayValue()) + ", "
+                + slot(payload.value()) + ", " + numeric(slot(payload.fromIndex())) + ", " + payload.includes() + ", "
+                + jsString(element.canonicalSpecText()) + ", " + spanArgs(op) + ");");
         }
 
         private void emitArraySlice(SemanticOp op) {

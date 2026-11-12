@@ -1849,6 +1849,7 @@ record NumValue(double value) implements Value {
                 case OBJECT_KEYS -> executeObjectKeys(op);
                 case ARRAY_SPLICE -> executeArraySplice(op);
                 case ARRAY_SLICE -> executeArraySlice(op);
+                case ARRAY_SEARCH -> executeArraySearch(op);
                 case MEMBER_READ -> executeMemberRead(op);
                 case MEMBER_WRITE, MEMBER_DELETE, INDEX_WRITE, INDEX_DELETE,
                      FIELD_WRITE, FIELD_DELETE -> executeCommit(op);
@@ -2121,6 +2122,35 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                 entries.put(entry.key(), valueOf(entry.value()));
             }
             return publish(op, new Value.TableValue(entries));
+        }
+
+        private String executeArraySearch(SemanticOp op) {
+            KindPayload.ArraySearchPayload payload = (KindPayload.ArraySearchPayload) op.payload();
+            Value.ArrayValue array = (Value.ArrayValue) valueOf(payload.arrayValue());
+            Value needle = valueOf(payload.value());
+            int length = array.elements().size();
+            int start = deal.semantic.ir.NumberSemantics.spliceStart(numberUse(valueOf(payload.fromIndex())), length);
+            RuntimeDescriptor element = ((RuntimeDescriptor.Array) op.operandTypes().getFirst()).element();
+            for (int i = start; i < length; i++) {
+                Value value = i < array.elements().size() ? array.elements().get(i) : Value.MissingValue.INSTANCE;
+                if (value instanceof Value.MissingValue) {
+                    if (!payload.includes()) continue;
+                    value = Value.UndefinedValue.INSTANCE;
+                } else {
+                    BoundaryOutcome outcome = BoundaryExecutor.execute(FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR,
+                        element, viewOfValue(value), BoundaryContext.element(i + 1),
+                        new deal.semantic.ir.BoundaryRealization.RuntimeValidation("array-search"));
+                    if (outcome instanceof BoundaryOutcome.Fail fail)
+                        throw DealFailure.of(fail.failure(), op.origin(), List.copyOf(frames));
+                    value = valueOfView(((BoundaryOutcome.Pass) outcome).value(), value);
+                }
+                boolean equal = ComparisonExecutor.compare(deal.semantic.ir.BinarySelector.UNKNOWN_EQ,
+                    viewOf(value), viewOf(needle), null, null);
+                if (payload.includes() && value instanceof Value.NumValue n && needle instanceof Value.NumValue r
+                        && Double.isNaN(n.value()) && Double.isNaN(r.value())) equal = true;
+                if (equal) return publish(op, payload.includes() ? new Value.BoolValue(true) : new Value.NumValue(i));
+            }
+            return publish(op, payload.includes() ? new Value.BoolValue(false) : new Value.NumValue(-1));
         }
 
         private String executeArraySlice(SemanticOp op) {

@@ -34,6 +34,8 @@ Array.push evaluates receiver then value once before capturing the live append p
 
 Array.slice carries once-evaluated receiver/start/end in ARRAY_SLICE with exact array/number/number descriptors. Normalize relative bounds against the saved receiver's length after argument effects, without swapping. Admit selected present elements in ascending source position, preserve missing positions where supported by storage, and publish fresh shallow typed storage only on success; never mutate the source or validate unselected elements.
 
+Array.includes/indexOf lower to ARRAY_SEARCH with exact array/element/number operands. Save the receiver before needle evaluation; admit and save the contextual/adapted needle before fromIndex. Binding-backed operands preserve this order inside assignment chains. Snapshot length only after arguments, clamp relative fromIndex, admit reached present elements in order and stop at the first match. Includes uses SameValueZero and reads holes as undefined; indexOf uses strict equality and skips holes. Preserve source-index failures and destination rollback.
+
 Array.from expands into existing validated binding, ARRAY_NEW, live FOR_EACH, indirect CALL and checked append-chain operations. Evaluate/admit source then mapper once; create shorter-arity adapters at mapper evaluation and validate the saved function signature even for empty input. Preserve normal parameter/return boundaries and fresh iteration cells; do not add backend snapshot/map algorithms or publish partial results after failure.
 
 Object.hasOwn consumes its receiver and dynamic string key through operand admission in receiver/key order, tests presence without reading values, and never narrows fields. Error owns code/message presence independently of stored values.

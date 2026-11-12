@@ -220,6 +220,10 @@ deal_outcome_data deal_array_pop(deal_array *array, deal_descriptor *element,
 deal_outcome_data deal_array_splice(deal_array *array, double from, double delete_count,
                                      deal_descriptor *element, const deal_origin *origin);
 
+/* Snapshot length, then validate/read in order until strict/SameValueZero match. */
+deal_outcome_data deal_array_search(deal_array *array, const deal_data *needle, double from,
+                                     uint32_t includes, deal_descriptor *element, const deal_origin *origin);
+
 /* Fresh shallow typed copy; selected positions validate without source mutation. */
 deal_outcome_data deal_array_slice(deal_array *array, double from, double to,
                                     deal_descriptor *element, const deal_origin *origin);

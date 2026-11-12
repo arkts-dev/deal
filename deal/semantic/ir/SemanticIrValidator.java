@@ -1932,6 +1932,29 @@ public final class SemanticIrValidator {
                     return failure;
                 }
             }
+            case "ARRAY_SEARCH" -> {
+                ValueId receiver = parseValueIdQuiet(payloadValue(payload, "arrayValue") instanceof CanonicalJson.Obj obj ? obj : null);
+                ValueId value = parseValueIdQuiet(payloadValue(payload, "value") instanceof CanonicalJson.Obj obj ? obj : null);
+                ValueId from = parseValueIdQuiet(payloadValue(payload, "fromIndex") instanceof CanonicalJson.Obj obj ? obj : null);
+                CanonicalJson.Value mode = payloadValue(payload, "includes");
+                RuntimeDescriptor.Array array = null;
+                String valueType = null;
+                boolean fromReady = false;
+                for (RawOp producer : unit.ops()) {
+                    if (producer.opId().equals(op.opId())) break;
+                    if (receiver != null && receiver.equals(producer.resultValue())
+                            && parseDescriptorQuiet(producer.resultType()) instanceof RuntimeDescriptor.Array found) array = found;
+                    if (value != null && value.equals(producer.resultValue())) valueType = producer.resultType();
+                    if (from != null && from.equals(producer.resultValue()) && "number".equals(producer.resultType())) fromReady = true;
+                }
+                if (array == null || valueType == null || !array.element().canonicalSpecText().equals(valueType)
+                        || !fromReady || !(mode instanceof CanonicalJson.Bool)
+                        || !(((CanonicalJson.Bool) mode).value() ? "boolean" : "number").equals(op.resultType())
+                        || !List.of(receiver, value, from).equals(op.operands())
+                        || !List.of(array.canonicalSpecText(), valueType, "number").equals(op.operandTypes()))
+                    return fail(op, unit, facts, R_ENUM, SemanticCapability.CONTAINERS_AND_STRINGS,
+                        origin(R_ENUM, "ARRAY_SEARCH requires preceding array/element/number operands, a boolean includes mode and its boolean/number result descriptor"));
+            }
             case "ARRAY_SPLICE", "ARRAY_SLICE" -> {
                 ValueId receiver = parseValueIdQuiet(payloadValue(payload, "arrayValue") instanceof CanonicalJson.Obj obj ? obj : null);
                 ValueId start = parseValueIdQuiet(payloadValue(payload, "start") instanceof CanonicalJson.Obj obj ? obj : null);
@@ -2534,7 +2557,7 @@ public final class SemanticIrValidator {
     /** The closed per-kind allowed failure-policy sets (parent operation rows). */
     private static Set<FailurePolicyId> allowedPolicies(SemanticOpKind kind) {
         return switch (kind) {
-            case ARRAY_POP, ARRAY_SPLICE, ARRAY_SLICE -> Set.of(FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR);
+            case ARRAY_POP, ARRAY_SPLICE, ARRAY_SLICE, ARRAY_SEARCH -> Set.of(FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR);
             case ARRAY_LENGTH, OBJECT_KEYS -> Set.of(FailurePolicyId.NO_DEAL_FAILURE);
             case OPTIONAL_READ -> Set.of(FailurePolicyId.NO_DEAL_FAILURE,
                 FailurePolicyId.TYPE_DESCRIPTOR);

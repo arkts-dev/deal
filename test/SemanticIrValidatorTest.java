@@ -1305,6 +1305,46 @@ public class SemanticIrValidatorTest {
         }
         }
 
+        for (boolean includes : List.of(false, true)) {
+        for (String defect : List.of("none", "receiver", "value", "from", "result", "operand", "type", "policy", "forward")) {
+            var arrayType = new RuntimeDescriptor.Array(INT);
+            SemanticOp array = op(SemanticOpKind.ARRAY_NEW, new KindPayload.ArrayNewPayload(INT, List.of(), List.of()),
+                nextValue(), arrayType, FailurePolicyId.NO_DEAL_FAILURE, null);
+            SemanticOp value = nextConst(), from = nextConst();
+            var payload = new KindPayload.ArraySearchPayload(
+                defect.equals("receiver") ? nextValue() : (ValueId)array.result(),
+                defect.equals("value") ? nextValue() : (ValueId)value.result(),
+                defect.equals("from") ? nextValue() : (ValueId)from.result(), includes);
+            RuntimeDescriptor result = defect.equals("result") ? STR : includes ? BOOL : INT;
+            List<ValueId> operands = List.of((ValueId)array.result(), (ValueId)value.result(),
+                defect.equals("operand") ? nextValue() : (ValueId)from.result());
+            List<RuntimeDescriptor> types = List.of(arrayType, defect.equals("type") ? STR : INT, INT);
+            FailurePolicyId policy = defect.equals("policy") ? FailurePolicyId.NO_DEAL_FAILURE : FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR;
+            var contract = contractFor(SemanticOpKind.ARRAY_SEARCH, payload, result, types, policy, "placeholder");
+            contract = contractFor(SemanticOpKind.ARRAY_SEARCH, payload, result, types, policy,
+                ContractSnapshotCanonicalizer.digest(contract));
+            SemanticOp search = new SemanticOp(nextOpId(), SemanticOpKind.ARRAY_SEARCH, origin(null), nextValue(),
+                result, operands, types, payload, policy, contract);
+            var fixture = unit(defect.equals("forward") ? List.of(array, value, search, from) : List.of(array, value, from, search));
+            var rebuilt = deal.semantic.ir.RawUnitMaterializer.materialize(RawUnit.fromTyped(fixture));
+            if (defect.equals("none")) {
+                assertUnitPass(fixture, FACTS, "array search exact mode/result admission");
+                assertUnitPass(rebuilt, FACTS, "array search raw admission");
+                checkEq(SemanticIrValidator.toUnitText(fixture), SemanticIrValidator.toUnitText(rebuilt), "search lossless transport");
+            } else {
+                var typed = SemanticIrValidator.validate(fixture, FACTS);
+                assertE6005(typed, defect.equals("policy") ? "R-POLICY-KIND" : "R-ENUM", "ARRAY_SEARCH");
+                check(typed.orElseThrow().range().equals(search.origin().span().range()), "search rejection origin: " + defect);
+                if (!defect.equals("policy")) check(typed.orElseThrow().message().contains(
+                    "ARRAY_SEARCH requires preceding array/element/number operands, a boolean includes mode and its boolean/number result descriptor"),
+                    "search exact shape failure: " + defect);
+                check(typed.equals(SemanticIrValidator.validate(rebuilt, FACTS))
+                    && typed.equals(SemanticIrValidator.validateText(SemanticIrValidator.toUnitText(fixture), FACTS)),
+                    "search typed/raw/text rejection agrees: " + defect);
+            }
+        }
+        }
+
         for (String defect : List.of("none", "receiver", "result", "operand", "type", "policy", "forward")) {
             var tableType = RuntimeDescriptor.Table.INSTANCE;
             SemanticOp table = op(SemanticOpKind.TABLE_NEW, new KindPayload.TableNewPayload(List.of()),

@@ -652,6 +652,7 @@ final class LlvmFunctionEmitter {
             case OBJECT_KEYS -> emitObjectKeys(op);
             case ARRAY_SPLICE -> emitArraySplice(op);
             case ARRAY_SLICE -> emitArraySlice(op);
+            case ARRAY_SEARCH -> emitArraySearch(op);
             case MEMBER_READ -> emitMemberRead(op);
             case OPTIONAL_READ -> emitOptionalRead(op);
             case MEMBER_WRITE -> emitMemberWrite(op);
@@ -4981,6 +4982,27 @@ final class LlvmFunctionEmitter {
         emit("store " + LlvmTypeMapper.DATA + " " + datum + ", "
             + LlvmTypeMapper.DATA + "* " + slot);
         return slot;
+    }
+
+    private void emitArraySearch(SemanticOp op) {
+        KindPayload.ArraySearchPayload payload = (KindPayload.ArraySearchPayload) op.payload();
+        RuntimeDescriptor element = ((RuntimeDescriptor.Array) op.operandTypes().getFirst()).element();
+        session.referenceRuntimeEntry("deal_descriptor_intern");
+        session.referenceRuntimeEntry("deal_array_search");
+        String atom = emitTemporary(op, "call %struct.deal_descriptor* @deal_descriptor_intern("
+            + session.data.operand(session.data.intern(element.canonicalSpecText())) + ")");
+        String array = loadValue(payload.arrayValue(), LlvmTypeMapper.ARRAY, op);
+        String from = loadValue(payload.fromIndex(), LlvmTypeMapper.NUMBER, op);
+        String needle = boxedOperandSlot(payload.value(), op);
+        String outcome = callRecord(op, "%struct.deal_outcome_data", "deal_array_search",
+            LlvmTypeMapper.ARRAY + " " + array + ", " + LlvmTypeMapper.DATA + "* " + needle + ", double " + from
+                + ", i32 " + (payload.includes() ? 1 : 0) + ", %struct.deal_descriptor* " + atom
+                + ", %struct.deal_origin* " + originValue(op));
+        String error = emitTemporary(op, "extractvalue %struct.deal_outcome_data " + outcome + ", 0");
+        branchOnFailure(op, error, "arraysearch");
+        String result = emitTemporary(op, "extractvalue %struct.deal_outcome_data " + outcome + ", 1");
+        RuntimeDescriptor type = (RuntimeDescriptor) op.resultType();
+        storeResult(op, LlvmTypeMapper.representationOf(type).orElseThrow(), datumToRepresentation(type, result, op));
     }
 
     private void emitArraySlice(SemanticOp op) {

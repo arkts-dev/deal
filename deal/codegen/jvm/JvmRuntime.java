@@ -3289,6 +3289,34 @@ case "NUMBER_ADD" -> {
     // Array read/bounds cells (shared slot-space context)
     // =========================================================================
 
+    public static Object arraySearch(Array array, Object needle, double from, boolean includes,
+                                     String descriptor, String canonical, String origin) {
+        int length = array.length();
+        int start = deal.semantic.ir.NumberSemantics.spliceStart(from, length);
+        for (int i = start; i < length; i++) {
+            Object value = i < array.elements.size() ? array.elements.get(i) : MISSING;
+            if (value == MISSING) {
+                if (!includes) continue;
+                value = UNDEFINED;
+            } else {
+                try { value = bcheck(descriptor, "unknown", value, canonical); }
+                catch (DealError cause) {
+                    DealError outer = arm(deal.semantic.ir.FailureArmId.ARRAY_ELEMENT_KIND,
+                        java.util.Map.of("oneBasedIndex", Integer.toString(i + 1)), origin, canonical,
+                        elementActualOf("unknown", value));
+                    DealError leaf = cause.code.equals("E8003") && cause.cause != null ? cause.cause : cause;
+                    throw new DealError(outer.code, outer.msg, outer.origin, outer.expected, outer.actual, outer.frames, leaf);
+                }
+            }
+            boolean equal = nullableEquals("unknown", value, "unknown", needle);
+            if (includes && value instanceof Number n && needle instanceof Number r
+                    && Double.isNaN(n.doubleValue()) && Double.isNaN(r.doubleValue())) equal = true;
+            if (equal) { if (includes) return true; return (double) i; }
+        }
+        if (includes) return false;
+        return -1.0;
+    }
+
     /** Shallow copy with source-position element failures and no source mutation. */
     public static Array arraySlice(Array array, double from, double to,
                                    String descriptor, String canonical, String origin) {

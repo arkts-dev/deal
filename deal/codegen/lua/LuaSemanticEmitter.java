@@ -1571,6 +1571,7 @@ public final class LuaSemanticEmitter {
                 case OBJECT_KEYS -> emitObjectKeys(op);
                 case ARRAY_SPLICE -> emitArraySplice(op);
                 case ARRAY_SLICE -> emitArraySlice(op);
+                case ARRAY_SEARCH -> emitArraySearch(op);
                 case MEMBER_READ -> emitMemberRead(op);
                 case MEMBER_WRITE -> emitMemberWrite(op);
                 case MEMBER_DELETE -> emitMemberDelete(op);
@@ -1988,6 +1989,30 @@ public final class LuaSemanticEmitter {
                     .append(isNumberKind(producerKind(entry.value())) ? "true" : "false")
                     .append(")\n");
             }
+            emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
+        }
+
+        private void emitArraySearch(SemanticOp op) {
+            KindPayload.ArraySearchPayload payload = (KindPayload.ArraySearchPayload) op.payload();
+            RuntimeDescriptor element = ((RuntimeDescriptor.Array) op.operandTypes().getFirst()).element();
+            String target = slot((ValueId) op.result());
+            emitStart(op);
+            out.append("do local a=").append(slot(payload.arrayValue())).append("; local needle=__num(")
+                .append(slot(payload.value())).append("); local n=a[__dealCarrierKeys.n] or 0; while rawget(a,n+1) ~= nil do n=n+1 end\n")
+                .append("local s=__num(").append(slot(payload.fromIndex())).append("); if s ~= s then s=0 elseif s < 0 then s=math.ceil(s) else s=math.floor(s) end; if s < 0 then s=math.max(0,n+s) else s=math.min(n,s) end\n")
+                .append(target).append(payload.includes() ? "=false\n" : "=-1\n")
+                .append("for i=s+1,n do local v=rawget(a,i); ")
+                .append(payload.includes() ? "if v == nil then v=__UNDEFINED else " : "if v ~= nil then ")
+                .append("__okB,__chkB=pcall(__bcheck,").append(bcheckArgs(element, "v")).append(")\n")
+                .append("if not __okB then local failure=__arm(\"ARRAY_ELEMENT_KIND\",{oneBasedIndex=i},")
+                .append(luaString(originOf(op))).append(",").append(luaString(element.canonicalSpecText()))
+                .append(",__elemRefKind(").append(luaString(staticKind(element)))
+                .append(",v)); failure.cause=(__chkB.code == \"E8003\" and __chkB.cause) or __chkB; error(failure,0) end; v=__chkB; ")
+                .append(payload.includes() ? "end; " : "")
+                .append("v=__num(v); if rawequal(v,needle)")
+                .append(payload.includes() ? " or (type(v)==\"number\" and type(needle)==\"number\" and v~=v and needle~=needle)" : "")
+                .append(" then ").append(target).append(payload.includes() ? "=true" : "=i-1")
+                .append("; break end; ").append(payload.includes() ? "" : "end; ").append("end end\n");
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
         }
 

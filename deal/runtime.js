@@ -2478,6 +2478,31 @@ const $rt = {
     return value;
   },
 
+  arraySearch: function(v, needle, from, includes, descriptor, file, line, column) {
+    const length = $rt.arrayLength(v);
+    const integer = Number.isNaN(from) ? 0 : Math.trunc(from);
+    const start = Math.max(0, Math.min(length, integer < 0 ? length + integer : integer));
+    needle = $rt.scalarOf(needle);
+    for (let i = start; i < length; i++) {
+      const present = $rt.arrayHas(v, i);
+      if (!present && !includes) continue;
+      let value = present ? $rt.arrayAt(v, i) : undefined;
+      if (present) {
+        try { value = $rt.checkType(descriptor, value, file, line, column); }
+        catch (cause) {
+          const failure = new $DEALError("E8003", "array element " + (i + 1) + " type mismatch",
+            file, line, column, descriptor, $elemKindOf(value));
+          failure.cause = cause.code === "E8003" && cause.cause ? cause.cause : cause;
+          throw failure;
+        }
+      }
+      value = $rt.scalarOf(value);
+      if (value === needle || includes && typeof value === "number" && typeof needle === "number"
+          && Number.isNaN(value) && Number.isNaN(needle)) return includes ? true : i;
+    }
+    return includes ? false : -1;
+  },
+
   // Shallow copy; relative bounds observe length only after argument effects.
   arraySlice: function(v, start, end, descriptor, file, line, column) {
     const length = $rt.arrayLength(v);

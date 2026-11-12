@@ -8116,6 +8116,39 @@ public final class SemanticLowerer {
         private ValueId lowerCallSite(CallExpr call, ValueId slot) {
             if (call.callee() instanceof MemberAccessExpr member
                     && checkedType(member.object()) instanceof Type.Array array
+                    && List.of("includes", "indexOf").contains(member.field())) {
+                RuntimeDescriptor.Array descriptor = (RuntimeDescriptor.Array) ContainerPayloadDescriptors.resultDescriptorOf(array);
+                ValueId receiver = lowerOperand(member.object());
+                BindingId receiverBinding = ids.nextBindingId(module, nextOrdinal++, 0);
+                emitUserNullOp(SemanticOpKind.BINDING_ALLOC, new KindPayload.BindingAllocPayload(receiverBinding,
+                    currentBlock(), true, BindingCellKind.DIRECT, 0), call.span(), FailurePolicyId.NO_DEAL_FAILURE);
+                emitUserNullOp(SemanticOpKind.BINDING_INIT, new KindPayload.BindingInitPayload(receiverBinding, 0, receiver),
+                    call.span(), FailurePolicyId.NO_DEAL_FAILURE);
+                BindingId saved = ids.nextBindingId(module, nextOrdinal++, 0);
+                emitUserNullOp(SemanticOpKind.BINDING_ALLOC, new KindPayload.BindingAllocPayload(saved,
+                    currentBlock(), true, BindingCellKind.DIRECT, 0), call.span(), FailurePolicyId.NO_DEAL_FAILURE);
+                ValueId value = lowerParameterArgument(call, 0, true);
+                OpId boundary = emitUserNullOp(SemanticOpKind.BOUNDARY,
+                    new KindPayload.BoundaryPayload(BoundaryKind.VARIABLE_DECLARATION, descriptor.element(), value,
+                        new BoundaryRealization.RuntimeValidation(CANONICAL_RUNTIME_VALIDATION_ID)),
+                    call.span(), descriptorKindPolicy(descriptor.element()));
+                recordPositionAdapterAt(value, boundary, BoundaryKind.VARIABLE_DECLARATION);
+                emitUserNullOp(SemanticOpKind.BINDING_INIT, new KindPayload.BindingInitPayload(saved, 0, value),
+                    call.span(), FailurePolicyId.NO_DEAL_FAILURE);
+                ValueId from = call.args().size() == 2 ? lowerOperand(call.args().get(1))
+                    : emitValueOp(SemanticOpKind.CONST, new KindPayload.ConstPayload(new ScalarValue.Number(0)),
+                        call.span(), RuntimeDescriptor.Number.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE);
+                receiver = emitBuiltinLoad(receiverBinding, descriptor, call.span(), null);
+                value = emitBuiltinLoad(saved, descriptor.element(), call.span(), null);
+                boolean includes = member.field().equals("includes");
+                return emitOperandOp(SemanticOpKind.ARRAY_SEARCH,
+                    new KindPayload.ArraySearchPayload(receiver, value, from, includes), List.of(receiver, value, from),
+                    List.of(descriptor, descriptor.element(), RuntimeDescriptor.Number.INSTANCE),
+                    call.span(), includes ? RuntimeDescriptor.Boolean.INSTANCE : RuntimeDescriptor.Number.INSTANCE,
+                    FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, slot);
+            }
+            if (call.callee() instanceof MemberAccessExpr member
+                    && checkedType(member.object()) instanceof Type.Array array
                     && member.field().equals("slice")) {
                 ValueId receiver = lowerOperand(member.object());
                 ValueId start = lowerOperand(call.args().get(0));

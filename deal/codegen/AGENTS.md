@@ -16,6 +16,8 @@ ARRAY_POP checks the live tail before alias-visible shrink, returns the admitted
 
 ARRAY_SLICE normalizes both relative bounds against the post-argument length of the saved receiver. Copy only selected present positions into fresh descriptor-preserving storage, retaining shallow reference identities and holes without materializing undefined. Unselected hostile elements remain unread; failure preserves source and destination publication, with source-index E8003 and the leaf cause at the operation origin. Native arrays have dense storage; do not invent a sparse representation for this operation.
 
+ARRAY_SEARCH snapshots the saved receiver's post-argument length, normalizes relative fromIndex and visits ascending reached positions only. Admit present slots with original source-index E8003/leaf causes before comparison. Includes uses SameValueZero and holes as undefined; indexOf uses strict equality and skips holes. Return immediately on a match, preserving aggregate/function identities and source storage. Native storage remains dense.
+
 CONDITIONAL enters only the chosen arm after consuming its once-evaluated boolean condition. Publish the selected value explicitly, preserving false/null/undefined and reference identity. Contextual adapters execute only in that arm. Native joins convert actual to admitted joined representations and root managed results; void joins require no storage.
 
 OBJECT_KEYS snapshots presence/order without consuming unrelated values, including hostile callable fields and cycles. Use private class declaration metadata, not reflection or user-string tags; return fresh typed string arrays. Native emitted field readers accept a NULL value output for presence-only queries and must not load/classify those values.

@@ -1,0 +1,40 @@
+// @spec: Arrays
+// @description: Search stops before unreached corruption, validates reached source positions and readmits repaired storage
+// @expected: runtime-ok
+// @features: arrays, host-abi
+import * as host from "host/probe";
+class Item {x:number;stable:number;}
+function check(ok:boolean):void {if(!ok){throw {code:"SEARCH",message:"live mismatch"};}}
+export function main():null {
+  let xs:number[]=[4,5,9];let alias=xs;
+  let matrix:number[][]=[[1],xs];let first=matrix[0];
+  host.keep(xs);host.corrupt();let caught=false;let destination=123;
+  check(xs.includes(4) && xs.indexOf(5)===1);
+  check(!xs.includes(0,3) && xs.indexOf(0,1/0)===-1);
+  try {destination=xs.indexOf(9);}catch(e){check((e as Error).code==="E8003" && (e as Error).message==="array element 3 type mismatch");caught=true;}
+  check(caught && destination===123 && host.size()===3 && alias[1]===5);
+  check(matrix.includes(first) && matrix.indexOf(first)===0);caught=false;
+  try {matrix.includes([8]);}catch(e){check((e as Error).code==="E8003" && (e as Error).message==="array element 2 type mismatch");caught=true;}
+  check(caught && matrix.length===2 && matrix[0]===first && host.size()===3);
+  host.repair();check(alias.indexOf(9)===2 && xs.includes(9) && xs===alias);
+  let live=host.make();let grow=():number=>{host.grow();return -1;};check(live.includes(11,grow()) && live.length===3);
+  let item:Item={x:9,stable:4};let other:Item={x:8,stable:3};let items:Item[]=[other,item];
+  host.damage(item,false);caught=false;check(items.includes(other));
+  try {destination=items.indexOf(other,1);}catch(e){check((e as Error).code==="E8003" && (e as Error).message==="array element 2 type mismatch");caught=true;}
+  check(caught && destination===123 && items.length===2);
+  host.damage(null,true);check(items.includes(item) && items.indexOf(item)===1 && item.stable===4);
+  let calls=0;let callback=():number=>{calls=calls+1;return 7;};let needle=():number=>{calls=calls+1;return 8;};
+  let functions:(()=>number)[]=[callback];host.keep(functions);
+  for(let signature of [false,true]) {
+    if(signature){host.poisonSignature(callback);}else{host.poison(callback);}
+    caught=false;check(!functions.includes(needle,1));
+    try {functions.includes(needle);}catch(e){check((e as Error).code==="E8003");caught=true;}
+    check(caught && calls===0 && functions.length===1);
+    host.restoreFunction();check(functions.includes(callback) && functions.indexOf(callback)===0 && !functions.includes(needle));
+  }
+  check(calls===0);
+  let decoded:number[]=JSON.parse("[4,5,9]");host.keep(decoded);host.corrupt();caught=false;check(decoded.includes(5));
+  try {destination=decoded.indexOf(9);}catch(e){check((e as Error).code==="E8003");caught=true;}
+  check(caught && destination===123 && decoded.length===3);host.repair();check(decoded.includes(9) && decoded.indexOf(9)===2);
+  return null;
+}

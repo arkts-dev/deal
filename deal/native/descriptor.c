@@ -1593,6 +1593,44 @@ deal_outcome_data deal_array_splice(deal_array *array, double from, double delet
     return result;
 }
 
+deal_outcome_data deal_array_search(deal_array *array, const deal_data *needle, double from,
+                                     uint32_t includes, deal_descriptor *element, const deal_origin *origin) {
+    deal_outcome_data result = {0};
+    result.value = includes ? deal_data_of_boolean(0) : deal_data_of_number(-1.0);
+    size_t length = deal_container_array_count(array);
+    double first = isnan(from) ? 0.0 : trunc(from);
+    first = first < 0.0 ? fmax(0.0, (double)length + first) : fmin((double)length, first);
+    deal_root_scope_push();
+    (void)deal_root_scope_hold(array);
+    (void)deal_root_scope_hold_data(needle);
+    for (size_t i = (size_t)first; i < length; i++) {
+        deal_check_input input = deal_live_element(array, i);
+        deal_check_context context = {0};
+        context.origin = origin;
+        uint32_t boundary = deal_descriptor_type(element) == DEAL_DESCRIPTOR_FUNCTION
+            ? DEAL_BOUNDARY_FUNCTION_SIGNATURE : DEAL_BOUNDARY_TYPE_DESCRIPTOR;
+        deal_outcome checked = deal_check_live_value_core(element, input, boundary, &context, 0);
+        if (checked.error != NULL) {
+            char index_text[3u * sizeof(size_t) + 1u];
+            size_t end = sizeof(index_text) - 1u;
+            index_text[end] = '\0';
+            size_t index = i + 1u;
+            do { index_text[--end] = (char)('0' + index % 10u); index /= 10u; } while (index != 0u);
+            deal_arm_parameter parameter = {"oneBasedIndex", &index_text[end]};
+            result.error = deal_error_materialize(DEAL_ARM_ID_ARRAY_ELEMENT_KIND,
+                &parameter, 1u, deal_descriptor_text(element), deal_check_token(&input), origin, checked.error);
+            break;
+        }
+        if (deal_data_same(&input.datum, needle) || (includes && input.datum.tag == DEAL_DATA_NUMBER
+                && needle->tag == DEAL_DATA_NUMBER && isnan(input.datum.number) && isnan(needle->number))) {
+            result.value = includes ? deal_data_of_boolean(1) : deal_data_of_number((double)i);
+            break;
+        }
+    }
+    deal_root_scope_pop();
+    return result;
+}
+
 deal_outcome_data deal_array_slice(deal_array *array, double from, double to,
                                     deal_descriptor *element, const deal_origin *origin) {
     deal_outcome_data result = {0};

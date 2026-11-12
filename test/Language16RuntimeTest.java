@@ -92,6 +92,7 @@ public final class Language16RuntimeTest {
             }
         }
         arraySliceMissingPositions();
+        arraySearchMissingPositions();
         objectKeysAdmission(false);
         objectKeysAdmission(true);
         fixtureAdmission("tables/builtin-has-own.deal", deal.semantic.ir.SemanticOpKind.HAS_FIELD, 17);
@@ -99,6 +100,7 @@ public final class Language16RuntimeTest {
         fixtureAdmission("arrays/from-live.deal", deal.semantic.ir.SemanticOpKind.FOR_EACH, 17);
         fixtureAdmission("arrays/push.deal", deal.semantic.ir.SemanticOpKind.INDEX_WRITE, -1);
         fixtureAdmission("arrays/slice.deal", deal.semantic.ir.SemanticOpKind.ARRAY_SLICE, -1);
+        fixtureAdmission("arrays/search.deal", deal.semantic.ir.SemanticOpKind.ARRAY_SEARCH, -1);
         fixtureAdmission("stdlib/json/contextual-parse.deal", deal.semantic.ir.SemanticOpKind.JSON_PARSE, -1);
         fixtureAdmission("stdlib/string/substring-omitted-end.deal", deal.semantic.ir.SemanticOpKind.STDLIB_CALL, 12);
         fixtureAdmission("stdlib/string/slice.deal", deal.semantic.ir.SemanticOpKind.STDLIB_CALL, 26);
@@ -115,10 +117,43 @@ public final class Language16RuntimeTest {
         arrayRemovalAdmission("pop-live-retry");
         arrayRemovalAdmission("splice-live-retry");
         arrayRemovalAdmission("slice-live-retry");
+        arrayRemovalAdmission("search-live-retry");
         callableBodyAdmission();
         errorGraphAdmission();
         for (String fixture : List.of("core", "refinement", "assertion", "failures", "equality-loops", "json-values", "audit-scalars")) executeFixture(fixture);
         System.out.println("Language16RuntimeTest: passed (Oracle, JS, LuaJIT, JVM; deployed array descriptors)");
+    }
+
+    private static void arraySearchMissingPositions() {
+        var source = new deal.codegen.jvm.JvmRuntime.Array(0);
+        source.elements.add(deal.codegen.jvm.JvmRuntime.MISSING);
+        source.elements.add(deal.codegen.jvm.JvmRuntime.UNDEFINED);
+        source.elements.add("bad");
+        source.length = 3;
+        source.elementDescriptor = "!number";
+        if (!Boolean.TRUE.equals(deal.codegen.jvm.JvmRuntime.arraySearch(source,
+                deal.codegen.jvm.JvmRuntime.UNDEFINED, 0, true, "!number", "!number", "search.deal:2:3"))
+                || !Double.valueOf(1).equals(deal.codegen.jvm.JvmRuntime.arraySearch(source,
+                    deal.codegen.jvm.JvmRuntime.UNDEFINED, 0, false, "!number", "!number", "search.deal:2:3")))
+            throw new AssertionError("includes reads holes as undefined; indexOf skips holes and stops at stored undefined");
+        source.elements.set(1, 7.0);
+        source.elementDescriptor = "number";
+        if (!Double.valueOf(1).equals(deal.codegen.jvm.JvmRuntime.arraySearch(source,
+                7.0, 0, false, "number", "number", "search.deal:2:3")))
+            throw new AssertionError("indexOf must skip absent positions before admission");
+        for (boolean includes : List.of(false, true)) {
+            try {
+                deal.codegen.jvm.JvmRuntime.arraySearch(source, 8.0, 0, includes,
+                    "number", "number", "search.deal:2:3");
+                throw new AssertionError("reached bad source element must reject");
+            } catch (deal.codegen.jvm.JvmRuntime.DealError error) {
+                if (!error.code.equals("E8003") || !error.msg.equals("array element 3 type mismatch")
+                        || !error.actual.equals("string") || error.cause == null)
+                    throw new AssertionError(error);
+            }
+        }
+        if (source.length() != 3 || !source.elements.get(2).equals("bad"))
+            throw new AssertionError("search failure mutated source");
     }
 
     private static void arraySliceMissingPositions() {
@@ -1299,8 +1334,8 @@ public final class Language16RuntimeTest {
 
     /** Execute the same retained-mutation contract in the Oracle with genuine lowered bodies. */
     private static void arrayRemovalAdmission(String fixture) throws Exception {
-        boolean splice = fixture.startsWith("splice"), slice = fixture.startsWith("slice");
-        String operation = slice ? "ARRAY_SLICE" : splice ? "ARRAY_SPLICE" : "ARRAY_POP";
+        boolean splice = fixture.startsWith("splice"), slice = fixture.startsWith("slice"), search = fixture.startsWith("search");
+        String operation = search ? "ARRAY_SEARCH" : slice ? "ARRAY_SLICE" : splice ? "ARRAY_SPLICE" : "ARRAY_POP";
         Path work = Files.createTempDirectory(Path.of("build"), "pop-admission-").toAbsolutePath();
         try {
             Path source = Files.createDirectories(work.resolve("src")).resolve("main.deal");
@@ -1341,7 +1376,7 @@ public final class Language16RuntimeTest {
             rejectsOp(raw, operation, op -> field(op, "payload", field(payload(op), "arrayValue",
                 deal.semantic.ir.CanonicalJson.Null.INSTANCE)), facts);
             rejectsOp(raw, operation, op -> field(field(op, "operands", empty), "operandTypes", empty), facts);
-            if (!splice && !slice) rejectsOp(raw, operation, op -> field(op, "operandTypes", new deal.semantic.ir.CanonicalJson.Arr(
+            if (!splice && !slice && !search) rejectsOp(raw, operation, op -> field(op, "operandTypes", new deal.semantic.ir.CanonicalJson.Arr(
                 List.of(new deal.semantic.ir.CanonicalJson.Str("[string]")))), facts);
             if (splice || slice) {
                 for (String key : List.of("start", slice ? "end" : "deleteCount")) {
@@ -1350,7 +1385,11 @@ public final class Language16RuntimeTest {
                         deal.semantic.ir.CanonicalJson.Null.INSTANCE)), facts);
                 }
             }
-            rejectsOp(raw, operation, op -> field(op, "resultType", new deal.semantic.ir.CanonicalJson.Str("number")), facts);
+            if (search) for (String key : List.of("value", "fromIndex", "includes")) {
+                rejectsOp(raw, operation, op -> field(op, "payload", field(payload(op), key,
+                    deal.semantic.ir.CanonicalJson.Null.INSTANCE)), facts);
+            }
+            rejectsOp(raw, operation, op -> field(op, "resultType", new deal.semantic.ir.CanonicalJson.Str(search ? "string" : "number")), facts);
             var tables = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.StructuredBodyTable>();
             var registries = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.ClassFactoryRegistry>();
             project.modules().forEach((id, unit) -> { tables.put(id, unit.bodyTable()); registries.put(id, unit.classFactories()); });
@@ -1408,20 +1447,20 @@ public final class Language16RuntimeTest {
                     .filter(e -> e.phase()==deal.semantic.SemanticRuntimeModel.Phase.FAILURE).toList());
             var failures = result.trace().stream().filter(e -> e.kind()==deal.semantic.ir.SemanticOpKind.valueOf(operation)
                 && e.phase()==deal.semantic.SemanticRuntimeModel.Phase.FAILURE).toList();
-            int population = slice ? 6 : 3;
+            int population = slice || search ? 6 : 3;
             if (failures.size()!=population) throw new AssertionError(operation + " failure trace population: " + failures);
             for (int i=0; i<population; i++) {
                 var error = failures.get(i).error();
-                String expected = slice ? (i==0 || i==5 ? "number" : i==1 ? "[number]" : i==2
+                String expected = slice || search ? (i==0 || i==5 ? "number" : i==1 ? "[number]" : i==2
                     ? "@src/main.deal/Item" : "()->number")
                     : i==0 ? "[number]" : i==1 ? "number" : "@src/main.deal/Item";
-                String actual = slice ? (i==0 || i==5 ? "string" : i==1 ? "array" : i>=3 ? "function" : expected)
+                String actual = slice || search ? (i==0 || i==5 ? "string" : i==1 ? "array" : i>=3 ? "function" : expected)
                     : i==0 ? "array" : i==1 ? "string" : expected;
-                int position = slice ? (i==0 || i==5 ? 3 : i==1 || i==2 ? 2 : 1)
+                int position = slice || search ? (i==0 || i==5 ? 3 : i==1 || i==2 ? 2 : 1)
                     : splice ? (i==0 ? 2 : i==1 ? 3 : 1) : (i==1 ? 2 : 1);
-                String leafExpected = slice && i==4 ? "()->number" : slice && i==3 ? "function" : "number";
-                String leafActual = slice && i==4 ? "()->string" : slice && i==3 ? "function" : "string";
-                String leafCode = slice && i==4 ? "E8010" : "E8001";
+                String leafExpected = (slice || search) && i==4 ? "()->number" : (slice || search) && i==3 ? "function" : "number";
+                String leafActual = (slice || search) && i==4 ? "()->string" : (slice || search) && i==3 ? "function" : "string";
+                String leafCode = (slice || search) && i==4 ? "E8010" : "E8001";
                 if (!error.code().equals("E8003") || !error.expected().equals(expected)
                         || !error.actual().equals(actual)
                         || !error.message().equals("array element " + position + " type mismatch") || error.cause()==null
@@ -1693,6 +1732,9 @@ public final class Language16RuntimeTest {
             run(root, "node", "-e", """
                 const rt=require('./deal/runtime'),s=require('./std/string'),t=require('./std/table');
                 const sparse=rt.tagArray([1,,undefined],'!number');
+                if(!rt.arraySearch(sparse,undefined,1,true,'!number','search.deal',2,3)
+                    || rt.arraySearch(sparse,undefined,1,false,'!number','search.deal',2,3)!==2)
+                  throw Error('search must distinguish holes from stored undefined');
                 const slice=rt.arraySlice(sparse,1,3,'!number','slice.deal',1,1);
                 if(slice===sparse || slice.length!==2 || 0 in slice || !(1 in slice) || slice[1]!==undefined)
                   throw Error('slice must preserve holes separately from undefined');
@@ -1702,6 +1744,12 @@ public final class Language16RuntimeTest {
                 try {rt.arraySlice(sparse,2,3,'number','slice.deal',1,1)}
                 catch(e){rejectedUndefined=e.code==='E8003' && e.message==='array element 3 type mismatch'}
                 if(!rejectedUndefined) throw Error('slice skipped stored undefined');
+                if(!rt.arraySearch(sparse,undefined,1,true,'number','search.deal',2,3))
+                  throw Error('includes hole must not admit a missing element');
+                let rejectedSearch=false;
+                try {rt.arraySearch(sparse,undefined,1,false,'number','search.deal',2,3)}
+                catch(e){rejectedSearch=e.code==='E8003' && e.message==='array element 3 type mismatch'}
+                if(!rejectedSearch || sparse.length!==3 || 1 in sparse) throw Error('search reached undefined/rollback');
                 if(rt.checkType('unknown','\\uD800')!=='\\uD800') throw Error('lone unit ingress');
                 for (const bad of [()=>{}, Promise.resolve(1), {}, Symbol('foreign')]) {
                   let rejected=false;

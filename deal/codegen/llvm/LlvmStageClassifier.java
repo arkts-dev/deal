@@ -104,7 +104,7 @@ public final class LlvmStageClassifier {
                  BINDING_STORE, ASSIGN, CALL, CLOSURE_NEW, BRANCH, LOOP, RETURN,
                  BREAK, CONTINUE, DISCARD, TRY_CATCH, THROW, MODULE_INIT,
                  MODULE_IMPORT, EXPORT_READ, EXPORT_PUBLISH, ENTRY_INVOKE,
-                 STRING_CONCAT, ARRAY_NEW, TABLE_NEW, ARRAY_LENGTH, ARRAY_POP, ARRAY_SPLICE, ARRAY_SLICE, OBJECT_KEYS, MEMBER_READ,
+                 STRING_CONCAT, ARRAY_NEW, TABLE_NEW, ARRAY_LENGTH, ARRAY_POP, ARRAY_SPLICE, ARRAY_SLICE, ARRAY_SEARCH, OBJECT_KEYS, MEMBER_READ,
                  MEMBER_WRITE, MEMBER_DELETE, INDEX_NORMALIZE, INDEX_READ,
                  INDEX_WRITE, INDEX_DELETE, HAS_FIELD, FOR_EACH, CLASS_NEW,
                  FIELD_READ, FIELD_WRITE, FIELD_DELETE, JSON_PARSE,
@@ -171,6 +171,7 @@ public final class LlvmStageClassifier {
         map.put(KindPayload.ObjectKeysPayload.class, STAGED);
         map.put(KindPayload.ArraySplicePayload.class, STAGED);
         map.put(KindPayload.ArraySlicePayload.class, STAGED);
+        map.put(KindPayload.ArraySearchPayload.class, STAGED);
         map.put(KindPayload.MemberReadPayload.class, STAGED);
         map.put(KindPayload.MemberWritePayload.class, STAGED);
         map.put(KindPayload.MemberDeletePayload.class, STAGED);
@@ -423,6 +424,8 @@ public final class LlvmStageClassifier {
             case KindPayload.ArrayNewPayload array ->
                 arrayReason(unit, op, array);
             case KindPayload.TableNewPayload ignored -> Optional.empty();
+            case KindPayload.ArraySearchPayload search ->
+                requireStaticType(unit, op, search.arrayValue(), RuntimeDescriptor.Array.class, "array search receiver");
             case KindPayload.ArraySlicePayload slice ->
                 requireStaticType(unit, op, slice.arrayValue(), RuntimeDescriptor.Array.class, "array slice receiver");
             case KindPayload.ArraySplicePayload splice ->

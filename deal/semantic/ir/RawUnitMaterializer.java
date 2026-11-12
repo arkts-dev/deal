@@ -406,6 +406,8 @@ public final class RawUnitMaterializer {
             case ARRAY_LENGTH -> new KindPayload.ArrayLengthPayload(valueIdAt(p, "arrayValue", where));
             case OBJECT_KEYS -> new KindPayload.ObjectKeysPayload(valueIdAt(p, "receiver", where));
             case ARRAY_POP -> new KindPayload.ArrayPopPayload(valueIdAt(p, "arrayValue", where));
+            case ARRAY_SEARCH -> new KindPayload.ArraySearchPayload(valueIdAt(p, "arrayValue", where),
+                valueIdAt(p, "value", where), valueIdAt(p, "fromIndex", where), boolAt(p, "includes", where));
             case ARRAY_SLICE -> new KindPayload.ArraySlicePayload(valueIdAt(p, "arrayValue", where),
                 valueIdAt(p, "start", where), valueIdAt(p, "end", where));
             case ARRAY_SPLICE -> new KindPayload.ArraySplicePayload(valueIdAt(p, "arrayValue", where),

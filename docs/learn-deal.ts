@@ -64,6 +64,9 @@ function counter(start: number): () => number {
 // slice(start, end) copies a shallow range without changing the source.
 // Both bounds are required; negatives count from the end, and reversed
 // bounds produce an empty array instead of being swapped.
+// includes(value, fromIndex?) tests membership (including NaN); indexOf uses
+// strict equality and returns the first zero-based match or -1. Negative
+// fromIndex counts from the end. Both stop at the first match.
 function sumAll(values: number[]): number {
   let total: number = 0;
   for (let value of values) { total = total + value; }
@@ -74,6 +77,7 @@ function arrays(): number {
   values[values.length] = 40;
   let tail: number | undefined = values.pop();
   if (tail !== undefined) { values[values.length] = tail; }
+  if (values.includes(20)) { console.log(values.indexOf(20, -3)); }
   let copy: number[] = values.slice(-2, values.length);
   copy[0] = 50; // Separate array storage; referenced elements would stay shared.
   let removed: number[] = values.splice(1, 2);

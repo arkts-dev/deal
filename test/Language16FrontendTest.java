@@ -139,6 +139,15 @@ public final class Language16FrontendTest {
         for (String expression : List.of("xs.push", "xs.push()", "xs.push(1,2)", "xs.push(\"bad\")", "xs.push(undefined)"))
             check("function f(xs:number[]):void{" + expression + ";}", false);
         check("function f(xs:number[]|null):void{xs.push(1);}", false);
+        for (String method : List.of("includes", "indexOf")) {
+            check("function f(xs:number[]):void{xs."+method+"(1);xs."+method+"(1,-0.9);}", true);
+            check("class Item{x:number;} function f(xs:Item[]):void{xs."+method+"({x:1});}", true);
+            check("function f(xs:((x:number)=>number)[]):void{xs."+method+"(():number=>7);}", true);
+            for (String arguments : List.of("", "1,2,3", "\"bad\"", "undefined", "1,undefined", "1,\"bad\""))
+                check("function f(xs:number[]):void{xs."+method+"("+arguments+");}", false);
+            check("function f(xs:number[]):void{xs."+method+";}", false);
+            check("function f(xs:number[]|null):void{xs."+method+"(1);}", false);
+        }
         check("function f(xs:number[]):number|undefined{return xs.pop();}", true);
         check("function f(xs:unknown[]):unknown{return xs.pop();}", true);
         check("function f(xs:(number|null)[]):number|null|undefined{return xs.pop();}", true);
