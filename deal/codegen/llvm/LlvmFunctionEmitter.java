@@ -654,6 +654,7 @@ final class LlvmFunctionEmitter {
             case ARRAY_SLICE -> emitArraySlice(op);
             case ARRAY_SEARCH -> emitArraySearch(op);
             case ARRAY_JOIN -> emitArrayJoin(op);
+            case ARRAY_ELEMENT_GET -> emitArrayElementGet(op);
             case MEMBER_READ -> emitMemberRead(op);
             case OPTIONAL_READ -> emitOptionalRead(op);
             case MEMBER_WRITE -> emitMemberWrite(op);
@@ -1552,7 +1553,8 @@ final class LlvmFunctionEmitter {
                 if (owner.payload() instanceof KindPayload.AwaitPayload await
                         && op.opId().equals(await.completionBoundaryOpId())) return;
                 if (owner.payload() instanceof KindPayload.CallPayload call
-                        && (op.opId().equals(call.returnBoundaryOpId())
+                        && (call.parameterBoundaryOpIds().contains(op.opId())
+                            || op.opId().equals(call.returnBoundaryOpId())
                             || call.dynamicReturnBoundary() != null
                                 && op.opId().equals(call.dynamicReturnBoundary().dealBodyBoundaryOpId()))) return;
             }
@@ -3039,7 +3041,13 @@ final class LlvmFunctionEmitter {
                                  ValueId calleeValue) {
         RuntimeDescriptor.Func signature = payload.signature();
         for (OpId boundary : payload.parameterBoundaryOpIds()) {
-            recordOrigin(unitOp(boundary));
+            SemanticOp position = unitOp(boundary);
+            recordOrigin(position);
+            KindPayload.BoundaryPayload parameter = (KindPayload.BoundaryPayload) position.payload();
+            if (needsLiveCheck(parameter.descriptor())) {
+                emitCheckCall(position, parameter.descriptor(), checkInput(position,
+                    parameter.input(), descriptorOfValue(parameter.input())));
+            }
         }
         if (payload.dynamicReturnBoundary() != null) {
             // The recorded return-boundary cells carry the completion's own
@@ -4983,6 +4991,24 @@ final class LlvmFunctionEmitter {
         emit("store " + LlvmTypeMapper.DATA + " " + datum + ", "
             + LlvmTypeMapper.DATA + "* " + slot);
         return slot;
+    }
+
+    private void emitArrayElementGet(SemanticOp op) {
+        KindPayload.ArrayElementGetPayload payload = (KindPayload.ArrayElementGetPayload) op.payload();
+        RuntimeDescriptor element = (RuntimeDescriptor) op.resultType();
+        session.referenceRuntimeEntry("deal_descriptor_intern");
+        session.referenceRuntimeEntry("deal_array_element_get");
+        String atom = emitTemporary(op, "call %struct.deal_descriptor* @deal_descriptor_intern("
+            + session.data.operand(session.data.intern(element.canonicalSpecText())) + ")");
+        String array = loadValue(payload.arrayValue(), LlvmTypeMapper.ARRAY, op);
+        String index = loadValue(payload.index(), LlvmTypeMapper.NUMBER, op);
+        String outcome = callRecord(op, "%struct.deal_outcome_data", "deal_array_element_get",
+            LlvmTypeMapper.ARRAY + " " + array + ", double " + index + ", %struct.deal_descriptor* " + atom
+                + ", %struct.deal_origin* " + originValue(op));
+        String error = emitTemporary(op, "extractvalue %struct.deal_outcome_data " + outcome + ", 0");
+        branchOnFailure(op, error, "arrayelementget");
+        String result = emitTemporary(op, "extractvalue %struct.deal_outcome_data " + outcome + ", 1");
+        storeResult(op, LlvmTypeMapper.representationOf(element).orElseThrow(), datumToRepresentation(element, result, op));
     }
 
     private void emitArrayJoin(SemanticOp op) {

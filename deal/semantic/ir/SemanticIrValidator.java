@@ -1932,6 +1932,23 @@ public final class SemanticIrValidator {
                     return failure;
                 }
             }
+            case "ARRAY_ELEMENT_GET" -> {
+                ValueId receiver = parseValueIdQuiet(payloadValue(payload, "arrayValue") instanceof CanonicalJson.Obj obj ? obj : null);
+                ValueId index = parseValueIdQuiet(payloadValue(payload, "index") instanceof CanonicalJson.Obj obj ? obj : null);
+                RuntimeDescriptor.Array array = null;
+                boolean indexReady = false;
+                for (RawOp producer : unit.ops()) {
+                    if (producer.opId().equals(op.opId())) break;
+                    if (receiver != null && receiver.equals(producer.resultValue())
+                            && parseDescriptorQuiet(producer.resultType()) instanceof RuntimeDescriptor.Array found) array = found;
+                    if (index != null && index.equals(producer.resultValue()) && "number".equals(producer.resultType())) indexReady = true;
+                }
+                if (array == null || !indexReady || !array.element().canonicalSpecText().equals(op.resultType())
+                        || !List.of(receiver, index).equals(op.operands())
+                        || !List.of(array.canonicalSpecText(), "number").equals(op.operandTypes()))
+                    return fail(op, unit, facts, R_ENUM, SemanticCapability.CONTAINERS_AND_STRINGS,
+                        origin(R_ENUM, "ARRAY_ELEMENT_GET requires preceding array/number operands and its element result descriptor"));
+            }
             case "ARRAY_JOIN" -> {
                 ValueId receiver = parseValueIdQuiet(payloadValue(payload, "arrayValue") instanceof CanonicalJson.Obj obj ? obj : null);
                 ValueId separator = parseValueIdQuiet(payloadValue(payload, "separator") instanceof CanonicalJson.Obj obj ? obj : null);
@@ -2573,6 +2590,7 @@ public final class SemanticIrValidator {
     /** The closed per-kind allowed failure-policy sets (parent operation rows). */
     private static Set<FailurePolicyId> allowedPolicies(SemanticOpKind kind) {
         return switch (kind) {
+            case ARRAY_ELEMENT_GET -> Set.of(FailurePolicyId.ARRAY_PRESENT_ELEMENT);
             case ARRAY_POP, ARRAY_SPLICE, ARRAY_SLICE, ARRAY_SEARCH, ARRAY_JOIN -> Set.of(FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR);
             case ARRAY_LENGTH, OBJECT_KEYS -> Set.of(FailurePolicyId.NO_DEAL_FAILURE);
             case OPTIONAL_READ -> Set.of(FailurePolicyId.NO_DEAL_FAILURE,

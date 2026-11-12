@@ -1639,6 +1639,10 @@ public final class TypeChecker {
                 && BuiltinCall.resolve(namespace.name(), member.field()) == BuiltinCall.ARRAY_FROM) {
             return checkArrayFrom(call, member);
         }
+        if (call.callee() instanceof MemberAccessExpr member && member.field().equals("map")) {
+            Type receiver = checkAddressOperand(member.object());
+            if (receiver instanceof Type.Array array) return checkArrayMap(call, member, array);
+        }
         if (call.callee() instanceof IdentifierExpr id && id.name().equals("String")
                 && resolveVisibleBinding(id.name()) instanceof Symbol.IntrinsicSymbol builtin) {
             typeMap.put(id, builtin.type());
@@ -1801,6 +1805,34 @@ public final class TypeChecker {
         }
         recordExactClassDecl(call, target, declaration);
         return target;
+    }
+
+    private Type checkArrayMap(CallExpr call, MemberAccessExpr member, Type.Array source) {
+        List<Type> arguments = new ArrayList<>();
+        Type savedExpected = expectedType;
+        Symbol.ClassSymbol savedContext = contextualClassDecl;
+        expectedType = null;
+        contextualClassDecl = null;
+        try {
+            for (ExpressionNode argument : call.args()) arguments.add(checkExpression(argument));
+        } finally {
+            expectedType = savedExpected;
+            contextualClassDecl = savedContext;
+        }
+        if (arguments.size() != 1) {
+            error(DiagnosticCode.E3009, "Array.map requires exactly one argument", call.span());
+            return Type.Error.INSTANCE;
+        }
+        if (!(arguments.getFirst() instanceof Type.Func mapper) || mapper.isAsync()
+                || mapper.returnType() instanceof Type.Void) {
+            if (arguments.getFirst() != Type.Error.INSTANCE)
+                error(DiagnosticCode.E5001, "Array.map requires a synchronous data-result mapper", call.args().getFirst().span());
+            return Type.Error.INSTANCE;
+        }
+        Type.Func signature = new Type.Func(List.of(source.element(), Type.Number.INSTANCE, source), mapper.returnType());
+        Type.Array result = new Type.Array(mapper.returnType());
+        typeMap.put(member, new Type.Func(List.of(signature), result));
+        return checkFunctionCall(call, (Type.Func) typeMap.get(member), arguments);
     }
 
     /** Inference is from the source and synchronous mapper, never the enclosing result. */
@@ -1994,6 +2026,10 @@ public final class TypeChecker {
                 }
                 return intrinsic.signature(directBuiltinCall.args().size());
             }
+        }
+        if (objType instanceof Type.Array && field.equals("map")) {
+            error(DiagnosticCode.E3001, "Receiver intrinsics support direct calls only", mae.span());
+            return Type.Error.INSTANCE;
         }
         if (objType instanceof Type.Array array && List.of("push", "pop", "splice", "slice", "includes", "indexOf", "join").contains(field)) {
             if (directBuiltinCall == null || mae != directBuiltinCall.callee()) {

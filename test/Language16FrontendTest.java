@@ -118,6 +118,19 @@ public final class Language16FrontendTest {
                 "Array.from([1],(x:number,i:number,z:number):number=>x)", "Array.from(xs,(x:number):number=>x)"))
             check("function f(xs:number[]|null):void{" + expression + ";}", false);
         check("function f(xs:number[]):string[]{return Array.from(xs,(x:number):number=>x);}", false);
+        check("function f(xs:number[]):string[]{return xs.map((x:number,i:number,a:number[]):string=>String(x+i+a.length));}", true);
+        check("function f(xs:number[]):number[]{return xs.map(():number=>7);}", true);
+        check("class Item{x:number;} function f(xs:number[]):Item[]{return xs.map((x:number):Item=>({x:x}));}", true);
+        check("function f(xs:number[]):number[]{return xs.map((x:unknown):number=>1);}", false);
+        for (String expression : List.of("xs.map", "xs.map()", "xs.map(1)", "xs.map((x:number):number=>x,1)",
+                "xs.map((x:string):number=>1)", "xs.map((x:number,i:string):number=>x)",
+                "xs.map((x:number,i:number,a:string[]):number=>x)",
+                "xs.map((x:number,i:number,a:number[],fourth:number):number=>x)",
+                "xs.map(async(x:number):Promise<number>=>x)", "xs.map((x:number):void=>console.log(String(x)))"))
+            check("function f(xs:number[]):void{" + expression + ";}", false);
+        check("function f(xs:number[]|null):void{xs.map((x:number):number=>x);}", false);
+        check("function f(xs:number[]):string[]{return xs.map((x:number):number=>x);}", false);
+        check("class C{map:()=>number;}function f(c:C):number{return c.map();}", true);
         check("function f(xs:number[]):number[]{return xs.splice(1,2);}", true);
         check("function f(xs:(number|null)[]):(number|null)[]{return xs.splice(1,2);}", true);
         check("function f(xs:unknown[]):unknown[]{return xs.splice(1,2);}", true);

@@ -27,8 +27,8 @@ public enum ConstructKind {
      * {@code CALLBACK_INVOKE}, {@code STDLIB_CALL}, or
      * {@code ASYNC_START}+{@code AWAIT}. */
     CALL("CALL (DIRECT/INDIRECT with execution-binding resolution), CALLBACK_INVOKE, "
-        + "STDLIB_CALL, ARRAY_POP, ARRAY_SPLICE, ARRAY_SLICE, ARRAY_SEARCH, ARRAY_JOIN, OBJECT_KEYS, or ASYNC_START+AWAIT",
-        List.of(SemanticOpKind.JSON_PARSE, SemanticOpKind.OBJECT_KEYS, SemanticOpKind.ARRAY_JOIN, SemanticOpKind.ARRAY_SEARCH, SemanticOpKind.ARRAY_SLICE, SemanticOpKind.ARRAY_SPLICE, SemanticOpKind.ARRAY_POP, SemanticOpKind.CALL, SemanticOpKind.CALLBACK_INVOKE,             SemanticOpKind.STDLIB_CALL, SemanticOpKind.ASYNC_START, SemanticOpKind.AWAIT)),
+        + "STDLIB_CALL, ARRAY_POP, ARRAY_SPLICE, ARRAY_SLICE, ARRAY_SEARCH, ARRAY_JOIN, ARRAY_ELEMENT_GET, LOOP, OBJECT_KEYS, or ASYNC_START+AWAIT",
+        List.of(SemanticOpKind.JSON_PARSE, SemanticOpKind.OBJECT_KEYS, SemanticOpKind.ARRAY_JOIN, SemanticOpKind.ARRAY_ELEMENT_GET, SemanticOpKind.LOOP, SemanticOpKind.ARRAY_SEARCH, SemanticOpKind.ARRAY_SLICE, SemanticOpKind.ARRAY_SPLICE, SemanticOpKind.ARRAY_POP, SemanticOpKind.CALL, SemanticOpKind.CALLBACK_INVOKE,             SemanticOpKind.STDLIB_CALL, SemanticOpKind.ASYNC_START, SemanticOpKind.AWAIT)),
 
     /** Required common form: {@code CALL(EXTERNAL)}/{@code ASYNC_START(EXTERNAL)} with
      * {@code EXTERNAL_ENTRY} on the shared-body callee side, or the retained ABI path. */

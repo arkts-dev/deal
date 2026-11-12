@@ -17,6 +17,7 @@ public sealed interface KindPayload
             KindPayload.ArraySlicePayload,
             KindPayload.ArraySearchPayload,
             KindPayload.ArrayJoinPayload,
+            KindPayload.ArrayElementGetPayload,
             KindPayload.MemberReadPayload,
             KindPayload.MemberWritePayload,
             KindPayload.MemberDeletePayload,
@@ -304,6 +305,14 @@ public sealed interface KindPayload
             Objects.requireNonNull(arrayValue, "arrayValue");
             Objects.requireNonNull(start, "start");
             Objects.requireNonNull(deleteCount, "deleteCount");
+        }
+    }
+
+    /** Strict present-position read and source-indexed element admission. */
+    record ArrayElementGetPayload(ValueId arrayValue, ValueId index) implements KindPayload {
+        public ArrayElementGetPayload {
+            Objects.requireNonNull(arrayValue, "arrayValue");
+            Objects.requireNonNull(index, "index");
         }
     }
 

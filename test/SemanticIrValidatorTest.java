@@ -1345,6 +1345,42 @@ public class SemanticIrValidatorTest {
         }
         }
 
+        for (String defect : List.of("none", "receiver", "index", "result", "operand", "type", "array-type", "policy", "forward")) {
+            var arrayType = new RuntimeDescriptor.Array(STR);
+            SemanticOp array = op(SemanticOpKind.ARRAY_NEW, new KindPayload.ArrayNewPayload(STR, List.of(), List.of()),
+                nextValue(), arrayType, FailurePolicyId.NO_DEAL_FAILURE, null);
+            SemanticOp index = nextConst();
+            var payload = new KindPayload.ArrayElementGetPayload(
+                defect.equals("receiver") ? nextValue() : (ValueId)array.result(),
+                defect.equals("index") ? nextValue() : (ValueId)index.result());
+            RuntimeDescriptor result = defect.equals("result") ? INT : STR;
+            List<ValueId> operands = List.of((ValueId)array.result(), defect.equals("operand") ? nextValue() : (ValueId)index.result());
+            List<RuntimeDescriptor> types = List.of(defect.equals("array-type") ? INT : arrayType, defect.equals("type") ? STR : INT);
+            FailurePolicyId policy = defect.equals("policy") ? FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR : FailurePolicyId.ARRAY_PRESENT_ELEMENT;
+            var contract = contractFor(SemanticOpKind.ARRAY_ELEMENT_GET, payload, result, types, policy, "placeholder");
+            contract = contractFor(SemanticOpKind.ARRAY_ELEMENT_GET, payload, result, types, policy,
+                ContractSnapshotCanonicalizer.digest(contract));
+            SemanticOp get = new SemanticOp(nextOpId(), SemanticOpKind.ARRAY_ELEMENT_GET, origin(null), nextValue(),
+                result, operands, types, payload, policy, contract);
+            var fixture = unit(defect.equals("forward") ? List.of(array, get, index) : List.of(array, index, get));
+            var rebuilt = deal.semantic.ir.RawUnitMaterializer.materialize(RawUnit.fromTyped(fixture));
+            if (defect.equals("none")) {
+                assertUnitPass(fixture, FACTS, "strict array read exact descriptors");
+                assertUnitPass(rebuilt, FACTS, "strict array read raw admission");
+                checkEq(SemanticIrValidator.toUnitText(fixture), SemanticIrValidator.toUnitText(rebuilt), "strict array read lossless transport");
+            } else {
+                var typed = SemanticIrValidator.validate(fixture, FACTS);
+                assertE6005(typed, defect.equals("policy") ? "R-POLICY-KIND" : "R-ENUM", "ARRAY_ELEMENT_GET");
+                check(typed.orElseThrow().range().equals(get.origin().span().range()), "strict array read rejection origin: " + defect);
+                if (!defect.equals("policy")) check(typed.orElseThrow().message().contains(
+                    "ARRAY_ELEMENT_GET requires preceding array/number operands and its element result descriptor"),
+                    "strict array read exact shape failure: " + defect);
+                check(typed.equals(SemanticIrValidator.validate(rebuilt, FACTS))
+                    && typed.equals(SemanticIrValidator.validateText(SemanticIrValidator.toUnitText(fixture), FACTS)),
+                    "strict array read typed/raw/text rejection agrees: " + defect);
+            }
+        }
+
         for (String defect : List.of("none", "receiver", "separator", "result", "operand", "type", "array-type", "policy", "forward")) {
             var arrayType = new RuntimeDescriptor.Array(defect.equals("array-type") ? INT : STR);
             SemanticOp array = op(SemanticOpKind.ARRAY_NEW, new KindPayload.ArrayNewPayload(arrayType.element(), List.of(), List.of()),

@@ -8115,6 +8115,9 @@ public final class SemanticLowerer {
          */
         private ValueId lowerCallSite(CallExpr call, ValueId slot) {
             if (call.callee() instanceof MemberAccessExpr member
+                    && checkedType(member.object()) instanceof Type.Array
+                    && member.field().equals("map")) return lowerArrayMap(call, member, slot);
+            if (call.callee() instanceof MemberAccessExpr member
                     && checkedType(member.object()) instanceof Type.Array array
                     && member.field().equals("join")) {
                 RuntimeDescriptor descriptor = ContainerPayloadDescriptors.resultDescriptorOf(array);
@@ -8950,6 +8953,126 @@ public final class SemanticLowerer {
             }
             return emitValueOp(SemanticOpKind.ARRAY_LENGTH, new KindPayload.ArrayLengthPayload(container),
                 span, RuntimeDescriptor.Number.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE, slot);
+        }
+
+        /** Map snapshots length and uses strict live element reads plus ordinary call boundaries. */
+        private ValueId lowerArrayMap(CallExpr call, MemberAccessExpr member, ValueId slot) {
+            Span span = call.span();
+            RuntimeDescriptor.Array sourceType = (RuntimeDescriptor.Array) valueDescriptorOf(checkedType(member.object()));
+            RuntimeDescriptor.Array output = (RuntimeDescriptor.Array) valueDescriptorOf(checkedType(call));
+            RuntimeDescriptor.Func mapperType = (RuntimeDescriptor.Func) callParameterDescriptor(call, 0);
+            ValueId source = lowerOperand(member.object());
+            BindingId sourceBinding = emitBuiltinBinding(source, span);
+            BindingId mapperBinding = ids.nextBindingId(module, nextOrdinal++, 0);
+            emitUserNullOp(SemanticOpKind.BINDING_ALLOC, new KindPayload.BindingAllocPayload(mapperBinding,
+                currentBlock(), true, BindingCellKind.DIRECT, 0), span, FailurePolicyId.NO_DEAL_FAILURE);
+            ExpressionNode expression = call.args().getFirst();
+            ValueId mapper = positionAdapts(expression, mapperType)
+                ? lowerPositionAdapter(expression, mapperType, () -> lowerOperand(expression)) : lowerOperand(expression);
+            OpId boundary = emitNullOp(SemanticOpKind.BOUNDARY,
+                new KindPayload.BoundaryPayload(BoundaryKind.VARIABLE_DECLARATION, mapperType, mapper,
+                    new BoundaryRealization.RuntimeValidation(CANONICAL_RUNTIME_VALIDATION_ID)),
+                expression.span(), FailurePolicyId.FUNCTION_SIGNATURE, SourceOriginKind.SYNTHETIC, null);
+            recordPositionAdapterAt(mapper, boundary, BoundaryKind.VARIABLE_DECLARATION);
+            emitUserNullOp(SemanticOpKind.BINDING_INIT, new KindPayload.BindingInitPayload(mapperBinding, 0, mapper),
+                span, FailurePolicyId.NO_DEAL_FAILURE);
+            source = emitBuiltinLoad(sourceBinding, sourceType, span, null);
+            ValueId length = emitValueOp(SemanticOpKind.ARRAY_LENGTH, new KindPayload.ArrayLengthPayload(source),
+                span, RuntimeDescriptor.Number.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE);
+            BindingId lengthBinding = emitBuiltinBinding(length, span);
+            ValueId empty = emitValueOp(SemanticOpKind.ARRAY_NEW,
+                new KindPayload.ArrayNewPayload(output.element(), List.of(), List.of()), span, output, FailurePolicyId.NO_DEAL_FAILURE);
+            BindingId resultBinding = emitBuiltinBinding(empty, span);
+            ValueId zero = emitValueOp(SemanticOpKind.CONST, new KindPayload.ConstPayload(new ScalarValue.Number(0)),
+                span, RuntimeDescriptor.Number.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE);
+            BindingId indexBinding = emitBuiltinBinding(zero, span);
+            BlockId conditionBlock = allocateBlock(), bodyBlock = allocateBlock();
+            OpId loop = ids.nextOpId(module, nextOrdinal++, 0);
+            int mark = emitTarget().size();
+            pushBlockParent(loop);
+            ValueId condition;
+            pushBlock(conditionBlock);
+            try {
+                ValueId index = emitBuiltinLoad(indexBinding, RuntimeDescriptor.Number.INSTANCE, span, null);
+                ValueId limit = emitBuiltinLoad(lengthBinding, RuntimeDescriptor.Number.INSTANCE, span, null);
+                condition = emitOperandOp(SemanticOpKind.BINARY, new KindPayload.BinaryPayload(BinarySelector.NUMBER_LT, null, null),
+                    List.of(index, limit), List.of(RuntimeDescriptor.Number.INSTANCE, RuntimeDescriptor.Number.INSTANCE),
+                    span, RuntimeDescriptor.Boolean.INSTANCE, SemanticIrValidator.binaryPolicy(BinarySelector.NUMBER_LT), null);
+            } finally { popBlock(); }
+            pushBlock(bodyBlock);
+            try {
+                ValueId index = emitBuiltinLoad(indexBinding, RuntimeDescriptor.Number.INSTANCE, span, null);
+                ValueId currentSource = emitBuiltinLoad(sourceBinding, sourceType, span, null);
+                ValueId element = emitBuiltinArrayRead(currentSource, sourceType, index, span);
+                ValueId currentMapper = emitBuiltinLoad(mapperBinding, mapperType, span, null);
+                ValueId mapped = emitDynamicInvocation(mapperType, currentMapper, List.of(element, index, currentSource),
+                    List.of(sourceType.element(), RuntimeDescriptor.Number.INSTANCE, sourceType), span, null);
+                emitBuiltinAppend(resultBinding, output, mapped, span);
+                ValueId one = emitValueOp(SemanticOpKind.CONST, new KindPayload.ConstPayload(new ScalarValue.Number(1)),
+                    span, RuntimeDescriptor.Number.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE);
+                ValueId next = emitOperandOp(SemanticOpKind.BINARY, new KindPayload.BinaryPayload(BinarySelector.NUMBER_ADD, null, null),
+                    List.of(index, one), List.of(RuntimeDescriptor.Number.INSTANCE, RuntimeDescriptor.Number.INSTANCE),
+                    span, RuntimeDescriptor.Number.INSTANCE, SemanticIrValidator.binaryPolicy(BinarySelector.NUMBER_ADD), null);
+                emitUserNullOp(SemanticOpKind.BINDING_STORE, new KindPayload.BindingStorePayload(indexBinding, 0, next),
+                    span, FailurePolicyId.NO_DEAL_FAILURE);
+            } finally { popBlock(); popBlockParent(); }
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            emitAt(mark, buildOp(loop, SemanticOpKind.LOOP,
+                new KindPayload.LoopPayload(ControlSelector.WHILE, conditionBlock, condition, bodyBlock, null),
+                null, null, FailurePolicyId.NO_DEAL_FAILURE,
+                new SourceOrigin(sourceId, toSourceSpan(span), SourceOriginKind.SYNTHETIC, anchor, currentParent())));
+            return emitBuiltinLoad(resultBinding, output, span, slot);
+        }
+
+        private BindingId emitBuiltinBinding(ValueId value, Span span) {
+            BindingId binding = ids.nextBindingId(module, nextOrdinal++, 0);
+            emitUserNullOp(SemanticOpKind.BINDING_ALLOC, new KindPayload.BindingAllocPayload(binding,
+                currentBlock(), true, BindingCellKind.DIRECT, 0), span, FailurePolicyId.NO_DEAL_FAILURE);
+            emitUserNullOp(SemanticOpKind.BINDING_INIT, new KindPayload.BindingInitPayload(binding, 0, value),
+                span, FailurePolicyId.NO_DEAL_FAILURE);
+            return binding;
+        }
+
+        private ValueId emitBuiltinArrayRead(ValueId array, RuntimeDescriptor.Array type, ValueId index, Span span) {
+            ValueId result = emitOperandOp(SemanticOpKind.ARRAY_ELEMENT_GET,
+                new KindPayload.ArrayElementGetPayload(array, index), List.of(array, index),
+                List.of(type, RuntimeDescriptor.Number.INSTANCE), span, type.element(),
+                FailurePolicyId.ARRAY_PRESENT_ELEMENT, null);
+            registerDynamicMaterialization(result, producerOpId(result), type.element());
+            return result;
+        }
+
+        private void emitBuiltinAppend(BindingId resultBinding, RuntimeDescriptor.Array output, ValueId value, Span span) {
+            OpId chain = ids.nextOpId(module, nextOrdinal++, 0);
+            chainParents.push(chain);
+            List<OpId> children;
+            try {
+                ValueId destination = emitBuiltinLoad(resultBinding, output, span, null);
+                ValueId index = emitChainChildOp(SemanticOpKind.ARRAY_LENGTH,
+                    new KindPayload.ArrayLengthPayload(destination), span, RuntimeDescriptor.Number.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE);
+                // Republish the already computed value inside the closed assignment's value child.
+                BindingId saved = emitBuiltinBinding(value, span);
+                ValueId stored = emitBuiltinLoad(saved, output.element(), span, null);
+                value = stored;
+                ValueId length = emitChainChildOp(SemanticOpKind.ARRAY_LENGTH,
+                    new KindPayload.ArrayLengthPayload(destination), span, RuntimeDescriptor.Number.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE);
+                ValueId position = emitChainChildOp(SemanticOpKind.INDEX_NORMALIZE,
+                    new KindPayload.IndexNormalizePayload(IndexMode.ARRAY_WRITE, index, length), span,
+                    RuntimeDescriptor.Number.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE);
+                OpId boundary = emitNullOp(SemanticOpKind.BOUNDARY,
+                    new KindPayload.BoundaryPayload(BoundaryKind.ARRAY_ELEMENT_ASSIGNMENT, output.element(), stored,
+                        new BoundaryRealization.RuntimeValidation(CANONICAL_RUNTIME_VALIDATION_ID)), span,
+                    FailurePolicyId.ARRAY_WRITE_BOUNDS_THEN_ELEMENT, SourceOriginKind.SYNTHETIC, chain);
+                OpId commit = emitNullOp(SemanticOpKind.INDEX_WRITE,
+                    new KindPayload.IndexWritePayload(destination, position, stored), span,
+                    FailurePolicyId.NO_DEAL_FAILURE, SourceOriginKind.SYNTHETIC, chain);
+                children = List.of(producerOpId(destination), producerOpId(index), producerOpId(stored),
+                    producerOpId(length), producerOpId(position), boundary, commit);
+            } finally { chainParents.pop(); }
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            emit(buildOp(chain, SemanticOpKind.ASSIGN, new KindPayload.AssignPayload(AssignTargetKind.ARRAY_SLOT, children),
+                value, output.element(), FailurePolicyId.NO_DEAL_FAILURE,
+                new SourceOrigin(sourceId, toSourceSpan(span), SourceOriginKind.SYNTHETIC, anchor, currentParent())));
         }
 
         /** Expand Array.from into ordinary live iteration, calls and checked append chains. */

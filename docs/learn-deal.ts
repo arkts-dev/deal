@@ -68,6 +68,9 @@ function counter(start: number): () => number {
 // strict equality and returns the first zero-based match or -1. Negative
 // fromIndex counts from the end. Both stop at the first match.
 // string arrays join(separator) into one string; the separator is required.
+// map infers a fresh result array from a synchronous, explicitly typed mapper.
+// It snapshots length after mapper evaluation and reads live elements; callback
+// parameter/return boundaries remain checked, including the source-array argument.
 function sumAll(values: number[]): number {
   let total: number = 0;
   for (let value of values) { total = total + value; }
@@ -88,6 +91,9 @@ function arrays(): number {
   let labels: string[] = Array.from(values, (value: number, index: number): string =>
     `${index}: ${value}`);
   console.log(labels.join("; "));
+  let mapped: string[] = values.map((value: number, index: number, source: number[]): string =>
+    `${index}/${source.length}: ${value}`);
+  console.log(mapped.join("; "));
   values[0] = 99;
   let maybe: (number | null)[] = [1, null, 3];
   let selected: number | null = maybe[1];

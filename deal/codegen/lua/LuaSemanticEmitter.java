@@ -1573,6 +1573,7 @@ public final class LuaSemanticEmitter {
                 case ARRAY_SLICE -> emitArraySlice(op);
                 case ARRAY_SEARCH -> emitArraySearch(op);
                 case ARRAY_JOIN -> emitArrayJoin(op);
+                case ARRAY_ELEMENT_GET -> emitArrayElementGet(op);
                 case MEMBER_READ -> emitMemberRead(op);
                 case MEMBER_WRITE -> emitMemberWrite(op);
                 case MEMBER_DELETE -> emitMemberDelete(op);
@@ -1991,6 +1992,24 @@ public final class LuaSemanticEmitter {
                     .append(")\n");
             }
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
+        }
+
+        private void emitArrayElementGet(SemanticOp op) {
+            KindPayload.ArrayElementGetPayload payload = (KindPayload.ArrayElementGetPayload) op.payload();
+            RuntimeDescriptor element = (RuntimeDescriptor) op.resultType();
+            String target = slot((ValueId) op.result());
+            emitStart(op);
+            out.append("do local a=").append(slot(payload.arrayValue())).append("; local i=__num(")
+                .append(slot(payload.index())).append("); local n=a[__dealCarrierKeys.n] or 0; while rawget(a,n+1) ~= nil do n=n+1 end\n")
+                .append("if i~=i or i==math.huge or i==-math.huge or i~=math.floor(i) or i<0 or i>=n or rawget(a,i+1)==nil then error(__arm(\"ARRAY_READ_BOUNDS\",{},")
+                .append(luaString(originOf(op))).append("),0) end\n")
+                .append("local v=rawget(a,i+1); __okB,__chkB=pcall(__bcheck,").append(bcheckArgs(element, "v")).append(")\n")
+                .append("if not __okB then local failure=__arm(\"ARRAY_ELEMENT_KIND\",{oneBasedIndex=i+1},")
+                .append(luaString(originOf(op))).append(",").append(luaString(element.canonicalSpecText()))
+                .append(",__elemRefKind(").append(luaString(staticKind(element)))
+                .append(",v)); failure.cause=(__chkB.code == \"E8003\" and __chkB.cause) or __chkB; error(failure,0) end; ")
+                .append(target).append("=__chkB end\n");
+            emitResultSuccess(op, target, element);
         }
 
         private void emitArrayJoin(SemanticOp op) {

@@ -29,6 +29,9 @@ export function exercise(): null {
   let restored: Record<string, unknown> = JSON.parse(encoded);
   let enabled: boolean = restored.enabled as boolean;
   check.require(enabled, "table JSON roundtrip");
+  let counts: number[] = [1, 2, 3];
+  let labels: string[] = counts.map((value: number, index: number): string => `${index}: ${value}`);
+  check.require(labels.join("; ") === "0: 1; 1: 2; 2: 3", "map typed values in source order");
   data.note = null;
   delete data.note;
   return null;

@@ -1851,6 +1851,7 @@ record NumValue(double value) implements Value {
                 case ARRAY_SLICE -> executeArraySlice(op);
                 case ARRAY_SEARCH -> executeArraySearch(op);
                 case ARRAY_JOIN -> executeArrayJoin(op);
+                case ARRAY_ELEMENT_GET -> executeArrayElementGet(op);
                 case MEMBER_READ -> executeMemberRead(op);
                 case MEMBER_WRITE, MEMBER_DELETE, INDEX_WRITE, INDEX_DELETE,
                      FIELD_WRITE, FIELD_DELETE -> executeCommit(op);
@@ -2123,6 +2124,23 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                 entries.put(entry.key(), valueOf(entry.value()));
             }
             return publish(op, new Value.TableValue(entries));
+        }
+
+        private String executeArrayElementGet(SemanticOp op) {
+            KindPayload.ArrayElementGetPayload payload = (KindPayload.ArrayElementGetPayload) op.payload();
+            Value.ArrayValue array = (Value.ArrayValue) valueOf(payload.arrayValue());
+            double index = numberUse(valueOf(payload.index()));
+            if (!Double.isFinite(index) || index != Math.rint(index) || index < 0
+                    || index >= array.elements().size()
+                    || array.elements().get((int) index) instanceof Value.MissingValue)
+                throw registryFailure(op, FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR, null, null);
+            Value value = array.elements().get((int) index);
+            BoundaryOutcome outcome = BoundaryExecutor.execute(FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR,
+                (RuntimeDescriptor) op.resultType(), viewOfValue(value), BoundaryContext.element((int) index + 1),
+                new deal.semantic.ir.BoundaryRealization.RuntimeValidation("array-element-get"));
+            if (outcome instanceof BoundaryOutcome.Fail fail)
+                throw DealFailure.of(fail.failure(), op.origin(), List.copyOf(frames));
+            return publish(op, valueOfView(((BoundaryOutcome.Pass) outcome).value(), value));
         }
 
         private String executeArrayJoin(SemanticOp op) {

@@ -2478,6 +2478,19 @@ const $rt = {
     return value;
   },
 
+  arrayElementGet: function(v, index, descriptor, file, line, column) {
+    if (!Number.isInteger(index) || index < 0 || index >= $rt.arrayLength(v) || !$rt.arrayHas(v, index))
+      throw new $DEALError("E8002", "array index out of bounds", file, line, column);
+    const value = $rt.arrayAt(v, index);
+    try { return $rt.checkType(descriptor, value, file, line, column); }
+    catch (cause) {
+      const failure = new $DEALError("E8003", "array element " + (index + 1) + " type mismatch",
+        file, line, column, descriptor, $elemKindOf(value));
+      failure.cause = cause.code === "E8003" && cause.cause ? cause.cause : cause;
+      throw failure;
+    }
+  },
+
   arrayJoin: function(v, separator, file, line, column) {
     const length = $rt.arrayLength(v), parts = [];
     for (let i = 0; i < length; i++) {

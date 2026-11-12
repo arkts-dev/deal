@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "backends": ["js", "luajit", "jvm"],
+  "hostFixture": "array_pop",
+  "expected": {
+    "mode": "runtime-ok",
+    "transcript": {"stdout": "", "stderr": ""},
+    "exitCode": 0
+  }
+}

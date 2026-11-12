@@ -94,6 +94,7 @@ public final class Language16RuntimeTest {
         arraySliceMissingPositions();
         arraySearchMissingPositions();
         arrayJoinMissingPositions();
+        arrayElementGetMissingPositions();
         objectKeysAdmission(false);
         objectKeysAdmission(true);
         fixtureAdmission("tables/builtin-has-own.deal", deal.semantic.ir.SemanticOpKind.HAS_FIELD, 17);
@@ -103,6 +104,7 @@ public final class Language16RuntimeTest {
         fixtureAdmission("arrays/slice.deal", deal.semantic.ir.SemanticOpKind.ARRAY_SLICE, -1);
         fixtureAdmission("arrays/search.deal", deal.semantic.ir.SemanticOpKind.ARRAY_SEARCH, -1);
         fixtureAdmission("arrays/join.deal", deal.semantic.ir.SemanticOpKind.ARRAY_JOIN, -1);
+        fixtureAdmission("arrays/map.deal", deal.semantic.ir.SemanticOpKind.ARRAY_ELEMENT_GET, -1);
         fixtureAdmission("stdlib/json/contextual-parse.deal", deal.semantic.ir.SemanticOpKind.JSON_PARSE, -1);
         fixtureAdmission("stdlib/string/substring-omitted-end.deal", deal.semantic.ir.SemanticOpKind.STDLIB_CALL, 12);
         fixtureAdmission("stdlib/string/slice.deal", deal.semantic.ir.SemanticOpKind.STDLIB_CALL, 26);
@@ -121,10 +123,39 @@ public final class Language16RuntimeTest {
         arrayRemovalAdmission("slice-live-retry");
         arrayRemovalAdmission("search-live-retry");
         arrayRemovalAdmission("join-live-retry");
+        arrayRemovalAdmission("map-live-retry");
         callableBodyAdmission();
         errorGraphAdmission();
         for (String fixture : List.of("core", "refinement", "assertion", "failures", "equality-loops", "json-values", "audit-scalars")) executeFixture(fixture);
         System.out.println("Language16RuntimeTest: passed (Oracle, JS, LuaJIT, JVM; deployed array descriptors)");
+    }
+
+    private static void arrayElementGetMissingPositions() {
+        var source = new deal.codegen.jvm.JvmRuntime.Array(3);
+        source.elementDescriptor = "!number";
+        source.elements.add(7.0);source.elements.add(deal.codegen.jvm.JvmRuntime.MISSING);
+        source.elements.add(deal.codegen.jvm.JvmRuntime.UNDEFINED);
+        for (double index : new double[]{1, -1, 3, 0.5, Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY}) {
+            try {
+                deal.codegen.jvm.JvmRuntime.arrayElementGet(source,index,"!number","!number","map.deal:2:3");
+                throw new AssertionError("strict missing/nonintegral/out-of-bounds read accepted: " + index);
+            } catch (deal.codegen.jvm.JvmRuntime.DealError error) {
+                if (!error.code.equals("E8002") || !error.msg.equals("array index out of bounds")) throw new AssertionError(error);
+            }
+        }
+        if (deal.codegen.jvm.JvmRuntime.arrayElementGet(source,2,"!number","!number","map.deal:2:3") != deal.codegen.jvm.JvmRuntime.UNDEFINED
+                || !deal.codegen.jvm.JvmRuntime.arrayElementGet(source,-0.0,"!number","!number","map.deal:2:3").equals(7.0))
+            throw new AssertionError("strict read confused present undefined or negative zero");
+        try {
+            deal.codegen.jvm.JvmRuntime.arrayElementGet(source,2,"number","number","map.deal:2:3");
+            throw new AssertionError("strict stored undefined accepted as number");
+        } catch (deal.codegen.jvm.JvmRuntime.DealError error) {
+            if (!error.code.equals("E8003") || !error.msg.equals("array element 3 type mismatch")
+                    || !error.expected.equals("number") || !error.actual.equals("undefined") || error.cause == null)
+                throw new AssertionError(error);
+        }
+        if(source.length()!=3 || source.elements.get(1)!=deal.codegen.jvm.JvmRuntime.MISSING)
+            throw new AssertionError("strict read mutated source");
     }
 
     private static void arrayJoinMissingPositions() {
@@ -490,6 +521,17 @@ public final class Language16RuntimeTest {
             long tests = result.trace().stream().filter(e -> e.kind()==kind
                 && e.phase()==deal.semantic.SemanticRuntimeModel.Phase.SUCCESS).count();
             if (expected >= 0 && tests!=expected) throw new AssertionError(fixture + " Oracle population: " + tests);
+            if (fixture.equals("arrays/map.deal")) {
+                var failures = result.trace().stream().filter(e -> e.kind()==deal.semantic.ir.SemanticOpKind.ARRAY_ELEMENT_GET
+                    && e.phase()==deal.semantic.SemanticRuntimeModel.Phase.FAILURE).toList();
+                if(failures.size()!=1) throw new AssertionError("map shrink strict-read failure population: "+failures);
+                var event=failures.getFirst();var error=event.error();
+                var op=project.modules().get(event.op().module()).ops().stream().filter(o->o.opId().equals(event.op())).findFirst().orElseThrow();
+                String origin=op.origin().sourceId()+":"+op.origin().span().startLine()+":"+op.origin().span().startColumn();
+                if(!error.code().equals("E8002") || !error.message().equals("array index out of bounds")
+                        || error.expected()!=null || error.actual()!=null || error.cause()!=null
+                        || !error.origin().equals(origin) || error.frames().isEmpty()) throw new AssertionError(error);
+            }
         } finally { CompositionProductionTest.remove(work); }
     }
 
@@ -1356,15 +1398,16 @@ public final class Language16RuntimeTest {
 
     /** Execute the same retained-mutation contract in the Oracle with genuine lowered bodies. */
     private static void arrayRemovalAdmission(String fixture) throws Exception {
-        boolean splice = fixture.startsWith("splice"), slice = fixture.startsWith("slice"), search = fixture.startsWith("search"), join = fixture.startsWith("join");
-        String operation = join ? "ARRAY_JOIN" : search ? "ARRAY_SEARCH" : slice ? "ARRAY_SLICE" : splice ? "ARRAY_SPLICE" : "ARRAY_POP";
+        boolean splice = fixture.startsWith("splice"), slice = fixture.startsWith("slice"), search = fixture.startsWith("search"), join = fixture.startsWith("join"), map = fixture.startsWith("map");
+        String operation = map ? "ARRAY_ELEMENT_GET" : join ? "ARRAY_JOIN" : search ? "ARRAY_SEARCH" : slice ? "ARRAY_SLICE" : splice ? "ARRAY_SPLICE" : "ARRAY_POP";
         Path work = Files.createTempDirectory(Path.of("build"), "pop-admission-").toAbsolutePath();
         try {
             Path source = Files.createDirectories(work.resolve("src")).resolve("main.deal");
             Files.writeString(source, ConformanceHarnessMetadata.stripClassificationHeaders(Files.readString(
                 Path.of("test/conformance/backend-runtime/arrays/" + fixture + ".deal")))
                 .replace("export function main():null", "export function run():null")
-                + "\nexport function main():null{return null;}\n");
+                + "\nexport function main():null{return null;}\n"
+                + (map ? "export function hole():number{let xs:unknown[]=[undefined];host.keep(xs);host.corrupt();return xs.map((value:unknown):unknown=>value).length;}\n" : ""));
             Path declaration = source.resolveSibling("probe.d.deal");
             Files.copy(Path.of("test/conformance/host-fixtures/" + (join ? "array_join" : "array_pop") + ".d.deal"), declaration);
             Files.writeString(work.resolve("deal.json"),
@@ -1400,7 +1443,7 @@ public final class Language16RuntimeTest {
             rejectsOp(raw, operation, op -> field(field(op, "operands", empty), "operandTypes", empty), facts);
             if (join) for (var bad : List.of(missing, deal.semantic.ir.CanonicalJson.Null.INSTANCE))
                 rejectsOp(raw, operation, op -> field(op, "payload", field(payload(op), "separator", bad)), facts);
-            if (!splice && !slice && !search && !join) rejectsOp(raw, operation, op -> field(op, "operandTypes", new deal.semantic.ir.CanonicalJson.Arr(
+            if (!splice && !slice && !search && !join && !map) rejectsOp(raw, operation, op -> field(op, "operandTypes", new deal.semantic.ir.CanonicalJson.Arr(
                 List.of(new deal.semantic.ir.CanonicalJson.Str("[string]")))), facts);
             if (splice || slice) {
                 for (String key : List.of("start", slice ? "end" : "deleteCount")) {
@@ -1413,7 +1456,7 @@ public final class Language16RuntimeTest {
                 rejectsOp(raw, operation, op -> field(op, "payload", field(payload(op), key,
                     deal.semantic.ir.CanonicalJson.Null.INSTANCE)), facts);
             }
-            rejectsOp(raw, operation, op -> field(op, "resultType", new deal.semantic.ir.CanonicalJson.Str(search ? "string" : "number")), facts);
+            rejectsOp(raw, operation, op -> field(op, "resultType", new deal.semantic.ir.CanonicalJson.Str(search || map ? "string" : "number")), facts);
             var tables = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.StructuredBodyTable>();
             var registries = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.ClassFactoryRegistry>();
             project.modules().forEach((id, unit) -> { tables.put(id, unit.bodyTable()); registries.put(id, unit.classFactories()); });
@@ -1421,6 +1464,7 @@ public final class Language16RuntimeTest {
                 private deal.semantic.SemanticOracle.Value.ArrayValue saved;
                 private deal.semantic.SemanticOracle.Value.ClassValue damaged;
                 private deal.semantic.SemanticOracle.Value originalFunction;
+                int holeMode;
                 public SyncOutcome call(deal.semantic.ir.ModuleId module, String export,
                         deal.semantic.ir.RuntimeDescriptor.Func descriptor,
                         List<deal.semantic.SemanticOracle.Value> arguments) {
@@ -1440,7 +1484,9 @@ public final class Language16RuntimeTest {
                         }
                         case "restoreFunction" -> saved.elements().set(0, originalFunction);
                         case "corrupt" -> saved.elements().set(saved.elements().size()-1,
-                            new deal.semantic.SemanticOracle.Value.StrValue("bad"));
+                            holeMode==1 ? deal.semantic.SemanticOracle.Value.MissingValue.INSTANCE
+                            : holeMode==2 ? deal.semantic.SemanticOracle.Value.UndefinedValue.INSTANCE
+                            : new deal.semantic.SemanticOracle.Value.StrValue("bad"));
                         case "repair" -> saved.elements().set(saved.elements().size()-1,
                             new deal.semantic.SemanticOracle.Value.NumValue(9));
                         case "size" -> result = new deal.semantic.SemanticOracle.Value.NumValue(saved.elements().size());
@@ -1473,20 +1519,39 @@ public final class Language16RuntimeTest {
                     .filter(e -> e.phase()==deal.semantic.SemanticRuntimeModel.Phase.FAILURE).toList());
             var failures = result.trace().stream().filter(e -> e.kind()==deal.semantic.ir.SemanticOpKind.valueOf(operation)
                 && e.phase()==deal.semantic.SemanticRuntimeModel.Phase.FAILURE).toList();
-            int population = join ? 4 : slice || search ? 6 : 3;
+            if(map) for(int mode:List.of(1,2)) {
+                responder.holeMode=mode;
+                var hole=deal.semantic.SemanticOracle.invokeSyncEntry(project,tables,registries,responder,
+                    compiler.checkedProject().input().entryModule(),"hole",List.of());
+                var events=hole.trace().stream().filter(e->e.kind()==deal.semantic.ir.SemanticOpKind.ARRAY_ELEMENT_GET
+                    && e.phase()!=deal.semantic.SemanticRuntimeModel.Phase.START).toList();
+                if(events.size()!=1 || responder.saved.elements().size()!=1
+                        || responder.saved.elements().getFirst()!=(mode==1 ? deal.semantic.SemanticOracle.Value.MissingValue.INSTANCE
+                            : deal.semantic.SemanticOracle.Value.UndefinedValue.INSTANCE)) throw new AssertionError(hole.comparisonReport());
+                if(mode==1) {
+                    var event=events.getFirst();var error=event.error();
+                    var op=project.modules().get(event.op().module()).ops().stream().filter(o->o.opId().equals(event.op())).findFirst().orElseThrow();
+                    String origin=op.origin().sourceId()+":"+op.origin().span().startLine()+":"+op.origin().span().startColumn();
+                    if(error==null || !error.code().equals("E8002") || !error.message().equals("array index out of bounds")
+                            || error.expected()!=null || error.actual()!=null || error.cause()!=null
+                            || !error.origin().equals(origin) || error.frames().isEmpty()) throw new AssertionError(event);
+                } else if(!(hole.terminal() instanceof deal.semantic.SemanticRuntimeModel.Terminal.Success done)
+                        || !done.resultAtom().equals("num:0x1.0p0")) throw new AssertionError(hole.comparisonReport());
+            }
+            int population = map || join ? 4 : slice || search ? 6 : 3;
             if (failures.size()!=population) throw new AssertionError(operation + " failure trace population: " + failures);
             for (int i=0; i<population; i++) {
                 var error = failures.get(i).error();
-                String expected = join ? "string" : slice || search ? (i==0 || i==5 ? "number" : i==1 ? "[number]" : i==2
+                String expected = map ? (i==0 ? "number" : i==1 ? "@src/main.deal/Item" : "()->number") : join ? "string" : slice || search ? (i==0 || i==5 ? "number" : i==1 ? "[number]" : i==2
                     ? "@src/main.deal/Item" : "()->number")
                     : i==0 ? "[number]" : i==1 ? "number" : "@src/main.deal/Item";
-                String actual = join ? (i==1 ? "undefined" : "null") : slice || search ? (i==0 || i==5 ? "string" : i==1 ? "array" : i>=3 ? "function" : expected)
+                String actual = map ? (i==0 ? "string" : i==1 ? expected : "function") : join ? (i==1 ? "undefined" : "null") : slice || search ? (i==0 || i==5 ? "string" : i==1 ? "array" : i>=3 ? "function" : expected)
                     : i==0 ? "array" : i==1 ? "string" : expected;
-                int position = join ? (i==0 || i==3 ? 2 : i==1 ? 3 : 1) : slice || search ? (i==0 || i==5 ? 3 : i==1 || i==2 ? 2 : 1)
+                int position = map ? (i==0 ? 3 : 1) : join ? (i==0 || i==3 ? 2 : i==1 ? 3 : 1) : slice || search ? (i==0 || i==5 ? 3 : i==1 || i==2 ? 2 : 1)
                     : splice ? (i==0 ? 2 : i==1 ? 3 : 1) : (i==1 ? 2 : 1);
-                String leafExpected = join ? "string" : (slice || search) && i==4 ? "()->number" : (slice || search) && i==3 ? "function" : "number";
-                String leafActual = join ? actual : (slice || search) && i==4 ? "()->string" : (slice || search) && i==3 ? "function" : "string";
-                String leafCode = (slice || search) && i==4 ? "E8010" : "E8001";
+                String leafExpected = map ? (i==3 ? "()->number" : i==2 ? "function" : "number") : join ? "string" : (slice || search) && i==4 ? "()->number" : (slice || search) && i==3 ? "function" : "number";
+                String leafActual = map ? (i==3 ? "()->string" : i==2 ? "function" : "string") : join ? actual : (slice || search) && i==4 ? "()->string" : (slice || search) && i==3 ? "function" : "string";
+                String leafCode = map && i==3 || (slice || search) && i==4 ? "E8010" : "E8001";
                 if (!error.code().equals("E8003") || !error.expected().equals(expected)
                         || !error.actual().equals(actual)
                         || !error.message().equals("array element " + position + " type mismatch") || error.cause()==null
@@ -1766,6 +1831,17 @@ public final class Language16RuntimeTest {
                   && e.expected==='string' && e.actual==='undefined' && e.cause.code==='E8001'}
                 if(!rejectedJoin || strings.length!==3 || !(1 in strings)) throw Error('join present undefined/rollback');
                 const sparse=rt.tagArray([1,,undefined],'!number');
+                for(const index of [1,-1,3,.5,NaN,Infinity,-Infinity]) {
+                  let rejected=false;try{rt.arrayElementGet(sparse,index,'!number','map.deal',2,3)}
+                  catch(e){rejected=e.code==='E8002' && e.message==='array index out of bounds'}
+                  if(!rejected) throw Error('strict read missing/position '+index);
+                }
+                if(rt.arrayElementGet(sparse,2,'!number','map.deal',2,3)!==undefined
+                    || rt.arrayElementGet(sparse,-0,'!number','map.deal',2,3)!==1) throw Error('strict present undefined/negative zero');
+                let rejectedElement=false;try{rt.arrayElementGet(sparse,2,'number','map.deal',2,3)}
+                catch(e){rejectedElement=e.code==='E8003' && e.message==='array element 3 type mismatch'
+                  && e.expected==='number' && e.actual==='undefined' && e.cause.code==='E8001'}
+                if(!rejectedElement || sparse.length!==3 || 1 in sparse) throw Error('strict read descriptor/rollback');
                 if(!rt.arraySearch(sparse,undefined,1,true,'!number','search.deal',2,3)
                     || rt.arraySearch(sparse,undefined,1,false,'!number','search.deal',2,3)!==2)
                   throw Error('search must distinguish holes from stored undefined');

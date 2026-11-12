@@ -842,6 +842,7 @@ public class CanonicalJsonTest {
             case ARRAY_SPLICE -> new KindPayload.ArraySplicePayload(v0, v1, v0);
             case ARRAY_SLICE -> new KindPayload.ArraySlicePayload(v0, v1, v0);
             case ARRAY_JOIN -> new KindPayload.ArrayJoinPayload(v0, v1);
+            case ARRAY_ELEMENT_GET -> new KindPayload.ArrayElementGetPayload(v0, v1);
             case ARRAY_SEARCH -> new KindPayload.ArraySearchPayload(v0, v1, v0, true);
             case MEMBER_READ -> new KindPayload.MemberReadPayload(v0, "k");
             case MEMBER_WRITE -> new KindPayload.MemberWritePayload(v0, "k", v1);

@@ -221,6 +221,8 @@ deal_outcome_data deal_array_splice(deal_array *array, double from, double delet
                                      deal_descriptor *element, const deal_origin *origin);
 
 /* Snapshot length, then validate/read in order until strict/SameValueZero match. */
+deal_outcome_data deal_array_element_get(deal_array *array, double index, deal_descriptor *element, const deal_origin *origin);
+
 deal_outcome_data deal_array_join(deal_array *array, deal_string *separator, const deal_origin *origin);
 
 deal_outcome_data deal_array_search(deal_array *array, const deal_data *needle, double from,

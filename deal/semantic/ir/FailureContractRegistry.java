@@ -58,6 +58,12 @@ rows.put(FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR,
                 ORIGIN_OPERATION, "cause equal to the leaf descriptor error", FRAMES_ACTIVE,
                 "first failing element in increasing index order"));
 
+        rows.put(FailurePolicyId.ARRAY_PRESENT_ELEMENT,
+            makeRow(FailurePolicyId.ARRAY_PRESENT_ELEMENT, null, List.of(), List.of(),
+                ORIGIN_OPERATION, CAUSE_NONE, FRAMES_ACTIVE,
+                "integrality, live bounds and presence first (ARRAY_READ_BOUNDS); "
+                    + "then ARRAY_ELEMENT_DESCRIPTOR at the original one-based source index; no mutation"));
+
         rows.put(FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR,
             makeRow(FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR, DiagnosticCode.E8002,
                 List.of("array index out of bounds"), List.of(),

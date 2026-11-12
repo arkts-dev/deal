@@ -1593,6 +1593,35 @@ deal_outcome_data deal_array_splice(deal_array *array, double from, double delet
     return result;
 }
 
+deal_outcome_data deal_array_element_get(deal_array *array, double index, deal_descriptor *element, const deal_origin *origin) {
+    deal_outcome_data result = {0};
+    size_t position;
+    if (!deal_container_position(index, deal_container_array_count(array), 0, &position)) {
+        result.error = deal_error_array_position(DEAL_ARM_ID_ARRAY_READ_BOUNDS, origin);
+        return result;
+    }
+    deal_root_scope_push();
+    (void)deal_root_scope_hold(array);
+    deal_check_input input = deal_live_element(array, position);
+    deal_check_context context = {0};
+    context.origin = origin;
+    uint32_t boundary = deal_descriptor_type(element) == DEAL_DESCRIPTOR_FUNCTION
+        ? DEAL_BOUNDARY_FUNCTION_SIGNATURE : DEAL_BOUNDARY_TYPE_DESCRIPTOR;
+    deal_outcome checked = deal_check_live_value_core(element, input, boundary, &context, 0);
+    if (checked.error != NULL) {
+        char index_text[3u * sizeof(size_t) + 1u];
+        size_t end = sizeof(index_text) - 1u;
+        index_text[end] = '\0';
+        size_t one_based = position + 1u;
+        do { index_text[--end] = (char)('0' + one_based % 10u); one_based /= 10u; } while (one_based != 0u);
+        deal_arm_parameter parameter = {"oneBasedIndex", &index_text[end]};
+        result.error = deal_error_materialize(DEAL_ARM_ID_ARRAY_ELEMENT_KIND,
+            &parameter, 1u, deal_descriptor_text(element), deal_check_token(&input), origin, checked.error);
+    } else result.value = input.datum;
+    deal_root_scope_pop();
+    return result;
+}
+
 deal_outcome_data deal_array_join(deal_array *array, deal_string *separator, const deal_origin *origin) {
     deal_outcome_data result = {0};
     size_t length = deal_container_array_count(array);
