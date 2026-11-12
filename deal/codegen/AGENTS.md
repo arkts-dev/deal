@@ -18,6 +18,8 @@ ARRAY_SLICE normalizes both relative bounds against the post-argument length of 
 
 ARRAY_ELEMENT_GET validates integrality, current bounds and presence before reading, with E8002 for a missing position even when the element admits undefined. Admit present storage at its original one-based source index before unboxing; preserve E8003 with its unwrapped leaf cause, operation origin and unchanged source. Expanded map loops use this operation with ordinary call/append boundaries, not a backend-local map algorithm.
 
+ARRAY_HAS observes current bounds/presence without descriptor admission or element reads. Invalid/nonintegral/nonfinite/negative positions are absent; negative zero addresses zero and stored undefined remains present. Filter/some/every render their expanded shared branch/call/append IR, never backend-local callback algorithms. Native arrays remain dense; current-bounds validation suffices there.
+
 ARRAY_JOIN consumes a saved string-array receiver and required string separator, snapshots length after argument effects and admits present strings in ascending source order. Holes contribute empty text, but stored undefined/null fail ordinary string admission. Preserve every UTF-16 unit and separator, source-index E8003/leaf causes and unchanged source/destination on failure. Native storage remains dense.
 
 ARRAY_SEARCH snapshots the saved receiver's post-argument length, normalizes relative fromIndex and visits ascending reached positions only. Admit present slots with original source-index E8003/leaf causes before comparison. Includes uses SameValueZero and holes as undefined; indexOf uses strict equality and skips holes. Return immediately on a match, preserving aggregate/function identities and source storage. Native storage remains dense.

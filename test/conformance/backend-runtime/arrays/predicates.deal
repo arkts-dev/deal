@@ -1,0 +1,65 @@
+// @spec: Arrays
+// @description: Filter some and every snapshot length, skip missing positions and preserve live values and early exit
+// @expected: runtime-ok
+// @features: arrays, functions
+class Item {x:number;}
+function check(ok:boolean):void {if(!ok){throw {code:"PREDICATES",message:"predicate mismatch"};}}
+export function main():null {
+  let xs:number[]=[1,2,3];let calls=0;
+  let filtered=xs.filter((value:number,index:number,array:number[]):boolean=>{
+    calls=calls+1;check(array===xs);if(index===0){array[1]=20;array.push(4);}return value>1;
+  });
+  check(filtered!==xs && filtered.length===2 && filtered[0]===20 && filtered[1]===3 && calls===3);
+  calls=0;check(xs.some((value:number):boolean=>{calls=calls+1;return value===20;}) && calls===2);
+  calls=0;check(!xs.every((value:number):boolean=>{calls=calls+1;return value<10;}) && calls===2);
+  check(xs.every((value:number):boolean=>value>0) && !xs.some(():boolean=>false));
+  let empty:number[]=[];calls=0;
+  check(!empty.some(():boolean=>{calls=calls+1;return true;}));
+  check(empty.every(():boolean=>{calls=calls+1;return false;}));
+  check(empty.filter(():boolean=>{calls=calls+1;return true;}).length===0 && calls===0);
+  let original:number[]=[2,3];let saved=original;let effects="";
+  let receiver=():number[]=>{effects=effects+"r";return original;};
+  let predicate=():(value:number,index:number,array:number[])=>boolean=>{
+    effects=effects+"p";saved.push(4);original=[99];
+    return (value:number,index:number,array:number[]):boolean=>{check(array===saved);effects=effects+String(index);return value>2;};
+  };
+  let selected=receiver().filter(predicate());check(selected.length===2 && selected[0]===3 && selected[1]===4 && effects==="rp012");
+  effects="";original=saved;check(receiver().some(predicate()) && effects==="rp01");
+  effects="";original=saved;check(!receiver().every(predicate()) && effects==="rp0");
+  let item:Item={x:7};let replacement:Item={x:8};let items:Item[]=[item];
+  let matching=items.filter((value:Item):boolean=>{items[0]=replacement;return true;});
+  check(matching!==items && matching[0]===item && items[0]===replacement);
+  let callback=():number=>9;let functions:(()=>number)[]=[callback];check(functions.filter(():boolean=>true)[0]===callback);
+  let matrix:number[][]=[[1],[2]];check(matrix.filter(():boolean=>true)[0]===matrix[0]);
+  let nullish:(number|null|undefined)[]=[null,undefined,-0,0/0,1/0];
+  let copy=nullish.filter(():boolean=>true);check(copy.length===5 && copy[0]===null && copy[1]===undefined);
+  check(1/(copy[2] as number)===-1/0 && Number.isNaN(copy[3]) && (copy[4] as number)===1/0);
+  check(nullish.some((value:number|null|undefined):boolean=>value===undefined));
+  check(!nullish.every((value:number|null|undefined):boolean=>value!==null));
+  let text:string[]=["a\u0000","\ud800","\udc00"];let units=text.filter(():boolean=>true);
+  check(units[0]==="a\u0000" && units[1]==="\ud800" && units[2]==="\udc00");
+  let decoded:number[]=JSON.parse("[4,5]");check(decoded.filter((value:number):boolean=>value===5)[0]===5);
+  check(decoded.some((value:number):boolean=>value===4) && decoded.every((value:number):boolean=>value>0));
+  let shrink:number[]=[1,2,3];calls=0;
+  let result=shrink.filter((value:number):boolean=>{calls=calls+1;shrink.splice(0,shrink.length);return true;});
+  check(result.length===1 && result[0]===1 && calls===1);
+  shrink=[1,2,3];calls=0;check(!shrink.some((value:number):boolean=>{calls=calls+1;shrink.splice(0,shrink.length);return false;}) && calls===1);
+  shrink=[1,2,3];calls=0;check(shrink.every((value:number):boolean=>{calls=calls+1;shrink.splice(0,shrink.length);return true;}) && calls===1);
+  let growth:number[]=[1];calls=0;check(growth.filter((value:number):boolean=>{calls=calls+1;growth.push(2);return true;}).length===1 && calls===1);
+  let destination:number[]=[123];let stable=destination;let caught=false;
+  try {destination=xs.filter((value:number,index:number):boolean=>{if(index===1){throw {code:"CALLBACK",message:"stop"};}return true;});}
+  catch(e){check((e as Error).code==="CALLBACK");caught=true;}
+  check(caught && destination===stable && destination[0]===123);
+  let booleanDestination=true;caught=false;
+  try {booleanDestination=xs.some(():boolean=>{throw {code:"CALLBACK",message:"stop"};});}
+  catch(e){check((e as Error).code==="CALLBACK");caught=true;}check(caught && booleanDestination);
+  booleanDestination=false;caught=false;
+  try {booleanDestination=xs.every(():boolean=>{throw {code:"CALLBACK",message:"stop"};});}
+  catch(e){check((e as Error).code==="CALLBACK");caught=true;}check(caught && !booleanDestination);
+  effects="";caught=false;
+  let abrupt=():(value:number)=>boolean=>{effects=effects+"p";throw {code:"PREDICATE",message:"stop"};};
+  try {destination=receiver().filter(abrupt());}catch(e){check((e as Error).code==="PREDICATE");caught=true;}
+  check(caught && effects==="rp" && destination===stable);
+  check(xs.some((value:number):boolean=>[value].every((inner:number):boolean=>inner===3)));
+  return null;
+}

@@ -14,12 +14,15 @@ public final class Language16FrontendTest {
         if (diagnostics.isEmpty() != accepted) throw new AssertionError(source + "\n" + diagnostics);
     }
     private static List<deal.diagnostics.CompilerDiagnostic> diagnostics(String source) {
+        return diagnostics(source, new StubModuleResolver());
+    }
+    private static List<deal.diagnostics.CompilerDiagnostic> diagnostics(String source, StubModuleResolver modules) {
         var lex = new Lexer(source, "test.deal").tokenize();
         var parsed = new Parser(lex.tokens(), "test.deal").parse();
         var diagnostics = new ArrayList<>(lex.diagnostics());
         diagnostics.addAll(parsed.diagnostics());
         if (diagnostics.isEmpty()) {
-            var resolver = new NameResolver("test.deal", new StubModuleResolver());
+            var resolver = new NameResolver("test.deal", modules);
             var scope = resolver.resolve(parsed.program());
             diagnostics.addAll(resolver.diagnostics());
             if (diagnostics.isEmpty()) diagnostics.addAll(TypeChecker.check("test.deal", scope, resolver, parsed.program()).diagnostics());
@@ -131,7 +134,7 @@ public final class Language16FrontendTest {
         check("function f(xs:number[]|null):void{xs.map((x:number):number=>x);}", false);
         check("function f(xs:number[]):string[]{return xs.map((x:number):number=>x);}", false);
         check("class C{map:()=>number;}function f(c:C):number{return c.map();}", true);
-        for (String method : List.of("find", "findIndex")) {
+        for (String method : List.of("find", "findIndex", "filter", "some", "every")) {
             check("function f(xs:number[]):void{xs."+method+"((x:number,i:number,a:number[]):boolean=>x+i===a.length);}", true);
             check("function f(xs:number[]):void{xs."+method+"(():boolean=>true);}", true);
             for (String parameters : List.of("", "1", "():number=>1", "(x:string):boolean=>true",
@@ -143,9 +146,23 @@ public final class Language16FrontendTest {
             check("function f(xs:number[]|null):void{xs."+method+"(():boolean=>true);}", false);
             check("class C{"+method+":()=>number;}function f(c:C):number{return c."+method+"();}", true);
         }
+        var modules = new StubModuleResolver();
+        for (String method : List.of("map", "find", "findIndex", "filter", "some", "every")) {
+            modules.register("host/predicates", Map.of(method, new Type.Func(List.of(Type.String.INSTANCE), Type.Number.INSTANCE)));
+            String source = "import * as host from \"host/predicates\";function f():number{return host."+method+"(\"ordinary\");}";
+            var errors = diagnostics(source, modules);
+            if (!errors.isEmpty()) throw new AssertionError(source + "\n" + errors);
+        }
         check("function f(xs:number[]):number|undefined{return xs.find(():boolean=>true);}", true);
         check("function f(xs:number[]):number{return xs.find(():boolean=>true);}", false);
         check("function f(xs:number[]):number{return xs.findIndex(():boolean=>true);}", true);
+        check("function f(xs:number[]):number[]{return xs.filter(():boolean=>true);}", true);
+        check("function f(xs:(number|null|undefined)[]):(number|null|undefined)[]{return xs.filter(():boolean=>true);}", true);
+        check("function f(xs:number[]):string[]{return xs.filter(():boolean=>true);}", false);
+        for (String method : List.of("some", "every")) {
+            check("function f(xs:number[]):boolean{return xs."+method+"(():boolean=>true);}", true);
+            check("function f(xs:number[]):number{return xs."+method+"(():boolean=>true);}", false);
+        }
         check("function f(xs:number[]):number[]{return xs.splice(1,2);}", true);
         check("function f(xs:(number|null)[]):(number|null)[]{return xs.splice(1,2);}", true);
         check("function f(xs:unknown[]):unknown[]{return xs.splice(1,2);}", true);

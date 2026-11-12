@@ -1574,6 +1574,7 @@ public final class LuaSemanticEmitter {
                 case ARRAY_SEARCH -> emitArraySearch(op);
                 case ARRAY_JOIN -> emitArrayJoin(op);
                 case ARRAY_ELEMENT_GET -> emitArrayElementGet(op);
+                case ARRAY_HAS -> emitArrayHas(op);
                 case MEMBER_READ -> emitMemberRead(op);
                 case MEMBER_WRITE -> emitMemberWrite(op);
                 case MEMBER_DELETE -> emitMemberDelete(op);
@@ -1992,6 +1993,16 @@ public final class LuaSemanticEmitter {
                     .append(")\n");
             }
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
+        }
+
+        private void emitArrayHas(SemanticOp op) {
+            KindPayload.ArrayHasPayload p = (KindPayload.ArrayHasPayload) op.payload();
+            String target = slot((ValueId) op.result());
+            emitStart(op);
+            out.append("do local a=").append(slot(p.arrayValue())).append("; local i=__num(")
+                .append(slot(p.index())).append("); local n=a[__dealCarrierKeys.n] or 0; while rawget(a,n+1) ~= nil do n=n+1 end; ")
+                .append(target).append("=i==i and i~=math.huge and i~=-math.huge and i==math.floor(i) and i>=0 and i<n and rawget(a,i+1)~=nil end\n");
+            emitResultSuccess(op, target, RuntimeDescriptor.Boolean.INSTANCE);
         }
 
         private void emitArrayElementGet(SemanticOp op) {

@@ -655,6 +655,7 @@ final class LlvmFunctionEmitter {
             case ARRAY_SEARCH -> emitArraySearch(op);
             case ARRAY_JOIN -> emitArrayJoin(op);
             case ARRAY_ELEMENT_GET -> emitArrayElementGet(op);
+            case ARRAY_HAS -> emitArrayHas(op);
             case MEMBER_READ -> emitMemberRead(op);
             case OPTIONAL_READ -> emitOptionalRead(op);
             case MEMBER_WRITE -> emitMemberWrite(op);
@@ -4991,6 +4992,19 @@ final class LlvmFunctionEmitter {
         emit("store " + LlvmTypeMapper.DATA + " " + datum + ", "
             + LlvmTypeMapper.DATA + "* " + slot);
         return slot;
+    }
+
+    private void emitArrayHas(SemanticOp op) {
+        KindPayload.ArrayHasPayload p = (KindPayload.ArrayHasPayload) op.payload();
+        session.referenceRuntimeEntry("deal_container_array_count");
+        session.referenceRuntimeEntry("deal_container_position");
+        String array = loadValue(p.arrayValue(), LlvmTypeMapper.ARRAY, op);
+        String index = loadValue(p.index(), LlvmTypeMapper.NUMBER, op);
+        String count = emitTemporary(op, "call i64 @deal_container_array_count(" + LlvmTypeMapper.ARRAY + " " + array + ")");
+        String offset = newAlloca("i64", "presenceoffset");
+        String valid = emitTemporary(op, "call i32 @deal_container_position(double " + index + ", i64 " + count
+            + ", i32 0, i64* " + offset + ")");
+        storeResult(op, LlvmTypeMapper.BOOLEAN_SSA, emitTemporary(op, "icmp ne i32 " + valid + ", 0"));
     }
 
     private void emitArrayElementGet(SemanticOp op) {

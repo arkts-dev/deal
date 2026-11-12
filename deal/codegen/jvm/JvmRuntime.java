@@ -3289,6 +3289,11 @@ case "NUMBER_ADD" -> {
     // Array read/bounds cells (shared slot-space context)
     // =========================================================================
 
+    public static boolean arrayHas(Array array, double index) {
+        return Double.isFinite(index) && index == Math.rint(index) && index >= 0 && index < array.length()
+            && index < array.elements.size() && array.elements.get((int) index) != MISSING;
+    }
+
     public static Object arrayElementGet(Array array, double index, String descriptor, String canonical, String origin) {
         if (!Double.isFinite(index) || index != Math.rint(index) || index < 0 || index >= array.length()
                 || index >= array.elements.size() || array.elements.get((int) index) == MISSING)

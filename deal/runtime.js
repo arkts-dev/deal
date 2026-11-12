@@ -2411,6 +2411,10 @@ const $rt = {
   // stored value, so a real Array keeps the representation its declared
   // element type gave it and a decoded slot whose variant matches its
   // declared kind stays a plain number.
+  arrayPositionPresent: function $arrayPositionPresent(v, i) {
+    return Number.isInteger(i) && i >= 0 && i < $rt.arrayLength(v) && $rt.arrayHas(v, i);
+  },
+
   arrayHas: function $arrayHas(v, i) {
     if ($rt.isJsonArrayTable(v)) {
       if ($arrayDeleted.get(v)?.has(i) && v.get(String(i + 1)) === $undefined) return false;

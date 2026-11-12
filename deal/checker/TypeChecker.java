@@ -1639,12 +1639,12 @@ public final class TypeChecker {
                 && BuiltinCall.resolve(namespace.name(), member.field()) == BuiltinCall.ARRAY_FROM) {
             return checkArrayFrom(call, member);
         }
-        if (call.callee() instanceof MemberAccessExpr member && List.of("map", "find", "findIndex").contains(member.field())
+        if (call.callee() instanceof MemberAccessExpr member && List.of("map", "find", "findIndex", "filter", "some", "every").contains(member.field())
                 && !(member.object() instanceof IdentifierExpr id
                     && resolveVisibleBinding(id.name()) instanceof Symbol.ModuleSymbol)) {
             Type receiver = checkAddressOperand(member.object());
             if (receiver instanceof Type.Array array) return member.field().equals("map")
-                ? checkArrayMap(call, member, array) : checkArrayFind(call, member, array);
+                ? checkArrayMap(call, member, array) : checkArrayPredicate(call, member, array);
         }
         if (call.callee() instanceof IdentifierExpr id && id.name().equals("String")
                 && resolveVisibleBinding(id.name()) instanceof Symbol.IntrinsicSymbol builtin) {
@@ -1810,9 +1810,14 @@ public final class TypeChecker {
         return target;
     }
 
-    private Type checkArrayFind(CallExpr call, MemberAccessExpr member, Type.Array source) {
+    private Type checkArrayPredicate(CallExpr call, MemberAccessExpr member, Type.Array source) {
         Type.Func predicate = new Type.Func(List.of(source.element(), Type.Number.INSTANCE, source), Type.Boolean.INSTANCE);
-        Type result = member.field().equals("findIndex") ? Type.Number.INSTANCE : Types.optionalRead(source.element());
+        Type result = switch (member.field()) {
+            case "findIndex" -> Type.Number.INSTANCE;
+            case "filter" -> source;
+            case "some", "every" -> Type.Boolean.INSTANCE;
+            default -> Types.optionalRead(source.element());
+        };
         Type.Func signature = new Type.Func(List.of(predicate), result);
         typeMap.put(member, signature);
         List<Type> arguments = new ArrayList<>();
@@ -2049,7 +2054,7 @@ public final class TypeChecker {
                 return intrinsic.signature(directBuiltinCall.args().size());
             }
         }
-        if (objType instanceof Type.Array && List.of("map", "find", "findIndex").contains(field)) {
+        if (objType instanceof Type.Array && List.of("map", "find", "findIndex", "filter", "some", "every").contains(field)) {
             error(DiagnosticCode.E3001, "Receiver intrinsics support direct calls only", mae.span());
             return Type.Error.INSTANCE;
         }

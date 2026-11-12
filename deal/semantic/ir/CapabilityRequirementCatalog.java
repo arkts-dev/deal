@@ -78,6 +78,7 @@ public final class CapabilityRequirementCatalog {
             RequiredOperation.of("ARRAY_SEARCH", SemanticOpKind.ARRAY_SEARCH),
             RequiredOperation.of("ARRAY_JOIN", SemanticOpKind.ARRAY_JOIN),
             RequiredOperation.of("ARRAY_ELEMENT_GET", SemanticOpKind.ARRAY_ELEMENT_GET),
+            RequiredOperation.of("ARRAY_HAS", SemanticOpKind.ARRAY_HAS),
             RequiredOperation.of("MEMBER_*", SemanticOpKind.MEMBER_READ,
                 SemanticOpKind.MEMBER_WRITE, SemanticOpKind.MEMBER_DELETE),
             RequiredOperation.of("INDEX_*", SemanticOpKind.INDEX_NORMALIZE,

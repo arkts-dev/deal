@@ -1932,7 +1932,7 @@ public final class SemanticIrValidator {
                     return failure;
                 }
             }
-            case "ARRAY_ELEMENT_GET" -> {
+            case "ARRAY_ELEMENT_GET", "ARRAY_HAS" -> {
                 ValueId receiver = parseValueIdQuiet(payloadValue(payload, "arrayValue") instanceof CanonicalJson.Obj obj ? obj : null);
                 ValueId index = parseValueIdQuiet(payloadValue(payload, "index") instanceof CanonicalJson.Obj obj ? obj : null);
                 RuntimeDescriptor.Array array = null;
@@ -1943,11 +1943,13 @@ public final class SemanticIrValidator {
                             && parseDescriptorQuiet(producer.resultType()) instanceof RuntimeDescriptor.Array found) array = found;
                     if (index != null && index.equals(producer.resultValue()) && "number".equals(producer.resultType())) indexReady = true;
                 }
-                if (array == null || !indexReady || !array.element().canonicalSpecText().equals(op.resultType())
+                boolean presence = op.kind().equals("ARRAY_HAS");
+                if (array == null || !indexReady || !(presence ? "boolean" : array.element().canonicalSpecText()).equals(op.resultType())
                         || !List.of(receiver, index).equals(op.operands())
                         || !List.of(array.canonicalSpecText(), "number").equals(op.operandTypes()))
                     return fail(op, unit, facts, R_ENUM, SemanticCapability.CONTAINERS_AND_STRINGS,
-                        origin(R_ENUM, "ARRAY_ELEMENT_GET requires preceding array/number operands and its element result descriptor"));
+                        origin(R_ENUM, op.kind() + " requires preceding array/number operands and "
+                            + (presence ? "a boolean result descriptor" : "its element result descriptor")));
             }
             case "ARRAY_JOIN" -> {
                 ValueId receiver = parseValueIdQuiet(payloadValue(payload, "arrayValue") instanceof CanonicalJson.Obj obj ? obj : null);
@@ -2591,6 +2593,7 @@ public final class SemanticIrValidator {
     private static Set<FailurePolicyId> allowedPolicies(SemanticOpKind kind) {
         return switch (kind) {
             case ARRAY_ELEMENT_GET -> Set.of(FailurePolicyId.ARRAY_PRESENT_ELEMENT);
+            case ARRAY_HAS -> Set.of(FailurePolicyId.NO_DEAL_FAILURE);
             case ARRAY_POP, ARRAY_SPLICE, ARRAY_SLICE, ARRAY_SEARCH, ARRAY_JOIN -> Set.of(FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR);
             case ARRAY_LENGTH, OBJECT_KEYS -> Set.of(FailurePolicyId.NO_DEAL_FAILURE);
             case OPTIONAL_READ -> Set.of(FailurePolicyId.NO_DEAL_FAILURE,

@@ -42,6 +42,8 @@ Array.map saves receiver then evaluates/adapts/admits mapper once, snapshots len
 
 Array.find/findIndex share map's saved receiver, post-predicate length snapshot, strict live reads and ordinary callback boundaries. Expand early exit into shared branch/binding control flow; publish the originally read element or index at the first true result, otherwise undefined or -1. Do not inspect later slots or re-read a matched element after predicate effects; failures preserve the enclosing destination.
 
+Array.filter/some/every share saved receiver/predicate evaluation and post-argument length snapshots. Guard each reached strict read/call with presence-only ARRAY_HAS; skip missing positions, not stored undefined. Filter appends the already-read selected value into fresh storage; some/every stop on true/false respectively, with false/true empty defaults. Retain all ordinary callback boundaries, including recursive source-array checks before effects; failures preserve destination publication.
+
 Array.from expands into existing validated binding, ARRAY_NEW, live FOR_EACH, indirect CALL and checked append-chain operations. Evaluate/admit source then mapper once; create shorter-arity adapters at mapper evaluation and validate the saved function signature even for empty input. Preserve normal parameter/return boundaries and fresh iteration cells; do not add backend snapshot/map algorithms or publish partial results after failure.
 
 Object.hasOwn consumes its receiver and dynamic string key through operand admission in receiver/key order, tests presence without reading values, and never narrows fields. Error owns code/message presence independently of stored values.

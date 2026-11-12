@@ -1050,6 +1050,10 @@ public final class JsSemanticEmitter {
                 case ARRAY_SEARCH -> emitArraySearch(op);
                 case ARRAY_JOIN -> emitArrayJoin(op);
                 case ARRAY_ELEMENT_GET -> emitArrayElementGet(op);
+                case ARRAY_HAS -> {
+                    KindPayload.ArrayHasPayload p = (KindPayload.ArrayHasPayload) op.payload();
+                    emit(slotOf(op) + " = $rt.arrayPositionPresent(" + slot(p.arrayValue()) + ", " + numeric(slot(p.index())) + ");");
+                }
                 case MEMBER_READ -> emitMemberRead(op);
                 case MEMBER_WRITE -> emitMemberWrite(op);
                 case MEMBER_DELETE -> emitMemberDelete(op);

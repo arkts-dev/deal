@@ -18,6 +18,7 @@ public sealed interface KindPayload
             KindPayload.ArraySearchPayload,
             KindPayload.ArrayJoinPayload,
             KindPayload.ArrayElementGetPayload,
+            KindPayload.ArrayHasPayload,
             KindPayload.MemberReadPayload,
             KindPayload.MemberWritePayload,
             KindPayload.MemberDeletePayload,
@@ -305,6 +306,14 @@ public sealed interface KindPayload
             Objects.requireNonNull(arrayValue, "arrayValue");
             Objects.requireNonNull(start, "start");
             Objects.requireNonNull(deleteCount, "deleteCount");
+        }
+    }
+
+    /** Presence only: no element read or descriptor admission; invalid positions are absent. */
+    record ArrayHasPayload(ValueId arrayValue, ValueId index) implements KindPayload {
+        public ArrayHasPayload {
+            Objects.requireNonNull(arrayValue, "arrayValue");
+            Objects.requireNonNull(index, "index");
         }
     }
 

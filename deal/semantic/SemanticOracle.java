@@ -1852,6 +1852,7 @@ record NumValue(double value) implements Value {
                 case ARRAY_SEARCH -> executeArraySearch(op);
                 case ARRAY_JOIN -> executeArrayJoin(op);
                 case ARRAY_ELEMENT_GET -> executeArrayElementGet(op);
+                case ARRAY_HAS -> executeArrayHas(op);
                 case MEMBER_READ -> executeMemberRead(op);
                 case MEMBER_WRITE, MEMBER_DELETE, INDEX_WRITE, INDEX_DELETE,
                      FIELD_WRITE, FIELD_DELETE -> executeCommit(op);
@@ -2124,6 +2125,15 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                 entries.put(entry.key(), valueOf(entry.value()));
             }
             return publish(op, new Value.TableValue(entries));
+        }
+
+        private String executeArrayHas(SemanticOp op) {
+            KindPayload.ArrayHasPayload payload = (KindPayload.ArrayHasPayload) op.payload();
+            Value.ArrayValue array = (Value.ArrayValue) valueOf(payload.arrayValue());
+            double index = numberUse(valueOf(payload.index()));
+            boolean present = Double.isFinite(index) && index == Math.rint(index) && index >= 0
+                && index < array.elements().size() && !(array.elements().get((int) index) instanceof Value.MissingValue);
+            return publish(op, new Value.BoolValue(present));
         }
 
         private String executeArrayElementGet(SemanticOp op) {

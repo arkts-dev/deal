@@ -1505,6 +1505,13 @@ public final class JvmSemanticEmitter {
                 case ARRAY_SEARCH -> emitArraySearch(op, indent);
                 case ARRAY_JOIN -> emitArrayJoin(op, indent);
                 case ARRAY_ELEMENT_GET -> emitArrayElementGet(op, indent);
+                case ARRAY_HAS -> {
+                    KindPayload.ArrayHasPayload p = (KindPayload.ArrayHasPayload) op.payload();
+                    emitStart(op, indent);
+                    out.append(indent(indent)).append(slot((ValueId) op.result())).append(" = JvmRuntime.arrayHas((JvmRuntime.Array) ")
+                        .append(slot(p.arrayValue())).append(", ((Number) ").append(slot(p.index())).append(").doubleValue());\n");
+                    emitResultSuccess(op, slot((ValueId) op.result()), RuntimeDescriptor.Boolean.INSTANCE, indent);
+                }
                 case MEMBER_READ -> emitMemberRead(op, indent);
                 case MEMBER_WRITE -> emitMemberWrite(op, indent);
                 case MEMBER_DELETE -> emitMemberDelete(op, indent);

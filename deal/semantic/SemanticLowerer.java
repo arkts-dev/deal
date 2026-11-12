@@ -8116,7 +8116,7 @@ public final class SemanticLowerer {
         private ValueId lowerCallSite(CallExpr call, ValueId slot) {
             if (call.callee() instanceof MemberAccessExpr member
                     && checkedType(member.object()) instanceof Type.Array
-                    && List.of("map", "find", "findIndex").contains(member.field())) return lowerArrayCallback(call, member, slot);
+                    && List.of("map", "find", "findIndex", "filter", "some", "every").contains(member.field())) return lowerArrayCallback(call, member, slot);
             if (call.callee() instanceof MemberAccessExpr member
                     && checkedType(member.object()) instanceof Type.Array array
                     && member.field().equals("join")) {
@@ -8960,8 +8960,11 @@ public final class SemanticLowerer {
             Span span = call.span();
             RuntimeDescriptor.Array sourceType = (RuntimeDescriptor.Array) valueDescriptorOf(checkedType(member.object()));
             boolean map = member.field().equals("map"), findIndex = member.field().equals("findIndex");
+            boolean filter = member.field().equals("filter"), every = member.field().equals("every");
+            boolean booleanResult = every || member.field().equals("some");
+            boolean skipMissing = filter || booleanResult;
             RuntimeDescriptor resultType = valueDescriptorOf(checkedType(call));
-            RuntimeDescriptor.Array output = map ? (RuntimeDescriptor.Array) resultType : null;
+            RuntimeDescriptor.Array output = map || filter ? (RuntimeDescriptor.Array) resultType : null;
             RuntimeDescriptor.Func mapperType = (RuntimeDescriptor.Func) callParameterDescriptor(call, 0);
             ValueId source = lowerOperand(member.object());
             BindingId sourceBinding = emitBuiltinBinding(source, span);
@@ -8983,12 +8986,13 @@ public final class SemanticLowerer {
                 span, RuntimeDescriptor.Number.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE);
             BindingId lengthBinding = emitBuiltinBinding(length, span);
             ValueId initial;
-            if (map) initial = emitValueOp(SemanticOpKind.ARRAY_NEW,
+            if (map || filter) initial = emitValueOp(SemanticOpKind.ARRAY_NEW,
                 new KindPayload.ArrayNewPayload(output.element(), List.of(), List.of()), span, output, FailurePolicyId.NO_DEAL_FAILURE);
-            else initial = emitValueOp(SemanticOpKind.CONST, new KindPayload.ConstPayload(findIndex
-                ? new ScalarValue.Number(-1) : ScalarValue.Undefined.INSTANCE), span,
-                findIndex ? RuntimeDescriptor.Number.INSTANCE : RuntimeDescriptor.Undefined.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE);
-            BindingId resultBinding = map ? emitBuiltinBinding(initial, span) : emitBuiltinBinding(initial, resultType, span);
+            else initial = emitValueOp(SemanticOpKind.CONST, new KindPayload.ConstPayload(booleanResult
+                ? new ScalarValue.Boolean(every) : findIndex ? new ScalarValue.Number(-1) : ScalarValue.Undefined.INSTANCE), span,
+                booleanResult ? RuntimeDescriptor.Boolean.INSTANCE : findIndex ? RuntimeDescriptor.Number.INSTANCE : RuntimeDescriptor.Undefined.INSTANCE,
+                FailurePolicyId.NO_DEAL_FAILURE);
+            BindingId resultBinding = output != null ? emitBuiltinBinding(initial, span) : emitBuiltinBinding(initial, resultType, span);
             ValueId zero = emitValueOp(SemanticOpKind.CONST, new KindPayload.ConstPayload(new ScalarValue.Number(0)),
                 span, RuntimeDescriptor.Number.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE);
             BindingId indexBinding = emitBuiltinBinding(zero, span);
@@ -9009,12 +9013,23 @@ public final class SemanticLowerer {
             try {
                 ValueId index = emitBuiltinLoad(indexBinding, RuntimeDescriptor.Number.INSTANCE, span, null);
                 ValueId currentSource = emitBuiltinLoad(sourceBinding, sourceType, span, null);
+                if (skipMissing) {
+                    ValueId present = emitOperandOp(SemanticOpKind.ARRAY_HAS, new KindPayload.ArrayHasPayload(currentSource, index),
+                        List.of(currentSource, index), List.of(sourceType, RuntimeDescriptor.Number.INSTANCE), span,
+                        RuntimeDescriptor.Boolean.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE, null);
+                    pushBuiltinIf(present, span);
+                }
+                try {
                 ValueId element = emitBuiltinArrayRead(currentSource, sourceType, index, span);
                 ValueId currentMapper = emitBuiltinLoad(mapperBinding, mapperType, span, null);
                 ValueId mapped = emitDynamicInvocation(mapperType, currentMapper, List.of(element, index, currentSource),
                     List.of(sourceType.element(), RuntimeDescriptor.Number.INSTANCE, sourceType), span, null);
                 if (map) emitBuiltinAppend(resultBinding, output, mapped, span);
                 else {
+                    if (every) mapped = emitOperandOp(SemanticOpKind.UNARY,
+                        new KindPayload.UnaryPayload(UnarySelector.BOOL_NOT, null), List.of(mapped),
+                        List.of(RuntimeDescriptor.Boolean.INSTANCE), span, RuntimeDescriptor.Boolean.INSTANCE,
+                        FailurePolicyId.NO_DEAL_FAILURE, null);
                     BlockId selected = allocateBlock();
                     OpId branch = ids.nextOpId(module, nextOrdinal++, 0);
                     AnchorId branchAnchor = ids.nextAnchorId(module, nextOrdinal++, 0);
@@ -9025,13 +9040,20 @@ public final class SemanticLowerer {
                     pushBlockParent(branch);
                     pushBlock(selected);
                     try {
-                        emitUserNullOp(SemanticOpKind.BINDING_STORE,
-                            new KindPayload.BindingStorePayload(resultBinding, 0, findIndex ? index : element), span, FailurePolicyId.NO_DEAL_FAILURE);
-                        ValueId limit = emitBuiltinLoad(lengthBinding, RuntimeDescriptor.Number.INSTANCE, span, null);
-                        emitUserNullOp(SemanticOpKind.BINDING_STORE,
-                            new KindPayload.BindingStorePayload(indexBinding, 0, limit), span, FailurePolicyId.NO_DEAL_FAILURE);
+                        if (filter) emitBuiltinAppend(resultBinding, output, element, span);
+                        else {
+                            ValueId result = booleanResult ? emitValueOp(SemanticOpKind.CONST,
+                                new KindPayload.ConstPayload(new ScalarValue.Boolean(!every)), span,
+                                RuntimeDescriptor.Boolean.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE) : findIndex ? index : element;
+                            emitUserNullOp(SemanticOpKind.BINDING_STORE,
+                                new KindPayload.BindingStorePayload(resultBinding, 0, result), span, FailurePolicyId.NO_DEAL_FAILURE);
+                            ValueId limit = emitBuiltinLoad(lengthBinding, RuntimeDescriptor.Number.INSTANCE, span, null);
+                            emitUserNullOp(SemanticOpKind.BINDING_STORE,
+                                new KindPayload.BindingStorePayload(indexBinding, 0, limit), span, FailurePolicyId.NO_DEAL_FAILURE);
+                        }
                     } finally { popBlock(); popBlockParent(); }
                 }
+                } finally { if (skipMissing) { popBlock(); popBlockParent(); } }
                 ValueId one = emitValueOp(SemanticOpKind.CONST, new KindPayload.ConstPayload(new ScalarValue.Number(1)),
                     span, RuntimeDescriptor.Number.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE);
                 ValueId currentIndex = emitBuiltinLoad(indexBinding, RuntimeDescriptor.Number.INSTANCE, span, null);
@@ -9047,6 +9069,18 @@ public final class SemanticLowerer {
                 null, null, FailurePolicyId.NO_DEAL_FAILURE,
                 new SourceOrigin(sourceId, toSourceSpan(span), SourceOriginKind.SYNTHETIC, anchor, currentParent())));
             return emitBuiltinLoad(resultBinding, resultType, span, slot);
+        }
+
+        private void pushBuiltinIf(ValueId condition, Span span) {
+            BlockId body = allocateBlock();
+            OpId branch = ids.nextOpId(module, nextOrdinal++, 0);
+            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+            emit(buildOp(branch, SemanticOpKind.BRANCH,
+                new KindPayload.BranchPayload(ControlSelector.IF, condition, body, null), null, null,
+                FailurePolicyId.NO_DEAL_FAILURE, new SourceOrigin(sourceId, toSourceSpan(span),
+                    SourceOriginKind.SYNTHETIC, anchor, currentParent())));
+            pushBlockParent(branch);
+            pushBlock(body);
         }
 
         private BindingId emitBuiltinBinding(ValueId value, RuntimeDescriptor type, Span span) {

@@ -125,6 +125,8 @@ public final class Language16RuntimeTest {
         arrayRemovalAdmission("join-live-retry");
         arrayRemovalAdmission("map-live-retry");
         arrayRemovalAdmission("find-live-retry");
+        arrayRemovalAdmission("predicates-live-retry");
+        fixtureAdmission("arrays/predicates.deal", deal.semantic.ir.SemanticOpKind.ARRAY_HAS, -1);
         fixtureAdmission("arrays/find.deal", deal.semantic.ir.SemanticOpKind.ARRAY_ELEMENT_GET, -1);
         callableBodyAdmission();
         errorGraphAdmission();
@@ -156,6 +158,10 @@ public final class Language16RuntimeTest {
                     || !error.expected.equals("number") || !error.actual.equals("undefined") || error.cause == null)
                 throw new AssertionError(error);
         }
+        for (double index : new double[]{1,-1,3,.5,Double.NaN,Double.POSITIVE_INFINITY,Double.NEGATIVE_INFINITY})
+            if (deal.codegen.jvm.JvmRuntime.arrayHas(source,index)) throw new AssertionError("presence admitted missing/invalid position " + index);
+        if (!deal.codegen.jvm.JvmRuntime.arrayHas(source,-0.0) || !deal.codegen.jvm.JvmRuntime.arrayHas(source,2))
+            throw new AssertionError("presence rejected stored undefined/negative zero");
         if(source.length()!=3 || source.elements.get(1)!=deal.codegen.jvm.JvmRuntime.MISSING)
             throw new AssertionError("strict read mutated source");
     }
@@ -513,6 +519,15 @@ public final class Language16RuntimeTest {
             if (fixture.contains("from-live")) arrayFromAdmission(project, invocation);
             if (fixture.equals("arrays/push.deal")) arrayPushAdmission(project, invocation);
             if (fixture.contains("contextual-parse")) jsonParseAdmission(project, invocation);
+            if (kind == deal.semantic.ir.SemanticOpKind.ARRAY_HAS) {
+                var facts = new deal.semantic.ir.SemanticIrValidator.ComparisonFacts(
+                    project.interfaceIndex().interfaceIndexDigest(), project.semanticProfile(), invocation.capabilityRegistryHash());
+                String raw = deal.semantic.ir.SemanticIrValidator.toProjectText(project);
+                for (String key : List.of("arrayValue", "index"))
+                    rejectsOp(raw, "ARRAY_HAS", op -> field(op, "payload", field(payload(op), key,
+                        deal.semantic.ir.ContractSnapshotCanonicalizer.semanticIdJson(new deal.semantic.ir.ValueId(Integer.MAX_VALUE)))), facts);
+                rejectsOp(raw, "ARRAY_HAS", op -> field(op, "resultType", new deal.semantic.ir.CanonicalJson.Str("number")), facts);
+            }
             var tables = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.StructuredBodyTable>();
             var registries = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.ClassFactoryRegistry>();
             project.modules().forEach((id, unit) -> { tables.put(id, unit.bodyTable()); registries.put(id, unit.classFactories()); });
@@ -1402,7 +1417,8 @@ public final class Language16RuntimeTest {
 
     /** Execute the same retained-mutation contract in the Oracle with genuine lowered bodies. */
     private static void arrayRemovalAdmission(String fixture) throws Exception {
-        boolean splice = fixture.startsWith("splice"), slice = fixture.startsWith("slice"), search = fixture.startsWith("search"), join = fixture.startsWith("join"), map = fixture.startsWith("map") || fixture.startsWith("find");
+        boolean splice = fixture.startsWith("splice"), slice = fixture.startsWith("slice"), search = fixture.startsWith("search"), join = fixture.startsWith("join"), map = fixture.startsWith("map") || fixture.startsWith("find") || fixture.startsWith("predicates");
+        boolean skipMissing = fixture.startsWith("predicates");
         String operation = map ? "ARRAY_ELEMENT_GET" : join ? "ARRAY_JOIN" : search ? "ARRAY_SEARCH" : slice ? "ARRAY_SLICE" : splice ? "ARRAY_SPLICE" : "ARRAY_POP";
         Path work = Files.createTempDirectory(Path.of("build"), "pop-admission-").toAbsolutePath();
         try {
@@ -1412,7 +1428,14 @@ public final class Language16RuntimeTest {
                 .replace("export function main():null", "export function run():null")
                 + "\nexport function main():null{return null;}\n"
                 + (map ? "export function hole():number{let xs:unknown[]=[undefined];host.keep(xs);host.corrupt();return "
-                    + (fixture.startsWith("find") ? "xs.findIndex((value:unknown):boolean=>true);" : "xs.map((value:unknown):unknown=>value).length;") + "}\n" : ""));
+                    + (skipMissing ? "holePredicates(xs);"
+                        : fixture.startsWith("find") ? "xs.findIndex((value:unknown):boolean=>true);" : "xs.map((value:unknown):unknown=>value).length;") + "}\n"
+                    + (skipMissing ? "function holePredicates(xs:unknown[]):number{let calls=0;"
+                        + "let selected=xs.filter((value:unknown):boolean=>{calls=calls+1;return true;});"
+                        + "let some=xs.some((value:unknown):boolean=>{calls=calls+1;return true;});"
+                        + "let every=xs.every((value:unknown):boolean=>{calls=calls+1;return false;});"
+                        + "check(calls===selected.length*3 && some===(selected.length===1) && every===(selected.length===0));"
+                        + "return selected.length;}\n" : "") : ""));
             Path declaration = source.resolveSibling("probe.d.deal");
             Files.copy(Path.of("test/conformance/host-fixtures/" + (join ? "array_join" : "array_pop") + ".d.deal"), declaration);
             Files.writeString(work.resolve("deal.json"),
@@ -1530,10 +1553,10 @@ public final class Language16RuntimeTest {
                     compiler.checkedProject().input().entryModule(),"hole",List.of());
                 var events=hole.trace().stream().filter(e->e.kind()==deal.semantic.ir.SemanticOpKind.ARRAY_ELEMENT_GET
                     && e.phase()!=deal.semantic.SemanticRuntimeModel.Phase.START).toList();
-                if(events.size()!=1 || responder.saved.elements().size()!=1
+                if(events.size()!=(skipMissing ? mode==1 ? 0 : 3 : 1) || responder.saved.elements().size()!=1
                         || responder.saved.elements().getFirst()!=(mode==1 ? deal.semantic.SemanticOracle.Value.MissingValue.INSTANCE
                             : deal.semantic.SemanticOracle.Value.UndefinedValue.INSTANCE)) throw new AssertionError(hole.comparisonReport());
-                if(mode==1) {
+                if(mode==1 && !skipMissing) {
                     var event=events.getFirst();var error=event.error();
                     var op=project.modules().get(event.op().module()).ops().stream().filter(o->o.opId().equals(event.op())).findFirst().orElseThrow();
                     String origin=op.origin().sourceId()+":"+op.origin().span().startLine()+":"+op.origin().span().startColumn();
@@ -1541,7 +1564,7 @@ public final class Language16RuntimeTest {
                             || error.expected()!=null || error.actual()!=null || error.cause()!=null
                             || !error.origin().equals(origin) || error.frames().isEmpty()) throw new AssertionError(event);
                 } else if(!(hole.terminal() instanceof deal.semantic.SemanticRuntimeModel.Terminal.Success done)
-                        || !done.resultAtom().equals(fixture.startsWith("find") ? "num:0x0.0p0" : "num:0x1.0p0")) throw new AssertionError(hole.comparisonReport());
+                        || !done.resultAtom().equals(fixture.startsWith("find") || skipMissing && mode==1 ? "num:0x0.0p0" : "num:0x1.0p0")) throw new AssertionError(hole.comparisonReport());
             }
             int population = map || join ? 4 : slice || search ? 6 : 3;
             if (failures.size()!=population) throw new AssertionError(operation + " failure trace population: " + failures);
@@ -1841,6 +1864,9 @@ public final class Language16RuntimeTest {
                   catch(e){rejected=e.code==='E8002' && e.message==='array index out of bounds'}
                   if(!rejected) throw Error('strict read missing/position '+index);
                 }
+                for(const index of [1,-1,3,.5,NaN,Infinity,-Infinity])
+                  if(rt.arrayPositionPresent(sparse,index)) throw Error('presence admitted missing/invalid position');
+                if(!rt.arrayPositionPresent(sparse,-0) || !rt.arrayPositionPresent(sparse,2)) throw Error('present undefined/negative zero');
                 if(rt.arrayElementGet(sparse,2,'!number','map.deal',2,3)!==undefined
                     || rt.arrayElementGet(sparse,-0,'!number','map.deal',2,3)!==1) throw Error('strict present undefined/negative zero');
                 let rejectedElement=false;try{rt.arrayElementGet(sparse,2,'number','map.deal',2,3)}

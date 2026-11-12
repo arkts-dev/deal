@@ -35,6 +35,10 @@ export function exercise(): null {
   let selected: number | undefined = counts.find((value: number): boolean => value > 1);
   check.require((selected as number) === 2, "find the first matching value");
   check.require(counts.findIndex((value: number): boolean => value > 2) === 2, "find the first matching index");
+  let larger: number[] = counts.filter((value: number): boolean => value > 1);
+  check.require(larger.length === 2 && larger[0] === 2, "filter selected values into fresh storage");
+  check.require(counts.some((value: number): boolean => value > 2), "some value matches");
+  check.require(counts.every((value: number): boolean => value > 0), "every value matches");
   data.note = null;
   delete data.note;
   return null;

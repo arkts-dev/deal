@@ -97,6 +97,10 @@ function arrays(): number {
   let selected: number | undefined = values.find((value: number): boolean => value > 1);
   if (selected !== undefined) { console.log(String(selected)); }
   console.log(String(values.findIndex((value: number): boolean => value > 1)));
+  const selected: number[] = values.filter((value: number): boolean => value > 1);
+  console.log(String(selected.length));
+  console.log(String(values.some((value: number): boolean => value > 1)));
+  console.log(String(values.every((value: number): boolean => value > 0)));
   values[0] = 99;
   let maybe: (number | null)[] = [1, null, 3];
   let selected: number | null = maybe[1];
