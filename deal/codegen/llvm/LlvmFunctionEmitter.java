@@ -651,6 +651,7 @@ final class LlvmFunctionEmitter {
             case ARRAY_POP -> emitArrayPop(op);
             case OBJECT_KEYS -> emitObjectKeys(op);
             case ARRAY_SPLICE -> emitArraySplice(op);
+            case ARRAY_SLICE -> emitArraySlice(op);
             case MEMBER_READ -> emitMemberRead(op);
             case OPTIONAL_READ -> emitOptionalRead(op);
             case MEMBER_WRITE -> emitMemberWrite(op);
@@ -4980,6 +4981,25 @@ final class LlvmFunctionEmitter {
         emit("store " + LlvmTypeMapper.DATA + " " + datum + ", "
             + LlvmTypeMapper.DATA + "* " + slot);
         return slot;
+    }
+
+    private void emitArraySlice(SemanticOp op) {
+        KindPayload.ArraySlicePayload payload = (KindPayload.ArraySlicePayload) op.payload();
+        RuntimeDescriptor element = ((RuntimeDescriptor.Array) op.operandTypes().getFirst()).element();
+        session.referenceRuntimeEntry("deal_descriptor_intern");
+        session.referenceRuntimeEntry("deal_array_slice");
+        String atom = emitTemporary(op, "call %struct.deal_descriptor* @deal_descriptor_intern("
+            + session.data.operand(session.data.intern(element.canonicalSpecText())) + ")");
+        String array = loadValue(payload.arrayValue(), LlvmTypeMapper.ARRAY, op);
+        String start = loadValue(payload.start(), LlvmTypeMapper.NUMBER, op);
+        String end = loadValue(payload.end(), LlvmTypeMapper.NUMBER, op);
+        String outcome = callRecord(op, "%struct.deal_outcome_data", "deal_array_slice",
+            LlvmTypeMapper.ARRAY + " " + array + ", double " + start + ", double " + end
+                + ", %struct.deal_descriptor* " + atom + ", %struct.deal_origin* " + originValue(op));
+        String error = emitTemporary(op, "extractvalue %struct.deal_outcome_data " + outcome + ", 0");
+        branchOnFailure(op, error, "arrayslice");
+        String datum = emitTemporary(op, "extractvalue %struct.deal_outcome_data " + outcome + ", 1");
+        storeResult(op, LlvmTypeMapper.ARRAY, datumToRepresentation((RuntimeDescriptor) op.resultType(), datum, op));
     }
 
     private void emitArraySplice(SemanticOp op) {

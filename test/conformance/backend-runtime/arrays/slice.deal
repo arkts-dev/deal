@@ -1,0 +1,37 @@
+// @spec: Arrays
+// @description: Shallow array slice uses relative bounds after argument effects
+// @expected: runtime-ok
+function check(ok:boolean):void{if(!ok){throw {code:"CHECK",message:"array slice"};}}
+class Item{x:number;}
+export function main():null{
+  let xs:number[]=[1,2,3,4];let copy=xs.slice(0,4);
+  check(copy!==xs && copy.length===4 && copy[0]===1 && copy[3]===4);
+  copy[0]=9;check(xs[0]===1);
+  let tail=xs.slice(-2,1/0);check(tail.length===2 && tail[0]===3 && tail[1]===4);
+  check(xs.slice(3,1).length===0 && xs.slice(-1/0,0/0).length===0);
+  check(xs.slice(-0.9,1.9)[0]===1 && xs.slice(0/0,-0.9).length===0);
+  let bounds:number[]=[-1/0,-9,-4,-3.9,-1,-0.9,-0,0,0.9,1,2.9,4,9,1/0,0/0];
+  for(let first of bounds){for(let last of bounds){
+    let a=0;let b=0;
+    if(first===first){if(first<=-4){a=0;}else if(first<0){let k=0;while(k-1>=first){k=k-1;}a=k<0?4+k:0;}else{while(a<4 && a+1<=first){a=a+1;}}}
+    if(last===last){if(last<=-4){b=0;}else if(last<0){let k=0;while(k-1>=last){k=k-1;}b=k<0?4+k:0;}else{while(b<4 && b+1<=last){b=b+1;}}}
+    let part=xs.slice(first,last);check(part.length===(b>a?b-a:0));
+    let i=0;while(i<part.length){check(part[i]===xs[a+i]);i=i+1;}
+  }}
+  let log="";let receiver=():number[]=>{log=log+"r";return xs;};
+  let start=():number=>{log=log+"s";xs.push(5);return 3;};
+  let end=():number=>{log=log+"e";xs.push(6);return 6;};
+  let live=receiver().slice(start(),end());check(log==="rse" && live.length===3 && live[0]===4 && live[2]===6);
+  let saved=xs;let replace=():number=>{xs=[99];return 2;};
+  let selected=xs.slice(0,replace());check(selected[0]===1 && selected[1]===2 && saved.length===6 && xs[0]===99);
+  let item:Item={x:7};let items:Item[]=[item];let aliases=items.slice(0,1);
+  check(aliases!==items && aliases[0]===item);aliases[0].x=8;check(item.x===8);
+  let fn=():number=>7;let functions:(()=>number)[]=[fn];check(functions.slice(0,1)[0]===fn && functions.slice(0,1)[0]()===7);
+  let nested:number[][]=[saved];check(nested.slice(0,1)[0]===saved);
+  let nullable:(number|null|undefined)[]=[null,undefined,-0,0/0];let values=nullable.slice(0,4);
+  check(values[0]===null && values[1]===undefined && 1/(values[2] as number)===-1/0 && Number.isNaN(values[3]));
+  let strings:string[]=["\uD800\0","\uDC00"];check(strings.slice(0,2)[0]==="\uD800\0" && strings.slice(1,2)[0]==="\uDC00");
+  let decoded:number[]=JSON.parse("[2,4,6]");check(decoded.slice(1,3)[1]===6 && decoded.length===3);
+  let empty=decoded.slice(0,0);check(empty!==decoded && empty.push(8)===1 && empty[0]===8);
+  return null;
+}

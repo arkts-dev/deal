@@ -1501,6 +1501,7 @@ public final class JvmSemanticEmitter {
                 case ARRAY_POP -> emitArrayPop(op, indent);
                 case OBJECT_KEYS -> emitObjectKeys(op, indent);
                 case ARRAY_SPLICE -> emitArraySplice(op, indent);
+                case ARRAY_SLICE -> emitArraySlice(op, indent);
                 case MEMBER_READ -> emitMemberRead(op, indent);
                 case MEMBER_WRITE -> emitMemberWrite(op, indent);
                 case MEMBER_DELETE -> emitMemberDelete(op, indent);
@@ -1997,6 +1998,19 @@ public final class JvmSemanticEmitter {
                     .append(slot(entry.value())).append(");\n");
             }
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType(), indent);
+        }
+
+        private void emitArraySlice(SemanticOp op, int indent) {
+            KindPayload.ArraySlicePayload payload = (KindPayload.ArraySlicePayload) op.payload();
+            RuntimeDescriptor element = ((RuntimeDescriptor.Array) op.operandTypes().getFirst()).element();
+            emitStart(op, indent);
+            out.append(indent(indent)).append(slot((ValueId) op.result()))
+                .append(" = JvmRuntime.arraySlice((JvmRuntime.Array) ").append(slot(payload.arrayValue()))
+                .append(", ((Number) ").append(slot(payload.start())).append(").doubleValue(), ((Number) ")
+                .append(slot(payload.end())).append(").doubleValue(), ")
+                .append(javaString(runtimeDescriptorText(element))).append(", ")
+                .append(javaString(element.canonicalSpecText())).append(", ").append(javaString(originOf(op))).append(");\n");
+            emitResultSuccess(op, slot((ValueId) op.result()), (RuntimeDescriptor) op.resultType(), indent);
         }
 
         private void emitArraySplice(SemanticOp op, int indent) {

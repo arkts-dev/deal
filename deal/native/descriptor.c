@@ -1593,6 +1593,48 @@ deal_outcome_data deal_array_splice(deal_array *array, double from, double delet
     return result;
 }
 
+deal_outcome_data deal_array_slice(deal_array *array, double from, double to,
+                                    deal_descriptor *element, const deal_origin *origin) {
+    deal_outcome_data result = {0};
+    size_t length = deal_container_array_count(array);
+    double first = isnan(from) ? 0.0 : trunc(from);
+    double last = isnan(to) ? 0.0 : trunc(to);
+    first = first < 0.0 ? fmax(0.0, (double)length + first) : fmin((double)length, first);
+    last = last < 0.0 ? fmax(0.0, (double)length + last) : fmin((double)length, last);
+    size_t start = (size_t)first;
+    size_t count = last > first ? (size_t)last - start : 0u;
+    deal_root_scope_push();
+    (void)deal_root_scope_hold(array);
+    for (size_t i = 0u; i < count; i++) {
+        deal_check_input input = deal_live_element(array, start + i);
+        deal_check_context context = {0};
+        context.origin = origin;
+        uint32_t boundary = deal_descriptor_type(element) == DEAL_DESCRIPTOR_FUNCTION
+            ? DEAL_BOUNDARY_FUNCTION_SIGNATURE : DEAL_BOUNDARY_TYPE_DESCRIPTOR;
+        deal_outcome checked = deal_check_live_value_core(element, input, boundary, &context, 0);
+        if (checked.error != NULL) {
+            char index_text[3u * sizeof(size_t) + 1u];
+            size_t end = sizeof(index_text) - 1u;
+            index_text[end] = '\0';
+            size_t index = start + i + 1u;
+            do { index_text[--end] = (char)('0' + index % 10u); index /= 10u; } while (index != 0u);
+            deal_arm_parameter parameter = {"oneBasedIndex", &index_text[end]};
+            result.error = deal_error_materialize(DEAL_ARM_ID_ARRAY_ELEMENT_KIND,
+                &parameter, 1u, deal_descriptor_text(element), deal_check_token(&input), origin, checked.error);
+            deal_root_scope_pop();
+            return result;
+        }
+    }
+    deal_array *copy = deal_container_array_new_typed(deal_container_array_element_layout(array),
+        deal_descriptor_reference(element), count);
+    (void)deal_root_scope_hold(copy);
+    for (size_t i = 0u; i < count; i++)
+        deal_container_array_store(copy, i, deal_container_array_element(array, start + i));
+    result.value = deal_data_of_reference(DEAL_DATA_ARRAY, copy);
+    deal_root_scope_pop();
+    return result;
+}
+
 /* -- the typed-boundary token (R4) -------------------------------------- */
 
 const char *deal_check_token(const deal_check_input *input) {

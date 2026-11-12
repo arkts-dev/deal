@@ -2478,6 +2478,29 @@ const $rt = {
     return value;
   },
 
+  // Shallow copy; relative bounds observe length only after argument effects.
+  arraySlice: function(v, start, end, descriptor, file, line, column) {
+    const length = $rt.arrayLength(v);
+    const bound = value => {
+      const integer = Number.isNaN(value) ? 0 : Math.trunc(value);
+      return Math.max(0, Math.min(length, integer < 0 ? length + integer : integer));
+    };
+    const first = bound(start), last = bound(end);
+    const result = $rt.tagArray(new $Array(Math.max(0, last - first)), descriptor);
+    for (let i = first; i < last; i++) {
+      if (!$rt.arrayHas(v, i)) continue;
+      const value = $rt.arrayAt(v, i);
+      try { result[i - first] = $rt.checkType(descriptor, value, file, line, column); }
+      catch (cause) {
+        const failure = new $DEALError("E8003", "array element " + (i + 1) + " type mismatch",
+          file, line, column, descriptor, $elemKindOf(value));
+        failure.cause = cause.code === "E8003" && cause.cause ? cause.cause : cause;
+        throw failure;
+      }
+    }
+    return result;
+  },
+
   // ECMAScript deletion-only splice. Admission completes before any mutation.
   arraySplice: function(v, start, deleteCount, descriptor, file, line, column) {
     const length = $rt.arrayLength(v);

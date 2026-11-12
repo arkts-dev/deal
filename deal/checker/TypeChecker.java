@@ -1995,7 +1995,7 @@ public final class TypeChecker {
                 return intrinsic.signature(directBuiltinCall.args().size());
             }
         }
-        if (objType instanceof Type.Array array && (field.equals("pop") || field.equals("splice") || field.equals("push"))) {
+        if (objType instanceof Type.Array array && List.of("push", "pop", "splice", "slice").contains(field)) {
             if (directBuiltinCall == null || mae != directBuiltinCall.callee()) {
                 error(DiagnosticCode.E3001, "Receiver intrinsics support direct calls only", mae.span());
                 return Type.Error.INSTANCE;

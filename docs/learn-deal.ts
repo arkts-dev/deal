@@ -61,6 +61,9 @@ function counter(start: number): () => number {
 // splice(start, deleteCount) deletes without insertion, normalizing numbers
 // like ECMAScript. It checks every removed value before changing the array
 // and returns a fresh array with the same element type; aliases see the shift.
+// slice(start, end) copies a shallow range without changing the source.
+// Both bounds are required; negatives count from the end, and reversed
+// bounds produce an empty array instead of being swapped.
 function sumAll(values: number[]): number {
   let total: number = 0;
   for (let value of values) { total = total + value; }
@@ -71,6 +74,8 @@ function arrays(): number {
   values[values.length] = 40;
   let tail: number | undefined = values.pop();
   if (tail !== undefined) { values[values.length] = tail; }
+  let copy: number[] = values.slice(-2, values.length);
+  copy[0] = 50; // Separate array storage; referenced elements would stay shared.
   let removed: number[] = values.splice(1, 2);
   values[values.length] = removed[0];
   // Array.from infers its result element type from a synchronous mapper.

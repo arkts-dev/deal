@@ -38,7 +38,7 @@ Use Record<string, unknown>. Every read infers unknown; explicitly check interme
 
 ## Arrays
 
-Arrays are zero-based with runtime-enforced invariant descriptors, unlike TypeScript arrays; emptiness cannot justify retagging. Annotate empty literals. Use xs.push(value) to append one element and receive the new length, or assign at length; iterate with inferred for-of bindings or explicit while indexes. Push evaluates the receiver and value once, observes argument-driven growth before appending, and validates the stored element before mutation. Deleted slots read undefined; out-of-bounds reads fail. Without a decoding target, JSON arrays carry unknown elements. Annotate a JSON.parse destination to reconstruct fresh arrays with the requested element descriptor.
+Arrays are zero-based with runtime-enforced invariant descriptors, unlike TypeScript arrays; emptiness cannot justify retagging. Annotate empty literals. Use xs.push(value) to append one element and receive the new length, or assign at length; iterate with inferred for-of bindings or explicit while indexes. Push evaluates the receiver and value once, observes argument-driven growth before appending, and validates the stored element before mutation. Use xs.slice(start, end) for a fresh shallow range: negative bounds count from the end, bounds truncate and clamp without swapping, and referenced elements keep their identities. Both number bounds are required. Out-of-bounds reads fail. Without a decoding target, JSON arrays carry unknown elements. Annotate a JSON.parse destination to reconstruct fresh arrays with the requested element descriptor.
 
 ## JSON
 

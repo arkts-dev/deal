@@ -1932,10 +1932,10 @@ public final class SemanticIrValidator {
                     return failure;
                 }
             }
-            case "ARRAY_SPLICE" -> {
+            case "ARRAY_SPLICE", "ARRAY_SLICE" -> {
                 ValueId receiver = parseValueIdQuiet(payloadValue(payload, "arrayValue") instanceof CanonicalJson.Obj obj ? obj : null);
                 ValueId start = parseValueIdQuiet(payloadValue(payload, "start") instanceof CanonicalJson.Obj obj ? obj : null);
-                ValueId count = parseValueIdQuiet(payloadValue(payload, "deleteCount") instanceof CanonicalJson.Obj obj ? obj : null);
+                ValueId count = parseValueIdQuiet(payloadValue(payload, "ARRAY_SLICE".equals(op.kind()) ? "end" : "deleteCount") instanceof CanonicalJson.Obj obj ? obj : null);
                 RuntimeDescriptor.Array array = null;
                 boolean startReady = false, countReady = false;
                 for (RawOp producer : unit.ops()) {
@@ -1949,7 +1949,7 @@ public final class SemanticIrValidator {
                         || !List.of(receiver, start, count).equals(op.operands())
                         || !List.of(array.canonicalSpecText(), "number", "number").equals(op.operandTypes()))
                     return fail(op, unit, facts, R_ENUM, SemanticCapability.CONTAINERS_AND_STRINGS,
-                        origin(R_ENUM, "ARRAY_SPLICE requires preceding array/number/number operands and the same array result descriptor"));
+                        origin(R_ENUM, op.kind() + " requires preceding array/number/number operands and the same array result descriptor"));
             }
             case "OBJECT_KEYS" -> {
                 ValueId receiver = parseValueIdQuiet(payloadValue(payload, "receiver") instanceof CanonicalJson.Obj obj ? obj : null);
@@ -2534,7 +2534,7 @@ public final class SemanticIrValidator {
     /** The closed per-kind allowed failure-policy sets (parent operation rows). */
     private static Set<FailurePolicyId> allowedPolicies(SemanticOpKind kind) {
         return switch (kind) {
-            case ARRAY_POP, ARRAY_SPLICE -> Set.of(FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR);
+            case ARRAY_POP, ARRAY_SPLICE, ARRAY_SLICE -> Set.of(FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR);
             case ARRAY_LENGTH, OBJECT_KEYS -> Set.of(FailurePolicyId.NO_DEAL_FAILURE);
             case OPTIONAL_READ -> Set.of(FailurePolicyId.NO_DEAL_FAILURE,
                 FailurePolicyId.TYPE_DESCRIPTOR);

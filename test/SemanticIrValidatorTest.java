@@ -1261,24 +1261,27 @@ public class SemanticIrValidatorTest {
             }
         }
 
+        for (SemanticOpKind kind : List.of(SemanticOpKind.ARRAY_SPLICE, SemanticOpKind.ARRAY_SLICE)) {
         for (String defect : List.of("none", "receiver", "start", "count", "result", "operand", "type", "policy", "forward")) {
             var arrayType = new RuntimeDescriptor.Array(INT);
             SemanticOp array = op(SemanticOpKind.ARRAY_NEW, new KindPayload.ArrayNewPayload(INT, List.of(), List.of()),
                 nextValue(), arrayType, FailurePolicyId.NO_DEAL_FAILURE, null);
             SemanticOp start = nextConst(), count = nextConst();
-            var payload = new KindPayload.ArraySplicePayload(
-                defect.equals("receiver") ? nextValue() : (ValueId)array.result(),
-                defect.equals("start") ? nextValue() : (ValueId)start.result(),
-                defect.equals("count") ? nextValue() : (ValueId)count.result());
+            ValueId receiver = defect.equals("receiver") ? nextValue() : (ValueId)array.result();
+            ValueId first = defect.equals("start") ? nextValue() : (ValueId)start.result();
+            ValueId last = defect.equals("count") ? nextValue() : (ValueId)count.result();
+            KindPayload payload = kind == SemanticOpKind.ARRAY_SLICE
+                ? new KindPayload.ArraySlicePayload(receiver, first, last)
+                : new KindPayload.ArraySplicePayload(receiver, first, last);
             RuntimeDescriptor result = defect.equals("result") ? INT : arrayType;
             List<ValueId> operands = List.of((ValueId)array.result(), (ValueId)start.result(),
                 defect.equals("operand") ? nextValue() : (ValueId)count.result());
             List<RuntimeDescriptor> types = List.of(arrayType, defect.equals("type") ? STR : INT, INT);
             FailurePolicyId policy = defect.equals("policy") ? FailurePolicyId.NO_DEAL_FAILURE : FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR;
-            var contract = contractFor(SemanticOpKind.ARRAY_SPLICE, payload, result, types, policy, "placeholder");
-            contract = contractFor(SemanticOpKind.ARRAY_SPLICE, payload, result, types, policy,
+            var contract = contractFor(kind, payload, result, types, policy, "placeholder");
+            contract = contractFor(kind, payload, result, types, policy,
                 ContractSnapshotCanonicalizer.digest(contract));
-            SemanticOp splice = new SemanticOp(nextOpId(), SemanticOpKind.ARRAY_SPLICE, origin(null), nextValue(),
+            SemanticOp splice = new SemanticOp(nextOpId(), kind, origin(null), nextValue(),
                 result, operands, types, payload, policy, contract);
             var fixture = unit(defect.equals("forward") ? List.of(array, start, splice, count) : List.of(array, start, count, splice));
             var rebuilt = deal.semantic.ir.RawUnitMaterializer.materialize(RawUnit.fromTyped(fixture));
@@ -1288,11 +1291,18 @@ public class SemanticIrValidatorTest {
                 checkEq(SemanticIrValidator.toUnitText(fixture), SemanticIrValidator.toUnitText(rebuilt), "splice lossless raw transport");
             } else {
                 var typed = SemanticIrValidator.validate(fixture, FACTS);
-                assertE6005(typed, defect.equals("policy") ? "R-POLICY-KIND" : "R-ENUM", "ARRAY_SPLICE");
+                String rule = defect.equals("policy") ? "R-POLICY-KIND" : "R-ENUM";
+                assertE6005(typed, rule, kind.name());
+                check(typed.orElseThrow().range().equals(splice.origin().span().range()),
+                    kind + " rejection retains operation origin: " + defect);
+                if (!defect.equals("policy")) check(typed.orElseThrow().message().contains(kind
+                    + " requires preceding array/number/number operands and the same array result descriptor"),
+                    kind + " exact shape failure: " + defect);
                 check(typed.equals(SemanticIrValidator.validate(rebuilt, FACTS))
                     && typed.equals(SemanticIrValidator.validateText(SemanticIrValidator.toUnitText(fixture), FACTS)),
-                    "splice typed/raw/text rejection agrees: " + defect);
+                    kind + " typed/raw/text rejection agrees: " + defect);
             }
+        }
         }
 
         for (String defect : List.of("none", "receiver", "result", "operand", "type", "policy", "forward")) {

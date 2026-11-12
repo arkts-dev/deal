@@ -126,6 +126,11 @@ public final class Language16FrontendTest {
             check("function f(xs:number[]):void{" + expression + ";}", false);
         check("function f(xs:number[]|null):void{xs.splice(0,1);}", false);
         check("function f():number{let r:Record<string,unknown>={splice:():number=>4};return (r.splice as ()=>number)();}", true);
+        check("function f(xs:number[]):number[]{return xs.slice(0,1);}", true);
+        check("function f(xs:(number|null)[]):(number|null)[]{return xs.slice(0,1);}", true);
+        for (String expression : List.of("xs.slice", "xs.slice()", "xs.slice(1)", "xs.slice(1,2,3)", "xs.slice(0,undefined)", "xs.slice(\"bad\",2)"))
+            check("function f(xs:number[]):void{" + expression + ";}", false);
+        check("function f(xs:number[]|null):void{xs.slice(0,1);}", false);
         check("function f(xs:number[]):number{return xs.push(1);}", true);
         check("function f(xs:(number|null)[]):number{return xs.push(null);}", true);
         check("function f(xs:unknown[]):number{return xs.push(\"value\");}", true);

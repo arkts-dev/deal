@@ -220,6 +220,10 @@ deal_outcome_data deal_array_pop(deal_array *array, deal_descriptor *element,
 deal_outcome_data deal_array_splice(deal_array *array, double from, double delete_count,
                                      deal_descriptor *element, const deal_origin *origin);
 
+/* Fresh shallow typed copy; selected positions validate without source mutation. */
+deal_outcome_data deal_array_slice(deal_array *array, double from, double to,
+                                    deal_descriptor *element, const deal_origin *origin);
+
 /* The scalar boundary helpers (R4): admit one persistent datum at one declared
  * scalar position and project its native payload through the same arm tuple as
  * `deal_check_value`. */

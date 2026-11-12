@@ -91,12 +91,14 @@ public final class Language16RuntimeTest {
                 if (!expected.code.equals("E8001")) throw new AssertionError(expected);
             }
         }
+        arraySliceMissingPositions();
         objectKeysAdmission(false);
         objectKeysAdmission(true);
         fixtureAdmission("tables/builtin-has-own.deal", deal.semantic.ir.SemanticOpKind.HAS_FIELD, 17);
         fixtureAdmission("control-flow/conditional-expression.deal", deal.semantic.ir.SemanticOpKind.BRANCH, 102);
         fixtureAdmission("arrays/from-live.deal", deal.semantic.ir.SemanticOpKind.FOR_EACH, 17);
         fixtureAdmission("arrays/push.deal", deal.semantic.ir.SemanticOpKind.INDEX_WRITE, -1);
+        fixtureAdmission("arrays/slice.deal", deal.semantic.ir.SemanticOpKind.ARRAY_SLICE, -1);
         fixtureAdmission("stdlib/json/contextual-parse.deal", deal.semantic.ir.SemanticOpKind.JSON_PARSE, -1);
         fixtureAdmission("stdlib/string/substring-omitted-end.deal", deal.semantic.ir.SemanticOpKind.STDLIB_CALL, 12);
         fixtureAdmission("stdlib/string/slice.deal", deal.semantic.ir.SemanticOpKind.STDLIB_CALL, 26);
@@ -110,12 +112,38 @@ public final class Language16RuntimeTest {
         jsonParseGeneratedArtifactIsolation();
         jsonParsePrivateProvider();
         jsonParseDeclarationProvider();
-        arrayRemovalAdmission(false);
-        arrayRemovalAdmission(true);
+        arrayRemovalAdmission("pop-live-retry");
+        arrayRemovalAdmission("splice-live-retry");
+        arrayRemovalAdmission("slice-live-retry");
         callableBodyAdmission();
         errorGraphAdmission();
         for (String fixture : List.of("core", "refinement", "assertion", "failures", "equality-loops", "json-values", "audit-scalars")) executeFixture(fixture);
         System.out.println("Language16RuntimeTest: passed (Oracle, JS, LuaJIT, JVM; deployed array descriptors)");
+    }
+
+    private static void arraySliceMissingPositions() {
+        var source = new deal.codegen.jvm.JvmRuntime.Array(0);
+        source.elementDescriptor = "!number";
+        source.elements.add(1.0);
+        source.elements.add(deal.codegen.jvm.JvmRuntime.MISSING);
+        source.elements.add(deal.codegen.jvm.JvmRuntime.UNDEFINED);
+        source.length = 3;
+        var result = deal.codegen.jvm.JvmRuntime.arraySlice(source, 1, 3, "!number", "!number", "slice.deal:1:1");
+        if (result == source || result.length() != 2 || result.elements.get(0) != deal.codegen.jvm.JvmRuntime.MISSING
+                || result.elements.get(1) != deal.codegen.jvm.JvmRuntime.UNDEFINED || source.length() != 3)
+            throw new AssertionError("slice must preserve missing separately from present undefined");
+        source.elementDescriptor = "number";
+        if (deal.codegen.jvm.JvmRuntime.arraySlice(source, 1, 2, "number", "number", "slice.deal:1:1")
+                .elements.getFirst() != deal.codegen.jvm.JvmRuntime.MISSING)
+            throw new AssertionError("missing slice position must skip element admission");
+        try {
+            deal.codegen.jvm.JvmRuntime.arraySlice(source, 2, 3, "number", "number", "slice.deal:1:1");
+            throw new AssertionError("stored undefined must be checked");
+        } catch (deal.codegen.jvm.JvmRuntime.DealError error) {
+            if (!error.code.equals("E8003") || !error.msg.equals("array element 3 type mismatch")
+                    || !error.actual.equals("undefined") || error.cause == null)
+                throw new AssertionError(error);
+        }
     }
 
     private static void stringifyDeclaredFields() {
@@ -1270,9 +1298,9 @@ public final class Language16RuntimeTest {
     }
 
     /** Execute the same retained-mutation contract in the Oracle with genuine lowered bodies. */
-    private static void arrayRemovalAdmission(boolean splice) throws Exception {
-        String fixture = splice ? "splice-live-retry" : "pop-live-retry";
-        String operation = splice ? "ARRAY_SPLICE" : "ARRAY_POP";
+    private static void arrayRemovalAdmission(String fixture) throws Exception {
+        boolean splice = fixture.startsWith("splice"), slice = fixture.startsWith("slice");
+        String operation = slice ? "ARRAY_SLICE" : splice ? "ARRAY_SPLICE" : "ARRAY_POP";
         Path work = Files.createTempDirectory(Path.of("build"), "pop-admission-").toAbsolutePath();
         try {
             Path source = Files.createDirectories(work.resolve("src")).resolve("main.deal");
@@ -1313,10 +1341,10 @@ public final class Language16RuntimeTest {
             rejectsOp(raw, operation, op -> field(op, "payload", field(payload(op), "arrayValue",
                 deal.semantic.ir.CanonicalJson.Null.INSTANCE)), facts);
             rejectsOp(raw, operation, op -> field(field(op, "operands", empty), "operandTypes", empty), facts);
-            if (!splice) rejectsOp(raw, operation, op -> field(op, "operandTypes", new deal.semantic.ir.CanonicalJson.Arr(
+            if (!splice && !slice) rejectsOp(raw, operation, op -> field(op, "operandTypes", new deal.semantic.ir.CanonicalJson.Arr(
                 List.of(new deal.semantic.ir.CanonicalJson.Str("[string]")))), facts);
-            if (splice) {
-                for (String key : List.of("start", "deleteCount")) {
+            if (splice || slice) {
+                for (String key : List.of("start", slice ? "end" : "deleteCount")) {
                     rejectsOp(raw, operation, op -> field(op, "payload", field(payload(op), key, missing)), facts);
                     rejectsOp(raw, operation, op -> field(op, "payload", field(payload(op), key,
                         deal.semantic.ir.CanonicalJson.Null.INSTANCE)), facts);
@@ -1329,12 +1357,23 @@ public final class Language16RuntimeTest {
             var responder = new deal.semantic.SemanticOracle.HostResponder() {
                 private deal.semantic.SemanticOracle.Value.ArrayValue saved;
                 private deal.semantic.SemanticOracle.Value.ClassValue damaged;
+                private deal.semantic.SemanticOracle.Value originalFunction;
                 public SyncOutcome call(deal.semantic.ir.ModuleId module, String export,
                         deal.semantic.ir.RuntimeDescriptor.Func descriptor,
                         List<deal.semantic.SemanticOracle.Value> arguments) {
                     deal.semantic.SemanticOracle.Value result = deal.semantic.SemanticOracle.Value.UndefinedValue.INSTANCE;
                     switch (export) {
                         case "keep" -> saved = (deal.semantic.SemanticOracle.Value.ArrayValue)arguments.getFirst();
+                        case "poison", "poisonSignature" -> {
+                            originalFunction = saved.elements().getFirst();
+                            var function = (deal.semantic.SemanticOracle.Value.FuncValue) originalFunction;
+                            saved.elements().set(0, new deal.semantic.SemanticOracle.Value.FuncValue(
+                                export.equals("poison") ? null : function.function(),
+                                export.equals("poisonSignature") ? (deal.semantic.ir.RuntimeDescriptor.Func)
+                                    deal.semantic.ir.RuntimeDescriptor.parseCanonicalText("()->string") : function.signature(),
+                                function.captures()));
+                        }
+                        case "restoreFunction" -> saved.elements().set(0, originalFunction);
                         case "corrupt" -> saved.elements().set(saved.elements().size()-1,
                             new deal.semantic.SemanticOracle.Value.StrValue("bad"));
                         case "repair" -> saved.elements().set(saved.elements().size()-1,
@@ -1369,17 +1408,25 @@ public final class Language16RuntimeTest {
                     .filter(e -> e.phase()==deal.semantic.SemanticRuntimeModel.Phase.FAILURE).toList());
             var failures = result.trace().stream().filter(e -> e.kind()==deal.semantic.ir.SemanticOpKind.valueOf(operation)
                 && e.phase()==deal.semantic.SemanticRuntimeModel.Phase.FAILURE).toList();
-            int population = 3;
+            int population = slice ? 6 : 3;
             if (failures.size()!=population) throw new AssertionError(operation + " failure trace population: " + failures);
             for (int i=0; i<population; i++) {
                 var error = failures.get(i).error();
-                String expected=i==0 ? "[number]" : i==1 ? "number" : "@src/main.deal/Item";
-                String actual=i==0 ? "array" : i==1 ? "string" : expected;
+                String expected = slice ? (i==0 || i==5 ? "number" : i==1 ? "[number]" : i==2
+                    ? "@src/main.deal/Item" : "()->number")
+                    : i==0 ? "[number]" : i==1 ? "number" : "@src/main.deal/Item";
+                String actual = slice ? (i==0 || i==5 ? "string" : i==1 ? "array" : i>=3 ? "function" : expected)
+                    : i==0 ? "array" : i==1 ? "string" : expected;
+                int position = slice ? (i==0 || i==5 ? 3 : i==1 || i==2 ? 2 : 1)
+                    : splice ? (i==0 ? 2 : i==1 ? 3 : 1) : (i==1 ? 2 : 1);
+                String leafExpected = slice && i==4 ? "()->number" : slice && i==3 ? "function" : "number";
+                String leafActual = slice && i==4 ? "()->string" : slice && i==3 ? "function" : "string";
+                String leafCode = slice && i==4 ? "E8010" : "E8001";
                 if (!error.code().equals("E8003") || !error.expected().equals(expected)
                         || !error.actual().equals(actual)
-                        || !error.message().equals("array element " + (splice ? (i==0 ? 2 : i==1 ? 3 : 1) : (i==1 ? 2 : 1)) + " type mismatch") || error.cause()==null
-                        || !error.cause().code().equals("E8001") || !error.cause().expected().equals("number")
-                        || !error.cause().actual().equals("string") || error.frames().isEmpty())
+                        || !error.message().equals("array element " + position + " type mismatch") || error.cause()==null
+                        || !error.cause().code().equals(leafCode) || !error.cause().expected().equals(leafExpected)
+                        || !error.cause().actual().equals(leafActual) || error.frames().isEmpty())
                     throw new AssertionError("pop projection: " + error);
                 var failedId=failures.get(i).op();
                 var op=project.modules().get(failedId.module()).ops().stream()
@@ -1645,6 +1692,16 @@ public final class Language16RuntimeTest {
             // stdlib realizations cannot stand in for the deployed wrappers.
             run(root, "node", "-e", """
                 const rt=require('./deal/runtime'),s=require('./std/string'),t=require('./std/table');
+                const sparse=rt.tagArray([1,,undefined],'!number');
+                const slice=rt.arraySlice(sparse,1,3,'!number','slice.deal',1,1);
+                if(slice===sparse || slice.length!==2 || 0 in slice || !(1 in slice) || slice[1]!==undefined)
+                  throw Error('slice must preserve holes separately from undefined');
+                rt.tagArray(sparse,'number');
+                if(0 in rt.arraySlice(sparse,1,2,'number','slice.deal',1,1)) throw Error('slice materialized hole');
+                let rejectedUndefined=false;
+                try {rt.arraySlice(sparse,2,3,'number','slice.deal',1,1)}
+                catch(e){rejectedUndefined=e.code==='E8003' && e.message==='array element 3 type mismatch'}
+                if(!rejectedUndefined) throw Error('slice skipped stored undefined');
                 if(rt.checkType('unknown','\\uD800')!=='\\uD800') throw Error('lone unit ingress');
                 for (const bad of [()=>{}, Promise.resolve(1), {}, Symbol('foreign')]) {
                   let rejected=false;

@@ -1848,6 +1848,7 @@ record NumValue(double value) implements Value {
                 case ARRAY_POP -> executeArrayPop(op);
                 case OBJECT_KEYS -> executeObjectKeys(op);
                 case ARRAY_SPLICE -> executeArraySplice(op);
+                case ARRAY_SLICE -> executeArraySlice(op);
                 case MEMBER_READ -> executeMemberRead(op);
                 case MEMBER_WRITE, MEMBER_DELETE, INDEX_WRITE, INDEX_DELETE,
                      FIELD_WRITE, FIELD_DELETE -> executeCommit(op);
@@ -2120,6 +2121,27 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                 entries.put(entry.key(), valueOf(entry.value()));
             }
             return publish(op, new Value.TableValue(entries));
+        }
+
+        private String executeArraySlice(SemanticOp op) {
+            KindPayload.ArraySlicePayload payload = (KindPayload.ArraySlicePayload) op.payload();
+            Value.ArrayValue array = (Value.ArrayValue) valueOf(payload.arrayValue());
+            int length = array.elements().size();
+            int start = deal.semantic.ir.NumberSemantics.spliceStart(numberUse(valueOf(payload.start())), length);
+            int end = deal.semantic.ir.NumberSemantics.spliceStart(numberUse(valueOf(payload.end())), length);
+            RuntimeDescriptor element = ((RuntimeDescriptor.Array) op.operandTypes().getFirst()).element();
+            List<Value> copied = new ArrayList<>();
+            for (int i = start; i < end; i++) {
+                Value value = array.elements().get(i);
+                if (value instanceof Value.MissingValue) { copied.add(value); continue; }
+                BoundaryOutcome outcome = BoundaryExecutor.execute(FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR,
+                    element, viewOfValue(value), BoundaryContext.element(i + 1),
+                    new deal.semantic.ir.BoundaryRealization.RuntimeValidation("array-slice"));
+                if (outcome instanceof BoundaryOutcome.Fail fail)
+                    throw DealFailure.of(fail.failure(), op.origin(), List.copyOf(frames));
+                copied.add(valueOfView(((BoundaryOutcome.Pass) outcome).value(), value));
+            }
+            return publish(op, new Value.ArrayValue(copied, element, false));
         }
 
         private String executeArraySplice(SemanticOp op) {

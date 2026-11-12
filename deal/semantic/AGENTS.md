@@ -32,6 +32,8 @@ Conditional BRANCH operations own two lazy arm blocks and explicit arm result li
 
 Array.push evaluates receiver then value once before capturing the live append position. Saved operands feed the closed ARRAY_SLOT assignment chain; validate before commit, preserve original receiver identity across argument mutation, adapt function elements over the saved source value, and publish the post-commit length. Preserve ordinary write failure projections; nested typed-array validation retains E8003 leaf causes.
 
+Array.slice carries once-evaluated receiver/start/end in ARRAY_SLICE with exact array/number/number descriptors. Normalize relative bounds against the saved receiver's length after argument effects, without swapping. Admit selected present elements in ascending source position, preserve missing positions where supported by storage, and publish fresh shallow typed storage only on success; never mutate the source or validate unselected elements.
+
 Array.from expands into existing validated binding, ARRAY_NEW, live FOR_EACH, indirect CALL and checked append-chain operations. Evaluate/admit source then mapper once; create shorter-arity adapters at mapper evaluation and validate the saved function signature even for empty input. Preserve normal parameter/return boundaries and fresh iteration cells; do not add backend snapshot/map algorithms or publish partial results after failure.
 
 Object.hasOwn consumes its receiver and dynamic string key through operand admission in receiver/key order, tests presence without reading values, and never narrows fields. Error owns code/message presence independently of stored values.

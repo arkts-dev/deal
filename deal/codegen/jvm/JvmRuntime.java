@@ -3289,6 +3289,29 @@ case "NUMBER_ADD" -> {
     // Array read/bounds cells (shared slot-space context)
     // =========================================================================
 
+    /** Shallow copy with source-position element failures and no source mutation. */
+    public static Array arraySlice(Array array, double from, double to,
+                                   String descriptor, String canonical, String origin) {
+        int length = array.length();
+        int start = deal.semantic.ir.NumberSemantics.spliceStart(from, length);
+        int end = deal.semantic.ir.NumberSemantics.spliceStart(to, length);
+        Array result = new Array(Math.max(0, end - start));
+        result.elementDescriptor = canonical;
+        for (int i = start; i < end; i++) {
+            Object value = i < array.elements.size() ? array.elements.get(i) : MISSING;
+            if (value == MISSING) { result.elements.add(MISSING); continue; }
+            try { result.elements.add(bcheck(descriptor, "unknown", value, canonical)); }
+            catch (DealError cause) {
+                DealError outer = arm(deal.semantic.ir.FailureArmId.ARRAY_ELEMENT_KIND,
+                    java.util.Map.of("oneBasedIndex", Integer.toString(i + 1)), origin, canonical,
+                    elementActualOf(value == MISSING ? "missing" : "unknown", value));
+                DealError leaf = cause.code.equals("E8003") && cause.cause != null ? cause.cause : cause;
+                throw new DealError(outer.code, outer.msg, outer.origin, outer.expected, outer.actual, outer.frames, leaf);
+            }
+        }
+        return result;
+    }
+
     /** Admit every removed value before shifting any live storage. */
     public static Array arraySplice(Array array, double from, double deleteCount,
                                     String descriptor, String canonical, String origin) {

@@ -14,6 +14,7 @@ public sealed interface KindPayload
             KindPayload.ArrayPopPayload,
             KindPayload.ObjectKeysPayload,
             KindPayload.ArraySplicePayload,
+            KindPayload.ArraySlicePayload,
             KindPayload.MemberReadPayload,
             KindPayload.MemberWritePayload,
             KindPayload.MemberDeletePayload,
@@ -301,6 +302,15 @@ public sealed interface KindPayload
             Objects.requireNonNull(arrayValue, "arrayValue");
             Objects.requireNonNull(start, "start");
             Objects.requireNonNull(deleteCount, "deleteCount");
+        }
+    }
+
+    /** Shallow nonmutating copy between truncated, clamped relative bounds. */
+    record ArraySlicePayload(ValueId arrayValue, ValueId start, ValueId end) implements KindPayload {
+        public ArraySlicePayload {
+            Objects.requireNonNull(arrayValue, "arrayValue");
+            Objects.requireNonNull(start, "start");
+            Objects.requireNonNull(end, "end");
         }
     }
 

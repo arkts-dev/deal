@@ -12,12 +12,12 @@ public final class Language16ArrayProductionTest {
         try {
             Path corpus = Path.of("test/conformance").toAbsolutePath().normalize();
             var fixtures = CorpusConformanceTest.nativeCorpusFixtures(corpus);
-            for (String name : List.of("push", "push-live-retry")) {
+            for (String name : List.of("push", "push-live-retry", "slice", "slice-live-retry")) {
                 String path = "backend-runtime/arrays/" + name + ".deal";
                 var fixture = fixtures.stream().filter(f -> f.corpusPath().equals(path)).findFirst().orElseThrow();
                 Path host = null;
-                if (name.equals("push-live-retry")) {
-                    host = Files.createDirectories(root.resolve("host"));
+                if (name.endsWith("-live-retry")) {
+                    host = Files.createDirectories(root.resolve(name + "-host"));
                     for (String extension : List.of("d.deal", "js", "lua", "java", "c"))
                         Files.copy(corpus.resolve("host-fixtures/array_pop." + extension), host.resolve("probe." + extension));
                 }
