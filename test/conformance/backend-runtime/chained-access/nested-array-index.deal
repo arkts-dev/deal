@@ -10,6 +10,6 @@ export function test_nested_array_index_chain(): number {
   return result;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

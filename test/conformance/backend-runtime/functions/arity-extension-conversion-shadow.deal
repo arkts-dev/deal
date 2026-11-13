@@ -73,7 +73,7 @@ function widenBytes(bytes: (x: number, y: number) => number[]):
   return bytes;
 }
 
-export function main(): null {
+export function main(): void {
   // --- the parameter positions --------------------------------------------
   let int: (x: number, y: number) => number = pairSeven;
   check(needTripleInt(int) === 7,
@@ -146,5 +146,5 @@ export function main(): null {
     "the return position adapted the bytes allocation intrinsic");
 
   output.log("OK");
-  return null;
+  return ;
 }

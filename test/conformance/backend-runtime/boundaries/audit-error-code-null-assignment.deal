@@ -5,4 +5,4 @@
 import * as printer from "std/console";
 import * as host from "host/probe";
 function take(e:Error):void{printer.log("PARAM_BODY");}
-export function main():null{let e:Error={name:"X",message:"m"};let original:Error={name:"OLD",message:"old"};let destination=original;let alias=e;let get: () => Error = function():Error{printer.log("RETURN_BODY");return e;};host.edit(e);try{destination=e;printer.log("ACCEPT");}catch(x){if(x instanceof Error){printer.log(x.name);}else{printer.log("NOT_ERROR");}}host.repair();if(e===alias && destination===original){printer.log("IDENTITY");}take(e);printer.log("RECOVERED");return null;}
+export function main():void{let e:Error={name:"X",message:"m"};let original:Error={name:"OLD",message:"old"};let destination=original;let alias=e;let get: () => Error = function():Error{printer.log("RETURN_BODY");return e;};host.edit(e);try{destination=e;printer.log("ACCEPT");}catch(x){if(x instanceof Error){printer.log(x.name);}else{printer.log("NOT_ERROR");}}host.repair();if(e===alias && destination===original){printer.log("IDENTITY");}take(e);printer.log("RECOVERED");return ;}

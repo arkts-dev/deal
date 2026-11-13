@@ -92,9 +92,9 @@ public final class BoundaryHistoryProductionTest {
                     function check(ok:boolean):void{if(!ok){throw {name:"HISTORY",message:"mismatch"};}}
                     """);
                 for (int i = batch; i < end; i++) source.append(trace(traces.get(i), i));
-                source.append("export function main():null{");
+                source.append("export function main():void{");
                 for (int i = batch; i < end; i++) source.append("trace").append(i).append("();");
-                source.append("c.log(\"HISTORIES_OK\");return null;}");
+                source.append("c.log(\"HISTORIES_OK\");return;}");
                 CompositionProductionTest.execute(source.toString(), "HISTORIES_OK\n",
                     root.resolve("batch" + batch), host,
                     List.of(deal.codegen.Backend.JS, deal.codegen.Backend.LUAJIT,

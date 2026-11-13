@@ -49,13 +49,13 @@ public final class LlvmDebugInfoTest {
     private static final String MAIN_SOURCE = """
         import * as lib from "./lib";
 
-        export function main(): null {
+        export function main(): void {
           let value: number = lib.compute(0);
           let bump: (n: number) => number = function (n: number): number {
             return n + 1;
           };
           let next: number = bump(value);
-          return null;
+          return ;
         }
         """;
 

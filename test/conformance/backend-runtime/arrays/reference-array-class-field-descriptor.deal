@@ -28,6 +28,6 @@ export function test_array_class_field_descriptor(): string {
   return "canonical number[] class field descriptor ok";
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

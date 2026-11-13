@@ -47,6 +47,6 @@ export function test_array_identity_equality(): number {
   return 0;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

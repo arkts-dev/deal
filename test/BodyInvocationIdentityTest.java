@@ -108,11 +108,11 @@ public class BodyInvocationIdentityTest {
           return 7;
         }
 
-        export function main(): null {
+        export function main(): void {
           // A value reference is not a call site: the declaration keeps zero
           // call sites and its value read publishes the closure identity.
           let ref: () => number = helper;
-          return null;
+          return ;
         }
         """;
 
@@ -155,12 +155,12 @@ public class BodyInvocationIdentityTest {
     // =========================================================================
 
     private static final String STORED_EXPRESSION_SOURCE = """
-        export function main(): null {
+        export function main(): void {
           let f: () => null = function(): null {
             let y: number = 2;
             return null;
           };
-          return null;
+          return ;
         }
         """;
 
@@ -205,7 +205,7 @@ public class BodyInvocationIdentityTest {
     // =========================================================================
 
     private static final String ASSIGNED_EXPRESSION_SOURCE = """
-        export function main(): null {
+        export function main(): void {
           let n: number = 1;
           let g: () => null = function(): null {
             return null;
@@ -214,7 +214,7 @@ public class BodyInvocationIdentityTest {
           g = function(): null {
             return null;
           };
-          return null;
+          return ;
         }
         """;
 
@@ -268,7 +268,7 @@ public class BodyInvocationIdentityTest {
           run: () => null;
         }
 
-        export function main(): null {
+        export function main(): void {
           let t: Record<string, unknown> = { run: function(): null { return null; } };
           t.run = function(): null {
             return null;
@@ -281,7 +281,7 @@ public class BodyInvocationIdentityTest {
           b.run = function(): null {
             return null;
           };
-          return null;
+          return ;
         }
         """;
 
@@ -342,8 +342,8 @@ public class BodyInvocationIdentityTest {
           return null;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -402,16 +402,16 @@ public class BodyInvocationIdentityTest {
     /**
      * The carrier-slice entry carries no export arm (EXPORT_* is the E7
      * entry's), so its fixture keeps the entry body non-exported: a
-     * never-called declaration plus the pinned {@code main(): null}.
+     * never-called declaration plus the pinned {@code main(): void}.
      */
     private static final String CARRIER_SLICE_SOURCE = """
         function helper(): number {
           return 7;
         }
 
-        function main(): null {
+        function main(): void {
           let ref: () => number = helper;
-          return null;
+          return;
         }
         """;
 
@@ -1415,7 +1415,7 @@ public class BodyInvocationIdentityTest {
           if (n === 0) { return false; }
           return isEven(n - 1);
         }
-        export function main(): null {
+        export function main(): void {
           let f: () => number = one;
           let call: () => number = function(): number { return f(); };
           f = two;
@@ -1436,7 +1436,7 @@ public class BodyInvocationIdentityTest {
               || stableValue !== 2 || recursive !== 55 || !mutual) {
             throw { name: "TEST_FAIL", message: "current binding" };
           }
-          return null;
+          return ;
         }
         """;
 
@@ -1644,7 +1644,7 @@ public class BodyInvocationIdentityTest {
         RealProject project = null;
         Path workspace = Files.createTempDirectory("for-let-counter-diff-");
         try {
-            project = compileProject("function one(): number { return 1; }\nfunction two(): number { return 2; }\nexport function main(): null {\n  let visits: number = 0;\n  { let v14Loop0: () => number = one; while (v14Loop0() === 1) { let f: () => number = v14Loop0; {\n    visits = visits + 1;\n    if (visits > 3) { break; }\n  } v14Loop0 = f; v14Loop0 = two; } }\n  let stable: number = 0;\n  { let v14Loop1: () => number = two; while (v14Loop1() === 2) { let g: () => number = v14Loop1; {\n    stable = stable + 1;\n    if (stable === 2) { break; }\n  } v14Loop1 = g;  } }\n  let adapted: number = 0;\n  { let v14Loop2: (x: number) => number = one; while (v14Loop2(7) === 1) { let h: (x: number) => number = v14Loop2; {\n    adapted = adapted + 1;\n    if (adapted > 3) { break; }\n  } v14Loop2 = h; v14Loop2 = two; } }\n  if (visits !== 1 || stable !== 2 || adapted !== 1) {\n    throw { name: \"TEST_FAIL\", message: \"function counters\" };\n  }\n  return null;\n}\n");
+            project = compileProject("function one(): number { return 1; }\nfunction two(): number { return 2; }\nexport function main(): void {\n  let visits: number = 0;\n  { let v14Loop0: () => number = one; while (v14Loop0() === 1) { let f: () => number = v14Loop0; {\n    visits = visits + 1;\n    if (visits > 3) { break; }\n  } v14Loop0 = f; v14Loop0 = two; } }\n  let stable: number = 0;\n  { let v14Loop1: () => number = two; while (v14Loop1() === 2) { let g: () => number = v14Loop1; {\n    stable = stable + 1;\n    if (stable === 2) { break; }\n  } v14Loop1 = g;  } }\n  let adapted: number = 0;\n  { let v14Loop2: (x: number) => number = one; while (v14Loop2(7) === 1) { let h: (x: number) => number = v14Loop2; {\n    adapted = adapted + 1;\n    if (adapted > 3) { break; }\n  } v14Loop2 = h; v14Loop2 = two; } }\n  if (visits !== 1 || stable !== 2 || adapted !== 1) {\n    throw { name: \"TEST_FAIL\", message: \"function counters\" };\n  }\n  return ;\n}\n");
             SemanticLowerer.ProjectLoweringResult result = lower(project);
             if (result.project() == null || !result.diagnostics().isEmpty()) {
                 fail("the function-valued for-let counter lowers for the differential "
@@ -1701,7 +1701,7 @@ public class BodyInvocationIdentityTest {
             project = compileProject("""
                 function one(): number { return 1; }
                 function two(): number { return 2; }
-                export function main(): null {
+                export function main(): void {
                   let alt: () => number = two;
                   let f: () => number = one;
                   let a: number = alt();
@@ -1709,7 +1709,7 @@ public class BodyInvocationIdentityTest {
                   if (a !== 2 || b !== 1) {
                     throw { name: "TEST_FAIL", message: "static control" };
                   }
-                  return null;
+                  return ;
                 }
                 """);
             SemanticLowerer.ProjectLoweringResult result = lower(project);
@@ -1755,7 +1755,7 @@ public class BodyInvocationIdentityTest {
             project = compileProject("""
                 function one(x: number): number { return x; }
                 function two(x: number): number { return x; }
-                export function main(): null {
+                export function main(): void {
                   let f: (x: number) => number = one;
                   let g: (x: number, y: number) => number = f;
                   f = two;
@@ -1764,7 +1764,7 @@ public class BodyInvocationIdentityTest {
                   if (r !== 1 || direct !== 1) {
                     throw { name: "TEST_FAIL", message: "arity extension" };
                   }
-                  return null;
+                  return ;
                 }
                 """);
             SemanticLowerer.ProjectLoweringResult result = lower(project);

@@ -160,10 +160,10 @@ public class CompositeTerminatorAnalysisTest {
           }
         }
 
-        export function main(): null {
+        export function main(): void {
           probe(true);
           probe(false);
-          return null;
+          return ;
         }
         """;
 
@@ -377,8 +377,8 @@ public class CompositeTerminatorAnalysisTest {
     private static String probeProgram(String probeSource) {
         return probeSource + """
 
-            export function main(): null {
-              return null;
+            export function main(): void {
+              return ;
             }
             """;
     }
@@ -527,8 +527,8 @@ public class CompositeTerminatorAnalysisTest {
 
     /** Resultless structural twins preserve every control-flow operation, not a null falloff exception. */
     private static String voidResultProbes(String source) {
-        int main = source.lastIndexOf("export function main(): null");
-        if (main < 0) throw new AssertionError("probe source has no explicit-null entry");
+        int main = source.lastIndexOf("export function main(): void");
+        if (main < 0) throw new AssertionError("probe source has no resultless entry");
         return source.substring(0, main).replace(": null", ": void")
             .replace("=> null", "=> void").replace("return null;", "return;")
             + source.substring(main);
@@ -863,7 +863,7 @@ public class CompositeTerminatorAnalysisTest {
     static void testNestedGroupFallOffExemption() throws Exception {
         System.out.println("-- nested mutual-reference groups reject null falloff and admit void --");
         String group = """
-            export function main(): null {
+            export function main(): void {
               let g:(n:number)=>null=function(n:number):null{return null;};
               let f = function(n: number): null {
                 if (n > 0) { g(n - 1); }
@@ -872,7 +872,7 @@ public class CompositeTerminatorAnalysisTest {
                 if (n > 1) { f(n - 1); }
               };
               f(4);
-              return null;
+              return ;
             }
             """;
         checkPublicFallOffCount("nested mutual-reference null group", group, 2);
@@ -882,7 +882,7 @@ public class CompositeTerminatorAnalysisTest {
         checkPublicFallOffCount("nested mutual-reference void group", voidGroup, 0);
 
         String standalone = """
-            export function main(): null {
+            export function main(): void {
               while (true) {
                 let inner = function(d: boolean): null {
                   while (true) {
@@ -890,7 +890,7 @@ public class CompositeTerminatorAnalysisTest {
                     return null;
                   }
                 };
-                return null;
+                return ;
               }
             }
             """;
@@ -903,15 +903,15 @@ public class CompositeTerminatorAnalysisTest {
             function g(n: number): null {
               if (n > 1) { f(n - 1); }
             }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             """;
         checkPublicFallOffCount("the module-level mutual group", moduleLevel, 2);
 
         String expression = """
-            export function main(): null {
+            export function main(): void {
               let f: () => null = function(): null {};
               f();
-              return null;
+              return ;
             }
             """;
         checkPublicFallOff("the nested function expression", expression);
@@ -1009,7 +1009,7 @@ public class CompositeTerminatorAnalysisTest {
     static void testTestlessForLetProductionArtifacts() throws Exception {
         System.out.println("-- the omitted-test for-let loop through the two "
             + "release-owned production lanes (the all-return shape) --");
-        String source = "import * as output from \"std/console\";\n\nexport function terminateForLetTestless(): null {\n  while (true) { {\n    output.log(\"testless-for-let-terminate\");\n    return null;\n  } }\n}\n\nexport function main(): null {\n  terminateForLetTestless();\n  return null;\n}\n";
+        String source = "import * as output from \"std/console\";\n\nexport function terminateForLetTestless(): null {\n  while (true) { {\n    output.log(\"testless-for-let-terminate\");\n    return null;\n  } }\n}\n\nexport function main(): void {\n  terminateForLetTestless();\n  return ;\n}\n";
         Path root = Files.createTempDirectory("testless-for-let-production-");
         try {
             writeFileIn(root, "src/main.deal", source);
@@ -1454,8 +1454,8 @@ public class CompositeTerminatorAnalysisTest {
         }
         return source + "export function probeTerminateForLetTestless(): null {\n"
             + headers[0] + " { return null; }\n}\n"
-            + "export function main(): null {\n" + calls
-            + "probeTerminateForLetTestless();\nreturn null;\n}\n";
+            + "export function main(): void {\n" + calls
+            + "probeTerminateForLetTestless();\nreturn ;\n}\n";
     }
 
     static void testPartialTransferProductionParity() throws Exception {
@@ -1492,17 +1492,17 @@ public class CompositeTerminatorAnalysisTest {
                     SemanticDifferentialHarness.runProject(lowered.project(),
                         lowered.tables(), lowered.registries(),
                         SemanticDifferentialHarness.Expectation.success(
-                            "partial-transfer probes", List.of(), "null"), workspace);
+                            "partial-transfer probes", List.of(), "undefined"), workspace);
                 check(verdict.pass(), "the oracle and both shared artifacts agree "
-                    + "event-for-event and the probes complete with null (no trace "
+                    + "event-for-event and the probes complete without data (no trace "
                     + "mismatch is admitted): " + verdict.failures());
                 checkEq(3, verdict.runs().size(), "the drive produced the exact "
                     + "three consumers: " + verdict.failures());
                 for (SemanticRuntimeModel.ConsumerRun run : verdict.runs()) {
                     check(run.terminal()
                             instanceof SemanticRuntimeModel.Terminal.Success success
-                            && "null".equals(success.resultAtom()),
-                        run.consumer() + " completes with the pinned null outcome: "
+                            && "undefined".equals(success.resultAtom()),
+                        run.consumer() + " completes with the pinned Void outcome: "
                             + run.terminal());
                     for (OpId id : implicitIds) {
                         long executed = run.trace().stream().filter(event ->
@@ -1553,9 +1553,9 @@ public class CompositeTerminatorAnalysisTest {
     private static final List<AllThrowForLetProgram> ALL_THROW_FOR_LET_PROGRAMS =
         List.of(
             new AllThrowForLetProgram(
-                "the all-throw while loop", false, "export function main(): null {\n  while (true) { {\n    throw { name: \"THROW_ONLY\", message: \"throw only\" };\n  } }\n}\n"),
+                "the all-throw while loop", false, "export function main(): void {\n  while (true) { {\n    throw { name: \"THROW_ONLY\", message: \"throw only\" };\n  } }\n}\n"),
             new AllThrowForLetProgram(
-                "the all-throw explicit-true for-let", false, "export function main(): null {\n  while (true) { {\n    throw { name: \"THROW_ONLY\", message: \"throw only\" };\n  } }\n}\n"));
+                "the all-throw explicit-true for-let", false, "export function main(): void {\n  while (true) { {\n    throw { name: \"THROW_ONLY\", message: \"throw only\" };\n  } }\n}\n"));
 
     static void testAllThrowForLetParity() throws Exception {
         System.out.println("-- the all-throw for-let bodies through the oracle "
@@ -1689,11 +1689,11 @@ public class CompositeTerminatorAnalysisTest {
         } else {
             writeFileIn(root, "src/app.deal",
                 "import * as fx from \"./" + fixture.relativePath() + "\";\n\n"
-                    + "export function main(): null {\n"
+                    + "export function main(): void {\n"
                     + "  if (fx." + fixture.probe() + "() !== " + fixture.pinnedValue() + ") {\n"
                     + "    throw { name: \"TEST_FAIL\", message: \""
                     + fixture.relativePath() + " pinned probe value\" };\n"
-                    + "  }\n  return null;\n}\n");
+                    + "  }\n  return ;\n}\n");
             lowered = lowerProjectRoot(root, "src/app.deal");
         }
         if (lowered == null) {
@@ -1708,7 +1708,7 @@ public class CompositeTerminatorAnalysisTest {
                     workspace, null)
                 : SemanticDifferentialHarness.runProject(lowered.project(), lowered.tables(),
                     lowered.registries(), SemanticDifferentialHarness.Expectation.success(
-                        fixture.relativePath(), List.of(), "null"), workspace);
+                        fixture.relativePath(), List.of(), "undefined"), workspace);
             checkEq(3, verdict.runs().size(), fixture.relativePath()
                 + ": three consumers: " + verdict.failures());
             boolean accepted = RECURSIVE_FIXTURES.contains(fixture.relativePath())
@@ -1720,7 +1720,7 @@ public class CompositeTerminatorAnalysisTest {
                 + ": event parity (only recursive pairing notices allowed): " + verdict.failures());
             for (SemanticRuntimeModel.ConsumerRun run : verdict.runs()) {
                 check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success success
-                        && (fixture.async() ? "num:" + Double.toHexString(Double.parseDouble(fixture.pinnedValue())) : "null")
+                        && (fixture.async() ? "num:" + Double.toHexString(Double.parseDouble(fixture.pinnedValue())) : "undefined")
                             .equals(success.resultAtom()),
                     fixture.relativePath() + ": " + run.consumer() + ": " + run.terminal());
             }

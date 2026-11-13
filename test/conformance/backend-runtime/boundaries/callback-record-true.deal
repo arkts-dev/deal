@@ -5,4 +5,4 @@
 import * as host from "host/probe";
 
 export async function run():Promise<number>{let f:()=>number=function():number{return 7;};let r:Record<string,unknown>={f:f};let u=await host.echo(r);let t=u as Record<string,unknown>;let g=t.f as ()=>number;if(g===f&&g()===7){return 1;}return 0;}
-export function main():null{return null;}
+export function main():void{return ;}

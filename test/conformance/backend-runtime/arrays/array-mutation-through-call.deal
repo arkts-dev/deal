@@ -15,6 +15,6 @@ export function test_array_mutation_through_call(): number {
   return xs[0];
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

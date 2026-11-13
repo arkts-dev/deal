@@ -7,7 +7,7 @@ function asInt(value: number): number {
   return value;
 }
 
-export function main(): null {
+export function main(): void {
   let f: ((value: number) => number) | null = asInt;
   let clear: () => null = function(): null {
     f = null;
@@ -17,5 +17,5 @@ export function main(): null {
     clear();
     let xs: ((value: number) => number)[] = [f];
   }
-  return null;
+  return ;
 }

@@ -9,8 +9,8 @@ function check(ok:boolean):void{
     };
   }
 }
-export function main():null{
-  return null;
+export function main():void{
+  return ;
 }
 async function staticDown(n:number):Promise<number>{
   if(n===0){

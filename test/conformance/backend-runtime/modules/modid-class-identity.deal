@@ -17,6 +17,6 @@ export function test_cross_module_class_identity(): number {
   throw { name: "TEST_FAIL", message: "nominal refinement branch skipped" };
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

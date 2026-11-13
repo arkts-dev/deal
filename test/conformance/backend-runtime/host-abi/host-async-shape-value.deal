@@ -11,6 +11,6 @@ export async function test_host_async_shape_value(): Promise<string> {
   return fetched;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

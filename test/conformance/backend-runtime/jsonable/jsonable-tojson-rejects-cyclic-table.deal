@@ -14,6 +14,6 @@ export function test_jsonable_tojson_cyclic_table(): string {
   return JSON.stringify(w) as string;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

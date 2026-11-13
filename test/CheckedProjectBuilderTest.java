@@ -264,7 +264,7 @@ public class CheckedProjectBuilderTest {
                     + "and kind = HOST; got " + hostImport);
             check(entryModule.exports().equals(List.of(
                     new ExportInterface("test_decl_type", "() => number"),
-                    new ExportInterface("main", "() => null"))),
+                    new ExportInterface("main", "() => void"))),
                 "the implementation entry's exports render the Phase-3-corrected export "
                     + "map in declaration order; got " + entryModule.exports());
 
@@ -320,7 +320,7 @@ public class CheckedProjectBuilderTest {
             Files.createDirectories(src);
             Files.writeString(src.resolve("main.deal"),
                 "import * as time from \"std/time\";\n"
-                    + "export function main(): null { return null; }\n");
+                    + "export function main(): void { return ; }\n");
             Path entry = src.resolve("main.deal").toAbsolutePath();
             Path output = tmp.resolve("build");
 
@@ -825,7 +825,7 @@ public class CheckedProjectBuilderTest {
                 "import * as lib from \"host/lib\";\n"
                     + "export class C { v: number; }\n"
                     + "export class D { w: boolean; }\n"
-                    + "export function main(): null { return null; }\n");
+                    + "export function main(): void { return ; }\n");
             Files.writeString(tmp.resolve("deal.json"),
                 "{\n  \"languageVersion\": \"1.6\",\n"
                     + "  \"moduleRoots\": [\"src\"],\n"
@@ -924,11 +924,11 @@ public class CheckedProjectBuilderTest {
 
     /** The pinned canonical JSON of the combined fixture index (golden). */
     private static final String PINNED_INDEX_JSON =
-        "{\"formatVersion\":\"deal.semantic-interface/1\",\"modules\":[{\"classes\":[],\"exports\":[{\"declaredType\":\"(number, number) => number\",\"name\":\"declaredAdd\"}],\"imports\":[],\"initialization\":\"ONCE_AFTER_DEPENDENCIES\",\"kind\":\"HOST\",\"moduleId\":{\"path\":\"host.lib\",\"type\":\"module\"}},{\"classes\":[],\"exports\":[{\"declaredType\":\"() => number\",\"name\":\"nowMillis\"}],\"imports\":[],\"initialization\":\"ONCE_AFTER_DEPENDENCIES\",\"kind\":\"STDLIB\",\"moduleId\":{\"path\":\"std.time\",\"type\":\"module\"}},{\"classes\":[],\"exports\":[{\"declaredType\":\"() => null\",\"name\":\"main\"}],\"imports\":[{\"alias\":\"lib\",\"kind\":\"HOST\",\"modulePath\":\"host/lib\",\"resolvedModuleId\":{\"path\":\"host.lib\",\"type\":\"module\"}},{\"alias\":\"time\",\"kind\":\"STDLIB\",\"modulePath\":\"std/time\",\"resolvedModuleId\":{\"path\":\"std.time\",\"type\":\"module\"}}],\"initialization\":\"ONCE_AFTER_DEPENDENCIES\",\"kind\":\"IMPLEMENTATION\",\"moduleId\":{\"path\":\"main\",\"type\":\"module\"}}]}";
+        "{\"formatVersion\":\"deal.semantic-interface/1\",\"modules\":[{\"classes\":[],\"exports\":[{\"declaredType\":\"(number, number) => number\",\"name\":\"declaredAdd\"}],\"imports\":[],\"initialization\":\"ONCE_AFTER_DEPENDENCIES\",\"kind\":\"HOST\",\"moduleId\":{\"path\":\"host.lib\",\"type\":\"module\"}},{\"classes\":[],\"exports\":[{\"declaredType\":\"() => number\",\"name\":\"nowMillis\"}],\"imports\":[],\"initialization\":\"ONCE_AFTER_DEPENDENCIES\",\"kind\":\"STDLIB\",\"moduleId\":{\"path\":\"std.time\",\"type\":\"module\"}},{\"classes\":[],\"exports\":[{\"declaredType\":\"() => void\",\"name\":\"main\"}],\"imports\":[{\"alias\":\"lib\",\"kind\":\"HOST\",\"modulePath\":\"host/lib\",\"resolvedModuleId\":{\"path\":\"host.lib\",\"type\":\"module\"}},{\"alias\":\"time\",\"kind\":\"STDLIB\",\"modulePath\":\"std/time\",\"resolvedModuleId\":{\"path\":\"std.time\",\"type\":\"module\"}}],\"initialization\":\"ONCE_AFTER_DEPENDENCIES\",\"kind\":\"IMPLEMENTATION\",\"moduleId\":{\"path\":\"main\",\"type\":\"module\"}}]}";
 
     /** The pinned interface index digest of the combined fixture (golden). */
     private static final String PINNED_INDEX_DIGEST =
-        "1c0f6cfeef78b02958b7fdc2c3975bec64bde977a3676a9481043cc75df4c403";
+        "2b311bfea070f9a20bd0f50aea9faa8abc87d196a66066475459bbe770b5469d";
 
     private static Path writeCombinedFixture(Path dir) throws Exception {
         Path src = dir.resolve("src");
@@ -938,7 +938,7 @@ public class CheckedProjectBuilderTest {
         Files.writeString(src.resolve("main.deal"),
             "import * as lib from \"host/lib\";\n"
                 + "import * as time from \"std/time\";\n"
-                + "export function main(): null { return null; }\n");
+                + "export function main(): void { return ; }\n");
         Files.writeString(dir.resolve("deal.json"),
             "{\n  \"languageVersion\": \"1.6\",\n"
                 + "  \"moduleRoots\": [\"src\"],\n"
@@ -1118,7 +1118,7 @@ public class CheckedProjectBuilderTest {
             writeSource(src, "main.deal",
                 "import * as A from \"./a\";\n"
                     + "import * as B from \"./b\";\n"
-                    + "export function main(): null { return null; }\n");
+                    + "export function main(): void { return ; }\n");
             writeSource(src, "a.deal",
                 "import * as D from \"./d\";\n"
                     + "export class Alpha { d: D.Delta | null; }\n");
@@ -1147,7 +1147,7 @@ public class CheckedProjectBuilderTest {
             Path src = typeOnly.resolve("src");
             writeSource(src, "main.deal",
                 "import * as A from \"./a\";\n"
-                    + "export function main(): null { return null; }\n");
+                    + "export function main(): void { return ; }\n");
             Path aFile = writeSource(src, "a.deal",
                 "import * as B from \"./b\";\n"
                     + "export class Alpha { b: B.Beta | null; }\n");
@@ -1165,7 +1165,7 @@ public class CheckedProjectBuilderTest {
             Path src = selfImport.resolve("src");
             Path mainFile = writeSource(src, "main.deal",
                 "import * as S from \"./main\";\n"
-                    + "export function main(): null { return null; }\n");
+                    + "export function main(): void { return ; }\n");
             checkCycles(selfImport, mainFile, null, List.of(List.of(mainFile, mainFile)));
         } finally {
             deleteRecursively(selfImport);
@@ -1178,7 +1178,7 @@ public class CheckedProjectBuilderTest {
                 "import * as L from \"./lib\";\n"
                     + "// @jsonable\n"
                     + "export class A { b: L.B; }\n"
-                    + "export function main(): null { return null; }\n");
+                    + "export function main(): void { return ; }\n");
             writeSource(src, "lib.deal",
                 "import * as M from \"./main\";\n"
                     + "// @jsonable\n"
@@ -1196,7 +1196,7 @@ public class CheckedProjectBuilderTest {
             writeSource(root, "main.deal",
                 "import * as A from \"./support/decl_two_a\";\n"
                     + "export function probe(x: A.A): A.A { return x; }\n"
-                    + "export function main(): null { return null; }\n");
+                    + "export function main(): void { return ; }\n");
             Path support = root.resolve("support");
             Path declA = writeSource(support, "decl_two_a.d.deal",
                 "import * as B from \"./decl_two_b\";\n"
@@ -1221,7 +1221,7 @@ public class CheckedProjectBuilderTest {
             writeSource(src, "main.deal",
                 "import * as A from \"./a\";\n"
                     + "import * as X from \"./x\";\n"
-                    + "export function main(): null { return null; }\n");
+                    + "export function main(): void { return ; }\n");
             writeSource(src, "a.deal",
                 "import * as B from \"./b\";\n"
                     + "export class Alpha { b: B.Beta | null; }\n");
@@ -1255,7 +1255,7 @@ public class CheckedProjectBuilderTest {
             writeSource(src, "main.deal",
                 "import * as A from \"./a\";\n"
                     + "import * as B from \"./b\";\n"
-                    + "export function main(): null { return null; }\n");
+                    + "export function main(): void { return ; }\n");
             Path aFile = writeSource(src, "a.deal",
                 "import * as C from \"./c\";\n"
                     + "export class Alpha { c: C.Gamma | null; }\n");

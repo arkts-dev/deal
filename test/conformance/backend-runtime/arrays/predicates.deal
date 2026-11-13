@@ -4,7 +4,7 @@
 // @features: arrays, functions
 class Item {x:number;}
 function check(ok:boolean):void {if(!ok){throw {name:"PREDICATES",message:"predicate mismatch"};}}
-export function main():null {
+export function main():void {
   let xs:number[]=[1,2,3];let calls=0;
   let filtered=xs.filter((value:number,index:number,array:number[]):boolean=>{
     calls=calls+1;check(array===xs);if(index===0){array[1]=20;array.push(4);}return value>1;
@@ -61,5 +61,5 @@ export function main():null {
   try {destination=receiver().filter(abrupt());}catch(e){check((e as Error).name==="PREDICATE");caught=true;}
   check(caught && effects==="rp" && destination===stable);
   check(xs.some((value:number):boolean=>[value].every((inner:number):boolean=>inner===3)));
-  return null;
+  return ;
 }

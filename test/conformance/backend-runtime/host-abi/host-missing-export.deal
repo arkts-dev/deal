@@ -9,6 +9,6 @@ export function test_host_missing_export(): string {
   return host.ping();
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

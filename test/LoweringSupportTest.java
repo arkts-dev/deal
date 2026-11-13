@@ -297,9 +297,9 @@ public class LoweringSupportTest {
                 "main.deal", """
                     import * as time from "std/time";
 
-                    export function main(): null {
+                    export function main(): void {
                       time.nowMillis();
-                      return null;
+                      return ;
                     }
                     """), "main.deal");
             check(fixture.ok(), "the direct time fixture compiles for execution");
@@ -336,10 +336,10 @@ public class LoweringSupportTest {
                 "main.deal", """
                     import * as time from "std/time";
 
-                    export function main(): null {
+                    export function main(): void {
                       let f: () => number = time.nowMillis;
                       f();
-                      return null;
+                      return ;
                     }
                     """), "main.deal");
             if (result == null) {
@@ -367,11 +367,11 @@ public class LoweringSupportTest {
                 "main.deal", """
                     import * as time from "std/time";
 
-                    export function main(): null {
+                    export function main(): void {
                       let t: Record<string, unknown> = {nowMillis: time.nowMillis};
                       let g: () => number = t.nowMillis as (() => number);
                       g();
-                      return null;
+                      return ;
                     }
                     """), "main.deal");
             if (result == null) {
@@ -399,10 +399,10 @@ public class LoweringSupportTest {
                       return t.nowMillis as (() => number);
                     }
 
-                    export function main(): null {
+                    export function main(): void {
                       let g: () => number = pick({nowMillis: time.nowMillis});
                       g();
-                      return null;
+                      return ;
                     }
                     """), "main.deal");
             if (result == null) {
@@ -436,11 +436,11 @@ public class LoweringSupportTest {
                 "main.deal", """
                     import * as a from "./a";
 
-                    export function main(): null {
+                    export function main(): void {
                       let t: Record<string, unknown> = a.getTime();
                       let g: () => number = t.nowMillis as (() => number);
                       g();
-                      return null;
+                      return ;
                     }
                     """), "main.deal");
             if (result == null) {
@@ -481,11 +481,11 @@ public class LoweringSupportTest {
                 "main.deal", """
                     import * as b from "./b";
 
-                    export function main(): null {
+                    export function main(): void {
                       let t: Record<string, unknown> = b.getTime2();
                       let g: () => number = t.nowMillis as (() => number);
                       g();
-                      return null;
+                      return ;
                     }
                     """), "main.deal");
             if (result == null) {
@@ -523,10 +523,10 @@ public class LoweringSupportTest {
                 "main.deal", """
                     import * as a from "./a";
 
-                    export function main(): null {
+                    export function main(): void {
                       let g: () => number = a.getNow();
                       g();
-                      return null;
+                      return ;
                     }
                     """), "main.deal");
             testCombinedDependencies(fixture);
@@ -568,10 +568,10 @@ public class LoweringSupportTest {
                 "main.deal", """
                     import * as b from "./b";
 
-                    export function main(): null {
+                    export function main(): void {
                       let g: () => number = b.getNow2();
                       g();
-                      return null;
+                      return ;
                     }
                     """), "main.deal");
             if (result == null) {
@@ -602,8 +602,8 @@ public class LoweringSupportTest {
                 "main.deal", """
                     import * as time from "std/time";
 
-                    export function main(): null {
-                      return null;
+                    export function main(): void {
+                      return ;
                     }
                     """), "main.deal");
             if (result == null) {
@@ -633,9 +633,9 @@ public class LoweringSupportTest {
                     "main.deal", """
                         import * as time from "./other";
 
-                        export function main(): null {
+                        export function main(): void {
                           time.nowMillis();
-                          return null;
+                          return ;
                         }
                         """), "main.deal");
             if (triggers == null || other == null) {
@@ -678,11 +678,11 @@ public class LoweringSupportTest {
                       return {};
                     }
 
-                    export function main(): null {
+                    export function main(): void {
                       let t: Record<string, unknown> = unrelated();
                       let g: () => number = t.nowMillis as (() => number);
                       g();
-                      return null;
+                      return ;
                     }
                     """), "main.deal");
             if (result == null) {
@@ -714,11 +714,11 @@ public class LoweringSupportTest {
                 "main.deal", """
                     import * as a from "./a";
 
-                    export function main(): null {
+                    export function main(): void {
                       let t: Record<string, unknown> = a.getTable();
                       let g: () => number = t.nowMillis as (() => number);
                       g();
-                      return null;
+                      return ;
                     }
                     """), "main.deal");
             if (result == null) {
@@ -752,8 +752,8 @@ public class LoweringSupportTest {
                 "main.deal", """
                     import * as a from "./a";
 
-                    export function main(): null {
-                      return null;
+                    export function main(): void {
+                      return ;
                     }
                     """), "main.deal");
             if (result == null) {
@@ -787,8 +787,8 @@ public class LoweringSupportTest {
                     "main.deal", """
                         import * as lib from "./lib";
 
-                        export function main(): null {
-                          return null;
+                        export function main(): void {
+                          return ;
                         }
                         """), "main.deal");
             if (importer == null) {
@@ -810,8 +810,8 @@ public class LoweringSupportTest {
                     export function value(): number {
                       return 42;
                     }
-                    export function main(): null {
-                      return null;
+                    export function main(): void {
+                      return ;
                     }
                     """), "main.deal");
             if (single == null) {
@@ -830,8 +830,8 @@ public class LoweringSupportTest {
                 Map.of("main.deal", """
                     import * as output from "std/console";
 
-                    export function main(): null {
-                      return null;
+                    export function main(): void {
+                      return ;
                     }
                     """), "main.deal");
             if (stdlib == null) {
@@ -861,7 +861,7 @@ public class LoweringSupportTest {
                       return 1;
                     }
 
-                    export function main(): null { return null; }
+                    export function main(): void { return ; }
                     """), "main.deal");
             RequirementManifestResult max = compileAndCompute(tmp.resolve("max"),
                 Map.of("main.deal", """
@@ -869,7 +869,7 @@ public class LoweringSupportTest {
                       return 2147483647;
                     }
 
-                    export function main(): null { return null; }
+                    export function main(): void { return ; }
                     """), "main.deal");
             RequirementManifestResult numberLiteral = compileAndCompute(tmp.resolve("number"),
                 Map.of("main.deal", """
@@ -877,7 +877,7 @@ public class LoweringSupportTest {
                       return 1.5;
                     }
 
-                    export function main(): null { return null; }
+                    export function main(): void { return ; }
                     """), "main.deal");
             if (small == null || max == null || numberLiteral == null) {
                 return;
@@ -908,7 +908,7 @@ public class LoweringSupportTest {
                       return -x;
                     }
 
-                    export function main(): null { return null; }
+                    export function main(): void { return ; }
                     """), "main.deal");
             RequirementManifestResult not = compileAndCompute(tmp.resolve("not"),
                 Map.of("main.deal", """
@@ -916,7 +916,7 @@ public class LoweringSupportTest {
                       return !b;
                     }
 
-                    export function main(): null { return null; }
+                    export function main(): void { return ; }
                     """), "main.deal");
             RequirementManifestResult add = compileAndCompute(tmp.resolve("add"),
                 Map.of("main.deal", """
@@ -924,7 +924,7 @@ public class LoweringSupportTest {
                       return x + y;
                     }
 
-                    export function main(): null { return null; }
+                    export function main(): void { return ; }
                     """), "main.deal");
             RequirementManifestResult eq = compileAndCompute(tmp.resolve("eq"),
                 Map.of("main.deal", """
@@ -932,7 +932,7 @@ public class LoweringSupportTest {
                       return x === y;
                     }
 
-                    export function main(): null { return null; }
+                    export function main(): void { return ; }
                     """), "main.deal");
             RequirementManifestResult addNumber = compileAndCompute(tmp.resolve("add-number"),
                 Map.of("main.deal", """
@@ -940,7 +940,7 @@ public class LoweringSupportTest {
                       return x + y;
                     }
 
-                    export function main(): null { return null; }
+                    export function main(): void { return ; }
                     """), "main.deal");
             if (neg == null || not == null || add == null || eq == null
                     || addNumber == null) {
@@ -973,7 +973,7 @@ public class LoweringSupportTest {
                     Map.of("main.deal", """
                         function %s(x: number): number { return x; }
                         export function value(): number { return %s(1.5); }
-                        export function main(): null { return null; }
+                        export function main(): void { return ; }
                         """.formatted(name, name)), "main.deal");
                 if (result == null) continue;
                 SemanticRequirementManifest manifest = manifestOf(result, "main");
@@ -1012,10 +1012,10 @@ public class LoweringSupportTest {
             CompiledFixture storeOnlyFixture = compileFixture(
                 tmp.resolve("store-only"), Map.of(
                     "main.deal", """
-                        export function main(): null {
+                        export function main(): void {
                           let x: number = 0;
                           x = 2;
-                          return null;
+                          return ;
                         }
                         """), "main.deal");
             check(storeOnlyFixture.ok(), "the write-only module compiles with "
@@ -1036,7 +1036,7 @@ public class LoweringSupportTest {
 
             CompiledFixture presenceOnly = compileFixture(
                 tmp.resolve("presence-only"), Map.of(
-                    "main.deal", "import * as model from \"./model\";export function main():null{return null;}",
+                    "main.deal", "import * as model from \"./model\";export function main():void{return ;}",
                     "model.deal", """
                     export class Item { value?: number; }
                     export function present(item: Item): boolean {
@@ -1058,11 +1058,11 @@ public class LoweringSupportTest {
             RequirementManifestResult readBack = compileAndCompute(
                 tmp.resolve("read-back"), Map.of(
                     "main.deal", """
-                        export function main(): null {
+                        export function main(): void {
                           let x: number = 0;
                           x = 2;
                           let y: number = x;
-                          return null;
+                          return ;
                         }
                         """), "main.deal");
             SemanticRequirementManifest readManifest = manifestOf(readBack, "main");
@@ -1089,7 +1089,7 @@ public class LoweringSupportTest {
                       return 1;
                     }
                     """,
-                "main.deal", "import * as time from \"std/time\";\nimport * as helper from \"./helper\";\n\nexport class Point {\n  x: number;\n  y?: number;\n}\n\nasync function asyncOne(): Promise<number> { return 1; }\n\nexport async function compute(a: number[]): Promise<number> {\n  let sum: number = 0;\n  let n: number = 1.5;\n  let s: string = \"a\" + \"b\";\n  let t: string = `v${s}`;\n  let neg: number = -sum;\n  let eq: boolean = sum === 0 && n > 1.0;\n  let arr: number[] = [1, 2];\n  let obj: Record<string, unknown> = { k: 1 };\n  let checked: number = obj.k as number;\n  let p: Point = { x: 2, y: 4 };\n  p.y = 3;\n  delete obj.k;\n  if (Object.hasOwn(p, \"y\")) { sum = 1; } else { sum = 2; }\n  let i: number = 0;\n  while (i < a.length) {\n    if (i > 5) { break; }\n    sum = sum + a[i];\n    i = i + 1;\n  }\n  { let v14Loop0: number = 0; while (v14Loop0 < 2) { let j: number = v14Loop0; {\n    if (j === 1) { { v14Loop0 = j; v14Loop0 = v14Loop0 + 1; continue; } }\n    sum = sum + j;\n  } v14Loop0 = j; v14Loop0 = v14Loop0 + 1; } }\n  for (let v of a) { sum = sum + v; }\n  let f: () => number = function(): number { return 1; };\n  let g: () => number = f;\n  g();\n  sum = sum + g();\n  sum = sum + await asyncOne();\n  sum = sum + helper.helperFn();\n  let now: number = time.nowMillis();\n  try {\n    if (now < 0.0) { throw { name: \"E\", message: \"x\" }; }\n  } catch (e) {\n    sum = 9;\n  }\n  return sum;\n}\n\nexport function main(): null {\n  return null;\n}\n"), "main.deal");
+                "main.deal", "import * as time from \"std/time\";\nimport * as helper from \"./helper\";\n\nexport class Point {\n  x: number;\n  y?: number;\n}\n\nasync function asyncOne(): Promise<number> { return 1; }\n\nexport async function compute(a: number[]): Promise<number> {\n  let sum: number = 0;\n  let n: number = 1.5;\n  let s: string = \"a\" + \"b\";\n  let t: string = `v${s}`;\n  let neg: number = -sum;\n  let eq: boolean = sum === 0 && n > 1.0;\n  let arr: number[] = [1, 2];\n  let obj: Record<string, unknown> = { k: 1 };\n  let checked: number = obj.k as number;\n  let p: Point = { x: 2, y: 4 };\n  p.y = 3;\n  delete obj.k;\n  if (Object.hasOwn(p, \"y\")) { sum = 1; } else { sum = 2; }\n  let i: number = 0;\n  while (i < a.length) {\n    if (i > 5) { break; }\n    sum = sum + a[i];\n    i = i + 1;\n  }\n  { let v14Loop0: number = 0; while (v14Loop0 < 2) { let j: number = v14Loop0; {\n    if (j === 1) { { v14Loop0 = j; v14Loop0 = v14Loop0 + 1; continue; } }\n    sum = sum + j;\n  } v14Loop0 = j; v14Loop0 = v14Loop0 + 1; } }\n  for (let v of a) { sum = sum + v; }\n  let f: () => number = function(): number { return 1; };\n  let g: () => number = f;\n  g();\n  sum = sum + g();\n  sum = sum + await asyncOne();\n  sum = sum + helper.helperFn();\n  let now: number = time.nowMillis();\n  try {\n    if (now < 0.0) { throw { name: \"E\", message: \"x\" }; }\n  } catch (e) {\n    sum = 9;\n  }\n  return sum;\n}\n\nexport function main(): void {\n  return ;\n}\n"), "main.deal");
             if (result == null) {
                 return;
             }
@@ -1314,11 +1314,11 @@ public class LoweringSupportTest {
                   y?: number;
                 }
 
-                export function main(): null {
+                export function main(): void {
                   let p: Point = { x: 2, y: 3 };
                   let g: () => number = time.nowMillis;
                   g();
-                  return null;
+                  return ;
                 }
                 """;
             RequirementManifestResult first = compileAndCompute(tmp.resolve("first"),
@@ -1431,7 +1431,7 @@ public class LoweringSupportTest {
         try {
             ProductionObservation production = productionAccept(tmp,
                 Map.of("main.deal", """
-                    export function main(): null {
+                    export function main(): void {
                       throw { name: "TEST_FAIL", message: "boom" };
                     }
                     """), "main.deal", "the builtin-Error-only E10 arm", "TEST_FAIL");
@@ -1457,10 +1457,10 @@ public class LoweringSupportTest {
         try {
             RequirementManifestResult result = compileAndCompute(tmp,
                 Map.of("main.deal", """
-                    export function main(): null {
+                    export function main(): void {
                       let f: () => number = function(): number { return 1; };
                       f();
-                      return null;
+                      return ;
                     }
                     """), "main.deal");
             if (result == null) {
@@ -1484,13 +1484,13 @@ public class LoweringSupportTest {
         try {
             RequirementManifestResult result = compileAndCompute(tmp,
                 Map.of("main.deal", """
-                    export function main(): null {
+                    export function main(): void {
                       let down: (n: number) => number = function(n: number): number {
                         if (n === 0) { return 0; }
                         return down(n - 1);
                       };
                       down(2);
-                      return null;
+                      return ;
                     }
                     """), "main.deal");
             if (result == null) {
@@ -1513,10 +1513,10 @@ public class LoweringSupportTest {
         try {
             RequirementManifestResult result = compileAndCompute(tmp,
                 Map.of("main.deal", """
-                    export function main(): null {
+                    export function main(): void {
                       let f: (a: number, b: number) => number = one;
                       f(1, 2);
-                      return null;
+                      return ;
                     }
                     function one(x: number): number {
                       return x;
@@ -1545,8 +1545,8 @@ public class LoweringSupportTest {
                 Map.of("main.deal", """
                     function orphan(): number { return 1; }
 
-                    export function main(): null {
-                      return null;
+                    export function main(): void {
+                      return ;
                     }
                     """), "main.deal");
             if (uncalled != null) {
@@ -1562,9 +1562,9 @@ public class LoweringSupportTest {
                       return x;
                     }
 
-                    export function main(): null {
+                    export function main(): void {
                       helper(1);
-                      return null;
+                      return ;
                     }
                     """), "main.deal");
             if (called != null) {
@@ -1577,9 +1577,9 @@ public class LoweringSupportTest {
             RequirementManifestResult calledMainFirst =
                 compileAndCompute(tmp.resolve("called-main-first"),
                 Map.of("main.deal", """
-                    export function main(): null {
+                    export function main(): void {
                       helper(1);
-                      return null;
+                      return ;
                     }
 
                     function helper(x: number): number {
@@ -1607,9 +1607,9 @@ public class LoweringSupportTest {
         try {
             RequirementManifestResult binding = compileAndCompute(
                 tmp.resolve("binding"), Map.of("main.deal", """
-                    export function main(): null {
+                    export function main(): void {
                       let g: () => number = function(): number { return 7; };
-                      return null;
+                      return ;
                     }
                     """), "main.deal");
             if (binding != null) {
@@ -1622,9 +1622,9 @@ public class LoweringSupportTest {
             }
             RequirementManifestResult arrayElement = compileAndCompute(
                 tmp.resolve("array"), Map.of("main.deal", """
-                    export function main(): null {
+                    export function main(): void {
                       let fs: (() => number)[] = [function(): number { return 7; }];
-                      return null;
+                      return ;
                     }
                     """), "main.deal");
             if (arrayElement != null) {
@@ -1636,9 +1636,9 @@ public class LoweringSupportTest {
             }
             RequirementManifestResult tableField = compileAndCompute(
                 tmp.resolve("table"), Map.of("main.deal", """
-                    export function main(): null {
+                    export function main(): void {
                       let t: Record<string, unknown> = { f: function(): number { return 7; } };
-                      return null;
+                      return ;
                     }
                     """), "main.deal");
             if (tableField != null) {
@@ -1654,9 +1654,9 @@ public class LoweringSupportTest {
             // arm's exemption never leaves an IIFE unclaimed.
             RequirementManifestResult iife = compileAndCompute(
                 tmp.resolve("iife"), Map.of("main.deal", """
-                    export function main(): null {
+                    export function main(): void {
                       let x: number = (function(): number { return 7; })();
-                      return null;
+                      return ;
                     }
                     """), "main.deal");
             if (iife != null) {
@@ -1676,12 +1676,12 @@ public class LoweringSupportTest {
         Path tmp = Files.createTempDirectory("deal-manifest-determinism");
         try {
             String source = """
-                export function main(): null {
+                export function main(): void {
                   let xs: number[] = [1, 2, 3];
                   if (xs.length !== 3) {
                     throw { name: "TEST_FAIL", message: "array length mismatch" };
                   }
-                  return null;
+                  return ;
                 }
                 """;
             ProductionObservation production = productionAccept(tmp.resolve("production"),
@@ -1708,7 +1708,7 @@ public class LoweringSupportTest {
                 "the manifest schema carries no retired bytes metadata");
 
             RequirementManifestResult plain = compileAndCompute(tmp.resolve("plain"),
-                Map.of("main.deal", "export function main(): null { return null; }"),
+                Map.of("main.deal", "export function main(): void { return ; }"),
                 "main.deal");
             if (plain == null) {
                 return;

@@ -1243,7 +1243,7 @@ public final class LuaSemanticEmitter {
             out.append("local __mainOk, __mainErr = __dealMain()\n");
             if (trace) {
                 out.append("if __mainOk then\n");
-                out.append("  io.stderr:write(\"R|success|null\\n\")\n");
+                out.append("  io.stderr:write(\"R|success|undefined\\n\")\n");
                 out.append("else\n");
                 out.append("  io.stderr:write(\"R|failure|\"..__errtext(__mainErr)..\"\\n\")\n");
                 out.append("end\n");

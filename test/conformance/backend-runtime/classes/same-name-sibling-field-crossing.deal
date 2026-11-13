@@ -10,7 +10,7 @@ class Holder {
   item: b.Item;
 }
 
-export function main(): null {
+export function main(): void {
   let value: unknown = b.make();
   let replace: () => void = function(): void { value = a.make(); };
   let h: Holder = {item: b.make()};
@@ -18,5 +18,5 @@ export function main(): null {
     replace();
     h.item = value;
   }
-  return null;
+  return ;
 }

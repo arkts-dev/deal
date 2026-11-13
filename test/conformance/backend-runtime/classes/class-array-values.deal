@@ -19,6 +19,6 @@ export function test_class_array_values(): number {
   return result;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

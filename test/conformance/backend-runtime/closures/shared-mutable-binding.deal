@@ -14,6 +14,6 @@ export function test_shared_closure_binding(): number {
   return result;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

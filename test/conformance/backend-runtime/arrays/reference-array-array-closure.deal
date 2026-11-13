@@ -48,6 +48,6 @@ export function test_array_array_closure(): number {
   throw { name: "TEST_FAIL", message: "nullable array alias failed" };
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

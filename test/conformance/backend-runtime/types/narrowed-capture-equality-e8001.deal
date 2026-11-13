@@ -3,7 +3,7 @@
 // @expected: runtime-error E8001
 // @features: type-system, nullable, narrowing, runtime-errors, equality
 
-export function main(): null {
+export function main(): void {
   let x: number | null = 1;
   let clear: () => null = function(): null {
     x = null;
@@ -13,5 +13,5 @@ export function main(): null {
     clear();
     let same: boolean = x === 1;
   }
-  return null;
+  return ;
 }

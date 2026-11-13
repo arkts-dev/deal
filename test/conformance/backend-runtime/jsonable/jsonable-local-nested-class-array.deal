@@ -20,6 +20,6 @@ export function test_jsonable_local_nested_class_array(): null {
   throw { name: "TEST_FAIL", message: "local nested class array fromJson failed" };
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

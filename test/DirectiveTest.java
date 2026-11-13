@@ -132,8 +132,8 @@ public final class DirectiveTest {
             Files.writeString(root.resolve("deal.json"), "{\"languageVersion\":\"1.6\"}");
             Files.writeString(source.resolve("main.deal"), "// @spec: comments are whitespace\n// @jsonable:foo\n"
                 + "class Node{value:number;next?:Node;}\n"
-                + "export function main():null{let node:Node=JSON.parse(\"{\\\"value\\\":1}\");"
-                + "let text=JSON.stringify(node);return null;}");
+                + "export function main():void{let node:Node=JSON.parse(\"{\\\"value\\\":1}\");"
+                + "let text=JSON.stringify(node);return ;}");
             for (Backend backend : List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM)) {
                 var compiler = new CompilationOrchestrator(source.resolve("main.deal"), root.resolve(backend.name()),
                     false, false, false, backend, Map.of(), List.of(source), Path.of(".").toAbsolutePath().normalize());
@@ -144,7 +144,7 @@ public final class DirectiveTest {
                 + "export function Model$fromJson(text:string):number;\n"
                 + "export function Model$toJson(value:number):string;\n");
             Files.writeString(source.resolve("main.deal"), "import * as M from \"./model\";\n"
-                + "export function main():null{return null;}");
+                + "export function main():void{return ;}");
             for (Backend backend : List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM)) {
                 var compiler = new CompilationOrchestrator(source.resolve("main.deal"), root.resolve(backend.name()),
                     false, false, false, backend, Map.of(), List.of(source), Path.of(".").toAbsolutePath().normalize());
@@ -154,7 +154,7 @@ public final class DirectiveTest {
                     "public declarations have no helper exemption: " + errors);
             }
             Files.writeString(source.resolve("main.deal"), "// @jsonable\nclass Unused{value:Missing;}\n"
-                + "export function main():null{return null;}");
+                + "export function main():void{return ;}");
             for (Backend backend : List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM)) {
                 var compiler = new CompilationOrchestrator(source.resolve("main.deal"), root.resolve(backend.name()),
                     false, false, false, backend, Map.of(), List.of(source), Path.of(".").toAbsolutePath().normalize());

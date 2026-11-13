@@ -19,6 +19,6 @@ export function test_mutual_recursion(): boolean {
   return true;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

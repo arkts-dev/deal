@@ -19,8 +19,8 @@ public final class OptionalChainingTest {
             for (String name : List.of("same_name_sibling_a", "same_name_sibling_b"))
                 companions.put(name+".deal", Files.readString(Path.of("test/conformance/backend-runtime/classes/"+name+".deal")));
             Path input = Files.createDirectories(root.resolve("oracle/src")).resolve("main.deal");
-            Files.writeString(input, source.replace("export function main():null", "export function run():null")
-                + "\nexport function main():null{return null;}\nexport function oracleFailure():number|undefined{return failure();}\n");
+            Files.writeString(input, source.replace("export function main():void", "export function run():void")
+                + "\nexport function main():void{return ;}\nexport function oracleFailure():number|undefined{return failure();}\n");
             for (var companion : companions.entrySet())
                 Files.writeString(input.getParent().resolve(companion.getKey()),companion.getValue());
             Files.writeString(input.getParent().getParent().resolve("deal.json"),
@@ -48,7 +48,7 @@ public final class OptionalChainingTest {
                 var result = SemanticOracle.invokeSyncEntry(executable,tables,registries,new SemanticOracle.HostResponder(){},
                     executable.entryModule(),"run",List.of());
                 if (!(result.terminal() instanceof SemanticRuntimeModel.Terminal.Success success)
-                        || !success.resultAtom().equals("null") || !result.effects().isEmpty())
+                        || !success.resultAtom().equals("undefined") || !result.effects().isEmpty())
                     throw new AssertionError(result.comparisonReport());
                 if (result.trace().stream().filter(e -> e.kind()==SemanticOpKind.UNARY
                         && e.phase()==SemanticRuntimeModel.Phase.SUCCESS).count()<35)

@@ -12,4 +12,4 @@ export function test_json_stringify_invalid_key(): void {
     throw {name:"FAIL",message:"lone key lost during host or JSON crossing"};
   }
 }
-export function main(): null { return null; }
+export function main(): void { return ; }

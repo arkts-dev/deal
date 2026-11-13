@@ -55,7 +55,7 @@ final class CorpusExecution {
 
     static void controls() throws Exception {
         String source = "export function first(): number { return 1; } "
-            + "export async function second(): Promise<number> { return 2; } export function main(): null { return null; }";
+            + "export async function second(): Promise<number> { return 2; } export function main(): void { return ; }";
         var parsed = new deal.parser.Parser(new deal.lexer.Lexer(source, "control.deal").tokenize().tokens(), "control.deal").parse();
         if (!parsed.diagnostics().isEmpty()) throw new AssertionError(parsed.diagnostics());
         if (!probes(parsed.program(), false).equals(List.of(new Probe("main", false),
@@ -118,7 +118,7 @@ final class CorpusExecution {
                 else probes.add(new Probe(fn.name(), fn.isAsync()));
             }
         }
-        if (main == null || main.isAsync()) throw new IllegalArgumentException("missing synchronous main(): null");
+        if (main == null || main.isAsync()) throw new IllegalArgumentException("missing synchronous main(): void");
         if (failure && !probes.isEmpty() && !noOp(main.body())) throw new IllegalArgumentException(
             "negative main may hide exported probes; use an empty main and one explicit failing probe");
         if (failure && probes.size() > 1) throw new IllegalArgumentException(

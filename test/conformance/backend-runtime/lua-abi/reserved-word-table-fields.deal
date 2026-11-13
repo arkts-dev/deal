@@ -11,6 +11,6 @@ export function test_lua_reserved_word_table_fields(): number {
   return a + b;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

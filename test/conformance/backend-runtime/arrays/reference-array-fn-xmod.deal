@@ -22,6 +22,6 @@ export function test_array_fn_xmod(): number {
   return 0;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

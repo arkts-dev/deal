@@ -10,6 +10,6 @@ export function test_host_prewrapped_bad(): null {
   return null;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

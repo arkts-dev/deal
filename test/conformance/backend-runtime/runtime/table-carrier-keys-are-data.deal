@@ -88,6 +88,6 @@ export function test_table_carrier_keys_are_data(): null {
   return null;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

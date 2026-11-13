@@ -10,6 +10,6 @@ export function test_declaration_only_not_executed(): number {
   return 1;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

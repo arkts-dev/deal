@@ -3,7 +3,7 @@
 // @expected: runtime-error E8001
 // @features: type-system, nullable, narrowing, arrays, runtime-errors
 
-export function main(): null {
+export function main(): void {
   let items: number[] = [0, 0, 0];
   let i: number | null = 1;
   let clear: () => null = function(): null {
@@ -14,5 +14,5 @@ export function main(): null {
     clear();
     items[i] = 7;
   }
-  return null;
+  return ;
 }

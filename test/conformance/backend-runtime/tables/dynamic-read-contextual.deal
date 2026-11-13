@@ -12,6 +12,6 @@ export function test_table_read(): number {
   return v;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

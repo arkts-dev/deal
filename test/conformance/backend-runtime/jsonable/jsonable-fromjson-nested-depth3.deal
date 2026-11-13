@@ -20,4 +20,4 @@ export function test_fromjson_nested_depth3(): null {
   return null;
 }
 
-export function main(): null { return null; }
+export function main(): void { return ; }

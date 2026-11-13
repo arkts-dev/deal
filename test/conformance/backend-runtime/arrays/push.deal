@@ -4,7 +4,7 @@
 // @features: arrays, closures, evaluation-order
 class Item {x:number;}
 function check(ok:boolean):void {if(!ok){throw {name:"PUSH",message:"mismatch"};}}
-export function main():null {
+export function main():void {
   let xs:number[]=[]; let alias=xs;
   check(xs.push(4)===1 && xs.push(9)===2 && alias===xs && alias[1]===9);
   let order="";
@@ -42,5 +42,5 @@ export function main():null {
   let stale:number[]|null=[1];let clear=():number=>{stale=null;return 2;};
   if(stale!==null){check(stale.push(clear())===2);}check(stale===null);
   let literals:number[][]=[];check(literals.push(true ? [1] : [2])===1 && literals[0][0]===1);
-  return null;
+  return ;
 }

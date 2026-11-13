@@ -11,6 +11,6 @@ export async function test_async_import_await(): Promise<number> {
   return result;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

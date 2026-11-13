@@ -17,6 +17,6 @@ export function test_ifelse(): number {
   return x;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

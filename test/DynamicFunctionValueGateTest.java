@@ -281,9 +281,9 @@ public class DynamicFunctionValueGateTest {
           return x * 2;
         }
 
-        export function main(): null {
+        export function main(): void {
           let r: number = apply(double, 21);
-          return null;
+          return ;
         }
         """;
 
@@ -299,7 +299,7 @@ public class DynamicFunctionValueGateTest {
         let f: (x: number, y: number) => number = int;
         let x: number = 1;
         let r: number = x;
-        export function main(): null { return null; }
+        export function main(): void { return ; }
         """;
 
     // =========================================================================

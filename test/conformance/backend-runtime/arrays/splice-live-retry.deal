@@ -12,7 +12,7 @@ function normalization(start:number,count:number,want:string,left:string):void {
   check((JSON.stringify(result) as string)===want && (JSON.stringify(alias) as string)===left);
   result[result.length]=7; check(result[result.length-1]===7);
 }
-export function main():null {
+export function main():void {
   normalization(1,2,"[2,3]","[1,4]");
   normalization(-2,1,"[3]","[1,2,4]");
   normalization(-100,2,"[1,2]","[3,4]");
@@ -69,5 +69,5 @@ export function main():null {
   let stale:number[]|null=[1];let clear=():void=>{stale=null;};caught=false;
   if(stale!==null){clear();try{stale.splice(0,1);}catch(e){check((e as Error).name==="E8001");caught=true;}}
   check(caught);
-  return null;
+  return ;
 }

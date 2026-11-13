@@ -59,4 +59,4 @@ export async function test_async():Promise<void>{
   let rethrow:()=>void=function():void{throw original;};
   caught=false;try{await host.asyncCallback(rethrow);}catch(e){if(e instanceof Error){caught=e===original && e.message==="identity";}}check(caught);
 }
-export function main():null{return null;}
+export function main():void{return ;}

@@ -7,11 +7,11 @@ function empty(): void { return; }
 function fallthrough(): void {}
 function explicitNull(): null { return null; }
 
-export function main(): null {
+export function main(): void {
   empty();
   fallthrough();
   if (explicitNull() !== null) {
     throw { name: "TEST_FAIL", message: "explicit null return changed" };
   }
-  return null;
+  return ;
 }

@@ -46,6 +46,6 @@ export function test_toJson_omits_missing(): null {
   return null;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

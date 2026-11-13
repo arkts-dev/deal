@@ -26,7 +26,7 @@ function keep(b: Box): Box {
   return b;
 }
 
-export function main(): null {
+export function main(): void {
   let missing: Box = {};
   require("missing hasOwn is false", !Object.hasOwn(missing, "n"));
   let missingN: null | undefined = missing.n;
@@ -129,5 +129,5 @@ export function main(): null {
   }
 
   printer.log("OK");
-  return null;
+  return ;
 }

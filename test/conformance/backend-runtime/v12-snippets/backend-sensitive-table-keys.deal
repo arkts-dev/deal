@@ -4,7 +4,7 @@
 // @features: v1.2, runtime, corner-case
 
 import * as c from "std/console";
-export function main(): null {
+export function main(): void {
  let t: Record<string, unknown> = {}; let proto: string = "__proto__"; let ctor: string = "constructor"; let own: string = "hasOwnProperty";
  t[proto] = 11; t[ctor] = 12; t[own] = 13;
  let a: number = t[proto] as number; let b: number = t[ctor] as number; let d: number = t[own] as number;
@@ -12,5 +12,5 @@ export function main(): null {
  delete t[proto]; let absent: unknown = t[proto];
  if(absent !== undefined || Object.hasOwn(t, proto)) {throw {name:"TEST_FAIL",message:"delete meta-key failed"};}
  t[proto] = 14; let again: number = t[proto] as number; if(again !== 14) {throw {name:"TEST_FAIL",message:"rewrite meta-key failed"};}
- c.log("backend-sensitive-table-keys"); return null;
+ c.log("backend-sensitive-table-keys"); return ;
 }

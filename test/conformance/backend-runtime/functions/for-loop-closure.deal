@@ -27,6 +27,6 @@ export function test_for_closure(): number {
   return v0 * 100 + v1 * 10 + v2; // should return 12
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

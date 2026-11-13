@@ -15,6 +15,6 @@ export function test_canonical_sig_mismatch(): number {
   return f(1);
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

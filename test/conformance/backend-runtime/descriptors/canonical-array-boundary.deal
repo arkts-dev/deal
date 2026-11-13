@@ -37,6 +37,6 @@ export function test_canonical_array_boundary(): string {
   return "canonical array boundary ok";
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

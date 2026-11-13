@@ -12,6 +12,6 @@ export function test_generated_name_no_collision(): number {
   return result;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

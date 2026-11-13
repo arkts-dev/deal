@@ -16,6 +16,6 @@ export function test_dynamic_array_element_runtime_error(): number {
   throw { name: "TEST_FAIL", message: "array element branch skipped" };
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

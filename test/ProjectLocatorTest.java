@@ -151,7 +151,7 @@ public final class ProjectLocatorTest {
 
     /** Writes a trivial (unparsed) entry file; locate never parses it. */
     private static Path writeEntry(Path dir, String name) throws IOException {
-        return writeText(dir.resolve(name), "export function main(): null { }\n");
+        return writeText(dir.resolve(name), "export function main(): void { }\n");
     }
 
     /** A fixture directory with a valid manifest and an entry file. */

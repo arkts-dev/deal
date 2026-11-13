@@ -23,6 +23,6 @@ export function test_nested_scope_recursion(): number {
   return 0;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

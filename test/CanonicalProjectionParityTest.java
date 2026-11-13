@@ -836,8 +836,8 @@ public class CanonicalProjectionParityTest {
                 0, spec.fixtureFile().length() - ".deal".length());
             Path app = mirror.resolve("app.deal");
             Files.writeString(app, "import * as fx from \"./" + fixtureSpec
-                + "\";\n\nexport function main(): null {\n  fx." + spec.probe()
-                + "();\n  return null;\n}\n", StandardCharsets.UTF_8);
+                + "\";\n\nexport function main(): void {\n  fx." + spec.probe()
+                + "();\n  return ;\n}\n", StandardCharsets.UTF_8);
             stripped.put("app.deal", 0);
             modulePathToCorpus.put("app.deal", "app.deal");
             modulePathToCorpus.put("app", "app.deal");
@@ -1865,8 +1865,8 @@ public class CanonicalProjectionParityTest {
           return null;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -1939,8 +1939,8 @@ public class CanonicalProjectionParityTest {
           return null;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -2233,8 +2233,8 @@ public class CanonicalProjectionParityTest {
           return w;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -2251,8 +2251,8 @@ public class CanonicalProjectionParityTest {
           return 0;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -2266,8 +2266,8 @@ public class CanonicalProjectionParityTest {
           return w;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -2327,7 +2327,7 @@ public class CanonicalProjectionParityTest {
             int start = i == 0 ? 0 : driver.indexOf("export async function");
             source.append(driver, start, driver.indexOf("export function main()"));
         }
-        return source.append("export function main(): null {\n  return null;\n}\n").toString();
+        return source.append("export function main(): void {\n  return ;\n}\n").toString();
     }
 
     /** The int completion drive: admitted carriers and the rejected ones. */
@@ -2551,8 +2551,8 @@ public class CanonicalProjectionParityTest {
           return v + 1;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -2572,8 +2572,8 @@ public class CanonicalProjectionParityTest {
           return 0;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -2601,8 +2601,8 @@ public class CanonicalProjectionParityTest {
           return 0;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -2619,8 +2619,8 @@ public class CanonicalProjectionParityTest {
           return v + 1;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -2643,8 +2643,8 @@ public class CanonicalProjectionParityTest {
           return 8;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -2657,8 +2657,8 @@ public class CanonicalProjectionParityTest {
           return null;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -2671,8 +2671,8 @@ public class CanonicalProjectionParityTest {
           return null;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -3372,8 +3372,8 @@ public class CanonicalProjectionParityTest {
           return v;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -3560,8 +3560,8 @@ public class CanonicalProjectionParityTest {
           return null;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -3574,8 +3574,8 @@ public class CanonicalProjectionParityTest {
           return null;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -3588,8 +3588,8 @@ public class CanonicalProjectionParityTest {
           return null;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -3606,8 +3606,8 @@ public class CanonicalProjectionParityTest {
           return null;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -4431,7 +4431,7 @@ public class CanonicalProjectionParityTest {
             }
             blocks.put(row.line(), nullFunction("export ", row.async(), row.export(), "", "null", body));
         }
-        blocks.put(286, nullFunction("export ", false, "main", "", "null", "return null;\n"));
+        blocks.put(286, nullFunction("export ", false, "main", "", "void", "return;\n"));
         blocks.put(319, nullFunction("export ", false, "test_take_nullable_array_bad_return", "", "null",
             "host.takeNullableArrayBadReturn([null, 7]);\nreturn null;\n"));
         blocks.put(324, nullArrayDriver());
@@ -6082,9 +6082,9 @@ public class CanonicalProjectionParityTest {
               return x;
             }
 
-            export function main(): null {
+            export function main(): void {
               let r: number = needInt(1);
-              return null;
+              return ;
             }
             """;
         SemanticLowerer.ProjectLoweringResult control = lowerDoctored(source,
@@ -6213,8 +6213,8 @@ public class CanonicalProjectionParityTest {
           return x + 2;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -6400,8 +6400,8 @@ public class CanonicalProjectionParityTest {
           return x + 1;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -6534,9 +6534,9 @@ public class CanonicalProjectionParityTest {
     private static final String HOST_CARRIER_DRIVER = """
         import * as host from "host/bad_string";
 
-        export function main(): null {
+        export function main(): void {
           let s: string = host.%s();
-          return null;
+          return ;
         }
         """;
 
@@ -6544,12 +6544,12 @@ public class CanonicalProjectionParityTest {
     private static final String HOST_CARRIER_VALID_DRIVER = """
         import * as host from "host/bad_string";
 
-        export function main(): null {
+        export function main(): void {
           let s: string = host.validString();
           if (s !== "ok") {
             throw { name: "PROBE_STRING_CARRIER", message: "the valid host string carrier did not decode to 'ok'" };
           }
-          return null;
+          return ;
         }
         """;
 
@@ -6557,13 +6557,13 @@ public class CanonicalProjectionParityTest {
     private static final String HOST_CARRIER_ARRAY_DRIVER = """
         import * as host from "host/bad_string";
 
-        export function main(): null {
+        export function main(): void {
           let xs: string[] = host.rawStringArray();
           let s: string = xs[0];
           if (s !== "ok") {
             throw { name: "PROBE_STRING_CARRIER", message: "the raw host string element did not decode to 'ok'" };
           }
-          return null;
+          return ;
         }
         """;
 
@@ -6571,13 +6571,13 @@ public class CanonicalProjectionParityTest {
     private static final String HOST_CARRIER_NESTED_DRIVER = """
         import * as host from "host/bad_string";
 
-        export function main(): null {
+        export function main(): void {
           let xs: string[][] = host.rawNestedStringArray();
           let s: string = xs[0][0];
           if (s !== "ok") {
             throw { name: "PROBE_STRING_CARRIER", message: "the nested raw host string element did not decode to 'ok'" };
           }
-          return null;
+          return ;
         }
         """;
 
@@ -6585,14 +6585,14 @@ public class CanonicalProjectionParityTest {
     private static final String HOST_CARRIER_NULLABLE_DRIVER = """
         import * as host from "host/bad_string";
 
-        export function main(): null {
+        export function main(): void {
           let xs: (string | null)[] = host.rawNullableStringArray();
           let s: string | null = xs[0];
           if (s !== null) {
             if (s !== "ok") {
               throw { name: "PROBE_STRING_CARRIER", message: "the nullable raw host string element did not decode to 'ok'" };
             }
-            return null;
+            return ;
           }
           throw { name: "PROBE_STRING_CARRIER", message: "the nullable raw host string element decoded to null" };
         }
@@ -6602,7 +6602,7 @@ public class CanonicalProjectionParityTest {
     private static final String HOST_CARRIER_NULLABLE_ARRAY_DRIVER = """
         import * as host from "host/bad_string";
 
-        export function main(): null {
+        export function main(): void {
           let xs: (string[] | null)[] = host.rawNullableArrayArray();
           let first: string[] | null = xs[0];
           if (first !== null) {
@@ -6614,7 +6614,7 @@ public class CanonicalProjectionParityTest {
             if (s !== "ok") {
               throw { name: "PROBE_NULLABLE_ARRAY", message: "the nested raw host string element did not decode to 'ok'" };
             }
-            return null;
+            return ;
           }
           throw { name: "PROBE_NULLABLE_ARRAY", message: "the non-null nested array element decoded to null" };
         }
@@ -6631,10 +6631,10 @@ public class CanonicalProjectionParityTest {
     private static final String HOST_CARRIER_NESTED_TAIL_DRIVER = """
         import * as host from "host/bad_string";
 
-        export function main(): null {
+        export function main(): void {
           let xs: string[][] = host.badNestedTail();
           let s: string = xs[0][0];
-          return null;
+          return ;
         }
         """;
 
@@ -6653,7 +6653,7 @@ public class CanonicalProjectionParityTest {
     private static final String HOST_CARRIER_SHARED_ARRAY_DRIVER = """
         import * as host from "host/bad_string";
 
-        export function main(): null {
+        export function main(): void {
           let xs: string[][] = host.sharedNestedStringArray();
           if (xs[0] !== xs[1]) {
             throw { name: "PROBE_ALIAS", message: "the same host inner array became two DEAL arrays" };
@@ -6663,7 +6663,7 @@ public class CanonicalProjectionParityTest {
           if (s !== "changed") {
             throw { name: "PROBE_ALIAS", message: "the shared host inner array did not observe the mutation through both aliases" };
           }
-          return null;
+          return ;
         }
         """;
 
@@ -6697,51 +6697,51 @@ public class CanonicalProjectionParityTest {
     private static final String HOST_NATIVE_BAD_ARRAY_DRIVER = """
         import * as host from "host/bad_string";
 
-        export function main(): null {
+        export function main(): void {
           let xs: string[] = host.nativeBadStringArray();
-          return null;
+          return ;
         }
         """;
 
     private static final String HOST_NATIVE_BAD_NESTED_TAIL_DRIVER = """
         import * as host from "host/bad_string";
 
-        export function main(): null {
+        export function main(): void {
           let xs: string[][] = host.nativeBadNestedTail();
-          return null;
+          return ;
         }
         """;
 
     private static final String HOST_NATIVE_ARRAY_DRIVER = """
         import * as host from "host/bad_string";
 
-        export function main(): null {
+        export function main(): void {
           let xs: string[] = host.nativeStringArray();
           let s: string = xs[0];
           if (s !== "ok") {
             throw { name: "PROBE_NATIVE_CARRIER", message: "the declared host array carrier did not land 'ok'" };
           }
-          return null;
+          return ;
         }
         """;
 
     private static final String HOST_NATIVE_NESTED_DRIVER = """
         import * as host from "host/bad_string";
 
-        export function main(): null {
+        export function main(): void {
           let xs: string[][] = host.nativeNestedStringArray();
           let s: string = xs[0][0];
           if (s !== "ok") {
             throw { name: "PROBE_NATIVE_CARRIER", message: "the nested declared host array carrier did not land 'ok'" };
           }
-          return null;
+          return ;
         }
         """;
 
     private static final String HOST_NATIVE_SHARED_DRIVER = """
         import * as host from "host/bad_string";
 
-        export function main(): null {
+        export function main(): void {
           let xs: string[][] = host.nativeSharedNestedStringArray();
           if (xs[0] !== xs[1]) {
             throw { name: "PROBE_NATIVE_ALIAS", message: "the same native inner carrier became two DEAL arrays" };
@@ -6751,7 +6751,7 @@ public class CanonicalProjectionParityTest {
           if (s !== "changed") {
             throw { name: "PROBE_NATIVE_ALIAS", message: "the shared native inner carrier did not observe the mutation through both aliases" };
           }
-          return null;
+          return ;
         }
         """;
 
@@ -6772,9 +6772,9 @@ public class CanonicalProjectionParityTest {
     private static final String HOST_NATIVE_DIFFERING_DEPTH_DRIVER = """
         import * as host from "host/bad_string";
 
-        export function main(): null {
+        export function main(): void {
           host.nativeDifferingDepthStringArray();
-          return null;
+          return ;
         }
         """;
 
@@ -6992,7 +6992,7 @@ public class CanonicalProjectionParityTest {
             source.append(fixture.substring(fixture.indexOf("export function main"))
                 .replace("export function main", "export function " + export));
         }
-        source.append("export function main(): null { return null; }\n");
+        source.append("export function main(): void { return ; }\n");
         Compiled compiled = compile(hostCarrierCase(), source.toString());
         try {
             String entry = compiled.checkedProject().entryModule().path();
@@ -7003,7 +7003,7 @@ public class CanonicalProjectionParityTest {
                         responderFor(compiled.spec()), compiled.checkedProject().entryModule(),
                         export, List.of());
                     check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success success
-                            && "null".equals(success.resultAtom()),
+                            && "undefined".equals(success.resultAtom()),
                         export + " (oracle): the isolated export succeeds: " + run.terminal());
                     String lua = luaArtifactOutput(compiled, Map.of(),
                         luaProbe(compiled.root().resolve("out").resolve(
@@ -8214,13 +8214,13 @@ public class CanonicalProjectionParityTest {
      * never-skip rules are discriminated by the same seed.
      */
     private static final String FOREACH_DELETED_SLOT_SOURCE = """
-        function main(): null {
+        function main(): void {
           let xs: number[] = [1, 2, 3];
           for (let e of xs) {
             if (e === 1) { delete xs[1]; }
             if (e === 3) { let z: number = 1 / (e - 3); z = z + 1; }
           }
-          return null;
+          return;
         }
         """;
 
@@ -8232,13 +8232,13 @@ public class CanonicalProjectionParityTest {
      * after element 2 and return null.
      */
     private static final String FOREACH_APPENDED_SLOT_SOURCE = """
-        function main(): null {
+        function main(): void {
           let xs: number[] = [1, 2];
           for (let e of xs) {
             if (e === 1) { xs[xs.length] = 7; }
             if (e === 7) { let z: number = xs[100]; z = z + 1; }
           }
-          return null;
+          return;
         }
         """;
 
@@ -8370,13 +8370,13 @@ public class CanonicalProjectionParityTest {
         System.out.println("-- array deletion rejects; FOR_EACH observes a later live write on all three consumers --");
         rejectArrayDeletion(FOREACH_DELETED_SLOT_SOURCE);
         Seed seed = lowerSeed("""
-            function main(): null {
+            function main(): void {
               let xs: number[] = [1, 2, 3];
               for (let e of xs) {
                 if (e === 1) { xs[1] = 4; }
                 if (e === 4) { let z: number = xs[100]; z = z + 1; }
               }
-              return null;
+              return;
             }
             """, "the FOR_EACH live-write seed");
         if (seed == null) {
@@ -8442,7 +8442,7 @@ public class CanonicalProjectionParityTest {
      */
     private static final String DYNAMIC_TABLE_READ_SOURCE = """
         function keyOf(): string { return "x"; }
-        function main(): null {
+        function main(): void {
           let t: Record<string, unknown> = { x: 7 };
           let k: string = "x";
           let n: number = t[k] as number;
@@ -8457,7 +8457,7 @@ public class CanonicalProjectionParityTest {
           let nn: number | null = v["s"] as number | null;
           let nz: number = 0;
           if (nn !== null) { nz = nn; }
-          return null;
+          return;
         }
         """;
 
@@ -8467,11 +8467,11 @@ public class CanonicalProjectionParityTest {
      * read's origin).
      */
     private static final String DYNAMIC_TABLE_READ_WRONG_KIND_SOURCE = """
-        function main(): null {
+        function main(): void {
           let t: Record<string, unknown> = { x: "str" };
           let k: string = "x";
           let n: number | null = t[k] as number | null;
-          return null;
+          return;
         }
         """;
 
@@ -8480,11 +8480,11 @@ public class CanonicalProjectionParityTest {
      * non-nullable read position (E8001 at the read's origin).
      */
     private static final String DYNAMIC_TABLE_READ_MISSING_SOURCE = """
-        function main(): null {
+        function main(): void {
           let t: Record<string, unknown> = {};
           let k: string = "x";
           let n: number = t[k] as number;
-          return null;
+          return;
         }
         """;
 
@@ -8508,7 +8508,7 @@ public class CanonicalProjectionParityTest {
                 SemanticDifferentialHarness.Verdict verdict =
                     SemanticDifferentialHarness.run(success.unit(), success.table(),
                         SemanticDifferentialHarness.Expectation.success(
-                            "the dynamic table read", List.of(), "null"),
+                            "the dynamic table read", List.of(), "undefined"),
                         workspace);
                 checkEq(3, verdict.runs().size(), "the dynamic table read drive "
                     + "produced the three consumers: " + verdict.failures());
@@ -8572,32 +8572,32 @@ public class CanonicalProjectionParityTest {
      * and the dynamic array boundary's element check over the present null.
      */
     private static final String PRESENT_NULL_ELEMENT_SOURCE = """
-        function main(): null {
+        function main(): void {
           let inner: number | null = 1;
           let clear: () => void = function(): void { inner = null; };
           if (inner !== null) { clear(); let ys: number[] = [inner]; }
-          return null;
+          return;
         }
         """;
 
     /** The deleted-slot seed: the same boundary cell over an absent slot. */
     private static final String DELETED_SLOT_ELEMENT_SOURCE = """
-        function main(): null {
+        function main(): void {
           let inner: number[] = [1];
           delete inner[0];
           let holder: Record<string, unknown> = { xs: inner };
           let ys: number[] = inner;
-          return null;
+          return;
         }
         """;
 
     /** The array(null) admission seed: the present null passes the cell. */
     private static final String NULL_ARRAY_ELEMENT_SOURCE = """
-        function main(): null {
+        function main(): void {
           let inner: (null)[] = [null];
           let holder: Record<string, unknown> = { xs: inner };
           let ys: (null)[] = holder.xs as (null)[];
-          return null;
+          return;
         }
         """;
 
@@ -8694,7 +8694,7 @@ public class CanonicalProjectionParityTest {
         }
         SemanticDifferentialHarness.Verdict verdict = SemanticDifferentialHarness.run(
             seed.unit(), seed.table(), SemanticDifferentialHarness.Expectation.success(
-                what, List.of(), "null"), workspace);
+                what, List.of(), "undefined"), workspace);
         checkEq(3, verdict.runs().size(), what + ": the drive produced the three "
             + "consumers: " + verdict.failures());
         check(verdict.pass(), what + ": the three-consumer verdict passes: "
@@ -8719,11 +8719,11 @@ public class CanonicalProjectionParityTest {
      * token.
      */
     private static final String ARRAY_LITERAL_WALK_ELEMENT_SOURCE = """
-        function main(): null {
+        function main(): void {
           let inner: number[] = [1, 2];
           delete inner[0];
           let ys: number[][] = [inner];
-          return null;
+          return;
         }
         """;
 
@@ -8733,11 +8733,11 @@ public class CanonicalProjectionParityTest {
      * own element position.
      */
     private static final String ARRAY_LITERAL_NESTED_ELEMENT_SOURCE = """
-        function main(): null {
+        function main(): void {
           let inner: number[] = [1, 2];
           delete inner[0];
           let ys: number[][][] = [[inner]];
-          return null;
+          return;
         }
         """;
 
@@ -8746,20 +8746,20 @@ public class CanonicalProjectionParityTest {
      * second child, so the arm renders its one-based literal index 2.
      */
     private static final String ARRAY_LITERAL_SECOND_ELEMENT_SOURCE = """
-        function main(): null {
+        function main(): void {
           let inner: number[] = [1, 2];
           delete inner[0];
           let ys: number[][] = [[1, 2], inner];
-          return null;
+          return;
         }
         """;
 
     /** The admitted element control: the typed element value passes the cell. */
     private static final String ARRAY_LITERAL_ADMITTED_ELEMENT_SOURCE = """
-        function main(): null {
+        function main(): void {
           let inner: number[] = [1, 2];
           let ys: number[][] = [inner];
-          return null;
+          return;
         }
         """;
 
@@ -8769,9 +8769,9 @@ public class CanonicalProjectionParityTest {
      * consumer.
      */
     private static final String ARRAY_LITERAL_MISSING_ELEMENT_SOURCE = """
-        function main(): null {
+        function main(): void {
           let ys: (number | null)[] = [null];
-          return null;
+          return;
         }
         """;
 
@@ -8872,7 +8872,7 @@ public class CanonicalProjectionParityTest {
         }
         SemanticDifferentialHarness.Verdict verdict = SemanticDifferentialHarness.run(
             seed.unit(), seed.table(), SemanticDifferentialHarness.Expectation.success(
-                what, List.of(), "null"), workspace);
+                what, List.of(), "undefined"), workspace);
         checkEq(3, verdict.runs().size(), what + ": the drive produced the three "
             + "consumers: " + verdict.failures());
         check(verdict.pass(), what + ": the three-consumer verdict passes: "
@@ -8939,8 +8939,8 @@ public class CanonicalProjectionParityTest {
 
     /** The classification probe's trivial production seed. */
     private static final String TABLE_CARRIER_CLASSIFICATION_SOURCE = """
-        function main(): null {
-          return null;
+        function main(): void {
+          return;
         }
         """;
 
@@ -9032,10 +9032,10 @@ public class CanonicalProjectionParityTest {
     private static final String NAMESPACE_DIRECT_SOURCE = """
         import * as lib from "./lib";
 
-        export function main(): null {
+        export function main(): void {
           let holder: Record<string, unknown> = { ns: lib };
           let xs: number[] = holder.ns as number[];
-          return null;
+          return ;
         }
         """;
 
@@ -9046,10 +9046,10 @@ public class CanonicalProjectionParityTest {
     private static final String NAMESPACE_NESTED_SOURCE = """
         import * as lib from "./lib";
 
-        export function main(): null {
+        export function main(): void {
           let holder: Record<string, unknown> = { ns: lib };
           let xs: number[][] = holder.ns as number[][];
-          return null;
+          return ;
         }
         """;
 
@@ -9061,11 +9061,11 @@ public class CanonicalProjectionParityTest {
     private static final String NAMESPACE_WRITTEN_SOURCE = """
         import * as lib from "./lib";
 
-        export function main(): null {
+        export function main(): void {
           let holder: Record<string, unknown> = { ns: [1] };
           holder.ns = lib;
           let xs: number[] = holder.ns as number[];
-          return null;
+          return ;
         }
         """;
 
@@ -9078,11 +9078,11 @@ public class CanonicalProjectionParityTest {
     private static final String NAMESPACE_ARRAY_CONTROL_SOURCE = """
         import * as lib from "./lib";
 
-        export function main(): null {
+        export function main(): void {
           let payload: number[] = [1];
           let holder: Record<string, unknown> = { ns: payload };
           let t: Record<string, unknown> = holder.ns as Record<string, unknown>;
-          return null;
+          return ;
         }
         """;
 

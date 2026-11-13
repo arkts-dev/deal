@@ -6,7 +6,7 @@
 
 import * as str from "std/string";
 
-export function main(): null {
+export function main(): void {
   let doc: Record<string, unknown> = { count: 42, ratio: 2.5, flag: true, nothing: null, name: "Ada" };
   let encoded: string = JSON.stringify(doc) as string;
   if (!str.contains(encoded, "\"count\":42")) {
@@ -35,5 +35,5 @@ export function main(): null {
   if (name !== "Ada") {
     throw { name: "TEST_FAIL", message: "string round-trip mismatch" };
   }
-  return null;
+  return ;
 }

@@ -201,7 +201,7 @@ function testReturnAndThrowSkipUpdate(): void {
   return;
 }
 
-export function main(): null {
+export function main(): void {
   testBodyStoreFeedsUpdateAndTest();
   testOmittedUpdateStillCarries();
   testContinueInTryAfterStore();
@@ -214,5 +214,5 @@ export function main(): null {
   testStringCounterStore();
   testNumberCounterStore();
   testReturnAndThrowSkipUpdate();
-  return null;
+  return ;
 }

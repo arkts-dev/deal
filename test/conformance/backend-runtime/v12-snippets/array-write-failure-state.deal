@@ -4,7 +4,7 @@
 // @features: v1.4, runtime, corner-case
 
 import * as c from "std/console";
-export function main(): null {
+export function main(): void {
  let trace: string = ""; let xs: number[] = [7]; let alias: number[] = xs;
  let receiver = function(): number[] {trace = trace + "R"; return xs;};
  let index = function(): number {trace = trace + "I"; return 2;};
@@ -15,5 +15,5 @@ export function main(): null {
  if(trace !== "RIVC" || alias.length !== 1 || alias[0] !== 7) {throw {name:"TEST_FAIL",message:"failed write: " + trace};}
  alias[alias.length] = 8;
  if(xs.length !== 2 || xs[1] !== 8) {throw {name:"TEST_FAIL",message:"append after failure"};}
- c.log("array-write-failure-state"); return null;
+ c.log("array-write-failure-state"); return ;
 }

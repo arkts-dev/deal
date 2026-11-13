@@ -79,11 +79,11 @@ public final class ClassPresenceAdmissionTest {
         Files.writeString(root.resolve("src/main.deal"), """
             import * as model from "./model";
             class LocalRecord { required: number; nullable: number | null; optional?: number; }
-            export function main(): null {
+            export function main(): void {
               let record: LocalRecord = {required: 1, nullable: null};
               let error: Error = {name: "TEST", message: "complete"};
               let imported: model.Shared = {required: 2, nullable: null};
-              return null;
+              return ;
             }
             """);
         Path source = root.resolve("src/main.deal");

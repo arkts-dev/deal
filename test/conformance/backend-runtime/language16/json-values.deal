@@ -22,7 +22,7 @@ function parsedArray(text: string): void {
     check((items as unknown) === (value as unknown));
     items[items.length] = "text";
 }
-export function main(): null {
+export function main(): void {
   let paired = `🌍\\`;
   check(paired === "🌍\\");
   let interpolated = `🌍\\${"x"}`;
@@ -73,5 +73,5 @@ export function main(): null {
   let cycle: boolean = false;
   try { JSON.stringify(value); } catch (e) { if (e instanceof Error) { cycle = e.name === "E8001"; } }
   check(cycle);
-  return null;
+  return ;
 }

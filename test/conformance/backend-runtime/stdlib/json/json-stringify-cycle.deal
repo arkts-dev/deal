@@ -11,6 +11,6 @@ export function test_json_stringify_cycle(): string {
   return JSON.stringify(t) as string;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

@@ -12,6 +12,6 @@ export function test_abi_multiple_temp_name_near_collision(): number {
   return result;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

@@ -9,6 +9,6 @@ export async function test_async_error_code_through_module(): Promise<number> {
   return await Lib.fail();
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

@@ -7,6 +7,6 @@ export function test_int_range(): number {
   return (1e308);
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

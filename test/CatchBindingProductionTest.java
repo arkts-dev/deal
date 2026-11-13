@@ -656,10 +656,10 @@ public final class CatchBindingProductionTest {
         System.out.println("-- the catch variable stays scoped to its catch "
             + "block --");
         String source = """
-            export function main(): null {
+            export function main(): void {
               try { throw {name:"CONTROL",message:"control"}; } catch (e) { }
-              if (e.message !== "") { return null; }
-              return null;
+              if (e.message !== "") { return ; }
+              return ;
             }
             """;
         Project project = writeProject(root, source);
@@ -698,10 +698,10 @@ public final class CatchBindingProductionTest {
      * with E6005 CONSTRUCT_UNLOWERED.
      */
     private static final String STORE_ONLY_SOURCE = """
-        export function main(): null {
+        export function main(): void {
           try { throw { name: "E_STORE", message: "caught" }; }
           catch (e) { e = { name: "E_STORE2", message: "stored" }; }
-          return null;
+          return ;
         }
         """;
 
@@ -801,7 +801,7 @@ public final class CatchBindingProductionTest {
             SemanticDifferentialHarness.runProject(lowered.project(),
                 lowered.tables(), lowered.registries(),
                 SemanticDifferentialHarness.Expectation.success(
-                    "the catch-binding fixture", List.of("OK"), "null"),
+                    "the catch-binding fixture", List.of("OK"), "undefined"),
                 workspace);
         checkEq(3, verdict.runs().size(), "oracle parity: the differential ran the "
             + "oracle and both shared artifacts: " + verdict.failures());

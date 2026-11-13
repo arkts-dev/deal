@@ -4,4 +4,4 @@
 // @features: boundary-validation
 import * as printer from "std/console";
 function f(f:number):number{return f;}
-export function main():null{f(1);printer.log("OK");return null;}
+export function main():void{f(1);printer.log("OK");return ;}

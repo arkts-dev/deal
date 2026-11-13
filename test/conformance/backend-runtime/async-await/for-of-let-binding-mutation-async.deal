@@ -93,6 +93,6 @@ export async function testAsyncClosureMutation(): Promise<number> {
   return total;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

@@ -938,8 +938,8 @@ public class FailureArmAuthorityTest {
           return f;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -1092,8 +1092,8 @@ public class FailureArmAuthorityTest {
           return null;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 

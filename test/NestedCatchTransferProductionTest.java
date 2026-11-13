@@ -63,8 +63,8 @@ public final class NestedCatchTransferProductionTest {
                 }
             }
             if (cases != 48) throw new AssertionError("combination enumeration changed: " + cases);
-            source.append("export function main():null{").append(calls)
-                .append("c.log(\"COMBINATIONS_OK\");return null;}\n");
+            source.append("export function main():void{").append(calls)
+                .append("c.log(\"COMBINATIONS_OK\");return ;}\n");
             CompositionProductionTest.execute(source.toString(), "COMBINATIONS_OK\n", root.resolve("run"), null);
             System.out.println("Nested catch/transfer: 48 combinations x 3 executed backends passed");
         } finally {

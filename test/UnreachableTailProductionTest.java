@@ -792,12 +792,12 @@ public class UnreachableTailProductionTest {
           return 5;
         }
 
-        export function main(): null {
+        export function main(): void {
           let value: number = f();
           if (value !== 1) {
             throw { name: "TEST_FAIL", message: "f returned the wrong value" };
           }
-          return null;
+          return ;
         }
         """;
 
@@ -815,12 +815,12 @@ public class UnreachableTailProductionTest {
           return 5;
         }
 
-        export function main(): null {
+        export function main(): void {
           let value: number = g();
           if (value !== 1) {
             throw { name: "TEST_FAIL", message: "g returned the wrong value" };
           }
-          return null;
+          return ;
         }
         """;
 
@@ -916,7 +916,7 @@ public class UnreachableTailProductionTest {
             List<OpId> tails, Path workspace) throws Exception {
         SemanticDifferentialHarness.Verdict verdict = SemanticDifferentialHarness.runProject(
             lowered.project(), lowered.tables(), lowered.registries(),
-            SemanticDifferentialHarness.Expectation.success(name, List.of(), "null"), workspace);
+            SemanticDifferentialHarness.Expectation.success(name, List.of(), "undefined"), workspace);
         check(verdict.runs().size() == 3, name + ": three consumers: " + verdict.failures());
         check(verdict.pass(), name + ": event parity: " + verdict.failures());
         for (SemanticRuntimeModel.ConsumerRun consumer : verdict.runs()) {
@@ -989,12 +989,12 @@ public class UnreachableTailProductionTest {
 
     private static String unreachableLoopSource(String transfer) {
         return """
-            export function main(): null {
+            export function main(): void {
               try {
                 throw { name: "EXPECTED", message: "expected" };
                 while (true) { %s; }
               } catch (e) { }
-              return null;
+              return ;
             }
             """.formatted(transfer);
     }
@@ -1149,12 +1149,12 @@ public class UnreachableTailProductionTest {
                                  boolean directInTry) {
     }
 
-    private static final String IN_TRY_BREAK_SOURCE = "export function main(): null {\n  try {\n    {  while (true) { {\n      break;\n      \"loopBreakTail\";\n      let breakTail: number = 1;\n    }  } }\n  } catch (e) {\n  }\n  return null;\n}\n";
+    private static final String IN_TRY_BREAK_SOURCE = "export function main(): void {\n  try {\n    {  while (true) { {\n      break;\n      \"loopBreakTail\";\n      let breakTail: number = 1;\n    }  } }\n  } catch (e) {\n  }\n  return ;\n}\n";
 
-    private static final String IN_TRY_CONTINUE_SOURCE = "export function main(): null {\n  try {\n    { let v14Loop0: number = 0; while (v14Loop0 < 2) { let i: number = v14Loop0; {\n      if (i === 0) {\n        { v14Loop0 = i; v14Loop0 = v14Loop0 + 1; continue; }\n        \"loopContinueTail\";\n        let continueTail: number = 2;\n      }\n    } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }\n  } catch (e) {\n  }\n  return null;\n}\n";
+    private static final String IN_TRY_CONTINUE_SOURCE = "export function main(): void {\n  try {\n    { let v14Loop0: number = 0; while (v14Loop0 < 2) { let i: number = v14Loop0; {\n      if (i === 0) {\n        { v14Loop0 = i; v14Loop0 = v14Loop0 + 1; continue; }\n        \"loopContinueTail\";\n        let continueTail: number = 2;\n      }\n    } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }\n  } catch (e) {\n  }\n  return ;\n}\n";
 
     private static final String FOR_EACH_BREAK_TAIL_SOURCE = """
-        export function main(): null {
+        export function main(): void {
           let arr: number[] = [1, 2, 3];
           let n: number = 0;
           for (let x of arr) {
@@ -1168,12 +1168,12 @@ public class UnreachableTailProductionTest {
           if (n !== 0) {
             throw { name: "TEST_FAIL", message: "for-of break tail" };
           }
-          return null;
+          return ;
         }
         """;
 
     private static final String FOR_EACH_CONTINUE_TAIL_SOURCE = """
-        export function main(): null {
+        export function main(): void {
           let arr: number[] = [1, 2, 3];
           let sum: number = 0;
           for (let x of arr) {
@@ -1187,7 +1187,7 @@ public class UnreachableTailProductionTest {
           if (sum !== 0) {
             throw { name: "TEST_FAIL", message: "for-of continue tail" };
           }
-          return null;
+          return ;
         }
         """;
 

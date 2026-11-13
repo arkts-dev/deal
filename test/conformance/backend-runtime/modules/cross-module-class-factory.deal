@@ -12,6 +12,6 @@ export function test_cross_module_class_factory(): number {
   return result;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

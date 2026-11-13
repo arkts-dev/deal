@@ -18,6 +18,6 @@ export function test_catch_error_inside_loop_continue(): number {
   return total;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

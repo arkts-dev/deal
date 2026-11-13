@@ -38,6 +38,6 @@ export function test_string_substring_unicode(): null {
   return null;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

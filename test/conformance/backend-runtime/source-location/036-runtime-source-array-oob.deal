@@ -3,8 +3,8 @@
 // @expected: runtime-error E8002
 // @features: diagnostics, runtime-location, arrays
 
-export function main(): null {
+export function main(): void {
   let values: number[] = [1];
   let value: number = values[2];
-  return null;
+  return ;
 }

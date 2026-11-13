@@ -5,9 +5,9 @@
 
 function bytes(n: number): number { return n + 100; }
 
-export function main(): null {
+export function main(): void {
   if (bytes(2) !== 102) {
     throw { name: "TEST_FAIL", message: "module-level bytes declaration ignored" };
   }
-  return null;
+  return ;
 }

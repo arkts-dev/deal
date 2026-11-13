@@ -18,6 +18,6 @@ export function test_plan_fresh_literals(): null {
   return null;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

@@ -40,6 +40,6 @@ export function test_host_array_no_call_on_failure(): string {
   return "no-call-ok";
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

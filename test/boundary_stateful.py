@@ -100,14 +100,14 @@ class BoundaryMachine(RuleBasedStateMachine):
     def teardown(self):
         source = (
             'import * as c from "std/console";import * as host from "host/probe";'
-            'export function main():null{let checks:string="";'
+            'export function main():void{let checks:string="";'
             'let check=function(ok:boolean):void{checks=checks+".";'
             'if(!ok){c.log(checks);throw {name:"TEST_FAIL",message:"stateful"};}};'
             # Give each action its own lexical block so repeated declarations
             # stay valid while shared bindings live in main's outer scope.
             + "".join(self.actions[:7])
             + "".join("{" + action + "}" for action in self.actions[7:])
-            + 'c.log("STATE_OK");return null;}'
+            + 'c.log("STATE_OK");return;}'
         )
         with tempfile.TemporaryDirectory(prefix="deal-hypothesis-") as temp:
             temp = Path(temp)

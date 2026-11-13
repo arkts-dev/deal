@@ -3,8 +3,8 @@
 // @expected: runtime-error E8001
 // @features: tables, missing-fields, contextual-typing
 
-export function main(): null {
+export function main(): void {
   let t: Record<string, unknown> = {};
   let value: number = t.missing as number;
-  return null;
+  return ;
 }

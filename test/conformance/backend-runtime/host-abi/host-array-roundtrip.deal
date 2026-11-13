@@ -37,6 +37,6 @@ export function test_host_array_roundtrip(): string {
   return "host-array-ok";
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

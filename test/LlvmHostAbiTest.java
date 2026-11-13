@@ -149,7 +149,7 @@ public final class LlvmHostAbiTest {
           return null;
         }
 
-        export function main(): null {
+        export function main(): void {
           let action: probe.Action = probe.makeAction();
           check(action.run(1) === 2,
                 "the host-built function field applies through the crossing");
@@ -157,7 +157,7 @@ public final class LlvmHostAbiTest {
                 "the host view store of the declared function slot");
           check(action.run(2) === 3,
                 "the admitted host view store commits in DEAL");
-          return null;
+          return ;
         }
         """;
 
@@ -236,7 +236,7 @@ public final class LlvmHostAbiTest {
           return null;
         }
 
-        export function main(): null {
+        export function main(): void {
           let total: number = probe.sum(1, 2);
           check(total === 3, "the scalar parameter and return crossing");
           // The declared `boolean` result position (H2 verification 3): the
@@ -557,7 +557,7 @@ public final class LlvmHostAbiTest {
           check(probe.classAtomStatuses() === 1,
                 "the class-atom grammar answers the closed bad-descriptor"
                 + " status");
-          return null;
+          return ;
         }
         """;
 
@@ -591,9 +591,9 @@ public final class LlvmHostAbiTest {
           throw held;
         }
 
-        export function main(): null {
+        export function main(): void {
           let ignored: number = probe.hostText();
-          return null;
+          return ;
         }
         """;
 
@@ -628,7 +628,7 @@ public final class LlvmHostAbiTest {
           return null;
         }
 
-        export function main(): null {
+        export function main(): void {
           let shared: Error = { name: "E_CALLBACK", message: "the callback body threw" };
           let relayed: boolean = false;
           try {
@@ -662,7 +662,7 @@ public final class LlvmHostAbiTest {
             late = true;
           }
           check(late, "the retained Error relayed in a later crossing");
-          return null;
+          return ;
         }
         """;
 
@@ -1326,10 +1326,10 @@ public final class LlvmHostAbiTest {
             Files.writeString(root.resolve("src/main.deal"), """
                 import * as probe from "host/probe";
 
-                export function main(): null {
+                export function main(): void {
                   """ + facts[0] + """
 
-                  return null;
+                  return ;
                 }
                 """, StandardCharsets.UTF_8);
             compile(root);
@@ -1376,21 +1376,21 @@ public final class LlvmHostAbiTest {
         // A cleared `number | null` refinement read at `probe.sum`'s first
         // declared position: the parameter cell owns the projection.
         cases.put("scalar", new String[] {
-            "export function main(): null {\n"
+            "export function main(): void {\n"
                 + "  let value: number | null = 1;\n"
                 + "  let clear: () => void = function(): void { value = null; };\n"
                 + "  if (value !== null) {\n"
                 + "    clear();\n"
                 + "    probe.sum(value, 2);\n"
                 + "  }\n"
-                + "  return null;\n"
+                + "  return ;\n"
                 + "}\n",
             "parameter 1 type mismatch: expected number",
             "number", "8", "5"});
         // The same shape at a declared function-typed position: the cleared
         // refinement is the absence of the carrier the position declares.
         cases.put("function", new String[] {
-            "export function main(): null {\n"
+            "export function main(): void {\n"
                 + "  let callback: ((x: number) => number) | null ="
                 + " function(x: number): number { return x; };\n"
                 + "  let clear: () => void = function(): void { callback = null; };\n"
@@ -1398,7 +1398,7 @@ public final class LlvmHostAbiTest {
                 + "    clear();\n"
                 + "    probe.applyOne(callback);\n"
                 + "  }\n"
-                + "  return null;\n"
+                + "  return ;\n"
                 + "}\n",
             "parameter 1 type mismatch: expected function",
             "(number)->number", "8", "5"});
@@ -2332,13 +2332,13 @@ public final class LlvmHostAbiTest {
             import * as pr from "host/pr";
             import * as pr2 from "host/pr2";
 
-            export function main(): null {
+            export function main(): void {
               let first: number = pr.observe();
               let second: number = pr2.observe();
               if (first !== second) {
                 throw { name: "TEST_FAIL", message: "the host observations" };
               }
-              return null;
+              return ;
             }
             """, StandardCharsets.UTF_8);
         Path output = root.resolve("out");
@@ -2604,7 +2604,7 @@ public final class LlvmHostAbiTest {
               return null;
             }
             class OptionalPair { first?: string; second?: string; }
-            export function main(): null {
+            export function main(): void {
               let pair: OptionalPair = {first:"remove", second:"keep"};
               p.deleteFirst(pair);
               check(!Object.hasOwn(pair, "first"));
@@ -2644,7 +2644,7 @@ public final class LlvmHostAbiTest {
               check(e.name === "B");
               check(e.message === "B");
               check(p.scalarSame("x", 0.0 / 0.0, 0.0));
-              return null;
+              return ;
             }
             """);
         compile(root);

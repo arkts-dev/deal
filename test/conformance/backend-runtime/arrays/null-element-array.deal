@@ -25,7 +25,7 @@ function emptyNulls(): null[] {
   return [];
 }
 
-export function main(): null {
+export function main(): void {
   // The variable annotation: length, read, append, write, and iteration.
   let xs: null[] = [null];
   expectTrue("initial length is one", xs.length === 1);
@@ -87,5 +87,5 @@ export function main(): null {
   expectTrue("empty null array", none.length === 0);
 
   printer.log("OK");
-  return null;
+  return ;
 }

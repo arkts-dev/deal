@@ -12,6 +12,6 @@ export function test_exported_class_function_combo(): number {
   return result;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

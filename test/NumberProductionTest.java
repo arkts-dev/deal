@@ -14,7 +14,7 @@ public final class NumberProductionTest {
           if (!ok) { throw {name: "TEST_FAIL", message: "number contract"}; }
           return null;
         }
-        export function main(): null {
+        export function main(): void {
           ensure(7 / 2 === 3.5);
           ensure(2147483647 + 1 === 2147483648);
           ensure(9007199254740993 === 9007199254740992);
@@ -65,7 +65,7 @@ public final class NumberProductionTest {
           ensure(int(1) === 11);
           ensure(number(2) === 22);
           output.log("number-ok");
-          return null;
+          return ;
         }
         """;
 
@@ -102,7 +102,7 @@ public final class NumberProductionTest {
                 Files.readString(fixture), fixture.toString());
             Path entry = Files.createDirectories(root.resolve("oracle/src")).resolve("main.deal");
             Files.writeString(entry, source.replace("export function main()", "export function run()")
-                + "\nexport function main():null{return null;}\n");
+                + "\nexport function main():void{return ;}\n");
             Files.writeString(root.resolve("oracle/deal.json"),
                 "{\"languageVersion\":\"1.6\",\"stdlib\":\"1.6\",\"moduleRoots\":[\"src\"]}");
             var invocation = deal.semantic.CompilerProfileProvider.resolve(

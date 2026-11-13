@@ -21,6 +21,6 @@ export function test_for_of_unicode(): number {
   return collected.length;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

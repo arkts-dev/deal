@@ -83,9 +83,9 @@ public final class LlvmStageClassifierTest {
         "src/main.deal", """
             import * as lib from "./lib";
 
-            export function main(): null {
+            export function main(): void {
               let ignored: null = lib.ping();
-              return ignored;
+              return;
             }
             """);
 
@@ -103,8 +103,8 @@ public final class LlvmStageClassifierTest {
     private static final String HOST_IMPORT_SOURCE = """
         import * as probe from "host/probe";
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -112,9 +112,9 @@ public final class LlvmStageClassifierTest {
     private static final String HOST_CALL_SOURCE = """
         import * as probe from "host/probe";
 
-        export function main(): null {
+        export function main(): void {
           let value: number = probe.fetch();
-          return null;
+          return ;
         }
         """;
 

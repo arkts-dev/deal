@@ -262,11 +262,11 @@ public final class FunctionArityExtensionProductionTest {
 
         function one(x: number): number { return x; }
 
-        export function main(): null {
+        export function main(): void {
           let source: (x: number, y: number) => number = function(x: number, y: number): number { return x + y; };
           if (!mutation.replaceSignature({value: source}, "(number)->number")) { throw {name: "TEST_FAIL", message: "signature mutation failed"}; }
           let r: number = host.usePair(source);
-          return null;
+          return ;
         }
         """;
 
@@ -277,7 +277,7 @@ public final class FunctionArityExtensionProductionTest {
     private static final String HOST_PARAMETER_FACT_ENTRY = """
         import * as lib from "./lib";
 
-        export function main(): null { return null; }
+        export function main(): void { return ; }
         """;
 
     /**
@@ -315,12 +315,12 @@ public final class FunctionArityExtensionProductionTest {
 
         function oneInt(x: number): number { return x; }
 
-        export function main(): null {
+        export function main(): void {
           let r: number = host.useIntTable(oneInt);
           if (r !== 5) {
             throw { name: "TEST_FAIL", message: "the adapted host parameter ran" };
           }
-          return null;
+          return ;
         }
         """;
 
@@ -344,7 +344,7 @@ public final class FunctionArityExtensionProductionTest {
 
         function needPair(f: (x: number, y: number) => number): number { return f(3, 4); }
 
-        export function main(): null {
+        export function main(): void {
           check(needPair(host.one) === 3,
             "a host-origin shorter function value adapts at a DEAL parameter");
           check(host.usePair(one) === 5,
@@ -360,7 +360,7 @@ public final class FunctionArityExtensionProductionTest {
             "an adapter-valued source adapts at a host parameter");
 
           output.log("OK");
-          return null;
+          return ;
         }
         """;
 
@@ -375,13 +375,13 @@ public final class FunctionArityExtensionProductionTest {
         import * as host from "host/arity_extension_host";
         import * as strings from "std/string";
 
-        export function main(): null {
+        export function main(): void {
           let length: number = host.useLength(strings.length);
           if (length !== 2) {
             throw { name: "TEST_FAIL", message: "host stdlib adapter failed" };
           }
           output.log("OK");
-          return null;
+          return ;
         }
         """;
 
@@ -1598,8 +1598,8 @@ public final class FunctionArityExtensionProductionTest {
           return one;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -1809,7 +1809,7 @@ public final class FunctionArityExtensionProductionTest {
             var verdict = SemanticDifferentialHarness.runProject(lowering.project(),
                 lowering.tables(), lowering.registries(),
                 SemanticDifferentialHarness.Expectation.success("retained source values",
-                    List.of("factory", "after", "OK"), "null"), workspace);
+                    List.of("factory", "after", "OK"), "undefined"), workspace);
             checkEq(3, verdict.runs().size(), "value capture executes Oracle/Lua/JVM");
             check(verdict.pass(), "independent creation-time transcript and snapshots: "
                 + verdict.failures() + "\n" + verdict.report());
@@ -1863,7 +1863,7 @@ public final class FunctionArityExtensionProductionTest {
                     lowering.project(), lowering.tables(), lowering.registries(),
                     deal.test.SemanticDifferentialHarness.Expectation.success(
                         "the adapter-valued-source corpus",
-                        List.of("OK"), "null"),
+                        List.of("OK"), "undefined"),
                     workspace);
             checkEq(3, verdict.runs().size(), "nested adapter: the parity case "
                 + "produces the three consumers: " + verdict.failures());
@@ -1874,9 +1874,9 @@ public final class FunctionArityExtensionProductionTest {
                     : verdict.runs()) {
                 check(run.terminal() instanceof
                         deal.semantic.SemanticRuntimeModel.Terminal.Success success
-                        && "null".equals(success.resultAtom()),
+                        && "undefined".equals(success.resultAtom()),
                     run.consumer() + ": the chain completes the entry export "
-                        + "with null: " + run.terminal());
+                        + "without data: " + run.terminal());
             }
         } finally {
             deleteRecursively(workspace);
@@ -1993,7 +1993,7 @@ public final class FunctionArityExtensionProductionTest {
           return (f = one);
         }
 
-        export function main(): null {
+        export function main(): void {
           let f: (x: number, y: number) => number = pairExact;
           let argument: number = needPair((f = one));
           let widenedArgument: number = needTriple((f = one));
@@ -2004,7 +2004,7 @@ public final class FunctionArityExtensionProductionTest {
               || returned !== 5) {
             throw { name: "TEST_FAIL", message: "assignment-source value" };
           }
-          return null;
+          return ;
         }
         """;
 
@@ -2034,7 +2034,7 @@ public final class FunctionArityExtensionProductionTest {
                 deal.test.SemanticDifferentialHarness.runProject(
                     lowering.project(), lowering.tables(), lowering.registries(),
                     deal.test.SemanticDifferentialHarness.Expectation.success(
-                        "the assignment-expression-source shapes", List.of(), "null"),
+                        "the assignment-expression-source shapes", List.of(), "undefined"),
                     workspace);
             checkEq(3, verdict.runs().size(), "assignment source: the parity case "
                 + "produces the three consumers: " + verdict.failures());
@@ -2045,9 +2045,9 @@ public final class FunctionArityExtensionProductionTest {
                     : verdict.runs()) {
                 check(run.terminal() instanceof
                         deal.semantic.SemanticRuntimeModel.Terminal.Success success
-                        && "null".equals(success.resultAtom()),
+                        && "undefined".equals(success.resultAtom()),
                     run.consumer() + ": the assignment-source shapes complete the "
-                        + "entry export with null: " + run.terminal());
+                        + "entry export without data: " + run.terminal());
             }
         } finally {
             deleteRecursively(workspace);

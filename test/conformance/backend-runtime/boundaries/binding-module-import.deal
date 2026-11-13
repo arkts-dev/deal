@@ -4,4 +4,4 @@
 // @features: boundary-validation
 import * as output from "std/console";
 
-export function main():null{output.log=function(x:string):void{};return null;}
+export function main():void{output.log=function(x:string):void{};return ;}

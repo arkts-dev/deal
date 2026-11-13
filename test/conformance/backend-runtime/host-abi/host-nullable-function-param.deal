@@ -21,6 +21,6 @@ export function test_host_nullable_function_param(): number {
   return withFn;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

@@ -4,7 +4,7 @@
 // @features: v1.2, runtime, corner-case
 
 import * as c from "std/console";
-export function main(): null {
+export function main(): void {
  let trace: string = "";
  let mark = function(s: string, value: boolean): boolean { trace = trace + s; return value; };
  let fail = function(): boolean { throw {name:"BAD", message:"must not execute"}; };
@@ -13,5 +13,5 @@ export function main(): null {
  let d: boolean = mark("A", true) && mark("B", false) && mark("X", true);
  let e: boolean = mark("C", false) || mark("D", true) || mark("Y", false);
  if (a || !b || d || !e || trace !== "ABCD") { throw {name:"TEST_FAIL",message:"short-circuit: " + trace}; }
- c.log("short-circuit-abrupt"); return null;
+ c.log("short-circuit-abrupt"); return ;
 }

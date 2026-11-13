@@ -9,6 +9,6 @@ export function test_array_negative_write(): number {
   return xs[0];
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

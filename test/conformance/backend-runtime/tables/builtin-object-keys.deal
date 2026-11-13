@@ -4,7 +4,7 @@ class Item { z:number; nil:null; absent?:number; undef:undefined; call:()=>numbe
 class Empty {}
 class Callable {keys:()=>number;}
 function joined(xs:string[]):string {let out="";for(const key of xs){out=out+key+"|";}return out;}
-export function main():null {
+export function main():void {
   const r:Record<string,unknown>={z:1};r["10"]=null;r["2"]=undefined;r["01"]=true;r["4294967295"]=0;r["0"]=0;r.a=2;
   const before=Object.keys(r);
   if(joined(before)!=="0|2|10|z|01|4294967295|a|"){throw {name:"KEYS",message:"Record order"};}
@@ -34,5 +34,5 @@ export function main():null {
     throw {name:"KEYS",message:"numeric boundary and metadata collisions"};}
   const empty:Record<string,unknown>={};const e1=Object.keys(empty);const e2=Object.keys(empty);
   if(e1===e2 || e1.length!==0 || e2.length!==0){throw {name:"KEYS",message:"fresh empty"};}
-  return null;
+  return ;
 }

@@ -16,6 +16,6 @@ export function test_table_mutation_through_function(): number {
   return result;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

@@ -78,6 +78,6 @@ export function test_array_sync_fn_shapes(): number {
   return 0;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

@@ -35,4 +35,4 @@ export function test_fromJson_explicit_null_on_non_nullable_optional(): null {
   return null;
 }
 
-export function main(): null { return null; }
+export function main(): void { return ; }

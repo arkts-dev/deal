@@ -14,4 +14,4 @@ export function test_jsonable_minimal_nested_class_array_access(): null {
   return null;
 }
 
-export function main(): null { return null; }
+export function main(): void { return ; }

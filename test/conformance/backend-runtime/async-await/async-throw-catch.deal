@@ -34,6 +34,6 @@ export async function f(): Promise<string> {
   return "E_TEST";
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

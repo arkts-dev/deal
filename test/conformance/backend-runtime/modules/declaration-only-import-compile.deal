@@ -10,4 +10,4 @@ export function test_decl_type(): number {
   return 1;
 }
 
-export function main(): null { return null; }
+export function main(): void { return ; }

@@ -261,7 +261,7 @@ function testForOfCatchShadowing(): null {
   return null;
 }
 
-export function main(): null {
+export function main(): void {
   testCaptureAfterExit();
   testImmediateInvocation();
   testNestedDeclaration();
@@ -281,5 +281,5 @@ export function main(): null {
   testOrdinaryReadControl();
   testForOfCatchShadowing();
   printer.log("OK");
-  return null;
+  return ;
 }

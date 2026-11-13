@@ -2,7 +2,7 @@
 // @description: String array join preserves units, saved receiver and post-argument length
 // @expected: runtime-ok
 function check(ok:boolean,detail:string):void{if(!ok){throw {name:"CHECK",message:detail};}}
-export function main():null{
+export function main():void{
   let empty:string[]=[];check(empty.join("-")==="","empty");
   let singleton:string[]=["one"];check(singleton.join("-")==="one","singleton");
   let xs:string[]=["a","","b"];
@@ -24,5 +24,5 @@ export function main():null{
   let i=0;while(i<1024){many.push("x\0\uD800");if(i!==0){text=text+"\uDC00";}text=text+"x\0\uD800";i=i+1;}
   check(many.join("\uDC00")===text,"large lossless join");
   check(xs[0]==="a" && xs[1]==="" && xs[2]==="b","source unchanged");
-  return null;
+  return ;
 }

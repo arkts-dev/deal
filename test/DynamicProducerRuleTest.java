@@ -101,32 +101,32 @@ public class DynamicProducerRuleTest {
           return x * 2;
         }
 
-        export function main(): null {
+        export function main(): void {
           let h: (x: number) => number = apply(double);
           let r: number = h(21);
-          return null;
+          return ;
         }
         """;
 
     /** The member-read arm: a function-typed table member read. */
     private static final String MEMBER_READ_SOURCE = """
-        export function main(): null {
+        export function main(): void {
           let id: (x: number) => number = function(x: number): number { return x; };
           let holder: Record<string, unknown> = { g: id };
           let g: (x: number) => number = holder.g as (x: number) => number;
           let r: number = g(1);
-          return null;
+          return ;
         }
         """;
 
     /** The index-read arm: a function-typed array element read. */
     private static final String INDEX_READ_SOURCE = """
-        export function main(): null {
+        export function main(): void {
           let id: (x: number) => number = function(x: number): number { return x; };
           let fns: ((x: number) => number)[] = [id];
           let g: (x: number) => number = fns[0];
           let r: number = g(1);
-          return null;
+          return ;
         }
         """;
 
@@ -140,11 +140,11 @@ public class DynamicProducerRuleTest {
           return x;
         }
 
-        export function main(): null {
+        export function main(): void {
           let h: Holder = { f: compute };
           let g: (x: number) => number = h.f;
           let r: number = g(1);
-          return null;
+          return ;
         }
         """;
 
@@ -155,14 +155,14 @@ public class DynamicProducerRuleTest {
      */
     private static final String OPTIONAL_READ_SOURCE = """
         class OptionalHolder { g?: (x: number) => number; }
-        export function main(): null {
+        export function main(): void {
           let id: (x: number) => number = function(x: number): number { return x; };
           let holder: OptionalHolder = { g: id };
           let f: ((x: number) => number) | undefined = holder.g;
           if (f !== undefined) {
             let r: number = f(1);
           }
-          return null;
+          return ;
         }
         """;
 
@@ -176,9 +176,9 @@ public class DynamicProducerRuleTest {
           return x * 2;
         }
 
-        export function main(): null {
+        export function main(): void {
           let r: number = pick(double)(1);
-          return null;
+          return ;
         }
         """;
 
@@ -202,20 +202,20 @@ public class DynamicProducerRuleTest {
           return g(1);
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
     /** The iteration-binding arm: a function-typed for-of binding load. */
     private static final String ITERATION_BINDING_SOURCE = """
-        export function main(): null {
+        export function main(): void {
           let id: (x: number) => number = function(x: number): number { return x; };
           let fns: ((x: number) => number)[] = [id];
           for (let f of fns) {
             let r: number = f(1);
           }
-          return null;
+          return ;
         }
         """;
 
@@ -225,11 +225,11 @@ public class DynamicProducerRuleTest {
           return x;
         }
 
-        export function main(): null {
+        export function main(): void {
           let g: (x: number) => number = make;
           let h: (x: number) => number = g;
           let r: number = h(1);
-          return null;
+          return ;
         }
         """;
 
@@ -882,12 +882,12 @@ public class DynamicProducerRuleTest {
           return f(1);
         }
 
-        export function main(): null {
+        export function main(): void {
           let f: (x: number) => number = lib.double;
           let g: (x: number) => number = lib.make();
           let r: number = g(1);
           let s: number = apply(f);
-          return null;
+          return ;
         }
         """;
 
@@ -921,19 +921,19 @@ public class DynamicProducerRuleTest {
     private static final String STDLIB_READ_SOURCE = """
         import * as output from "std/console";
 
-        export function main(): null {
+        export function main(): void {
           let f: (x: string) => void = output.log;
-          return null;
+          return ;
         }
         """;
 
     private static final String NAMESPACE_READ_SOURCE = """
         import * as output from "std/console";
 
-        export function main(): null {
+        export function main(): void {
           let c: Record<string, unknown> = {log: output.log};
           let g: (x: string) => void = c.log as (x: string) => void;
-          return null;
+          return ;
         }
         """;
 

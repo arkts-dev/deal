@@ -5,7 +5,7 @@
 import * as printer from "std/console";
 import * as host from "host/probe";
 
-export function main():null {
+export function main():void {
   let e:Error={name:"X",message:"original"};
   let alias=e;
   let original:Record<string,unknown>={};
@@ -21,5 +21,5 @@ export function main():null {
   if(e===alias && destination===original) { printer.log("UNCHANGED"); }
   destination={unread:e};
   printer.log("RECOVERED");
-  return null;
+  return ;
 }

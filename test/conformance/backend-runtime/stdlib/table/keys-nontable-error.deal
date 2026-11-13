@@ -10,6 +10,6 @@ export function test_table_keys_nontable_error(): string[] {
   return tables.keys(t.value as Record<string, unknown>);
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

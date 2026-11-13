@@ -11,4 +11,4 @@ export function test_equality_before_logical_and(): null {
   return null;
 }
 
-export function main(): null { return test_equality_before_logical_and(); }
+export function main(): void { test_equality_before_logical_and(); }

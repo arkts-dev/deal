@@ -15,6 +15,6 @@ export function test_jsonable_nested_array_extra_key_rejected(): null {
   return null;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

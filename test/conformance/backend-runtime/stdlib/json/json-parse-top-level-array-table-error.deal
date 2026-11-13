@@ -10,6 +10,6 @@ export function test_json_parse_top_level_array(): null {
   return null;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

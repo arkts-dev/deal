@@ -302,9 +302,9 @@ mkdir -p "$FAILURE_PROJECT/src"
 printf '%s\n' '{"languageVersion": "1.6", "moduleRoots": ["src"], "backend": "luajit"}' \
   >"$FAILURE_PROJECT/deal.json"
 printf '%s\n' \
-  'export function main(): null {' \
+  'export function main(): void {' \
   '  throw { name: "VERIFY_FAIL", message: "expected distribution failure" };' \
-  '  return null;' \
+  '  return;' \
   '}' >"$FAILURE_PROJECT/src/main.deal"
 
 for backend in luajit jvm js; do
@@ -472,8 +472,8 @@ printf '%s\n' 'return {scan=function() error("broken internal JSON scanner",0) e
 json_project="$SCRATCH/bad-json-runtime-smoke"
 json_out="$SCRATCH/bad-json-runtime-out"
 copy_smoke "$json_project"
-printf '%s\n' 'export function main(): null {' \
-  '  let value: number = JSON.parse("1");' '  return null;' '}' \
+printf '%s\n' 'export function main(): void {' \
+  '  let value: number = JSON.parse("1");' '  return;' '}' \
   >"$json_project/src/main.deal"
 if ! compile "$bad_json" "$json_project" "$json_project/src/main.deal" luajit \
     "$json_out" "$SCRATCH/bad-json-runtime.log"; then

@@ -124,7 +124,7 @@ export function test_arity_extension_control(): number {
   return result;
 }
 
-export function main(): null {
+export function main(): void {
   let captured: number = test_captured_function_binding();
   let visits: number = test_loop_function_binding();
   let nested: number = test_nested_capture_function_binding();
@@ -141,5 +141,5 @@ export function main(): null {
     staticControls: staticControls === 57,
     widened: widened === 4
   }) as string);
-  return null;
+  return ;
 }

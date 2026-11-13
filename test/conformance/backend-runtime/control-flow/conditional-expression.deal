@@ -12,7 +12,7 @@ export async function asyncConditional():Promise<number>{
   check(a===1 && b===4 && effects==="14","async selection");
   const c=await asyncNumber(true?5:6);return a+b+c;
 }
-export function main():null {
+export function main():void {
   let flag=true;let effects="";
   const mark=(label:string,value:number):number=>{effects=effects+label;return value;};
   let result=flag?mark("a",1):mark("b",2);
@@ -79,5 +79,5 @@ export function main():null {
   const dynamic:unknown=flag?1:"text";check((dynamic as string)==="text","context unknown");
   const say=(label:string):void=>{effects=effects+label;};
   flag?say("g"):say("h");check(effects==="adh","void selection");
-  return null;
+  return ;
 }

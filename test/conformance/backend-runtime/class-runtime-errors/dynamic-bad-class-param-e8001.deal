@@ -18,6 +18,6 @@ export function test_dynamic_bad_class_param(): number {
   throw { name: "TEST_FAIL", message: "refined class branch skipped" };
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

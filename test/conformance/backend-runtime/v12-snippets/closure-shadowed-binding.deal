@@ -4,7 +4,7 @@
 // @features: v1.2, runtime, corner-case
 
 import * as c from "std/console";
-export function main(): null {
+export function main(): void {
  let x: number = 1; let outer: () => number = function(): number {return x;};
  let inner: () => number = function(): number {return -1;};
  { let x: number = 10; inner = function(): number {x = x + 1; return x;}; }
@@ -14,5 +14,5 @@ export function main(): null {
  if(b!==2) {throw {name:"OUTER_VALUE",message:"shadowed outer closure"};}
  if(d!==12) {throw {name:"INNER_SECOND",message:"shadowed inner second value"};}
  if(x!==2) {throw {name:"OUTER_STORAGE",message:"shadowed outer storage"};}
- c.log("closure-shadowed-binding"); return null;
+ c.log("closure-shadowed-binding"); return ;
 }

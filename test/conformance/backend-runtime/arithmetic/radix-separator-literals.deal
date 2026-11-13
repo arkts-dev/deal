@@ -7,7 +7,7 @@ function check(ok:boolean):void {
   if (!ok) { throw {name:"TEST",message:"numeric literal value"}; }
 }
 
-export function main():null {
+export function main():void {
   check(0xF_f === 255 && 0Xff === 255);
   check(0b10_01 === 9 && 0B101 === 5);
   check(0o7_1 === 57 && 0O17 === 15);
@@ -20,5 +20,5 @@ export function main():null {
   check(`${0xF_f}|${1_2.}|${0o10}` === "255|12|8");
   let values:number[] = [0xff,0b11,0o10,1_0];
   check((JSON.stringify(values) as string) === "[255,3,8,10]");
-  return null;
+  return ;
 }

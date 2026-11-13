@@ -15,4 +15,4 @@ export function test_jsonable_extra_key_rejected(): null {
   return null;
 }
 
-export function main(): null { return null; }
+export function main(): void { return ; }

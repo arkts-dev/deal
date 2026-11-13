@@ -15,4 +15,4 @@ export function test_jsonable_helper_name_near_collision(): null {
   return null;
 }
 
-export function main(): null { return null; }
+export function main(): void { return ; }

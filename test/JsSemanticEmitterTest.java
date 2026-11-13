@@ -502,10 +502,10 @@ public class JsSemanticEmitterTest {
             import * as util from "./util";
             import * as empty from "./empty";
 
-            export function main(): null {
+            export function main(): void {
               let y: number = util.addOne(2);
               if (y !== 3) { throw { name: "TEST_FAIL", message: "cross" }; }
-              return null;
+              return ;
             }
             """, Map.of(
                 "src/util.deal", """
@@ -584,11 +584,11 @@ public class JsSemanticEmitterTest {
             + " ordered, and a comment precedes each mapped group --");
         Path root = Files.createTempDirectory(tmpRoot, "maps");
         Fixture fixture = compileFixture(root, """
-            export function main(): null {
+            export function main(): void {
               let a: number = 1;
               let b: number = a + 1;
               if (b !== 2) { throw { name: "TEST_FAIL", message: "sum" }; }
-              return null;
+              return ;
             }
             """);
         JsProjectEmission emission =
@@ -656,7 +656,7 @@ public class JsSemanticEmitterTest {
         String supplementary = "\uD83D\uDE00";
         Path root = Files.createTempDirectory(tmpRoot, "sidecars-" + supplementary);
         Path sourceDir = root.resolve(supplementary + "src");
-        String appSource = "import * as util from \"./util\";\nimport * as empty from \"./empty\";\n\nexport function main(): null {\n  let total: number = 0;\n  { let v14Loop0: number = 0; while (v14Loop0 < 3) { let i: number = v14Loop0; { total = total + i; } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }\n  let y: number = util.addOne(total);\n  if (y !== 4) { throw { name: \"TEST_FAIL\", message: \"cross\" }; }\n  while (total > 0) { total = total - 1; }\n  return null;\n}\n";
+        String appSource = "import * as util from \"./util\";\nimport * as empty from \"./empty\";\n\nexport function main(): void {\n  let total: number = 0;\n  { let v14Loop0: number = 0; while (v14Loop0 < 3) { let i: number = v14Loop0; { total = total + i; } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }\n  let y: number = util.addOne(total);\n  if (y !== 4) { throw { name: \"TEST_FAIL\", message: \"cross\" }; }\n  while (total > 0) { total = total - 1; }\n  return ;\n}\n";
         Map<String, String> extraSources = Map.of(
             supplementary + "src/util.deal", """
                 export function addOne(x: number): number {
@@ -888,7 +888,7 @@ public class JsSemanticEmitterTest {
               return 0;
             }
 
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             """, Map.of("src/lib.deal", provider.toString()));
         Path liveRoot = root.resolve("build/js");
         JsProjectEmission emission = JsSemanticEmitter.emitProductionProject(
@@ -1414,7 +1414,7 @@ public class JsSemanticEmitterTest {
               return n;
             }
 
-            export function main(): null {
+            export function main(): void {
               let ints: number[] = [1, 2, 3];
               let total: number = 0;
               for (let v of ints) { total = total + v; }
@@ -1449,7 +1449,7 @@ public class JsSemanticEmitterTest {
               let discarded: number = 0;
               discarded = 1;
               if (discarded !== 1) { throw { name: "TEST_FAIL", message: "seq" }; }
-              return null;
+              return ;
             }
             """);
         Path out = stage(fixture, "values", false);
@@ -1491,8 +1491,8 @@ public class JsSemanticEmitterTest {
               return a !== b;
             }
 
-            export function main(): null {
-              return null;
+            export function main(): void {
+              return ;
             }
             """);
         Path out = stage(fixture, "nullable-eq", false);
@@ -1574,7 +1574,7 @@ public class JsSemanticEmitterTest {
         System.out.println("-- live captures, fresh cells, recursion,"
             + " adapters and scalar iteration under Node --");
         Path root = Files.createTempDirectory(tmpRoot, "cells");
-        Fixture fixture = compileFixture(root, "function even(n: number): boolean {\n  if (n === 0) { return true; }\n  return odd(n - 1);\n}\n\nfunction odd(n: number): boolean {\n  if (n === 0) { return false; }\n  return even(n - 1);\n}\n\nfunction compute(): number {\n  let total: number = 0;\n  { let v14Loop1: number = 0; while (v14Loop1 < 3) { let i: number = v14Loop1; {\n    let f: () => number = function(): number { return i; };\n    total = total + f();\n  } v14Loop1 = i; v14Loop1 = v14Loop1 + 1; } }\n  let j: number = 0;\n  let seen: number = 0;\n  while (j < 2) {\n    let k: number = j;\n    let g: () => number = function(): number { return k; };\n    seen = seen + g();\n    j = j + 1;\n  }\n  return total + seen;\n}\n\nfunction loops(): number {\n  let acc: number = 0;\n  { let v14Loop2: number = 0; while (v14Loop2 < 10) { let i: number = v14Loop2; {\n    if (i === 3) { { v14Loop2 = i; v14Loop2 = v14Loop2 + 1; continue; } }\n    if (i === 6) { break; }\n    acc = acc + i;\n  } v14Loop2 = i; v14Loop2 = v14Loop2 + 1; } }\n  if (acc !== 12) { throw { name: \"TEST_FAIL\", message: \"fl\" }; }\n  let found: number = 0;\n  { let v14Loop3: number = 0; while (v14Loop3 < 3) { let i: number = v14Loop3; {\n    { let v14Loop4: number = 0; while (v14Loop4 < 3) { let j: number = v14Loop4; {\n      if (j === 1) { break; }\n      found = found + 1;\n    } v14Loop4 = j; v14Loop4 = v14Loop4 + 1; } }\n  } v14Loop3 = i; v14Loop3 = v14Loop3 + 1; } }\n  return found;\n}\n\nfunction run(): number {\n  let f: () => number = function(): number { return 7; };\n  let g: (x: number) => number = f;\n  f = function(): number { return 9; };\n  let adapted: number = g(5);\n  if (!even(4)) { throw { name: \"TEST_FAIL\", message: \"even\" }; }\n  if (odd(4)) { throw { name: \"TEST_FAIL\", message: \"odd\" }; }\n  return compute() + adapted + loops();\n}\n\nexport function main(): null {\n  let r: number = run();\n  if (r !== 14) { throw { name: \"TEST_FAIL\", message: \"cells\" }; }\n  let s: string = \"a😀b\";\n  let count: number = 0;\n  let collected: string = \"\";\n  for (let ch of s) {\n    count = count + 1;\n    collected = collected + ch;\n  }\n  if (count !== 3) { throw { name: \"TEST_FAIL\", message: \"scalars\" }; }\n  if (collected !== s) { throw { name: \"TEST_FAIL\", message: \"rebuild\" }; }\n  return null;\n}\n");
+        Fixture fixture = compileFixture(root, "function even(n: number): boolean {\n  if (n === 0) { return true; }\n  return odd(n - 1);\n}\n\nfunction odd(n: number): boolean {\n  if (n === 0) { return false; }\n  return even(n - 1);\n}\n\nfunction compute(): number {\n  let total: number = 0;\n  { let v14Loop1: number = 0; while (v14Loop1 < 3) { let i: number = v14Loop1; {\n    let f: () => number = function(): number { return i; };\n    total = total + f();\n  } v14Loop1 = i; v14Loop1 = v14Loop1 + 1; } }\n  let j: number = 0;\n  let seen: number = 0;\n  while (j < 2) {\n    let k: number = j;\n    let g: () => number = function(): number { return k; };\n    seen = seen + g();\n    j = j + 1;\n  }\n  return total + seen;\n}\n\nfunction loops(): number {\n  let acc: number = 0;\n  { let v14Loop2: number = 0; while (v14Loop2 < 10) { let i: number = v14Loop2; {\n    if (i === 3) { { v14Loop2 = i; v14Loop2 = v14Loop2 + 1; continue; } }\n    if (i === 6) { break; }\n    acc = acc + i;\n  } v14Loop2 = i; v14Loop2 = v14Loop2 + 1; } }\n  if (acc !== 12) { throw { name: \"TEST_FAIL\", message: \"fl\" }; }\n  let found: number = 0;\n  { let v14Loop3: number = 0; while (v14Loop3 < 3) { let i: number = v14Loop3; {\n    { let v14Loop4: number = 0; while (v14Loop4 < 3) { let j: number = v14Loop4; {\n      if (j === 1) { break; }\n      found = found + 1;\n    } v14Loop4 = j; v14Loop4 = v14Loop4 + 1; } }\n  } v14Loop3 = i; v14Loop3 = v14Loop3 + 1; } }\n  return found;\n}\n\nfunction run(): number {\n  let f: () => number = function(): number { return 7; };\n  let g: (x: number) => number = f;\n  f = function(): number { return 9; };\n  let adapted: number = g(5);\n  if (!even(4)) { throw { name: \"TEST_FAIL\", message: \"even\" }; }\n  if (odd(4)) { throw { name: \"TEST_FAIL\", message: \"odd\" }; }\n  return compute() + adapted + loops();\n}\n\nexport function main(): void {\n  let r: number = run();\n  if (r !== 14) { throw { name: \"TEST_FAIL\", message: \"cells\" }; }\n  let s: string = \"a😀b\";\n  let count: number = 0;\n  let collected: string = \"\";\n  for (let ch of s) {\n    count = count + 1;\n    collected = collected + ch;\n  }\n  if (count !== 3) { throw { name: \"TEST_FAIL\", message: \"scalars\" }; }\n  if (collected !== s) { throw { name: \"TEST_FAIL\", message: \"rebuild\" }; }\n  return ;\n}\n");
         Path out = stage(fixture, "cells", false);
         NodeRun run = runNode(out, entryPath(out));
         checkEq(0, run.status(), "the cells/closures program exits 0: "
@@ -1618,14 +1618,14 @@ public class JsSemanticEmitterTest {
               return g(x, y);
             }
 
-            export function main(): null {
+            export function main(): void {
               let a: number = storedInt(4.0);
               let b: boolean = same();
               let c: number = adapted(5.0, 0);
               if (a !== 4 || !b || c !== 5) {
                 throw { name: "TEST_FAIL", message: "intrinsic" };
               }
-              return null;
+              return ;
             }
             """);
         var oracle = deal.semantic.SemanticOracle.executeProjectInits(
@@ -1669,11 +1669,11 @@ public class JsSemanticEmitterTest {
               return v;
             }
 
-            export function main(): null {
+            export function main(): void {
               if (nullableHole() !== undefined) {
                 throw { name: "TEST_FAIL", message: "hole" };
               }
-              return null;
+              return ;
             }
             """);
         var nullableOracle = deal.semantic.SemanticOracle.executeProjectInits(
@@ -1707,9 +1707,9 @@ public class JsSemanticEmitterTest {
               return v;
             }
 
-            export function main(): null {
+            export function main(): void {
               let x: number = strictHole();
-              return null;
+              return ;
             }
             """);
         var strictOracle = deal.semantic.SemanticOracle.executeProjectInits(
@@ -1761,11 +1761,11 @@ public class JsSemanticEmitterTest {
         Path root = Files.createTempDirectory(tmpRoot, "adapter-origin");
         Fixture fixture = compileFixture(root, """
             function number(x: number): number { let xs: number[] = []; return xs[x]; }
-            export function main(): null {
+            export function main(): void {
               let g: (x: number, y: number) => number = number;
               let n: number = 0.0 / 0.0;
               let r: number = g(n, 1);
-              return null;
+              return ;
             }
             """);
         var oracle = deal.semantic.SemanticOracle.executeProjectInits(
@@ -1818,7 +1818,7 @@ public class JsSemanticEmitterTest {
         compileFixture(root, """
             import * as util from "./utilw3";
 
-            export function main(): null {
+            export function main(): void {
               let k: string = "counter";
               util[k] = 7;
               let v: number = util[k] as number;
@@ -1827,7 +1827,7 @@ public class JsSemanticEmitterTest {
               util[p] = 9;
               let w: number = util[p] as number;
               if (w !== 9) { throw { name: "TEST_FAIL", message: "proto" }; }
-              return null;
+              return ;
             }
             """, Map.of("src/utilw3.deal", """
                 export function counter(): number {
@@ -1939,7 +1939,7 @@ public class JsSemanticEmitterTest {
             export function decode(text: string): Form { return JSON.parse(text); }
             export function encode(value: Form): string { return JSON.stringify(value) as string; }
 
-            export function main(): null {
+            export function main(): void {
               let order: number[] = [];
               let note: (n: number) => number = function(n: number): number {
                 order[order.length] = n;
@@ -2017,7 +2017,7 @@ public class JsSemanticEmitterTest {
               if (errors !== "E8007;E8001;E8001;E8007;") {
                 throw { name: "TEST_FAIL", message: "throwing reconstruction: " + errors };
               }
-              return null;
+              return ;
             }
             """, Map.of("src/lib.deal", """
                 // @jsonable
@@ -2432,10 +2432,10 @@ public class JsSemanticEmitterTest {
             + " the entry presentation --");
         Path root = Files.createTempDirectory(tmpRoot, "failures");
         Fixture fixture = compileFixture(root, """
-            export function main(): null {
+            export function main(): void {
               let t: Record<string, unknown> = {a: "x"};
               let n: number = t.a as number;
-              return null;
+              return ;
             }
             """);
         Path out = stage(fixture, "failure-read", false);
@@ -2479,11 +2479,11 @@ public class JsSemanticEmitterTest {
               throw { name: "E9000", message: "boom" };
             }
 
-            export function main(): null {
+            export function main(): void {
               let arr: number[] = [1, 2];
               let i: number = 4;
               let x: number = arr[i];
-              return null;
+              return ;
             }
             """);
         Path boundsOut = stage(bounds, "failure-bounds", false);
@@ -2501,13 +2501,13 @@ public class JsSemanticEmitterTest {
               throw { name: "E9000", message: "boom" };
             }
 
-            export function main(): null {
+            export function main(): void {
               try {
                 boom();
               } catch (e) {
                 throw e as Error;
               }
-              return null;
+              return ;
             }
             """);
         Path throwOut = stage(throwFixture, "failure-throw", false);
@@ -2777,8 +2777,8 @@ public class JsSemanticEmitterTest {
               return encodeItem(item);
             }
 
-            export function main(): null {
-              return null;
+            export function main(): void {
+              return ;
             }
             """;
         // Encoding failure belongs to the builtin expression inside the
@@ -2937,10 +2937,10 @@ public class JsSemanticEmitterTest {
         Fixture fixture = compileFixture(root, """
             import * as util from "./util";
 
-            export function main(): null {
+            export function main(): void {
               let y: number = util.addOne(2);
               if (y !== 3) { throw { name: "TEST_FAIL", message: "cross" }; }
-              return null;
+              return ;
             }
             """, Map.of("src/util.deal", """
                 export function addOne(x: number): number {
@@ -3041,7 +3041,7 @@ public class JsSemanticEmitterTest {
         System.out.println("-- native async start/await, the async adapter and"
             + " the cross-module stored async value under Node --");
         Path root = Files.createTempDirectory(tmpRoot, "async-calls");
-        Fixture fixture = compileFixture(root, "import * as lib from \"./lib\";\n\nasync function inner(x: number): Promise<number> {\n  return x + 1;\n}\n\nasync function fail(): Promise<number> {\n  throw { name: \"E9001\", message: \"async-boom\" };\n}\n\nexport async function run(): Promise<number> {\n  let a: number = await inner(1);\n  let g: (x: number, y: number) => Promise<number> = inner;\n  let b: number = await g(a, 9);\n  let stored: (x: number) => Promise<number> = lib.fetch;\n  let d: number = await stored(10);\n  let total: number = 0;\n  { let v14Loop5: number = 0; while (v14Loop5 < 3) { let i: number = v14Loop5; {\n    total = total + (await inner(i));\n  } v14Loop5 = i; v14Loop5 = v14Loop5 + 1; } }\n  if (a !== 2 || b !== 3 || d !== 21 || total !== 6) {\n    throw { name: \"TEST_FAIL\", message: \"async\" };\n  }\n  return a + b + d + total;\n}\n\nexport async function swallowed(): Promise<number> {\n  try {\n    let c: number = await fail();\n    return c;\n  } catch (e) {\n    return 0;\n  }\n}\n\nexport async function rethrown(): Promise<number> {\n  try {\n    let c: number = await fail();\n    return c;\n  } catch (e) {\n    throw e as Error;\n  }\n}\n\nexport function main(): null { return null; }\n", Map.of("src/lib.deal", """
+        Fixture fixture = compileFixture(root, "import * as lib from \"./lib\";\n\nasync function inner(x: number): Promise<number> {\n  return x + 1;\n}\n\nasync function fail(): Promise<number> {\n  throw { name: \"E9001\", message: \"async-boom\" };\n}\n\nexport async function run(): Promise<number> {\n  let a: number = await inner(1);\n  let g: (x: number, y: number) => Promise<number> = inner;\n  let b: number = await g(a, 9);\n  let stored: (x: number) => Promise<number> = lib.fetch;\n  let d: number = await stored(10);\n  let total: number = 0;\n  { let v14Loop5: number = 0; while (v14Loop5 < 3) { let i: number = v14Loop5; {\n    total = total + (await inner(i));\n  } v14Loop5 = i; v14Loop5 = v14Loop5 + 1; } }\n  if (a !== 2 || b !== 3 || d !== 21 || total !== 6) {\n    throw { name: \"TEST_FAIL\", message: \"async\" };\n  }\n  return a + b + d + total;\n}\n\nexport async function swallowed(): Promise<number> {\n  try {\n    let c: number = await fail();\n    return c;\n  } catch (e) {\n    return 0;\n  }\n}\n\nexport async function rethrown(): Promise<number> {\n  try {\n    let c: number = await fail();\n    return c;\n  } catch (e) {\n    throw e as Error;\n  }\n}\n\nexport function main(): void { return ; }\n", Map.of("src/lib.deal", """
                 export async function fetch(n: number): Promise<number> {
                   return n + 11;
                 }
@@ -3139,7 +3139,7 @@ public class JsSemanticEmitterTest {
               }
             }
 
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             """, Map.of("src/lib.deal", """
                 export async function boom(): Promise<number> {
                   let t: Record<string, unknown> = {a: "x"};
@@ -3189,7 +3189,7 @@ public class JsSemanticEmitterTest {
 
     /**
      * ISSUE-0800: the entry and async-export ABI — direct execution
-     * initializes and runs non-async {@code main(): null} once (with the
+     * initializes and runs non-async {@code main(): void} once (with the
      * uncaught-main stderr/status presentation), a bare require only
      * initializes, and every explicit {@code $rt.invokeAsyncExport} runs
      * its own main leg once, selects the exact {@code async()->R} export,
@@ -3205,7 +3205,7 @@ public class JsSemanticEmitterTest {
             export async function oracle(): Promise<number> { return 7; }
             export function sync(): number { return 1; }
             export async function parameterized(x: number): Promise<number> { return x; }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             """);
         Path out = stage(fixture, "async-abi", false);
         Files.writeString(out.resolve("driver.js"), """
@@ -3282,7 +3282,7 @@ public class JsSemanticEmitterTest {
         NodeRun requireRun = runNode(out, "require.js");
         checkEq(0, requireRun.status(), "the require-only driver exits 0: "
             + requireRun.output());
-        check(requireRun.output().contains("\"mainSig\":\"()->null\""),
+        check(requireRun.output().contains("\"mainSig\":\"()->void\""),
             "a bare require publishes the non-async main wrapper without"
                 + " running it: " + requireRun.output());
         NodeRun direct = runNode(out, entryPath(out));
@@ -3295,7 +3295,7 @@ public class JsSemanticEmitterTest {
         // and status 1, with the source Error left untouched.
         Path throwingRoot = Files.createTempDirectory(tmpRoot, "async-main");
         Fixture throwing = compileFixture(throwingRoot, """
-            export function main(): null {
+            export function main(): void {
               throw { name: "E9001", message: "main-boom" };
             }
             """);
@@ -3329,7 +3329,7 @@ public class JsSemanticEmitterTest {
         Fixture initFailure = compileFixture(initRoot, """
             import * as util from "./util";
 
-            export function main(): null { return util.one(); }
+            export function main(): void { util.one(); }
             """, Map.of("src/util.deal", """
                 export function one(): null { return null; }
                 """));
@@ -3385,7 +3385,7 @@ public class JsSemanticEmitterTest {
               return x * 2;
             }
 
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             """, Map.of(), Map.of(), Set.of("cb"));
         Path out = stage(fixture, "callback", false);
         String appSource = Files.readString(out.resolve("app.js"),
@@ -3447,7 +3447,7 @@ public class JsSemanticEmitterTest {
               return one;
             }
 
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             """, Map.of(), Map.of(), Set.of("cb"));
         Path out = stage(fixture, "callback-return", false);
         Files.writeString(out.resolve("driver.js"), """
@@ -3580,7 +3580,7 @@ public class JsSemanticEmitterTest {
               return a + b + c + d;
             }
 
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             """, Map.of("src/dynlib.deal", """
                 export function bump(x: number): number { return x + 100; }
 
@@ -3712,7 +3712,7 @@ public class JsSemanticEmitterTest {
               return a + b;
             }
 
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             """);
         var oracle = deal.semantic.SemanticOracle.executeProjectInits(
             fixture.project(), fixture.tables(), fixture.registries(), null);
@@ -3790,7 +3790,7 @@ public class JsSemanticEmitterTest {
               return f;
             }
 
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             """);
         var oracle = deal.semantic.SemanticOracle.executeProjectInits(
             fixture.project(), fixture.tables(), fixture.registries(), null);
@@ -3975,10 +3975,10 @@ public class JsSemanticEmitterTest {
               return b;
             }
 
-            export function main(): null {
+            export function main(): void {
               let t: Record<string, unknown> = { v: 5 };
               let b: boolean = booleanFrom(t);
-              return null;
+              return ;
             }
             """);
         checkDeferredReadOrigin(booleanFailure, "boolean");
@@ -3989,10 +3989,10 @@ public class JsSemanticEmitterTest {
               return f;
             }
 
-            export function main(): null {
+            export function main(): void {
               let t: Record<string, unknown> = { f: 1 };
               let f: (x: number) => number = functionFrom(t);
-              return null;
+              return ;
             }
             """);
         checkDeferredReadOrigin(functionFailure, "function");
@@ -4134,7 +4134,7 @@ public class JsSemanticEmitterTest {
               return await h1.label();
             }
 
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             """, Map.of("src/util.deal", """
             import * as e from "host/cfg";
 
@@ -4370,7 +4370,7 @@ public class JsSemanticEmitterTest {
               return h.alpha() + h.zeta();
             }
 
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             """, Map.of(), Map.of("host/cfg", declaration.toString()));
         JsProjectEmission emission = JsSemanticEmitter.emitProductionProject(
             fixture.emissionInput(false));
@@ -4594,7 +4594,7 @@ public class JsSemanticEmitterTest {
               return JSON.parse("{\\"a\\":1.0,\\"a\\":2.0}");
             }
 
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             """);
         JsProjectEmission emission =
             JsSemanticEmitter.emitProductionProject(fixture.emissionInput(false));
@@ -4706,8 +4706,8 @@ public class JsSemanticEmitterTest {
         Fixture fixture = compileFixture(root, """
             import * as cfg from "host/cfg";
 
-            export function main(): null {
-              return null;
+            export function main(): void {
+              return ;
             }
             """, Map.of(), Map.of("host/cfg", declaration.toString()));
 
@@ -4817,8 +4817,8 @@ public class JsSemanticEmitterTest {
               return v;
             }
 
-            export function main(): null {
-              return null;
+            export function main(): void {
+              return ;
             }
             """);
         JsProjectEmission asyncEmission =

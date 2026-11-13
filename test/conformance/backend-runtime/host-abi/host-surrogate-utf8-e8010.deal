@@ -11,6 +11,6 @@ export function test_host_surrogate_utf8(): string {
   return s;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

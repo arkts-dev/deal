@@ -9,6 +9,6 @@ export function test_nullable_array_index_oob(): number {
   return 0;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

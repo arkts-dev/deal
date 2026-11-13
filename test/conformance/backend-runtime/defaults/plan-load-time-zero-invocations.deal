@@ -23,6 +23,6 @@ export function test_plan_load_time_zero_invocations(): null {
   return null;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

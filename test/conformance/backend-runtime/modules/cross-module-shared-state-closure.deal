@@ -5,7 +5,7 @@
 
 import * as State from "./integration_state_lib";
 
-export function main(): null {
+export function main(): void {
   let counter: State.Counter = State.makeCounter(40);
   let alias: State.Counter = counter;
   let audit: Record<string, unknown> = { calls: 0 };
@@ -23,5 +23,5 @@ export function main(): null {
   if (calls !== 2) {
     throw { name: "TEST_FAIL", message: "cross-module table mutation mismatch" };
   }
-  return null;
+  return ;
 }

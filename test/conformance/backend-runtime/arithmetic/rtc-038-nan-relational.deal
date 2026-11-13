@@ -9,4 +9,4 @@ export function test_nan_relational_false(): null {
   return null;
 }
 
-export function main(): null { return test_nan_relational_false(); }
+export function main(): void { test_nan_relational_false(); }

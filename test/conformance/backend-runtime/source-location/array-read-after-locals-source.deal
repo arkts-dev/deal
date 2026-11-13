@@ -11,6 +11,6 @@ export function test_source_location_array_after_locals(): number {
   return sum;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

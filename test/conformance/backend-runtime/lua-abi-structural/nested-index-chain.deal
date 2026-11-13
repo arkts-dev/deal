@@ -10,6 +10,6 @@ export function test_abi_nested_index_chain(): number {
   return result;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

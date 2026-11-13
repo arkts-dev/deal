@@ -54,7 +54,7 @@ async function settle(tag: string): Promise<string> {
   return tag;
 }
 
-export function main(): null {
+export function main(): void {
   // The unchanged non-null Error operand: a plain (non-refined) Error read is
   // thrown and caught as the identical instance, so a field write through the
   // catch binding is visible through every alias.
@@ -184,7 +184,7 @@ export function main(): null {
     throw { name: "CONTROL_FAIL", message: "once-only operand: the caught flag stayed false" };
   }
   expectEqual("operand evaluations", calls, 1);
-  return null;
+  return ;
 }
 
 // The async operand: the awaited statement keeps the same clearing capture,

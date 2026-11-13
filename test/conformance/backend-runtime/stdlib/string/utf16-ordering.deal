@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: string, comparison
 function check(ok:boolean):void { if(!ok){throw {name:"ORDER",message:"UTF-16 ordering"};} }
-export function main():null {
+export function main():void {
   let high:string=`\uD800`;
   let low:string=`\uDC00`;
   let pair:string="😀";
@@ -17,5 +17,5 @@ export function main():null {
   check(!(low < high) && !(low <= high));
   check("a" < "aa" && "aa" > "a");
   check("a" <= "aa" && "aa" >= "a");
-  return null;
+  return ;
 }

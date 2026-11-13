@@ -11,4 +11,4 @@ export function test_bad_class_field_runtime_type(): Box {
   return b;
 }
 
-export function main(): null { return null; }
+export function main(): void { return ; }

@@ -3,7 +3,7 @@
 // @expected: runtime-error E8001
 // @features: type-system, nullable, narrowing, runtime-errors, templates
 
-export function main(): null {
+export function main(): void {
   let name: string | null = "Ada";
   let clear: () => null = function(): null {
     name = null;
@@ -13,5 +13,5 @@ export function main(): null {
     clear();
     let text: string = `hello ${name}`;
   }
-  return null;
+  return ;
 }

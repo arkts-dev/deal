@@ -15,6 +15,6 @@ export function test_table_keys_dynamic_nontable(): string[] {
   throw { name: "TEST_FAIL", message: "Record parameter branch skipped" };
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

@@ -16,6 +16,6 @@ export function test_closure(): number {
   return result; // should return 2
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

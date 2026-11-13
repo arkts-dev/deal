@@ -6,7 +6,7 @@
 import * as a from "./same_name_sibling_a";
 import * as b from "./same_name_sibling_b";
 
-export function main(): null {
+export function main(): void {
   let wrong: b.Item = a.make();
-  return null;
+  return ;
 }

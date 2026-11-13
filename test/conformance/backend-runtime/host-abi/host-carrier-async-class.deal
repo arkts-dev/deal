@@ -64,6 +64,6 @@ export function test_class_arrays(): null {
   return null;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

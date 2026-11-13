@@ -17,6 +17,6 @@ export async function test_canonical_async_marker_boundary(): Promise<number> {
   return result;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

@@ -43,6 +43,6 @@ export function test_nullable_construction(): number {
   }
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

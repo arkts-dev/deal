@@ -5,7 +5,7 @@
 
 import * as nominal from "./nominal";
 class Same { other: string; }
-export function main(): null {
+export function main(): void {
   let foreign = nominal.make();
   let foreignUnknown: unknown = foreign;
   if (!(foreignUnknown instanceof nominal.Same)) { throw {name: "FAIL", message: "imported nominal target"}; }
@@ -29,5 +29,5 @@ export function main(): null {
     catch (e) { if (e instanceof Error) { staleRejected = e.name === "E8001"; } }
   }
   if (!staleRejected) { throw {name: "FAIL", message: "stale unknown refinement must check consumption"}; }
-  return null;
+  return ;
 }

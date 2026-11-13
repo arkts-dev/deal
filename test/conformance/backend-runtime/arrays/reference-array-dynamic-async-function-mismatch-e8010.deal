@@ -13,6 +13,6 @@ export function test_array_dynamic_async_function_mismatch(): number {
   return 0;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

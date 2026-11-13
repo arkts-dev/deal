@@ -221,11 +221,11 @@ export async function demo_async(): Promise<number> {
 
 // The entry drives every synchronous capability; demo_async is invoked by
 // the embedding through the backend's async-export ABI.
-export function main(): null {
+export function main(): void {
   demo_runtime_checks();
   let summary: string = demo_summary();
   console.log(summary);
-  return null;
+  return;
 }
 
 export function demo_runtime_checks(): null {

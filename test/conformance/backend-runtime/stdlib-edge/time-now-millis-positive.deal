@@ -12,6 +12,6 @@ export function test_time_now_millis_positive(): number {
   return now;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

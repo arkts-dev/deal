@@ -146,7 +146,7 @@ public class DiagnosticClassificationTest {
         // fragments live inside main() (docs/spec-v1.6.md
         // §Statement/expression separation and §Test suite basis),
         // so the trigger still exercises the pinned code.
-        String inMain = "export function main(): null { %s return null; }";
+        String inMain = "export function main(): void { %s return ; }";
         triggers.put("E2000", "function f(): null { break; }");
         triggers.put("E2001", inMain.replace("%s", "let x = y; "));
         triggers.put("E2002", inMain.replace("%s", "let x = 1; let x = 2; "));

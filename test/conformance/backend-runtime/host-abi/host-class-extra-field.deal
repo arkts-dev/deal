@@ -16,6 +16,6 @@ export function test_host_class_extra_field(): null {
   return null;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

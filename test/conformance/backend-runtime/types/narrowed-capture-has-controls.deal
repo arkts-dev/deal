@@ -45,7 +45,7 @@ function fail(what: string): null {
   throw { name: "CONTROL_FAIL", message: what + ": no error was raised" };
 }
 
-export function main(): null {
+export function main(): void {
   // The presence three-state over a valid refinement: an absent optional
   // field, a present zero, a present false, a present null, a present
   // string and a deleted optional field stay distinguishable, and the
@@ -221,5 +221,5 @@ export function main(): null {
     let kept: number = editable.value as number;
     expectEqual("the failed table read mutates nothing", kept, 7);
   }
-  return null;
+  return ;
 }

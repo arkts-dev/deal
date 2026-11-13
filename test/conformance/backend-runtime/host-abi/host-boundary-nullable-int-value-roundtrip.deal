@@ -4,14 +4,14 @@
 // @features: host-abi, nullable, primitive, int32
 
 import * as host from "host/boundary";
-export function main(): null {
+export function main(): void {
   let value: number | null = host.nullableInt(2147483647);
   if (value !== null) {
     let narrowed: number = value;
     if (narrowed !== 2147483647) {
       throw { name: "TEST_FAIL", message: "host nullable primitive value changed" };
     }
-    return null;
+    return ;
   }
   throw { name: "TEST_FAIL", message: "host nullable primitive value was null" };
 }

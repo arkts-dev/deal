@@ -11,4 +11,4 @@ export function test_additive_before_relational(): null {
   return null;
 }
 
-export function main(): null { return test_additive_before_relational(); }
+export function main(): void { test_additive_before_relational(); }

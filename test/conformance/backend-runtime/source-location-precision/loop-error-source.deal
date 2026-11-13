@@ -11,6 +11,6 @@ export function test_source_loop_error(): number {
   return 0;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

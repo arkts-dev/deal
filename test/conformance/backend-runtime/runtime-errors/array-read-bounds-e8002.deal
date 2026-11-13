@@ -8,6 +8,6 @@ export function test_array_read_bounds_error(): number {
   return [1][1];
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

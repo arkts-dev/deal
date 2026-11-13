@@ -5,7 +5,7 @@
 import * as host from "host/probe";
 class Item {x:number;stable:number;}
 function check(ok:boolean):void {if(!ok){throw {name:"SLICE",message:"live mismatch"};}}
-export function main():null {
+export function main():void {
   let xs:number[]=[4,5,9];let alias=xs;
   let matrix:number[][]=[[1],xs];let dynamic:unknown[]=[xs];let original:unknown=xs;
   host.keep(xs);host.corrupt();
@@ -57,5 +57,5 @@ export function main():null {
   let stale:number[]|null=[1];let clear=():void=>{stale=null;};caught=false;
   if(stale!==null){clear();try{stale.slice(0,1);}catch(e){check((e as Error).name==="E8001");caught=true;}}
   check(caught);
-  return null;
+  return ;
 }

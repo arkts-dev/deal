@@ -7,7 +7,7 @@ function check(ok:boolean):void {
   if(!ok){throw {name:"TEST",message:"substring omitted end"};}
 }
 
-export function main():null {
+export function main():void {
   check("abcd".substring(1)==="bcd");
   check("abcd".substring(1.9)==="bcd");
   check("abcd".substring(-1.9)==="abcd");
@@ -35,5 +35,5 @@ export function main():null {
   try { destination=receiver().substring(failStart()); }
   catch(e) { check((e as Error).message==="start"); }
   check(events==="rt" && destination==="kept");
-  return null;
+  return ;
 }

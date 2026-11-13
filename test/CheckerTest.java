@@ -1373,7 +1373,7 @@ public class CheckerTest {
 
         // Calls, including recursive calls, do not prove a value return.
         CheckerOutput recursive = checkProgram(
-            "export function main(): null {f(); return null;}\n"
+            "export function main(): void {f(); return ;}\n"
                 + "function f(): null {try {return null;} catch(e) {g();}}\n"
                 + "function g(): null {f();}\n");
         assertError(recursive, "E5002",
@@ -2038,13 +2038,13 @@ public class CheckerTest {
         System.out.println("-- the if join propagates assignment and await "
             + "invalidations --");
         CheckerOutput assigned = checkProgram(
-            "export function main(): null {\n" +
+            "export function main(): void {\n" +
             "  let x: string | null = \"a\";\n" +
             "  if (x !== null) {\n" +
             "    if (true) { x = null; }\n" +
             "    let y: string = x;\n" +
             "  }\n" +
-            "  return null;\n" +
+            "  return ;\n" +
             "}"
         );
         assertError(assigned, "E3001",
@@ -2067,13 +2067,13 @@ public class CheckerTest {
                 + "at the join");
 
         CheckerOutput elseAssigned = checkProgram(
-            "export function main(): null {\n" +
+            "export function main(): void {\n" +
             "  let x: string | null = \"a\";\n" +
             "  if (x !== null) {\n" +
             "    if (false) { } else { x = null; }\n" +
             "    let y: string = x;\n" +
             "  }\n" +
-            "  return null;\n" +
+            "  return ;\n" +
             "}"
         );
         assertError(elseAssigned, "E3001",
@@ -2096,13 +2096,13 @@ public class CheckerTest {
                 + "join");
 
         CheckerOutput harmless = checkProgram(
-            "export function main(): null {\n" +
+            "export function main(): void {\n" +
             "  let x: string | null = \"a\";\n" +
             "  if (x !== null) {\n" +
             "    if (true) { let z: number = 1; }\n" +
             "    let y: string = x;\n" +
             "  }\n" +
-            "  return null;\n" +
+            "  return ;\n" +
             "}"
         );
         assertNoErrors(harmless,
@@ -2119,13 +2119,13 @@ public class CheckerTest {
         System.out.println("-- the shadow snapshot survives a branch join "
             + "unless a path invalidated it --");
         CheckerOutput ifElse = checkProgram(
-            "export function main(): null {\n" +
+            "export function main(): void {\n" +
             "  let x: string | null = \"a\";\n" +
             "  if (x !== null) {\n" +
             "    { let x: number = 0; if (true) {} else {} }\n" +
             "    let y: string = x;\n" +
             "  }\n" +
-            "  return null;\n" +
+            "  return ;\n" +
             "}"
         );
         assertNoErrors(ifElse,
@@ -2171,13 +2171,13 @@ public class CheckerTest {
         System.out.println("-- the for-of back-edge invalidates the bindings "
             + "assigned in the body --");
         CheckerOutput assigned = checkProgram(
-            "export function main(): null {\n" +
+            "export function main(): void {\n" +
             "  let x: string | null = \"a\";\n" +
             "  if (x !== null) {\n" +
             "    for (let n of [1]) { x = null; }\n" +
             "    let y: string = x;\n" +
             "  }\n" +
-            "  return null;\n" +
+            "  return ;\n" +
             "}"
         );
         assertError(assigned, "E3001",
@@ -2185,13 +2185,13 @@ public class CheckerTest {
                 + "invalidates it after the loop");
 
         CheckerOutput control = checkProgram(
-            "export function main(): null {\n" +
+            "export function main(): void {\n" +
             "  let x: string | null = \"a\";\n" +
             "  if (x !== null) {\n" +
             "    for (let x of [\"z\"]) { x = \"b\"; }\n" +
             "    let y: string = x;\n" +
             "  }\n" +
-            "  return null;\n" +
+            "  return ;\n" +
             "}"
         );
         assertNoErrors(control,
@@ -2212,13 +2212,13 @@ public class CheckerTest {
         System.out.println("-- the try/catch revert records the assigned "
             + "bindings, never same-named declarations --");
         CheckerOutput shadow = checkProgram(
-            "export function main(): null {\n" +
+            "export function main(): void {\n" +
             "  let n: number | null = 1;\n" +
             "  if (n !== null) {\n" +
             "    try { let n: number = 2; } catch (e) {}\n" +
             "    let x: number = n;\n" +
             "  }\n" +
-            "  return null;\n" +
+            "  return ;\n" +
             "}"
         );
         assertNoErrors(shadow,
@@ -2226,13 +2226,13 @@ public class CheckerTest {
                 + "enclosing binding; the refinement survives the try");
 
         CheckerOutput shadowAssigned = checkProgram(
-            "export function main(): null {\n" +
+            "export function main(): void {\n" +
             "  let n: number | null = 1;\n" +
             "  if (n !== null) {\n" +
             "    try { let n: number = 2; n = 3; } catch (e) {}\n" +
             "    let x: number = n;\n" +
             "  }\n" +
-            "  return null;\n" +
+            "  return ;\n" +
             "}"
         );
         assertNoErrors(shadowAssigned,
@@ -2240,13 +2240,13 @@ public class CheckerTest {
                 + "enclosing binding's refinement intact");
 
         CheckerOutput nullBranch = checkProgram(
-            "export function main(): null {\n" +
+            "export function main(): void {\n" +
             "  let n: number | null = 1;\n" +
             "  if (n === null) {\n" +
             "    try { let n: number = 2; } catch (e) {}\n" +
             "    let x: null = n;\n" +
             "  }\n" +
-            "  return null;\n" +
+            "  return ;\n" +
             "}"
         );
         assertNoErrors(nullBranch,
@@ -2254,13 +2254,13 @@ public class CheckerTest {
                 + "survives a try-local shadow declaration");
 
         CheckerOutput direct = checkProgram(
-            "export function main(): null {\n" +
+            "export function main(): void {\n" +
             "  let n: number | null = 1;\n" +
             "  if (n !== null) {\n" +
             "    try { n = null; } catch (e) {}\n" +
             "    let x: number = n;\n" +
             "  }\n" +
-            "  return null;\n" +
+            "  return ;\n" +
             "}"
         );
         assertError(direct, "E3001",
@@ -2268,14 +2268,14 @@ public class CheckerTest {
                 + "try still reverts its refinement after the try");
 
         CheckerOutput otherBinding = checkProgram(
-            "export function main(): null {\n" +
+            "export function main(): void {\n" +
             "  let n: number | null = 1;\n" +
             "  let m: number | null = 1;\n" +
             "  if (n !== null) {\n" +
             "    try { m = null; } catch (e) {}\n" +
             "    let x: number = n;\n" +
             "  }\n" +
-            "  return null;\n" +
+            "  return ;\n" +
             "}"
         );
         assertNoErrors(otherBinding,
@@ -2297,7 +2297,7 @@ public class CheckerTest {
         System.out.println("-- a nested function body's write inside a try "
             + "region never reverts the enclosing refinement --");
         CheckerOutput expression = checkProgram(
-            "export function main(): null {\n" +
+            "export function main(): void {\n" +
             "  let n: number | null = 1;\n" +
             "  if (n !== null) {\n" +
             "    try {\n" +
@@ -2305,7 +2305,7 @@ public class CheckerTest {
             "    } catch (e) {}\n" +
             "    let x: number = n;\n" +
             "  }\n" +
-            "  return null;\n" +
+            "  return ;\n" +
             "}"
         );
         assertNoErrors(expression,
@@ -2313,7 +2313,7 @@ public class CheckerTest {
                 + "the enclosing refinement");
 
         CheckerOutput declaration = checkProgram(
-            "export function main(): null {\n" +
+            "export function main(): void {\n" +
             "  let n: number | null = 1;\n" +
             "  if (n !== null) {\n" +
             "    try {\n" +
@@ -2321,7 +2321,7 @@ public class CheckerTest {
             "    } catch (e) {}\n" +
             "    let x: number = n;\n" +
             "  }\n" +
-            "  return null;\n" +
+            "  return ;\n" +
             "}"
         );
         assertNoErrors(declaration,
@@ -2329,7 +2329,7 @@ public class CheckerTest {
                 + "not revert the enclosing refinement");
 
         CheckerOutput called = checkProgram(
-            "export function main(): null {\n" +
+            "export function main(): void {\n" +
             "  let n: number | null = 1;\n" +
             "  let clear: () => null = function(): null { n = null; return null; };\n" +
             "  if (n !== null) {\n" +
@@ -2338,7 +2338,7 @@ public class CheckerTest {
             "      let x: number = n;\n" +
             "    } catch (e) {}\n" +
             "  }\n" +
-            "  return null;\n" +
+            "  return ;\n" +
             "}"
         );
         assertNoErrors(called,
@@ -2347,7 +2347,7 @@ public class CheckerTest {
                 + "the cleared value");
 
         CheckerOutput nestedTryBody = checkProgram(
-            "export function main(): null {\n" +
+            "export function main(): void {\n" +
             "  let n: number | null = 1;\n" +
             "  if (n !== null) {\n" +
             "    try {\n" +
@@ -2358,7 +2358,7 @@ public class CheckerTest {
             "    } catch (e) {}\n" +
             "    let x: number = n;\n" +
             "  }\n" +
-            "  return null;\n" +
+            "  return ;\n" +
             "}"
         );
         assertNoErrors(nestedTryBody,
@@ -2377,13 +2377,13 @@ public class CheckerTest {
         System.out.println("-- a nested try assignment is collected by the "
             + "enclosing try region --");
         CheckerOutput nestedBlock = checkProgram(
-            "export function main(): null {\n" +
+            "export function main(): void {\n" +
             "  let n: number | null = 1;\n" +
             "  if (n !== null) {\n" +
             "    try { try { n = null; } catch (e) {} } catch (e) {}\n" +
             "    let x: number = n;\n" +
             "  }\n" +
-            "  return null;\n" +
+            "  return ;\n" +
             "}"
         );
         assertError(nestedBlock, "E3001",
@@ -2391,13 +2391,13 @@ public class CheckerTest {
                 + "the enclosing try");
 
         CheckerOutput nestedCatch = checkProgram(
-            "export function main(): null {\n" +
+            "export function main(): void {\n" +
             "  let n: number | null = 1;\n" +
             "  if (n !== null) {\n" +
             "    try { try { } catch (e) { n = null; } } catch (e) {}\n" +
             "    let x: number = n;\n" +
             "  }\n" +
-            "  return null;\n" +
+            "  return ;\n" +
             "}"
         );
         assertError(nestedCatch, "E3001",
@@ -2405,13 +2405,13 @@ public class CheckerTest {
                 + "enclosing try region and reverts the binding");
 
         CheckerOutput nestedShadow = checkProgram(
-            "export function main(): null {\n" +
+            "export function main(): void {\n" +
             "  let n: number | null = 1;\n" +
             "  if (n !== null) {\n" +
             "    try { try { let n: number = 2; } catch (e) {} } catch (e) {}\n" +
             "    let x: number = n;\n" +
             "  }\n" +
-            "  return null;\n" +
+            "  return ;\n" +
             "}"
         );
         assertNoErrors(nestedShadow,
@@ -2419,13 +2419,13 @@ public class CheckerTest {
                 + "enclosing binding");
 
         CheckerOutput nestedControlFlow = checkProgram(
-            "export function main(): null {\n" +
+            "export function main(): void {\n" +
             "  let n: number | null = 1;\n" +
             "  if (n !== null) {\n" +
             "    try { if (true) { while (false) { n = null; } } } catch (e) {}\n" +
             "    let x: number = n;\n" +
             "  }\n" +
-            "  return null;\n" +
+            "  return ;\n" +
             "}"
         );
         assertError(nestedControlFlow, "E3001",
@@ -2433,13 +2433,13 @@ public class CheckerTest {
                 + "reverts the binding");
 
         CheckerOutput loopRegion = checkProgram(
-            "export function main(): null {\n" +
+            "export function main(): void {\n" +
             "  let n: number | null = 1;\n" +
             "  if (n !== null) {\n" +
             "    try { while (false) { n = null; } } catch (e) {}\n" +
             "    let x: number = n;\n" +
             "  }\n" +
-            "  return null;\n" +
+            "  return ;\n" +
             "}"
         );
         assertError(loopRegion, "E3001",
@@ -2456,7 +2456,7 @@ public class CheckerTest {
             "  }\n" +
             "  return null;\n" +
             "}\n" +
-            "export function main(): null { return null; }"
+            "export function main(): void { return ; }"
         );
         assertError(awaitRegion, "E3001",
             "an enclosing async await invalidates every refinement even "
@@ -2474,19 +2474,19 @@ public class CheckerTest {
         System.out.println("-- the C-style for loop-head let is not visible "
             + "to its own initializer --");
         CheckerOutput self = checkProgram(
-            "export function main(): null {\n  { let v14Loop3: number = x; while (false) { let x: number = v14Loop3; {} v14Loop3 = x;  } }\n  return null;\n}"
+            "export function main(): void {\n  { let v14Loop3: number = x; while (false) { let x: number = v14Loop3; {} v14Loop3 = x;  } }\n  return ;\n}"
         );
         assertError(self, "E2001",
             "a loop-head self reference has no enclosing declaration");
 
         CheckerOutput shadow = checkProgram(
-            "export function main(): null {\n  let x: number = 1;\n  { let v14Loop4: number = x; while (false) { let x: number = v14Loop4; {} v14Loop4 = x;  } }\n  return null;\n}"
+            "export function main(): void {\n  let x: number = 1;\n  { let v14Loop4: number = x; while (false) { let x: number = v14Loop4; {} v14Loop4 = x;  } }\n  return ;\n}"
         );
         assertNoErrors(shadow,
             "the initializer reads the enclosing number binding");
 
         CheckerOutput restored = checkProgram(
-            "export function main(): null {\n  let x: string | null = \"a\";\n  if (x !== null) {\n    { let v14Loop5: number = 0; while (false) { let x: number = v14Loop5; {} v14Loop5 = x;  } }\n    let y: string = x;\n  }\n  return null;\n}"
+            "export function main(): void {\n  let x: string | null = \"a\";\n  if (x !== null) {\n    { let v14Loop5: number = 0; while (false) { let x: number = v14Loop5; {} v14Loop5 = x;  } }\n    let y: string = x;\n  }\n  return ;\n}"
         );
         assertNoErrors(restored,
             "the loop-head shadow ends with the loop and restores the "
@@ -2529,9 +2529,9 @@ public class CheckerTest {
             Files.writeString(crossingEntry,
                 "import * as a from \"./a\";\n"
                     + "import * as b from \"./b\";\n"
-                    + "export function main(): null {\n"
+                    + "export function main(): void {\n"
                     + "  let wrong: b.Item = a.make();\n"
-                    + "  return null;\n"
+                    + "  return ;\n"
                     + "}\n");
             for (String backend : List.of("js", "jvm", "luajit")) {
                 Path out = root.resolve("crossing_out_" + backend);
@@ -2568,7 +2568,7 @@ public class CheckerTest {
                 "import * as a from \"./a\";\n"
                     + "import * as aAgain from \"././a\";\n"
                     + "import * as b from \"./b\";\n"
-                    + "export function main(): null {\n"
+                    + "export function main(): void {\n"
                     + "  let t: Record<string, unknown> = { item: a.make() };\n"
                     + "  let own: a.Item = t.item as a.Item;\n"
                     + "  let again: aAgain.Item = own;\n"
@@ -2581,7 +2581,7 @@ public class CheckerTest {
                     + "    throw { name: \"WRONG_B\", message: \"b\" };\n"
                     + "  }\n"
                     + "  console.log(\"SIBLING_IDENTITY_OK\");\n"
-                    + "  return null;\n"
+                    + "  return ;\n"
                     + "}\n");
             Path controlOutJs = root.resolve("control_out_js");
             for (String backend : List.of("js", "jvm", "luajit")) {
@@ -2947,7 +2947,7 @@ public class CheckerTest {
                     .append("(): null { let a: A = {n: 7}; ").append(importedCrossings[i])
                     .append(" return null; }\n");
             }
-            crossingSource.append("export function main(): null { return null; }");
+            crossingSource.append("export function main(): void { return ; }");
             Path crossingEntry = cliProject(root, "module_crossings", crossingSource.toString());
             Files.createDirectories(crossingEntry.resolveSibling("foreign"));
             Files.writeString(crossingEntry.resolveSibling("foreign").resolve("types.deal"),
@@ -2965,10 +2965,10 @@ public class CheckerTest {
             for (int p = 0; p < negatives.length; p++) {
                 Path probeEntry = cliProject(root, "probe_" + names[p],
                     "class A { n: number; }\n"
-                        + "export function main(): null {\n"
+                        + "export function main(): void {\n"
                         + "  let a: A = {n: 7};\n"
                         + "  " + negatives[p] + "\n"
-                        + "  return null;\n"
+                        + "  return ;\n"
                         + "}\n");
                 for (String backend : List.of("js", "jvm", "luajit")) {
                     Path out = root.resolve("out_" + names[p] + "_" + backend);
@@ -2978,7 +2978,7 @@ public class CheckerTest {
 
             Path controlEntry = cliProject(root, "control",
                 "class A { n: number; }\n"
-                    + "export function main(): null {\n"
+                    + "export function main(): void {\n"
                     + "  let a: A = {n: 7};\n"
                     + "  let b: A = (a = {n: 7});\n"
                     + "  let c: A | null = (a = {n: 7});\n"
@@ -2990,7 +2990,7 @@ public class CheckerTest {
                     + "    }\n"
                     + "  }\n"
                     + "  console.log(\"CONSTRUCTED_OK\");\n"
-                    + "  return null;\n"
+                    + "  return ;\n"
                     + "}\n");
             Path controlOutJs = root.resolve("control_out_js");
             for (String backend : List.of("js", "jvm", "luajit")) {
@@ -3064,7 +3064,7 @@ public class CheckerTest {
             String[] probes = {
                 // explicit provided field, plain class target
                 "class A { n: number; }\n"
-                    + "export function main(): null {\n"
+                    + "export function main(): void {\n"
                     + "  let a: A = {n: 7};\n"
                     + "  {\n"
                     + "    class A { n: string; }\n"
@@ -3073,11 +3073,11 @@ public class CheckerTest {
                     + "  if (a.n !== 8) { throw { name: \"OUTER_LAYOUT\", "
                     + "message: \"outer\" }; }\n"
                     + "  console.log(\"SHADOW_CONSTRUCTION_OK\");\n"
-                    + "  return null;\n"
+                    + "  return ;\n"
                     + "}\n",
                 // nullable class target
                 "class A { n: number; }\n"
-                    + "export function main(): null {\n"
+                    + "export function main(): void {\n"
                     + "  let a: A | null = {n: 7};\n"
                     + "  {\n"
                     + "    class A { n: string; }\n"
@@ -3088,7 +3088,7 @@ public class CheckerTest {
                     + "message: \"nullable\" }; }\n"
                     + "  }\n"
                     + "  console.log(\"SHADOW_NULLABLE_OK\");\n"
-                    + "  return null;\n"
+                    + "  return ;\n"
                     + "}\n"
             };
             String[] names = {"explicit", "nullable"};
@@ -3123,7 +3123,7 @@ public class CheckerTest {
             // construction after the shadowing block (provided number).
             Path controlEntry = cliProject(root, "control",
                 "class A { n: number; }\nclass B { n: string; }\n"
-                    + "export function main(): null {\n"
+                    + "export function main(): void {\n"
                     + "  let a: A = {n: 7};\n"
                     + "  {\n"
                     + "    let b: B = {n: \"ok\"};\n"
@@ -3134,7 +3134,7 @@ public class CheckerTest {
                     + "  if (c.n !== 7) { throw { name: \"PROVIDED_LAYOUT\", "
                     + "message: \"provided\" }; }\n"
                     + "  console.log(\"SHADOW_CONTROL_OK\");\n"
-                    + "  return null;\n"
+                    + "  return ;\n"
                     + "}\n");
             Path controlOut = root.resolve("control_out");
             cliAccept(controlEntry, controlOut, "js", "legal shadowing control");
@@ -3176,14 +3176,14 @@ public class CheckerTest {
         try {
             Path probeEntry = cliProject(root, "probe",
                 "class A { n: number; }\n"
-                    + "export function main(): null {\n"
+                    + "export function main(): void {\n"
                     + "  let a: A = {n: 7};\n"
                     + "  {\n"
                     + "    class A { n: string; }\n"
                     + "    let b: A = (a = a);\n"
                     + "    let s: string = b.n;\n"
                     + "  }\n"
-                    + "  return null;\n"
+                    + "  return ;\n"
                     + "}\n");
             for (String backend : List.of("js", "jvm", "luajit")) {
                 Path out = root.resolve("probe_out_" + backend);
@@ -3192,7 +3192,7 @@ public class CheckerTest {
 
             Path controlEntry = cliProject(root, "control",
                 "class A { n: number; }\n"
-                    + "export function main(): null {\n"
+                    + "export function main(): void {\n"
                     + "  let a: A = {n: 7};\n"
                     + "  let b: A = (a = a);\n"
                     + "  let c: A | null = (a = a);\n"
@@ -3204,7 +3204,7 @@ public class CheckerTest {
                     + "    }\n"
                     + "  }\n"
                     + "  console.log(\"PROVENANCE_OK\");\n"
-                    + "  return null;\n"
+                    + "  return ;\n"
                     + "}\n");
             Path controlOutJs = root.resolve("control_out_js");
             for (String backend : List.of("js", "jvm", "luajit")) {
@@ -4165,9 +4165,9 @@ public class CheckerTest {
         String[] catchVars = { "$bad", "$", "bad$name", "b$ad", "bad$" };
         for (String catchVar : catchVars) {
             CheckerOutput out = checkProgram(
-                "export function main(): null {\n"
+                "export function main(): void {\n"
                 + "  try { throw {}; } catch (" + catchVar + ") {}\n"
-                + "  return null;\n"
+                + "  return ;\n"
                 + "}\n");
             assertError(out, "E2008", "dollar in catch variable '" + catchVar
                 + "' produces E2008");
@@ -4180,9 +4180,9 @@ public class CheckerTest {
         // Nested catch scopes: the inner and the outer declaration are
         // each checked in their own catch scope.
         CheckerOutput nested = checkProgram(
-            "export function main(): null {\n"
+            "export function main(): void {\n"
             + "  try { try {} catch (inner$e) {} } catch (outer$e) {}\n"
-            + "  return null;\n"
+            + "  return ;\n"
             + "}\n");
         List<String> nestedMessages = nested.result.diagnostics().stream()
             .filter(d -> d.code().equals("E2008"))
@@ -4197,7 +4197,7 @@ public class CheckerTest {
         // Passing controls: ordinary catch identifiers (including nested
         // scopes and the Error surface) remain legal.
         CheckerOutput normal = checkProgram(
-            "export function main(): null {\n"
+            "export function main(): void {\n"
             + "  try {\n"
             + "    try { throw {name: \"TEST\", message: \"test\"}; } catch (inner) {\n"
             + "      let msg: string = (inner as Error).message;\n"
@@ -4205,7 +4205,7 @@ public class CheckerTest {
             + "  } catch (outer) {\n"
             + "    let name: string = (outer as Error).name;\n"
             + "  }\n"
-            + "  return null;\n"
+            + "  return ;\n"
             + "}\n");
         assertNoErrors(normal, "normal catch identifiers stay accepted");
 
@@ -4213,10 +4213,10 @@ public class CheckerTest {
         CheckerOutput helpers = checkProgram(
             "// @jsonable\n"
             + "export class Payload { name: string; }\n"
-            + "export function main(): null {\n"
+            + "export function main(): void {\n"
             + "  let encoded: string = Payload$toJson({ name: \"x\" });\n"
             + "  let decoded: Payload | null = Payload$fromJson(encoded);\n"
-            + "  return null;\n"
+            + "  return ;\n"
             + "}\n");
         assertError(helpers, "E2001", "comment cannot introduce generated helper names");
         check(helpers.result.symbolTable().resolve("Payload$fromJson") == null
@@ -4228,7 +4228,7 @@ public class CheckerTest {
         // stays legal there; string data likewise. A class member read has
         // no such data-key route: it stays the declared-field rejection.
         CheckerOutput tableData = checkProgram(
-            "export function main(): null {\n"
+            "export function main(): void {\n"
             + "  let t: Record<string, unknown> = { bad$key: 1 };\n"
             + "  let direct: number = t.bad$key as number;\n"
             + "  let key: string = \"bad$key\";\n"
@@ -4236,17 +4236,17 @@ public class CheckerTest {
             + "  let indexed: number = t[key] as number;\n"
             + "  let text: string = \"price$\";\n"
             + "  let tpl: string = `tag$${text}`;\n"
-            + "  return null;\n"
+            + "  return ;\n"
             + "}\n");
         assertNoErrors(tableData,
             "table keys and string data may contain $");
 
         CheckerOutput classMember = checkProgram(
             "class C { x: number; }\n"
-            + "export function main(): null {\n"
+            + "export function main(): void {\n"
             + "  let c: C = { x: 1 };\n"
             + "  let v: number = c.bad$key;\n"
-            + "  return null;\n"
+            + "  return ;\n"
             + "}\n");
         assertError(classMember, "E4002",
             "a class member read stays the declared-field rejection");
@@ -4280,7 +4280,7 @@ public class CheckerTest {
                 String catchVar = c[0];
                 String range = c[1];
                 Path entry = cliProject(root, "catch_dollar_" + index++,
-                    "export function main(): null {\n"
+                    "export function main(): void {\n"
                     + "  try { throw {}; } catch (" + catchVar + ") {}\n"
                     + "  return null;\n"
                     + "}\n");
@@ -4652,13 +4652,13 @@ public class CheckerTest {
             "  y: string;\n" +
             "}\n" +
             "\n" +
-            "export function main(): null {\n" +
+            "export function main(): void {\n" +
             "  let a: Other.Point = { x: 1 };\n" +
             "  let x: number = a.x;\n" +
             "  let tag: boolean = Object.hasOwn(a, \"tag\");\n" +
             "  let p: Point = { y: \"s\" };\n" +
             "  let y: string = p.y;\n" +
-            "  return null;\n" +
+            "  return ;\n" +
             "}\n",
             resolver);
         assertNoErrors(out, "the imported provider's declaration owns its "
@@ -4705,10 +4705,10 @@ public class CheckerTest {
             + "  nick?: string;\n"
             + "}\n"
             + "\n"
-            + "export function main(): null {\n"
+            + "export function main(): void {\n"
             + "  let a: Other.Point = {};\n"
             + "  delete a.nick;\n"
-            + "  return null;\n"
+            + "  return ;\n"
             + "}\n",
             requiredProvider);
         check(required.result.diagnostics().stream()
@@ -4736,10 +4736,10 @@ public class CheckerTest {
             + "  nick: number;\n"
             + "}\n"
             + "\n"
-            + "export function main(): null {\n"
+            + "export function main(): void {\n"
             + "  let a: Other.Point = {};\n"
             + "  delete a.nick;\n"
-            + "  return null;\n"
+            + "  return ;\n"
             + "}\n",
             optionalProvider);
         check(optional.result.diagnostics().stream()
@@ -4786,50 +4786,50 @@ public class CheckerTest {
             + "class Point { nick?: string; }\n";
 
         CheckerOutput init = checkProgramWithModule(local
-            + "export function main(): null {\n"
+            + "export function main(): void {\n"
             + "  let y: Other.Point = {};\n"
             + "  let p: Point = y;\n"
-            + "  return null;\n"
+            + "  return ;\n"
             + "}\n", resolver);
         assertError(init, "E3019",
             "an imported value at a same-identity local declaration "
                 + "initialization is E3019");
 
         CheckerOutput reverse = checkProgramWithModule(local
-            + "export function main(): null {\n"
+            + "export function main(): void {\n"
             + "  let p: Point = {};\n"
             + "  let y: Other.Point = p;\n"
-            + "  return null;\n"
+            + "  return ;\n"
             + "}\n", resolver);
         assertError(reverse, "E3019",
             "a local value at a same-identity imported declaration "
                 + "initialization is E3019");
 
         CheckerOutput assignment = checkProgramWithModule(local
-            + "export function main(): null {\n"
+            + "export function main(): void {\n"
             + "  let y: Other.Point = {};\n"
             + "  let p: Point = {};\n"
             + "  p = y;\n"
-            + "  return null;\n"
+            + "  return ;\n"
             + "}\n", resolver);
         assertError(assignment, "E3019",
             "an assignment crossing the two same-identity declarations is "
                 + "E3019");
 
         CheckerOutput nullable = checkProgramWithModule(local
-            + "export function main(): null {\n"
+            + "export function main(): void {\n"
             + "  let y: Other.Point = {};\n"
             + "  let p: Point | null = y;\n"
-            + "  return null;\n"
+            + "  return ;\n"
             + "}\n", resolver);
         assertError(nullable, "E3019",
             "a nullable same-identity target keeps the crossing rejection");
 
         CheckerOutput argument = checkProgramWithModule(local
-            + "export function main(): null {\n"
+            + "export function main(): void {\n"
             + "  let y: Other.Point = {};\n"
             + "  take(y);\n"
-            + "  return null;\n"
+            + "  return ;\n"
             + "}\n"
             + "function take(p: Point): number { return 0; }\n", resolver);
         assertError(argument, "E3019",
@@ -4838,25 +4838,25 @@ public class CheckerTest {
 
         CheckerOutput returned = checkProgramWithModule(local
             + "function make(): Point { let y: Other.Point = {}; return y; }\n"
-            + "export function main(): null { return null; }\n", resolver);
+            + "export function main(): void { return ; }\n", resolver);
         assertError(returned, "E3019",
             "an imported value at a local declared-return position is E3019");
 
         CheckerOutput arrayElement = checkProgramWithModule(local
-            + "export function main(): null {\n"
+            + "export function main(): void {\n"
             + "  let y: Other.Point = {};\n"
             + "  let xs: Point[] = [y];\n"
-            + "  return null;\n"
+            + "  return ;\n"
             + "}\n", resolver);
         assertError(arrayElement, "E3019",
             "an imported value as a same-identity array element is E3019");
 
         CheckerOutput literalField = checkProgramWithModule(local
             + "class Holder { p: Point; }\n"
-            + "export function main(): null {\n"
+            + "export function main(): void {\n"
             + "  let y: Other.Point = {};\n"
             + "  let h: Holder = { p: y };\n"
-            + "  return null;\n"
+            + "  return ;\n"
             + "}\n", resolver);
         assertError(literalField, "E3019",
             "an imported value at a same-identity class-literal field is "
@@ -4871,9 +4871,9 @@ public class CheckerTest {
         CheckerOutput nested = checkProgramWithModule(local
             + "function f(x: Other.Point): Point { return {}; }\n"
             + "function g(x: Other.Point): Other.Point { return x; }\n"
-            + "export function main(): null {\n"
+            + "export function main(): void {\n"
             + "  let p: Point = f(g({}));\n"
-            + "  return null;\n"
+            + "  return ;\n"
             + "}\n", resolver);
         assertNoErrors(nested,
             "the nested-call literal is laid out by the callee parameter's "
@@ -4884,13 +4884,13 @@ public class CheckerTest {
         // initializing itself and the local declaration within itself are
         // legal, and the imported provider's own field stays readable.
         CheckerOutput control = checkProgramWithModule(local
-            + "export function main(): null {\n"
+            + "export function main(): void {\n"
             + "  let y: Other.Point = {};\n"
             + "  let y2: Other.Point = y;\n"
             + "  let n: number | undefined = y2.nick;\n"
             + "  let p: Point = {};\n"
             + "  let p2: Point = p;\n"
-            + "  return null;\n"
+            + "  return ;\n"
             + "}\n", resolver);
         assertNoErrors(control,
             "same-provider values remain compatible beside the distinct "
@@ -4957,14 +4957,14 @@ public class CheckerTest {
             String local = "import * as Other from \"./ir\";\n"
                 + "class Point { nick: number; }\n";
             CheckerOutput resolved = checkProgramWithModule(local
-                + "export function main(): null {\n"
-                + "  if (Object.hasOwn(Other.make(), \"nick\")) { return null; }\n"
+                + "export function main(): void {\n"
+                + "  if (Object.hasOwn(Other.make(), \"nick\")) { return ; }\n"
                 + "  let v: number = Other.make().a;\n"
                 + "  let y = Other.make();\n"
                 + "  delete y.nick;\n"
                 + "  let f: (x: Other.Point) => number = Other.take;\n"
                 + "  let n: number = f({ nick: \"s\", a: 1 });\n"
-                + "  return null;\n"
+                + "  return ;\n"
                 + "}\n", resolver);
             assertNoErrors(resolved,
                 "the optional receiver provider owns the has check, the call "
@@ -4979,18 +4979,18 @@ public class CheckerTest {
             String optionalLocal = "import * as Other from \"./strict\";\n"
                 + "class Point { nick?: string; }\n";
             CheckerOutput hasRequired = checkProgramWithModule(optionalLocal
-                + "export function main(): null {\n"
-                + "  if (Object.hasOwn(Other.make(), \"nick\")) { return null; }\n"
-                + "  return null;\n"
+                + "export function main(): void {\n"
+                + "  if (Object.hasOwn(Other.make(), \"nick\")) { return ; }\n"
+                + "  return ;\n"
                 + "}\n", resolver);
             assertNoErrors(hasRequired,
                 "the receiver provider's declared required field permits presence "
                     + "independently of the local optional declaration (" + order + ")");
             CheckerOutput deleteRequired = checkProgramWithModule(optionalLocal
-                + "export function main(): null {\n"
+                + "export function main(): void {\n"
                 + "  let y = Other.make();\n"
                 + "  delete y.nick;\n"
-                + "  return null;\n"
+                + "  return ;\n"
                 + "}\n", resolver);
             assertError(deleteRequired, "E4004",
                 "a required field of the receiver's declared provider is not "
@@ -5391,14 +5391,14 @@ public class CheckerTest {
         // -- The positive: an int-refined outer binding does not type the
         //    catch read, and the refinement is restored after the catch.
         String intRefined =
-            "export function main(): null {" +
+            "export function main(): void {" +
             "  let e: number | null = 1;" +
             "  if (e !== null) {" +
             "    try { throw { name: \"C_INT\", message: \"c\" }; }" +
             "    catch (e) { let captured: unknown = e; let error: Error = e as Error; }" +
             "    let afterCatch: number = e;" +
             "  }" +
-            "  return null;" +
+            "  return ;" +
             "}";
         CheckerOutput out = checkProgram(intRefined);
         assertNoErrors(out, "the unknown catch read and checked Error extraction under a number refinement");
@@ -5421,13 +5421,13 @@ public class CheckerTest {
 
         // -- The null refinement is the same distinct binding.
         CheckerOutput nullRefined = checkProgram(
-            "export function main(): null {" +
+            "export function main(): void {" +
             "  let e: number | null = null;" +
             "  if (e === null) {" +
             "    try { throw { name: \"C_NULL\", message: \"n\" }; }" +
             "    catch (e) { let captured: unknown = e; let error: Error = e as Error; }" +
             "  }" +
-            "  return null;" +
+            "  return ;" +
             "}");
         assertNoErrors(nullRefined, "the unknown catch read under a null refinement");
         TryStatement nullTry = findStatement(nullRefined.program().statements(), TryStatement.class);
@@ -5438,13 +5438,13 @@ public class CheckerTest {
         // -- The unsound inverse: a string refinement must not turn the
         //    catch binding into a string.
         CheckerOutput stringTransfer = checkProgram(
-            "export function main(): null {" +
+            "export function main(): void {" +
             "  let e: string | null = \"outer\";" +
             "  if (e !== null) {" +
             "    try { throw { name: \"C_STR\", message: \"s\" }; }" +
             "    catch (e) { let unsound: string = e; }" +
             "  }" +
-            "  return null;" +
+            "  return ;" +
             "}");
         assertErrorMessage(stringTransfer, "E3001",
             "Cannot assign unknown to string",
@@ -5453,13 +5453,13 @@ public class CheckerTest {
         // -- The reported defect's mirror: the catch binding is never the
         //    outer int either.
         CheckerOutput intTransfer = checkProgram(
-            "export function main(): null {" +
+            "export function main(): void {" +
             "  let e: number | null = 1;" +
             "  if (e !== null) {" +
             "    try { throw { name: \"C_INT\", message: \"i\" }; }" +
             "    catch (e) { let unsound: number = e; }" +
             "  }" +
-            "  return null;" +
+            "  return ;" +
             "}");
         assertErrorMessage(intTransfer, "E3001",
             "Cannot assign unknown to number",
@@ -5468,13 +5468,13 @@ public class CheckerTest {
         // -- A try-block declaration shadows a distinct binding, so the
         //    outer refinement survives the try/catch.
         CheckerOutput tryShadow = checkProgram(
-            "export function main(): null {" +
+            "export function main(): void {" +
             "  let e: number | null = 1;" +
             "  if (e !== null) {" +
             "    try { let e: string = \"inner\"; } catch (err) { }" +
             "    let afterCatch: number = e;" +
             "  }" +
-            "  return null;" +
+            "  return ;" +
             "}");
         assertNoErrors(tryShadow, "a try-block shadowing declaration keeps the outer refinement");
         IfStatement shadowIf = findStatement(tryShadow.program().statements(), IfStatement.class);
@@ -5490,7 +5490,7 @@ public class CheckerTest {
         //    same-named outer refinement survives the inner catch and the
         //    outer catch.
         CheckerOutput nestedCatchAssignment = checkProgram(
-            "export function main(): null {" +
+            "export function main(): void {" +
             "  let e: number | null = 1;" +
             "  if (e !== null) {" +
             "    try {" +
@@ -5500,7 +5500,7 @@ public class CheckerTest {
             "    } catch (outer) { }" +
             "    let afterOuter: number = e;" +
             "  }" +
-            "  return null;" +
+            "  return ;" +
             "}");
         assertNoErrors(nestedCatchAssignment,
             "a nested catch-binding reassignment keeps the outer refinement");
@@ -5523,7 +5523,7 @@ public class CheckerTest {
         // -- The same nesting under a string refinement: the reassigned catch
         //    binding is never the outer string either.
         CheckerOutput nestedString = checkProgram(
-            "export function main(): null {" +
+            "export function main(): void {" +
             "  let text: string | null = \"outer\";" +
             "  if (text !== null) {" +
             "    try {" +
@@ -5533,7 +5533,7 @@ public class CheckerTest {
             "    } catch (outer) { }" +
             "    let afterOuter: string = text;" +
             "  }" +
-            "  return null;" +
+            "  return ;" +
             "}");
         assertNoErrors(nestedString,
             "a nested catch-binding reassignment keeps a string refinement");
@@ -5568,14 +5568,14 @@ public class CheckerTest {
         assertErrorMessage(awaited, "E3001", "Cannot assign number | null to number",
             "an await inside the catch never resurrects the outer refinement");
         CheckerOutput outerAssigned = checkProgram(
-            "export function main(): null {" +
+            "export function main(): void {" +
             "  let value: number | null = 1;" +
             "  if (value !== null) {" +
             "    try { throw { name: \"C_SET\", message: \"s\" }; }" +
             "    catch (err) { value = null; }" +
             "    let unsound: number = value;" +
             "  }" +
-            "  return null;" +
+            "  return ;" +
             "}");
         assertErrorMessage(outerAssigned, "E3001", "Cannot assign number | null to number",
             "a catch-block assignment to the enclosing binding invalidates its refinement");
@@ -5583,13 +5583,13 @@ public class CheckerTest {
         // -- The resolver's own fact: the catch identifier is a distinct
         //    binding declared with unknown.
         String source =
-            "export function main(): null {" +
+            "export function main(): void {" +
             "  let e: number | null = 1;" +
             "  if (e !== null) {" +
             "    try { throw { name: \"C\", message: \"c\" }; }" +
             "    catch (e) { let captured: unknown = e; }" +
             "  }" +
-            "  return null;" +
+            "  return ;" +
             "}";
         LexResult lex = new Lexer(source, "test.deal").tokenize();
         ParseResult parse = new Parser(lex.tokens(), "test.deal").parse();
@@ -5962,7 +5962,7 @@ public class CheckerTest {
                 "export function f(): number { return true; }\n");
             Files.writeString(root.resolve("src/a.deal"),
                 "import * as z from \"./z\";\n"
-                    + "export function main(): null { return null; }\n"
+                    + "export function main(): void { return ; }\n"
                     + "function g(): number { return true; }\n");
             Path entry = root.resolve("src/a.deal").toAbsolutePath();
             Path jsonPath = root.resolve("diagnostics.json");

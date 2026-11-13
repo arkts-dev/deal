@@ -12,6 +12,6 @@ export function test_backend_temp_name_near_collision(): number {
   return __idx + value;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

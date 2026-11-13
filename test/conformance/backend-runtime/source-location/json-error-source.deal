@@ -11,6 +11,6 @@ export function test_source_location_json_error(): string {
   return JSON.stringify(t) as string;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

@@ -30,6 +30,6 @@ export function test_nested_try_runtime_error_caught(): number {
   return result;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

@@ -16,6 +16,6 @@ export function test_table_default_freshness_extended(): null {
   return null;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

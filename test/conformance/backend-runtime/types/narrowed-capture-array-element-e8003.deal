@@ -3,7 +3,7 @@
 // @expected: runtime-error E8003
 // @features: type-system, nullable, narrowing, arrays, runtime-errors
 
-export function main(): null {
+export function main(): void {
   let x: number | null = 1;
   let clear: () => null = function(): null {
     x = null;
@@ -13,5 +13,5 @@ export function main(): null {
     clear();
     let xs: number[] = [x];
   }
-  return null;
+  return ;
 }

@@ -41,4 +41,4 @@ export function test_function_upvalue_growth(): null {
   return null;
 }
 
-export function main(): null { return null; }
+export function main(): void { return ; }

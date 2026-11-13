@@ -16,6 +16,6 @@ export function test_jsonable_helper_exports(): null {
   throw { name: "TEST_FAIL", message: "helper export fromJson failed" };
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

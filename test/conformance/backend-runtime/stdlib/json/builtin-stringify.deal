@@ -4,7 +4,7 @@
 // @features: stdlib, json, classes
 class Packet { z: number; absent?: string; label: string; nil: null; ignored: undefined; }
 class References { callbacks: ((()=>number)|null)[]; errors: (Error|null)[]; }
-export function main(): null {
+export function main(): void {
   const packet: Packet = { ignored: undefined, nil: null, label: "\uD800", z: 1e21 };
   if ((JSON.stringify(packet) as string) !== "{\"z\":1e+21,\"label\":\"\\ud800\",\"nil\":null}") {
     throw { name: "CLASS", message: "JSON class order, presence and lone units" };
@@ -30,5 +30,5 @@ export function main(): null {
       || (refs.callbacks[0] as ()=>number) !== callback || (refs.errors[0] as Error) !== failure) {
     throw { name: "REFERENCES", message: "JSON reference-array identity and noninvocation" };
   }
-  return null;
+  return ;
 }

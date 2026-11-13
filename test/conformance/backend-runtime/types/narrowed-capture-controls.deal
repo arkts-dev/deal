@@ -50,7 +50,7 @@ function expectTrue(what: string, condition: boolean): null {
   return null;
 }
 
-export function main(): null {
+export function main(): void {
   // The nullable equality rows stay null tests: a declared nullable read is
   // never validated as the non-null type.
   let x: number | null = 1;
@@ -348,5 +348,5 @@ export function main(): null {
       expectCaught(e, "class reference equality", "E8001");
     }
   }
-  return null;
+  return ;
 }

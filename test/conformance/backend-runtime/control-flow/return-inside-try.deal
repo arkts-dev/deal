@@ -20,6 +20,6 @@ export function test_return_inside_try(): number {
   return 7;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

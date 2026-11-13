@@ -43,6 +43,6 @@ export function test_array_write_validation_after_rhs(): null {
   return null;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

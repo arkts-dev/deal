@@ -21,6 +21,6 @@ export function test_rethrow_across_function_boundary(): null {
   return null;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

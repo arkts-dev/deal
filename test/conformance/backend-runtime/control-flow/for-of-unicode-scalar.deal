@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: for-of, unicode, v1.2
 
-export function main(): null {
+export function main(): void {
   let count: number = 0;
   for (let c of "é") {
     count = count + 1;
@@ -14,5 +14,5 @@ export function main(): null {
   if (count !== 1) {
     throw { name: "TEST_FAIL", message: "for-of unicode: iteration count mismatch" };
   }
-  return null;
+  return ;
 }

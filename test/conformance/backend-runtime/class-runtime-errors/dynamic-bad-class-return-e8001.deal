@@ -17,6 +17,6 @@ export function test_dynamic_bad_class_return(): Box {
   throw { name: "TEST_FAIL", message: "refined class return branch skipped" };
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

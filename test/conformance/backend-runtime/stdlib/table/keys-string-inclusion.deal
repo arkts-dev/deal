@@ -29,6 +29,6 @@ export function test_table_keys_string_inclusion(): null {
   return null;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

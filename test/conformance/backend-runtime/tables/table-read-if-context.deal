@@ -3,8 +3,8 @@
 // @expected: runtime-ok
 // @features: tables, conditions, contextual-typing
 
-export function main(): null {
+export function main(): void {
   let t: Record<string, unknown> = { enabled: true };
-  if (t.enabled as boolean) { return null; }
+  if (t.enabled as boolean) { return ; }
   throw { name: "TEST_FAIL", message: "boolean table field was false" };
 }

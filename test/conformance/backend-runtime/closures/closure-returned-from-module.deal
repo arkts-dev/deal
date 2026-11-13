@@ -13,6 +13,6 @@ export function test_closure_returned_from_module(): number {
   return b;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

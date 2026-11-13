@@ -13,6 +13,6 @@ export function test_import_alias_member_access(): number {
   return x + y;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

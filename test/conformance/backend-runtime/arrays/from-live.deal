@@ -5,7 +5,7 @@ class Item {x:number;}
 function check(ok:boolean,label:string):void{if(!ok){throw {name:label,message:label};}}
 function one(x:number):number{return x+1;}
 function fromReturn(xs:number[]):number[]{return Array.from(xs,one);}
-export function main():null {
+export function main():void {
   let sources=0;let mappers=0;let effects="";let xs:number[]=[2,4];
   const source=():number[]=>{sources=sources+1;effects=effects+"s";return xs;};
   const mapper=():(x:number,i:number)=>number=>{mappers=mappers+1;effects=effects+"m";return (x:number,i:number):number=>{effects=effects+String(i);return x+i;};};
@@ -63,5 +63,5 @@ export function main():null {
   check(rejected,"stale mapper rejected");
   const recurse=(n:number):number=>{if(n===0){return 1;}const next=Array.from([n-1],(x:number):number=>recurse(x));return n+next[0];};
   check(recurse(4)===11,"recursive mapping");
-  return null;
+  return ;
 }

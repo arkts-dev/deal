@@ -138,9 +138,9 @@ public final class ErrorIdentityProductionTest {
     private static final String MUTATED_APP_SOURCE = """
         import * as lib from "./lib";
 
-        export function main(): null {
+        export function main(): void {
           let x: number = lib.raise();
-          return null;
+          return ;
         }
         """;
 

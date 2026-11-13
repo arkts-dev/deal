@@ -28,6 +28,6 @@ export function test_nested_run(): null {
   return null;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

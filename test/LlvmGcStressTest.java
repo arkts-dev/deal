@@ -633,8 +633,8 @@ public final class LlvmGcStressTest {
           return total;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -693,8 +693,8 @@ public final class LlvmGcStressTest {
           return counter;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -744,8 +744,8 @@ public final class LlvmGcStressTest {
           return projected.length;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -787,8 +787,8 @@ public final class LlvmGcStressTest {
           return after - before;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -835,8 +835,8 @@ public final class LlvmGcStressTest {
           return 1;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -913,8 +913,8 @@ public final class LlvmGcStressTest {
           return kept.length;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -941,8 +941,8 @@ public final class LlvmGcStressTest {
           return 1;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -991,8 +991,8 @@ public final class LlvmGcStressTest {
           return 1;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -1013,8 +1013,8 @@ public final class LlvmGcStressTest {
           return value;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -1035,8 +1035,8 @@ public final class LlvmGcStressTest {
           return value;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -1079,8 +1079,8 @@ public final class LlvmGcStressTest {
           return null;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 }

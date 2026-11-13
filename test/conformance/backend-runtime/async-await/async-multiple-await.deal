@@ -29,6 +29,6 @@ export async function test_multiple_await(): Promise<number> {
   return b;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

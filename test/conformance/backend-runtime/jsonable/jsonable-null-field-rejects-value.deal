@@ -5,12 +5,12 @@
 
 export class Marker { value: null; }
 
-export function main(): null {
+export function main(): void {
   let rejected = false;
   try { let invalid: Marker = JSON.parse("{\"value\":0}"); }
   catch (e) { let error = e as Error; rejected = error.name === "E8001" && error.message === "expected null"; }
   if (!rejected) { throw {name: "TEST_FAIL", message: "non-null value accepted"}; }
   let valid: Marker = JSON.parse("{\"value\":null}");
   if (valid.value !== null) { throw {name: "TEST_FAIL", message: "explicit null changed"}; }
-  return null;
+  return ;
 }

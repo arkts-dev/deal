@@ -127,7 +127,7 @@ public class DeclaredBodyCarrierProductionTest {
                               boolean recursive, List<Boolean> called, boolean implicit,
                               boolean alias) {
         return group(name, source, effects, recursive, called, implicit, alias,
-            null, null, "null", false);
+            null, null, "undefined", false);
     }
 
     private static Case self(String name, String source, List<String> effects,
@@ -138,7 +138,7 @@ public class DeclaredBodyCarrierProductionTest {
 
     private static final List<Case> CASES = List.of(
         body("acyclic-sibling", """
-            export function main(): null {
+            export function main(): void {
               let c: () => number = make(10);
               let v: number = c();
               if (v === 10) {
@@ -146,16 +146,16 @@ public class DeclaredBodyCarrierProductionTest {
               } else {
                 console.log("declared-body-sibling-bad");
               }
-              return null;
+              return ;
             }
             function make(base: number): () => number {
               let target = function(): number { return base; };
               let caller = function(): number { return target(); };
               return caller;
             }
-            """, List.of("declared-body-sibling-ok"), null, "null", 1, 0, false, false),
+            """, List.of("declared-body-sibling-ok"), null, "undefined", 1, 0, false, false),
         body("two-escaped-instances", """
-            export function main(): null {
+            export function main(): void {
               let a: () => number = make(10);
               let b: () => number = make(20);
               let av: number = a();
@@ -170,7 +170,7 @@ public class DeclaredBodyCarrierProductionTest {
               } else {
                 console.log("declared-body-instance-b-bad");
               }
-              return null;
+              return ;
             }
             function make(base: number): () => number {
               let target = function(): number { return base; };
@@ -178,7 +178,7 @@ public class DeclaredBodyCarrierProductionTest {
               return caller;
             }
             """, List.of("declared-body-instance-a-ok", "declared-body-instance-b-ok"),
-            null, "null", 1, 0, false, false),
+            null, "undefined", 1, 0, false, false),
         body("acyclic-sibling-async", """
             export async function drive(): Promise<number> {
               let c: () => Promise<number> = make(10);
@@ -190,7 +190,7 @@ public class DeclaredBodyCarrierProductionTest {
               }
               return v;
             }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             function make(base: number): () => Promise<number> {
               let target = async function(): Promise<number> { return base; };
               let caller = async function(): Promise<number> { return await target(); };
@@ -216,7 +216,7 @@ public class DeclaredBodyCarrierProductionTest {
               }
               return av + bv;
             }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             function make(base: number): () => Promise<number> {
               let target = async function(): Promise<number> { return base; };
               let caller = async function(): Promise<number> { return await target(); };
@@ -225,14 +225,14 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("declared-body-async-instance-a-ok",
                 "declared-body-async-instance-b-ok"), "drive", "num:0x1.ep4", 1, 0, false, false),
         body("forward-alias", """
-            export function main(): null {
+            export function main(): void {
               let v: number = g();
               if (v === 5) {
                 console.log("declared-body-forward-alias-ok");
               } else {
                 console.log("declared-body-forward-alias-bad");
               }
-              return null;
+              return ;
             }
             function g(): number {
               let alias: () => number = f;
@@ -240,7 +240,7 @@ public class DeclaredBodyCarrierProductionTest {
             }
             function f(): number { return helper(); }
             function helper(): number { return 5; }
-            """, List.of("declared-body-forward-alias-ok"), null, "null", 0, 0, false, false),
+            """, List.of("declared-body-forward-alias-ok"), null, "undefined", 0, 0, false, false),
         body("forward-alias-async", """
             export async function drive(): Promise<number> {
               let v: number = await g();
@@ -251,7 +251,7 @@ public class DeclaredBodyCarrierProductionTest {
               }
               return v;
             }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             async function g(): Promise<number> {
               let alias: () => Promise<number> = f;
               return await alias();
@@ -261,21 +261,21 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("declared-body-forward-alias-async-ok"), "drive", "num:0x1.4p2",
             0, 0, false, false),
         body("forward-alias-exported", """
-            export function main(): null {
+            export function main(): void {
               let v: number = g();
               if (v === 5) {
                 console.log("declared-body-forward-alias-exported-ok");
               } else {
                 console.log("declared-body-forward-alias-exported-bad");
               }
-              return null;
+              return ;
             }
             function g(): number {
               let alias: (n: number) => number = f;
               return alias(5);
             }
             export function f(n: number): number { return n; }
-            """, List.of("declared-body-forward-alias-exported-ok"), null, "null",
+            """, List.of("declared-body-forward-alias-exported-ok"), null, "undefined",
             0, 1, false, false),
         body("forward-alias-exported-async", """
             export async function drive(): Promise<number> {
@@ -287,7 +287,7 @@ public class DeclaredBodyCarrierProductionTest {
               }
               return v;
             }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             async function g(): Promise<number> {
               let alias: () => Promise<number> = f;
               return await alias();
@@ -298,20 +298,20 @@ public class DeclaredBodyCarrierProductionTest {
             0, 1, false, false),
         body("forward-alias-exported-reverse", """
             export function f(n: number): number { return n; }
-            export function main(): null {
+            export function main(): void {
               let v: number = g();
               if (v === 5) {
                 console.log("declared-body-forward-alias-exported-reverse-ok");
               } else {
                 console.log("declared-body-forward-alias-exported-reverse-bad");
               }
-              return null;
+              return ;
             }
             function g(): number {
               let alias: (n: number) => number = f;
               return alias(5);
             }
-            """, List.of("declared-body-forward-alias-exported-reverse-ok"), null, "null",
+            """, List.of("declared-body-forward-alias-exported-reverse-ok"), null, "undefined",
             0, 1, false, false),
         body("forward-alias-exported-async-reverse", """
             export async function f(): Promise<number> { return await helper(); }
@@ -320,7 +320,7 @@ public class DeclaredBodyCarrierProductionTest {
               let alias: () => Promise<number> = f;
               return await alias();
             }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             export async function drive(): Promise<number> {
               let v: number = await g();
               if (v === 5) {
@@ -342,7 +342,7 @@ public class DeclaredBodyCarrierProductionTest {
               }
               return v;
             }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             export async function f(): Promise<number> { return 5; }
             """, List.of("declared-body-exported-direct-await-ok"), "drive", "num:0x1.4p2",
             0, 1, false, false),
@@ -357,7 +357,7 @@ public class DeclaredBodyCarrierProductionTest {
               }
               return v;
             }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             export async function f(n: number): Promise<number> {
               let result: number = 0;
               if (n > 0) {
@@ -378,7 +378,7 @@ public class DeclaredBodyCarrierProductionTest {
               }
               return v;
             }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             export async function f(n: number): Promise<number> {
               let result: number = 0;
               if (n > 0) {
@@ -399,7 +399,7 @@ public class DeclaredBodyCarrierProductionTest {
               }
               return v;
             }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             export async function f(n: number): Promise<number> {
               let step: number = n;
               if (n <= 0) { return 0; }
@@ -419,7 +419,7 @@ public class DeclaredBodyCarrierProductionTest {
               }
               return v;
             }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             export async function f(n: number): Promise<number> {
               let result: number = 0;
               if (n > 0) {
@@ -431,13 +431,13 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("declared-body-recursive-deep-ok"), "drive", "num:0x1.8p1",
             0, 2, true, false),
         body("module-group-forward-alias", """
-            export function main(): null {
+            export function main(): void {
               if (f(1) === 42) {
                 console.log("declared-body-module-group-forward-alias-ok");
               } else {
                 console.log("declared-body-module-group-forward-alias-bad");
               }
-              return null;
+              return ;
             }
             function f(n: number): number {
               let alias: (n: number) => number = h;
@@ -450,17 +450,17 @@ public class DeclaredBodyCarrierProductionTest {
               return j(n - 1);
             }
             function j(n: number): number { return h(n); }
-            """, List.of("declared-body-module-group-forward-alias-ok"), null, "null",
+            """, List.of("declared-body-module-group-forward-alias-ok"), null, "undefined",
             1, 0, true, false),
         body("module-group-forward-carrier-alias", """
-            export function main(): null {
+            export function main(): void {
               let drive: (n: number) => number = f;
               if (drive(1) === 42) {
                 console.log("declared-body-module-group-forward-carrier-alias-ok");
               } else {
                 console.log("declared-body-module-group-forward-carrier-alias-bad");
               }
-              return null;
+              return ;
             }
             function f(n: number): number {
               let alias: (n: number) => number = h;
@@ -474,15 +474,15 @@ public class DeclaredBodyCarrierProductionTest {
             }
             function j(n: number): number { return h(n); }
             """, List.of("declared-body-module-group-forward-carrier-alias-ok"),
-            null, "null", 2, 0, true, false),
+            null, "undefined", 2, 0, true, false),
         body("module-group-reverse-alias", """
-            export function main(): null {
+            export function main(): void {
               if (f(1) === 42) {
                 console.log("declared-body-module-group-reverse-alias-ok");
               } else {
                 console.log("declared-body-module-group-reverse-alias-bad");
               }
-              return null;
+              return ;
             }
             function h(n: number): number {
               if (n <= 0) { return 42; }
@@ -495,7 +495,7 @@ public class DeclaredBodyCarrierProductionTest {
               return g(n - 1);
             }
             function g(n: number): number { return f(n); }
-            """, List.of("declared-body-module-group-reverse-alias-ok"), null, "null",
+            """, List.of("declared-body-module-group-reverse-alias-ok"), null, "undefined",
             1, 0, true, false),
         body("module-group-forward-alias-async", """
             export async function drive(): Promise<number> {
@@ -507,7 +507,7 @@ public class DeclaredBodyCarrierProductionTest {
               }
               return v;
             }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             async function f(n: number): Promise<number> {
               let alias: (n: number) => Promise<number> = h;
               if (n <= 0) { return await alias(0); }
@@ -531,7 +531,7 @@ public class DeclaredBodyCarrierProductionTest {
               }
               return v;
             }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             async function h(n: number): Promise<number> {
               if (n <= 0) { return 42; }
               return await j(n - 1);
@@ -546,31 +546,31 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("declared-body-module-group-reverse-alias-async-ok"),
             "drive", "num:0x1.5p5", 1, 0, true, false),
         body("forward-alias-exported-adapter", """
-            export function main(): null {
+            export function main(): void {
               let alias: (n: number, extra: number) => number = f;
               if (alias(1, 7) === 10) {
                 console.log("declared-body-forward-alias-exported-adapter-ok");
               } else {
                 console.log("declared-body-forward-alias-exported-adapter-bad");
               }
-              return null;
+              return ;
             }
             export function f(n: number): number { return n * 10; }
             """, List.of("declared-body-forward-alias-exported-adapter-ok"),
-            null, "null", 0, 0, false, true),
+            null, "undefined", 0, 0, false, true),
         body("forward-alias-exported-adapter-reverse", """
             export function f(n: number): number { return n * 10; }
-            export function main(): null {
+            export function main(): void {
               let alias: (n: number, extra: number) => number = f;
               if (alias(1, 7) === 10) {
                 console.log("declared-body-forward-alias-exported-adapter-reverse-ok");
               } else {
                 console.log("declared-body-forward-alias-exported-adapter-reverse-bad");
               }
-              return null;
+              return ;
             }
             """, List.of("declared-body-forward-alias-exported-adapter-reverse-ok"),
-            null, "null", 0, 0, false, true),
+            null, "undefined", 0, 0, false, true),
         body("forward-alias-exported-adapter-async", """
             export async function drive(): Promise<number> {
               let alias: (n: number, extra: number) => Promise<number> = f;
@@ -582,7 +582,7 @@ public class DeclaredBodyCarrierProductionTest {
               }
               return v;
             }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             export async function f(n: number): Promise<number> { return n * 10; }
             """, List.of("declared-body-forward-alias-exported-adapter-async-ok"),
             "drive", "num:0x1.4p3", 0, 1, false, true),
@@ -598,7 +598,7 @@ public class DeclaredBodyCarrierProductionTest {
               }
               return v;
             }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             """, List.of("declared-body-forward-alias-exported-adapter-async-reverse-ok"),
             "drive", "num:0x1.4p3", 0, 1, false, true),
         body("adapter-over-async-external", """
@@ -614,7 +614,7 @@ public class DeclaredBodyCarrierProductionTest {
               }
               return v;
             }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             """, List.of("declared-body-adapter-external-ok"), "drive", "num:0x1.0p1",
             0, 0, false, false, Map.of("adapter_lib.deal", """
                 export async function plus(x: number): Promise<number> { return x + 1; }
@@ -630,7 +630,7 @@ public class DeclaredBodyCarrierProductionTest {
               }
               return v;
             }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             function make(base: number): () => Promise<number> {
               let target = async function(): Promise<number> { return base; };
               let caller = async function(): Promise<number> {
@@ -659,7 +659,7 @@ public class DeclaredBodyCarrierProductionTest {
               }
               return av + bv;
             }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             function make(base: number): () => Promise<number> {
               let target = async function(): Promise<number> { return base; };
               let caller = async function(): Promise<number> {
@@ -672,7 +672,7 @@ public class DeclaredBodyCarrierProductionTest {
                 "declared-body-nested-adapter-instance-b-ok"), "drive", "num:0x1.ep4",
             1, 0, false, false),
         group("called-explicit", """
-            export function main(): null {
+            export function main(): void {
               let f: (n: number) => number = function(n: number): number {
                 if (n <= 0) { return 0; }
                 return n + g(n - 1);
@@ -686,12 +686,12 @@ public class DeclaredBodyCarrierProductionTest {
               } else {
                 console.log("nested-group-called-explicit-bad");
               }
-              return null;
+              return ;
             }
             """, List.of("nested-group-called-explicit-ok"), true,
             List.of(true, true), false, false),
         group("called-implicit", """
-            export function main(): null {
+            export function main(): void {
               let f: (n: number) => void = function(n: number): void {
                 if (n > 0) { g(n - 1); }
               };
@@ -700,12 +700,12 @@ public class DeclaredBodyCarrierProductionTest {
               };
               f(4);
               console.log("nested-group-called-implicit-ok");
-              return null;
+              return ;
             }
             """, List.of("nested-group-called-implicit-ok"), true,
             List.of(true, true), true, false),
         group("called-value-reference", """
-            export function main(): null {
+            export function main(): void {
               let f: (n: number) => number = function(n: number): number {
                 if (n <= 0) { return 0; }
                 return n + g(n - 1);
@@ -719,12 +719,12 @@ public class DeclaredBodyCarrierProductionTest {
               } else {
                 console.log("nested-group-called-value-reference-bad");
               }
-              return null;
+              return ;
             }
             """, List.of("nested-group-called-value-reference-ok"), false,
             List.of(true, true), false, false),
         group("called-alias", """
-            export function main(): null {
+            export function main(): void {
               let f: (n: number) => number = function(n: number): number {
                 if (n <= 0) { return 0; }
                 return n + g(n - 1);
@@ -738,12 +738,12 @@ public class DeclaredBodyCarrierProductionTest {
               } else {
                 console.log("nested-group-alias-bad");
               }
-              return null;
+              return ;
             }
             """, List.of("nested-group-alias-ok"), true,
             List.of(true, true), false, true),
         group("called-alias-captured", """
-            export function main(): null {
+            export function main(): void {
               let base: number = 10;
               let f: (n: number) => number = function(n: number): number {
                 if (n <= 0) { return base; }
@@ -758,12 +758,12 @@ public class DeclaredBodyCarrierProductionTest {
               } else {
                 console.log("nested-group-alias-captured-bad");
               }
-              return null;
+              return ;
             }
             """, List.of("nested-group-alias-captured-ok"), true,
             List.of(true, true), false, true),
         group("called-alias-later", """
-            export function main(): null {
+            export function main(): void {
               let g: (n: number) => number = function(n: number): number {
                 let fRef: (n: number) => number = f;
                 return fRef(n);
@@ -777,7 +777,7 @@ public class DeclaredBodyCarrierProductionTest {
               } else {
                 console.log("nested-group-alias-later-bad");
               }
-              return null;
+              return ;
             }
             """, List.of("nested-group-alias-later-ok"), true,
             List.of(true, true), false, true),
@@ -790,18 +790,18 @@ public class DeclaredBodyCarrierProductionTest {
               let fRef: (n: number) => number = f;
               return fRef(n);
             }
-            export function main(): null {
+            export function main(): void {
               if (f(4) === 10) {
                 console.log("module-group-alias-ok");
               } else {
                 console.log("module-group-alias-bad");
               }
-              return null;
+              return ;
             }
             """, List.of("module-group-alias-ok"), true,
             List.of(true, true), false, true),
         group("never-called-explicit-null", """
-            export function main(): null {
+            export function main(): void {
               let f: () => null = function(): null {
                 let gRef: () => null = g;
                 return null;
@@ -810,11 +810,11 @@ public class DeclaredBodyCarrierProductionTest {
                 let fRef: () => null = f;
                 return null;
               };
-              return null;
+              return ;
             }
             """, List.of(), false, List.of(false, false), false, false),
         group("never-called-explicit-number", """
-            export function main(): null {
+            export function main(): void {
               let f: () => number = function(): number {
                 let gRef: () => number = g;
                 return 0;
@@ -823,18 +823,18 @@ public class DeclaredBodyCarrierProductionTest {
                 let fRef: () => number = f;
                 return 1;
               };
-              return null;
+              return ;
             }
             """, List.of(), false, List.of(false, false), false, false),
         group("never-called-implicit", """
-            export function main(): null {
+            export function main(): void {
               let f: () => void = function(): void { let gRef: () => void = g; };
               let g: () => void = function(): void { let fRef: () => void = f; };
-              return null;
+              return ;
             }
             """, List.of(), false, List.of(false, false), true, false),
         group("captured-called", """
-            export function main(): null {
+            export function main(): void {
               let base: number = 10;
               let f: (n: number) => number = function(n: number): number {
                 if (n <= 0) { return base; }
@@ -846,12 +846,12 @@ public class DeclaredBodyCarrierProductionTest {
               } else {
                 console.log("nested-group-captured-bad");
               }
-              return null;
+              return ;
             }
             """, List.of("nested-group-captured-ok"), true,
             List.of(true, true), false, false),
         group("nested-inside-function", """
-            export function main(): null {
+            export function main(): void {
               let outer: () => number = function(): number {
                 let f: (n: number) => number = function(n: number): number {
                   if (n <= 0) { return 0; }
@@ -865,12 +865,12 @@ public class DeclaredBodyCarrierProductionTest {
               } else {
                 console.log("nested-group-inside-function-bad");
               }
-              return null;
+              return ;
             }
             """, List.of("nested-group-inside-function-ok"), true,
             List.of(true, true), false, false),
         group("escaped-two-groups", """
-            export function main(): null {
+            export function main(): void {
               let a: (n: number) => number = make(10);
               let b: (n: number) => number = make(20);
               if (a(3) === 10) {
@@ -883,7 +883,7 @@ public class DeclaredBodyCarrierProductionTest {
               } else {
                 console.log("escaped-group-b-bad");
               }
-              return null;
+              return ;
             }
             function make(base: number): (n: number) => number {
               let f: (n: number) => number = function(n: number): number {
@@ -896,7 +896,7 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("escaped-group-a-ok", "escaped-group-b-ok"), true,
             List.of(true, true), false, false),
         group("escaped-two-groups-recursion", """
-            export function main(): null {
+            export function main(): void {
               let a: (n: number) => number = make(10);
               let b: (n: number) => number = make(20);
               if (a(3) === 17) {
@@ -909,7 +909,7 @@ public class DeclaredBodyCarrierProductionTest {
               } else {
                 console.log("escaped-group-recursion-b-bad");
               }
-              return null;
+              return ;
             }
             function make(base: number): (n: number) => number {
               let f: (n: number) => number = function(n: number): number {
@@ -924,7 +924,7 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("escaped-group-recursion-a-ok", "escaped-group-recursion-b-ok"),
             true, List.of(true, true), false, false, null, null, "null", true),
         group("escaped-two-groups-alias-recursion", """
-            export function main(): null {
+            export function main(): void {
               let a: (n: number) => number = make(10);
               let b: (n: number) => number = make(20);
               if (a(3) === 17) {
@@ -937,7 +937,7 @@ public class DeclaredBodyCarrierProductionTest {
               } else {
                 console.log("escaped-group-alias-recursion-b-bad");
               }
-              return null;
+              return ;
             }
             function make(base: number): (n: number) => number {
               let f: (n: number) => number = function(n: number): number {
@@ -955,7 +955,7 @@ public class DeclaredBodyCarrierProductionTest {
                 "escaped-group-alias-recursion-b-ok"), true, List.of(true, true),
             false, true, null, null, "null", true),
         group("param-origin-contextual", """
-            export function main(): null {
+            export function main(): void {
               let f: (n: number) => number = function(n: number): number {
                 let gRef: (n: number) => number = g;
                 return n;
@@ -967,7 +967,7 @@ public class DeclaredBodyCarrierProductionTest {
               let value: number | null = 1;
               let clear: () => void = function(): void { value = null; };
               if (value !== null) { clear(); f(value); }
-              return null;
+              return ;
             }
             """, List.of(), false, List.of(true, false), false, false,
             new FailurePin("E8001", "function f(n: "), null, "null", false),
@@ -997,7 +997,7 @@ public class DeclaredBodyCarrierProductionTest {
               let g: (n: number) => Promise<number> = async function(n: number): Promise<number> { return await f(n); };
               return f;
             }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             """, List.of("async-escaped-group-a-ok", "async-escaped-group-b-ok"),
             true, List.of(true, true), false, false, null, "drive", "num:0x1.ep4", false),
         group("async-param-origin", """
@@ -1016,7 +1016,7 @@ public class DeclaredBodyCarrierProductionTest {
               let g: (n: number) => Promise<number> = async function(n: number): Promise<number> { return await f(n); };
               return f;
             }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             """, List.of(), true, List.of(true, true), false, false,
             new FailurePin("E8001", "async function g(n: "), "drive", "null", false),
         group("async-escaped-two-groups-alias", """
@@ -1046,7 +1046,7 @@ public class DeclaredBodyCarrierProductionTest {
               let g: (n: number) => Promise<number> = async function(n: number): Promise<number> { return await f(n); };
               return f;
             }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             """, List.of("async-escaped-group-alias-a-ok", "async-escaped-group-alias-b-ok"),
             true, List.of(true, true), false, false, null, "drive", "num:0x1.ep4", false),
         group("async-escaped-two-groups-alias-later", """
@@ -1076,7 +1076,7 @@ public class DeclaredBodyCarrierProductionTest {
               };
               return f;
             }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             """, List.of("async-escaped-group-alias-later-a-ok",
                 "async-escaped-group-alias-later-b-ok"), true, List.of(true, true),
             false, false, null, "drive", "num:0x1.ep4", false),
@@ -1107,7 +1107,7 @@ public class DeclaredBodyCarrierProductionTest {
               let g: (n: number) => Promise<number> = async function(n: number): Promise<number> { return await f(n); };
               return f;
             }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             """, List.of("async-escaped-group-param-a-ok", "async-escaped-group-param-b-ok"),
             true, List.of(true, true), false, false, null, "drive", "num:0x1.2p5", false),
         group("async-escaped-two-groups-alias-param", """
@@ -1138,7 +1138,7 @@ public class DeclaredBodyCarrierProductionTest {
               let g: (n: number) => Promise<number> = async function(n: number): Promise<number> { return await f(n); };
               return f;
             }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             """, List.of("async-escaped-group-alias-param-a-ok",
                 "async-escaped-group-alias-param-b-ok"), true, List.of(true, true),
             false, false, null, "drive", "num:0x1.2p5", false),
@@ -1171,7 +1171,7 @@ public class DeclaredBodyCarrierProductionTest {
               let g: (n: number) => Promise<number> = async function(n: number): Promise<number> { return await f(n); };
               return f;
             }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             """, List.of("async-escaped-group-captured-a-ok",
                 "async-escaped-group-captured-b-ok"), true, List.of(true, true),
             false, false, null, "drive", "num:0x1.5p5", false),
@@ -1205,12 +1205,12 @@ public class DeclaredBodyCarrierProductionTest {
               let g: (n: number) => Promise<number> = async function(n: number): Promise<number> { return await f(n); };
               return f;
             }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             """, List.of("async-escaped-group-alias-captured-a-ok",
                 "async-escaped-group-alias-captured-b-ok"), true, List.of(true, true),
             false, false, null, "drive", "num:0x1.5p5", false),
         self("nested-sync", """
-            export function main(): null {
+            export function main(): void {
               let base: number = 5;
               let f: (n: number) => number = function(n: number): number {
                 if (n <= 0) { return base; }
@@ -1222,24 +1222,24 @@ public class DeclaredBodyCarrierProductionTest {
               } else {
                 console.log("self-alias-nested-sync-bad");
               }
-              return null;
+              return ;
             }
-            """, List.of("self-alias-nested-sync-ok"), null, "null", true),
+            """, List.of("self-alias-nested-sync-ok"), null, "undefined", true),
         self("module-sync", """
             function f(n: number): number {
               if (n <= 0) { return 5; }
               let again: (n: number) => number = f;
               return n + again(n - 1);
             }
-            export function main(): null {
+            export function main(): void {
               if (f(4) === 15) {
                 console.log("self-alias-module-sync-ok");
               } else {
                 console.log("self-alias-module-sync-bad");
               }
-              return null;
+              return ;
             }
-            """, List.of("self-alias-module-sync-ok"), null, "null", false),
+            """, List.of("self-alias-module-sync-ok"), null, "undefined", false),
         self("nested-async", """
             export async function drive(): Promise<number> {
               let base: number = 5;
@@ -1259,7 +1259,7 @@ public class DeclaredBodyCarrierProductionTest {
               }
               return v;
             }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             """, List.of("self-alias-nested-async-leaf", "self-alias-nested-async-ok"),
             "drive", "num:0x1.4p2", true),
         self("module-async", """
@@ -1280,7 +1280,7 @@ public class DeclaredBodyCarrierProductionTest {
               }
               return v;
             }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             """, List.of("self-alias-module-async-leaf", "self-alias-module-async-ok"),
             "drive", "num:0x1.4p2", false),
         self("direct-accum", """
@@ -1298,7 +1298,7 @@ public class DeclaredBodyCarrierProductionTest {
               }
               return v;
             }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             """, List.of("async-recursion-direct-ok"), "drive", "num:0x1.8p2", false),
         self("alias-accum", """
             async function f(n: number): Promise<number> {
@@ -1316,7 +1316,7 @@ public class DeclaredBodyCarrierProductionTest {
               }
               return v;
             }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             """, List.of("async-recursion-alias-ok"), "drive", "num:0x1.8p2", false),
         self("direct-accum-fail", """
             async function f(n: number): Promise<number> {
@@ -1336,7 +1336,7 @@ public class DeclaredBodyCarrierProductionTest {
                 return 1;
               }
             }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             """, List.of("async-recursion-direct-fail:E8002"), "drive", "num:0x1.0p0", false),
         self("alias-accum-fail", """
             async function f(n: number): Promise<number> {
@@ -1357,7 +1357,7 @@ public class DeclaredBodyCarrierProductionTest {
                 return 1;
               }
             }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             """, List.of("async-recursion-alias-fail:E8002"), "drive", "num:0x1.0p0", false),
         self("seq-await", """
             async function step(n: number): Promise<number> { return n; }
@@ -1381,7 +1381,7 @@ public class DeclaredBodyCarrierProductionTest {
               }
               return total;
             }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             """, List.of("seq-await-fail:E8002"), "drive", "num:0x1.356p12", false));
 
     private record Lowered(ExecutableLoweredProject project,

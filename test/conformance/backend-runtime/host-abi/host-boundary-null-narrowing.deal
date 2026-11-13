@@ -4,4 +4,4 @@
 // @features: host-abi, string, empty-value, boundary-checks
 
 import * as host from "host/boundary";
-export function main(): null { let value: string = host.echoString(""); if (value !== "") { throw { name: "TEST_FAIL", message: "host empty string mapping" }; } return null; }
+export function main(): void { let value: string = host.echoString(""); if (value !== "") { throw { name: "TEST_FAIL", message: "host empty string mapping" }; } return ; }

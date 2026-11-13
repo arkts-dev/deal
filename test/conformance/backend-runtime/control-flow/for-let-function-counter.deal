@@ -262,7 +262,7 @@ function testNullableFunctionCounter(): void {
   return;
 }
 
-export function main(): null {
+export function main(): void {
   testDeclarationInitializerAndReassignment();
   testExpressionInitializer();
   testOmittedUpdateWithBodyAssignment();
@@ -279,7 +279,7 @@ export function main(): null {
   testShadowedInitializerReadsTheEnclosingBinding();
   testIntrinsicCounter();
   testNullableFunctionCounter();
-  return null;
+  return ;
 }
 
 function int(value: number): number { return value; }

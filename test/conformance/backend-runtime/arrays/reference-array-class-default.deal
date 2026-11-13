@@ -5,8 +5,8 @@
 
 class Packet { payload: number[]; }
 
-export function main(): null {
+export function main(): void {
   let packet: Packet = {payload: [0, 0]};
   if (packet.payload.length !== 2) { throw { name: "TEST_FAIL", message: "number[] class field mismatch" }; }
-  return null;
+  return ;
 }

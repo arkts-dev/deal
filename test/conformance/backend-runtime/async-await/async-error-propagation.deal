@@ -35,6 +35,6 @@ export async function outer(): Promise<string> {
   return "E_INNER";
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

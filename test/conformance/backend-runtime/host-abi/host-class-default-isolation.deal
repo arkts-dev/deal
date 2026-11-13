@@ -39,6 +39,6 @@ export function test_host_class_default_isolation(): string {
   return "host class default isolation ok";
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

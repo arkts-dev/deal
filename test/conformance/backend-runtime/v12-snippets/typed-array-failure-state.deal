@@ -4,10 +4,10 @@
 // @features: v1.2, runtime, corner-case
 
 import * as c from "std/console";
-export function main(): null {
+export function main(): void {
  let xs: number[] = [7]; let alias: number[] = xs; let t: Record<string, unknown> = {bad:"not-int"}; let count: number = 0;
  try {xs[0] = t.bad as number;} catch(e) {count = count + 1;}
  try {xs[xs.length] = t.bad as number;} catch(e) {count = count + 1;}
  if(count !== 2 || alias.length !== 1 || alias[0] !== 7) {throw {name:"TEST_FAIL",message:"failed element checks mutated storage"};}
- c.log("typed-array-failure-state"); return null;
+ c.log("typed-array-failure-state"); return ;
 }

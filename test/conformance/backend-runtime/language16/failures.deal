@@ -9,7 +9,7 @@ function require(condition: boolean, message: string): void {
   if (!condition) { throw {name: "FAIL", message: message}; }
 }
 class Bucket { values: ((n: number) => number)[]; }
-export function main(): null {
+export function main(): void {
   let callbacks: ((n: number) => number)[] = [function(n: number): number { return n; }];
   let bucket: Bucket = {values: callbacks};
   let captured: unknown = callbacks;
@@ -39,5 +39,5 @@ export function main(): null {
   try { let invalid = value as ((n: number) => string)[]; }
   catch (e) { if (e instanceof Error) { caught = e.name === "E8001"; } }
   require(caught, "nested function nullish descriptor mismatch");
-  return null;
+  return ;
 }

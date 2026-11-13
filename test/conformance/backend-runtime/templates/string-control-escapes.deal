@@ -7,7 +7,7 @@ function check(ok:boolean):void {
   if (!ok) { throw {name:"TEST",message:"string escape decoding"}; }
 }
 
-export function main():null {
+export function main():void {
   check("\b\f\v\0" === `\u0008\u000c\u000b\u0000`);
   check('\b\f\v\0' === "\x08\x0c\x0b\x00");
   check("\0".length === 1);
@@ -22,5 +22,5 @@ b"}` === "ab");
 b" === "ab");
   check("a\
 b" === "ab");
-  return null;
+  return ;
 }

@@ -7,7 +7,7 @@ function check(ok:boolean):void {
   if(!ok){throw {name:"TEST",message:"string slice"};}
 }
 
-export function main():null {
+export function main():void {
   check("abcd".slice(1)==="bcd");
   check("abcd".slice(-2)==="cd");
   check("abcd".slice(-1.9)==="d");
@@ -55,5 +55,5 @@ export function main():null {
   try {destination=receiver().slice(start(),failEnd());}
   catch(e){check((e as Error).message==="end");}
   check(events==="rsu" && destination==="kept");
-  return null;
+  return ;
 }

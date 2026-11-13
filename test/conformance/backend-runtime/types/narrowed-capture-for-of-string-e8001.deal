@@ -3,7 +3,7 @@
 // @expected: runtime-error E8001
 // @features: type-system, nullable, narrowing, control-flow, for-of, strings, runtime-errors
 
-export function main(): null {
+export function main(): void {
   let name: string | null = "ab";
   let clear: () => null = function(): null {
     name = null;
@@ -15,5 +15,5 @@ export function main(): null {
       throw { name: "TEST_FAIL", message: "the loop body must not run" };
     }
   }
-  return null;
+  return ;
 }

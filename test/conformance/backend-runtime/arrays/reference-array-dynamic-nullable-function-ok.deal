@@ -22,6 +22,6 @@ export function test_array_dynamic_nullable_function_ok(): string {
   return "dynamic ?(number[])->number[] ok";
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

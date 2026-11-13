@@ -7,7 +7,7 @@ export class Message {
   tag?: string | null;
 }
 
-export function main(): null {
+export function main(): void {
   let destination: Message = {text: "kept", note: null};
   let original = destination;
   let rejected = false;
@@ -35,5 +35,5 @@ export function main(): null {
     throw { name: "SMOKE_NUMBER", message: "binary64 arithmetic changed" };
   }
   c.log(str.trim(` smoke ${supplied.text} `));
-  return null;
+  return ;
 }

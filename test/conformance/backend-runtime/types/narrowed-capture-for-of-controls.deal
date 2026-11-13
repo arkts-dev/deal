@@ -24,7 +24,7 @@ function expectCaught(what: string, e: Error, code: string): null {
   return null;
 }
 
-export function main(): null {
+export function main(): void {
   // A valid refinement is admitted unchanged: the narrowed array iterable
   // still supplies every element once.
   let items: number[] | null = [1, 2, 3];
@@ -183,5 +183,5 @@ export function main(): null {
     expectEqual("string iterable admission raised", caught, 1);
     expectEqual("string iterable body visits", visits, 0);
   }
-  return null;
+  return ;
 }

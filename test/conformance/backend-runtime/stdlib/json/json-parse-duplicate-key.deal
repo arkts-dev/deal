@@ -9,6 +9,6 @@ export function test_json_parse_duplicate_key(): Record<string, unknown> {
   return JSON.parse("{\"a\":1,\"a\":2}");
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

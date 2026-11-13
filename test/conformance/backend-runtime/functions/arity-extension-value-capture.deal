@@ -21,7 +21,7 @@ function widen(source: () => number): (ignored: number) => number {
   return source;
 }
 
-export function main(): null {
+export function main(): void {
   let source: () => number = one;
   let saved: (ignored: number) => number = source;
   source = two;
@@ -91,5 +91,5 @@ export function main(): null {
   check(stringValues[0](0) === 1);
   check(stringValues[1](0) === 2);
   output.log("OK");
-  return null;
+  return ;
 }

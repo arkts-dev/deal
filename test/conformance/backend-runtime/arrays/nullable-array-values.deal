@@ -13,4 +13,4 @@ export function test_nullable_array_values(): null {
   return null;
 }
 
-export function main(): null { return null; }
+export function main(): void { return ; }

@@ -5,7 +5,7 @@
 import * as host from "host/probe";
 class Item {x:number; stable:number;}
 function check(ok:boolean):void { if(!ok){throw {name:"POP",message:"mismatch"};} }
-export function main():null {
+export function main():void {
   let xs:number[]=[4,9]; let alias=xs;
   let nested:number[][]=[xs]; let dynamic:unknown[]=[xs]; let dynamicAlias:unknown=xs;
   host.keep(xs); host.corrupt(); let caught=false;
@@ -46,5 +46,5 @@ export function main():null {
   host.damage(null,true);
   check((items.pop() as Item)===item && item.x===9 && item.stable===4);
   check(records.length===0 && data.length===0);
-  return null;
+  return ;
 }

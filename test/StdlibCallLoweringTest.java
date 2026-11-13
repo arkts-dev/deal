@@ -387,8 +387,8 @@ public class StdlibCallLoweringTest {
                 "main.deal", """
                     import * as lib from "./lib";
 
-                    export function main(): null {
-                      return null;
+                    export function main(): void {
+                      return ;
                     }
                     """,
                 "lib.deal", """
@@ -435,9 +435,9 @@ public class StdlibCallLoweringTest {
                       return null;
                     }
 
-                    function main(): null {
+                    function main(): void {
                       run();
-                      return null;
+                      return;
                     }
                     """), "main.deal");
             if (checked == null) {
@@ -706,8 +706,8 @@ public class StdlibCallLoweringTest {
                 "main.deal", """
                     import * as lib from "./lib";
 
-                    export function main(): null {
-                      return null;
+                    export function main(): void {
+                      return ;
                     }
                     """,
                 "lib.deal", """
@@ -723,9 +723,9 @@ public class StdlibCallLoweringTest {
                       return null;
                     }
 
-                    function main(): null {
+                    function main(): void {
                       run();
-                      return null;
+                      return;
                     }
                     """), "main.deal");
             if (checked == null) {
@@ -836,8 +836,8 @@ public class StdlibCallLoweringTest {
                 "main.deal", """
                     import * as lib from "./lib";
 
-                    export function main(): null {
-                      return null;
+                    export function main(): void {
+                      return ;
                     }
                     """,
                 "util.deal", """
@@ -853,9 +853,9 @@ public class StdlibCallLoweringTest {
                       return null;
                     }
 
-                    function main(): null {
+                    function main(): void {
                       run();
-                      return null;
+                      return;
                     }
                     """), "main.deal");
             if (checked == null) {
@@ -904,8 +904,8 @@ public class StdlibCallLoweringTest {
                 "main.deal", """
                     import * as lib from "./lib";
 
-                    export function main(): null {
-                      return null;
+                    export function main(): void {
+                      return ;
                     }
                     """,
                 "lib.deal", """
@@ -917,9 +917,9 @@ public class StdlibCallLoweringTest {
                       return null;
                     }
 
-                    function main(): null {
+                    function main(): void {
                       run();
-                      return null;
+                      return;
                     }
                     """), "main.deal");
             if (checked == null) {
@@ -1097,8 +1097,8 @@ public class StdlibCallLoweringTest {
                 "main.deal", """
                     import * as lib from "./lib";
 
-                    export function main(): null {
-                      return null;
+                    export function main(): void {
+                      return ;
                     }
                     """,
                 "lib.deal", """
@@ -1109,9 +1109,9 @@ public class StdlibCallLoweringTest {
                       return null;
                     }
 
-                    function main(): null {
+                    function main(): void {
                       run();
-                      return null;
+                      return;
                     }
                     """), "main.deal");
             if (checked == null) {
@@ -1276,8 +1276,8 @@ public class StdlibCallLoweringTest {
                 "main.deal", """
                     import * as lib from "./lib";
 
-                    export function main(): null {
-                      return null;
+                    export function main(): void {
+                      return ;
                     }
                     """,
                 "lib.deal", """
@@ -1294,9 +1294,9 @@ public class StdlibCallLoweringTest {
                       return null;
                     }
 
-                    function main(): null {
+                    function main(): void {
                       run();
-                      return null;
+                      return;
                     }
                     """), "main.deal");
             if (checked == null) {
@@ -1388,8 +1388,8 @@ public class StdlibCallLoweringTest {
                 "main.deal", """
                     import * as lib from "./lib";
 
-                    export function main(): null {
-                      return null;
+                    export function main(): void {
+                      return ;
                     }
                     """,
                 "lib.deal", """
@@ -1400,9 +1400,9 @@ public class StdlibCallLoweringTest {
                       return null;
                     }
 
-                    function main(): null {
+                    function main(): void {
                       run();
-                      return null;
+                      return;
                     }
                     """), "main.deal");
             if (checked == null) {

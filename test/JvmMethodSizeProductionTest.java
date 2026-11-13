@@ -56,15 +56,15 @@ public final class JvmMethodSizeProductionTest {
         }
         source.append(";\n}\n").append(async
             ? "export async function drive(): Promise<number> {\n"
-            : "export function main(): null {\n")
+            : "export function main(): void {\n")
             .append("  let total: number = 0;\n");
         for (int i = 0; i < calls; i++) {
             source.append("  total = total + ").append(async ? "await " : "").append("wide(2);\n");
         }
         source.append("  if (total !== ").append(calls * (width * (width + 1) / 2 + 2 * width))
             .append(") { throw { name: \"TEST_FAIL\", message: \"caller state\" }; }\n")
-            .append(async ? "  return total;\n}\nexport function main(): null { return null; }\n"
-                : "  return null;\n}\n");
+            .append(async ? "  return total;\n}\nexport function main(): void { return ; }\n"
+                : "  return;\n}\n");
         source.append("export function resultlessSmall(): void { let v: number = 1; }\n")
             .append("export function resultless(): void {\n");
         for (int i = 0; i < width; i++) {

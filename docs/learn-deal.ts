@@ -203,8 +203,8 @@ function checkedRead(values: number[]): number | null {
   }
 }
 
-// An executable entry exports a synchronous main(): null.
-export function main(): null {
+// An executable entry exports a synchronous main(): void.
+export function main(): void {
   let result: number = arrays();
-  return null;
+  return;
 }

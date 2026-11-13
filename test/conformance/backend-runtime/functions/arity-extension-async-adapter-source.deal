@@ -45,6 +45,6 @@ export async function test_arity_extension_async_adapter_source(): Promise<numbe
   return first + second + third;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

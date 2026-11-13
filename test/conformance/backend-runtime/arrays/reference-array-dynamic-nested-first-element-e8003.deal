@@ -16,6 +16,6 @@ export function test_array_dynamic_nested_first_element(): number {
   throw { name: "TEST_FAIL", message: "nested element branch skipped" };
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

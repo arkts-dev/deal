@@ -38,6 +38,6 @@ export function test_array_function_array_closure(): number {
   return 0;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

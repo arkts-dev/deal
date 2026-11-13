@@ -15,7 +15,7 @@ function require(what: string, condition: boolean): null {
   return null;
 }
 
-export function main(): null {
+export function main(): void {
   let decodedNull: Note = JSON.parse("{\"label\":\"a\",\"n\":null}");
   require("explicit null field is present", Object.hasOwn(decodedNull, "n"));
   let nullRead: null | undefined = decodedNull.n;
@@ -45,5 +45,5 @@ export function main(): null {
   require("non-null value is rejected without publication", rejected && decodedMissing === original);
   require("failed decode preserves missing field", !Object.hasOwn(decodedMissing, "n"));
   printer.log("OK");
-  return null;
+  return ;
 }

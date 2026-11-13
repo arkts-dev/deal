@@ -26,7 +26,7 @@ public final class JsonClassLoweringTest {
         export class Point { x: number; tag: string; note?: string; }
         export function decode(s: string): Point { return JSON.parse(s); }
         export function encode(p: Point): string { return JSON.stringify(p) as string; }
-        export function main(): null { let p: Point = decode(`{"x":1,"tag":"ok"}`); encode(p); return null; }
+        export function main(): void { let p: Point = decode(`{"x":1,"tag":"ok"}`); encode(p); return ; }
         """;
 
     private static void check(boolean condition, String message) {
@@ -327,7 +327,7 @@ public final class JsonClassLoweringTest {
             export class Strict { tag:string; }
             export function person(s:string):Person { return JSON.parse(s); }
             export function strict(s:string):Strict { return JSON.parse(s); }
-            export function main():null { return null; }
+            export function main():void { return ; }
             """;
         Slice main = checked(source, MAIN, resolver);
         if (main == null) return;

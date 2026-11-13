@@ -18,6 +18,6 @@ export function test_math_int_helpers(): null {
   return null;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

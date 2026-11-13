@@ -10,4 +10,4 @@ export function test_error_default_code(): null {
   return null;
 }
 
-export function main(): null { return test_error_default_code(); }
+export function main(): void { test_error_default_code(); }

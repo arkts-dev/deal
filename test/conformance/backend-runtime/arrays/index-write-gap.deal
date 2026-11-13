@@ -9,6 +9,6 @@ export function test_array_write_gap(): number {
   return xs[4];
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

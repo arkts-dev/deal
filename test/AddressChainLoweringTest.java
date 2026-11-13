@@ -1667,7 +1667,7 @@ public class AddressChainLoweringTest {
         testProtocolOrigins(seeds.get(0));
         CheckedSlice adapterSource = checkSlice("""
             function inner(x: number): null {}
-            function main(): null {
+            function main(): void {
               let f: (x: number) => null = inner;
               let g: (a: number, b: number) => null = inner;
               g = f;

@@ -4,4 +4,4 @@
 // @features: host-abi, number, outbound-boundary, inbound-boundary
 
 import * as host from "host/boundary";
-export function main(): null { let value: number = host.echoNumber(1.25); if (value !== 1.25) { throw { name: "TEST_FAIL", message: "host number mapping" }; } return null; }
+export function main(): void { let value: number = host.echoNumber(1.25); if (value !== 1.25) { throw { name: "TEST_FAIL", message: "host number mapping" }; } return ; }

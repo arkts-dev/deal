@@ -346,7 +346,7 @@ public final class CatchNarrowingIsolationProductionTest {
         return List.of(
             new Rejection("string-refined catch binding transferred to string",
                 """
-                export function main(): null {
+                export function main(): void {
                   let e: string | null = "outer";
                   if (e !== null) {
                     try {
@@ -355,12 +355,12 @@ public final class CatchNarrowingIsolationProductionTest {
                       let unsound: string = e;
                     }
                   }
-                  return null;
+                  return ;
                 }
                 """, "E3001", 7, 29, 1, "Cannot assign unknown to string"),
             new Rejection("number-refined catch binding transferred to number",
                 """
-                export function main(): null {
+                export function main(): void {
                   let e: number | null = 1;
                   if (e !== null) {
                     try {
@@ -369,12 +369,12 @@ public final class CatchNarrowingIsolationProductionTest {
                       let unsound: number = e;
                     }
                   }
-                  return null;
+                  return ;
                 }
                 """, "E3001", 7, 29, 1, "Cannot assign unknown to number"),
             new Rejection("enclosing binding assigned inside the catch",
                 """
-                export function main(): null {
+                export function main(): void {
                   let value: number | null = 1;
                   if (value !== null) {
                     try {
@@ -384,7 +384,7 @@ public final class CatchNarrowingIsolationProductionTest {
                     }
                     let unsound: number = value;
                   }
-                  return null;
+                  return ;
                 }
                 """, "E3001", 9, 27, 5, "Cannot assign number | null to number"),
             new Rejection("awaited resumption inside the catch",
@@ -407,8 +407,8 @@ public final class CatchNarrowingIsolationProductionTest {
                   return 0;
                 }
 
-                export function main(): null {
-                  return null;
+                export function main(): void {
+                  return ;
                 }
                 """, "E3001", 14, 27, 1, "Cannot assign number | null to number"),
             new Rejection("awaited resumption inside the try block",
@@ -430,13 +430,13 @@ public final class CatchNarrowingIsolationProductionTest {
                   return 0;
                 }
 
-                export function main(): null {
-                  return null;
+                export function main(): void {
+                  return ;
                 }
                 """, "E3001", 13, 27, 1, "Cannot assign number | null to number"),
             new Rejection("try-block assignment inside a nested try",
                 """
-                export function main(): null {
+                export function main(): void {
                   let e: number | null = 1;
                   if (e !== null) {
                     try {
@@ -448,7 +448,7 @@ public final class CatchNarrowingIsolationProductionTest {
                     } catch (outer) {
                     }
                   }
-                  return null;
+                  return ;
                 }
                 """, "E3001", 9, 29, 1, "Cannot assign number | null to number"));
     }

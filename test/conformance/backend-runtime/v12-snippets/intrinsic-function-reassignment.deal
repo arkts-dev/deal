@@ -4,13 +4,13 @@
 // @features: v1.2, runtime, corner-case
 
 import * as c from "std/console";
-export function main(): null {
+export function main(): void {
  let f:(x:number)=>number=int;
  let before:number=f(2.0);
  f=function(x:number): number {return 9;};
  let after:number=f(2.0);
  if(before!==2 || after!==9) {throw {name:"TEST_FAIL",message:"intrinsic folded past reassignment"};}
- c.log("intrinsic-function-reassignment"); return null;
+ c.log("intrinsic-function-reassignment"); return ;
 }
 
 function int(value: number): number { return value; }

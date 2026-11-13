@@ -18,4 +18,4 @@ export function test_abi_jsonable_helper_export_keys(): null {
   return null;
 }
 
-export function main(): null { return null; }
+export function main(): void { return ; }

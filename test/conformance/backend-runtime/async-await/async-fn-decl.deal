@@ -15,6 +15,6 @@ export async function test_async_decl(): Promise<number> {
   return x;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

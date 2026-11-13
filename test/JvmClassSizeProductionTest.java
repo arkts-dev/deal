@@ -44,11 +44,11 @@ public final class JvmClassSizeProductionTest {
               return read();
             }
             export async function drive():Promise<number>{return await recurse(3);}
-            export function main():null{let sum:number=0;
+            export function main():void{let sum:number=0;
             """);
         for (int f = 0; f < functions; f++) source.append("sum=sum+f").append(f).append("(1);\n");
         source.append("if(sum!==").append(functions * (width * (width - 1) / 2 + width))
-            .append("){throw {name:\"SUM\",message:\"result\"};}c.log(\"SIZE_OK\");return null;}");
+            .append("){throw {name:\"SUM\",message:\"result\"};}c.log(\"SIZE_OK\");return;}");
         return source.toString();
     }
 

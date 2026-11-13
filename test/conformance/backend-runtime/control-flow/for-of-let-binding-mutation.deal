@@ -244,7 +244,7 @@ function testAppendIsObserved(): void {
   return;
 }
 
-export function main(): null {
+export function main(): void {
   testArrayDirectMutation();
   testArrayClosureReadsMutation();
   testArrayClosureWritesMutation();
@@ -256,5 +256,5 @@ export function main(): null {
   testStringIterableEvaluatedOnce();
   testUnvisitedReplacementIsObserved();
   testAppendIsObserved();
-  return null;
+  return ;
 }

@@ -14,6 +14,6 @@ export function test_while(): number {
   return x;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

@@ -5,8 +5,8 @@
 
 function plus(x: number): number { return x + 1; }
 
-export function main(): null {
+export function main(): void {
   let int: (x: number) => number = plus;
   let int: (x: number) => number = plus;
-  return null;
+  return;
 }

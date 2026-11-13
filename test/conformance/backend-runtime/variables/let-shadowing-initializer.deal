@@ -57,6 +57,6 @@ export function test_let_shadowing_initializer(): null {
   return null;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

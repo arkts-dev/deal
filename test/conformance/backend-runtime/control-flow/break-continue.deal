@@ -16,6 +16,6 @@ export function test_break(): number {
   return found;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

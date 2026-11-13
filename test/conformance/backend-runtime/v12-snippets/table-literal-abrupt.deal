@@ -4,7 +4,7 @@
 // @features: v1.2, runtime, corner-case
 
 import * as c from "std/console";
-export function main(): null {
+export function main(): void {
  let trace: string = "";
  let mark = function(s: string): number {trace = trace + s; return 1;};
  let fail = function(): number {trace = trace + "B"; throw {name:"STOP",message:"literal"};};
@@ -12,5 +12,5 @@ export function main(): null {
   if((e as Error).name !== "STOP") {throw {name:"TEST_FAIL",message:"wrong name"};} trace = trace + "C";
  }
  if(trace !== "ABC") {throw {name:"TEST_FAIL",message:"literal order: " + trace};}
- c.log("table-literal-abrupt"); return null;
+ c.log("table-literal-abrupt"); return ;
 }

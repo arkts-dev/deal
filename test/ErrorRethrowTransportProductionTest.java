@@ -94,9 +94,9 @@ public class ErrorRethrowTransportProductionTest {
     private static final String APP_SOURCE = """
         import * as helper from "./lib";
 
-        export function main(): null {
+        export function main(): void {
           let x: number = helper.probeCause();
-          return null;
+          return ;
         }
         """;
 
@@ -140,9 +140,9 @@ public class ErrorRethrowTransportProductionTest {
     private static final String SAVED_CAUSE_APP_SOURCE = """
         import * as helper from "./lib";
 
-        export function main(): null {
+        export function main(): void {
           let x: number = helper.probe();
-          return null;
+          return ;
         }
         """;
 
@@ -444,7 +444,7 @@ public class ErrorRethrowTransportProductionTest {
 
     static final String HOST_ERROR_APP_SOURCE = """
         import * as helper from "./lib";
-        export function main(): null { return null; }
+        export function main(): void { return ; }
         export function run(): number { return helper.fail(); }
         export function reraise(): number {
           try { return helper.fail(); } catch (e) { throw e as Error; }

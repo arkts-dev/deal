@@ -16,6 +16,6 @@ export function test_closure_mutates_class_field(): number {
   return b.value;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

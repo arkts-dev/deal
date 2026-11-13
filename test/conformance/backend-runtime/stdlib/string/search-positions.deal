@@ -4,7 +4,7 @@
 function check(ok:boolean):void {
   if(!ok){throw {name:"TEST",message:"string search positions"};}
 }
-export function main():null {
+export function main():void {
   let text="ababa";
   check(text.indexOf("ba")===1);
   check(text.indexOf("ba",2)===3);
@@ -60,5 +60,5 @@ export function main():null {
   check(destination===17&&order==="rx");
   order="";try{destination=receiver().indexOf(search(),failPosition());}catch(e){}
   check(destination===17&&order==="rsx");
-  return null;
+  return ;
 }

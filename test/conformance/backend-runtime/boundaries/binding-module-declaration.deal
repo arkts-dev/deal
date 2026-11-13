@@ -4,4 +4,4 @@
 // @features: boundary-validation
 import * as output from "std/console";
 function f():number{return 1;}
-export function main():null{f=function():number{return 2;};if(f()===2){output.log("OK");}else{output.log("STALE");}return null;}
+export function main():void{f=function():number{return 2;};if(f()===2){output.log("OK");}else{output.log("STALE");}return ;}

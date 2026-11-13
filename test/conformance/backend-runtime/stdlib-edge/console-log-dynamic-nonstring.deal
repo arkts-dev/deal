@@ -15,6 +15,6 @@ export function test_console_log_dynamic_nonstring(): null {
   return null;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

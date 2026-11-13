@@ -12,6 +12,6 @@ export function test_imported_closure_factory(): number {
   return result;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 import * as host from "host/probe";
 function check(ok:boolean,detail:string):void{if(!ok){throw {name:detail,message:detail};}}
-export function main():null{
+export function main():void{
   let xs:string[]=["a","b","c"];let alias=xs;host.keep(xs);
   let result="unchanged";host.replace(2,undefined);host.replace(1,null);
   try{result=xs.join("|");}catch(e){check((e as Error).name==="E8003" && (e as Error).message==="array element 2 type mismatch","first reached failure");}
@@ -22,5 +22,5 @@ export function main():null{
   try{result=decoded.join(corruptSeparator());}catch(e){check((e as Error).message==="array element 2 type mismatch","separator mutation before reads");}
   check(result==="unchanged" && host.size()===3,"separator corruption rollback");host.replace(1,"e");
   check(decoded.join("|")==="d|e|f","final repair");
-  return null;
+  return ;
 }

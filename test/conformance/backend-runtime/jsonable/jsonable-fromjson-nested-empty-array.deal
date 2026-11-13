@@ -25,6 +25,6 @@ export function test_nested_empty_array_rejected(): null {
   return null;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

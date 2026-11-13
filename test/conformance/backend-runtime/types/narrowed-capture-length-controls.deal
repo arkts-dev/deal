@@ -27,7 +27,7 @@ function preserveCall(): null {
   return null;
 }
 
-export function main(): null {
+export function main(): void {
   // A live refinement reads the live length: the valid non-null binding, the
   // empty array keep their normal length behavior.
   let xs: number[] | null = [3, 4];
@@ -142,5 +142,5 @@ export function main(): null {
     // The failed append wrote nothing.
     expectEqual("alias length after failed append", alias.length, 3);
   }
-  return null;
+  return ;
 }

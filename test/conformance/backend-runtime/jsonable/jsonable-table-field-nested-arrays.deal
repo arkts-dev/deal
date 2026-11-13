@@ -24,6 +24,6 @@ export function test_jsonable_table_field_nested_arrays(): null {
   throw { name: "TEST_FAIL", message: "table nested arrays roundtrip failed" };
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

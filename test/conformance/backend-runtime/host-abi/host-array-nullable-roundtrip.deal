@@ -26,6 +26,6 @@ export function test_host_array_nullable_roundtrip(): string {
   return "host-array-nullable-ok";
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

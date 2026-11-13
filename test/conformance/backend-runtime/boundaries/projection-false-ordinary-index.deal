@@ -5,4 +5,4 @@
 import * as printer from "std/console";
 import * as host from "host/probe";
 
-export function main():null{let a:unknown[]=[1,2];host.f(a);let n=a[0] as number;if(n===9){printer.log("LIVE");}else{printer.log("STALE");}return null;}
+export function main():void{let a:unknown[]=[1,2];host.f(a);let n=a[0] as number;if(n===9){printer.log("LIVE");}else{printer.log("STALE");}return ;}

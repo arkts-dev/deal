@@ -26,4 +26,4 @@ export function test_jsonable_table_field(): null {
   return null;
 }
 
-export function main(): null { return null; }
+export function main(): void { return ; }

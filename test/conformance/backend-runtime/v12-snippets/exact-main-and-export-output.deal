@@ -6,4 +6,4 @@
 import * as c from "std/console";
 export function alpha(): null {c.log("alpha"); return null;}
 export function beta(): null {c.log("beta"); return null;}
-export function main(): null {c.log("main"); c.error("diagnostic β"); return null;}
+export function main(): void {c.log("main"); c.error("diagnostic β"); return ;}

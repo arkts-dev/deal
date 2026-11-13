@@ -4,4 +4,4 @@
 // @features: host-abi, string, unicode, outbound-boundary, inbound-boundary
 
 import * as host from "host/boundary";
-export function main(): null { let value: string = host.echoString("A😀B"); if (value !== "A😀B") { throw { name: "TEST_FAIL", message: "host Unicode string mapping" }; } return null; }
+export function main(): void { let value: string = host.echoString("A😀B"); if (value !== "A😀B") { throw { name: "TEST_FAIL", message: "host Unicode string mapping" }; } return ; }

@@ -15,7 +15,7 @@ export async function asyncCoalescing():Promise<number>{
   check(c===5 && effects==="45","awaited left");
   return a+b+c;
 }
-export function main():null {
+export function main():void {
   let calls=0;let effects="";
   const rhs=():number=>{calls=calls+1;effects=effects+"r";return 7;};
   const source=(value:number|null|undefined):number|null|undefined=>{effects=effects+"l";return value;};
@@ -58,5 +58,5 @@ export function main():null {
   const cells:number[]=[0];cells[0]=n??23;check(cells[0]===23,"array assignment");
   item.x=n??24;check(item.x===24,"field assignment");
   check((b??true?1:2)===2 && ((b??true)||true),"conditional and parenthesized logical");
-  return null;
+  return ;
 }

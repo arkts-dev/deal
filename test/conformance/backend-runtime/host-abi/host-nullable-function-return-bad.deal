@@ -10,6 +10,6 @@ export function test_host_nullable_function_return_bad(): null {
   return null;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

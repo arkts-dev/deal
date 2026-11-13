@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 function check(ok:boolean):void{if(!ok){throw {name:"CHECK",message:"array slice"};}}
 class Item{x:number;}
-export function main():null{
+export function main():void{
   let xs:number[]=[1,2,3,4];let copy=xs.slice(0,4);
   check(copy!==xs && copy.length===4 && copy[0]===1 && copy[3]===4);
   copy[0]=9;check(xs[0]===1);
@@ -33,5 +33,5 @@ export function main():null{
   let strings:string[]=["\uD800\0","\uDC00"];check(strings.slice(0,2)[0]==="\uD800\0" && strings.slice(1,2)[0]==="\uDC00");
   let decoded:number[]=JSON.parse("[2,4,6]");check(decoded.slice(1,3)[1]===6 && decoded.length===3);
   let empty=decoded.slice(0,0);check(empty!==decoded && empty.push(8)===1 && empty[0]===8);
-  return null;
+  return ;
 }

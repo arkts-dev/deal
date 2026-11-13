@@ -24,6 +24,6 @@ export function test_nullable_function_array_values(): number {
   throw { name: "TEST_FAIL", message: "first element was not the function" };
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

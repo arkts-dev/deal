@@ -9,4 +9,4 @@ export function test_number_positive_infinity(): null {
   return null;
 }
 
-export function main(): null { return test_number_positive_infinity(); }
+export function main(): void { test_number_positive_infinity(); }

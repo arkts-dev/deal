@@ -94,7 +94,7 @@ export function test_nested_default_literal_override(): null {
   return null;
 }
 
-export function main(): null {
+export function main(): void {
   check(probe.valueCount() === 0, "structural registration invoked a producer");
-  return null;
+  return ;
 }

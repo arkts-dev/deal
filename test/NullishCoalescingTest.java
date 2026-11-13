@@ -15,8 +15,8 @@ public final class NullishCoalescingTest {
             String source = ConformanceHarnessMetadata.productionCorpusSource(
                 Files.readString(Path.of("test/conformance/" + PATH)), PATH);
             Path input = Files.createDirectories(root.resolve("oracle/src")).resolve("main.deal");
-            Files.writeString(input, source.replace("export function main():null", "export function run():null")
-                + "\nexport function main():null{return null;}\nexport function oracleFailure():number{return badSelection();}\n");
+            Files.writeString(input, source.replace("export function main():void", "export function run():void")
+                + "\nexport function main():void{return ;}\nexport function oracleFailure():number{return badSelection();}\n");
             Files.writeString(input.getParent().getParent().resolve("deal.json"),
                 "{\"languageVersion\":\"1.6\",\"stdlib\":\"1.6\",\"moduleRoots\":[\"src\"]}");
             var invocation = CompilerProfileProvider.resolve(ReleaseConfiguration.CURRENT_RELEASE_STATE,
@@ -42,7 +42,7 @@ public final class NullishCoalescingTest {
                 var result = SemanticOracle.invokeSyncEntry(executable, tables, registries,
                     new SemanticOracle.HostResponder(){}, compiler.checkedProject().input().entryModule(), "run", List.of());
                 if (!(result.terminal() instanceof SemanticRuntimeModel.Terminal.Success success)
-                        || !success.resultAtom().equals("null") || !result.effects().isEmpty())
+                        || !success.resultAtom().equals("undefined") || !result.effects().isEmpty())
                     throw new AssertionError(result.comparisonReport());
                 long tests = result.trace().stream().filter(e -> e.kind()==SemanticOpKind.UNARY
                     && e.phase()==SemanticRuntimeModel.Phase.SUCCESS).count();

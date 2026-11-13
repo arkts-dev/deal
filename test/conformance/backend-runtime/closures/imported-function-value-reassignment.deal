@@ -18,8 +18,8 @@ export function test_imported_function_binding(): number {
   return result;
 }
 
-export function main(): null {
+export function main(): void {
   let imported: number = test_imported_function_binding();
   outputx.log(JSON.stringify({ imported: imported }) as string);
-  return null;
+  return ;
 }

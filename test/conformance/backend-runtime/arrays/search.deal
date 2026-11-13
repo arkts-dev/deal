@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 function check(ok:boolean,detail:string):void{if(!ok){throw {name:"CHECK",message:detail};}}
 class Item{x:number;}
-export function main():null{
+export function main():void{
   let xs:number[]=[1,2,1,0/0,-0,1/0,-1/0];
   check(xs.includes(1) && xs.indexOf(1)===0 && xs.indexOf(1,1)===2,"initial positions");
   check(xs.includes(0/0) && xs.indexOf(0/0)===-1 && xs.includes(0) && xs.indexOf(0)===4,"NaN and zero equality");
@@ -48,5 +48,5 @@ export function main():null{
   try{result=receiver().indexOf(value(),failFrom());}catch(e){check((e as Error).message==="from","from abrupt error");}
   check(log==="rvf" && result===123 && xs.length===2,"from abrupt rollback");
   log="";result=receiver().indexOf(value(),from());check(log==="rvf" && result===2 && xs.length===4,"assignment search order");
-  return null;
+  return ;
 }

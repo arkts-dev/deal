@@ -47,6 +47,6 @@ export function test_plan_phase_order(): null {
   return null;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

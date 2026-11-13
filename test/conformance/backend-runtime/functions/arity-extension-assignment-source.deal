@@ -72,7 +72,7 @@ function onceReturned(marker: Marker): (x: number, y: number) => number {
   return (singles[0] = makeOne(marker));
 }
 
-export function main(): null {
+export function main(): void {
   // The call-argument position: the produced value is the assignment's own
   // target-typed adapter, so the exact parameter accepts it unchanged.
   let f: (x: number, y: number) => number = pairExact;
@@ -151,5 +151,5 @@ export function main(): null {
     "a nested assignment chain produces and adapts the inner target-typed value");
 
   output.log("OK");
-  return null;
+  return ;
 }

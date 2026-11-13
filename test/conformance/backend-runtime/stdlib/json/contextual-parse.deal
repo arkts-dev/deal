@@ -12,7 +12,7 @@ function verify(ok:boolean):void {
 }
 function returned():Node { return (JSON.parse(`{"value":7}`)); }
 function consume(node:Node):number { return node.value; }
-export function main():null {
+export function main():void {
   let node:Node=JSON.parse(`{"next":{"value":5},"value":4}`);
   verify(node.value===4 && node.next!==undefined && (node.next as Node).value===5);
   verify(!Object.hasOwn(node.next as Node,"next"));
@@ -146,5 +146,5 @@ export function main():null {
     syntaxFirst=true;
   }
   verify(syntaxFirst);
-  return null;
+  return ;
 }

@@ -9,6 +9,6 @@ export function test_host_array_return_mismatch(): number[] {
   return host.badArrayReturn();
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

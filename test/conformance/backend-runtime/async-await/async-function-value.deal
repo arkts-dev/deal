@@ -12,6 +12,6 @@ export async function test_async_function_value(): Promise<number> {
   return result;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

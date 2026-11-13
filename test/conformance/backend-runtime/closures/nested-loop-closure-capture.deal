@@ -18,6 +18,6 @@ export function test_nested_loop_closure_capture(): number {
   return result;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

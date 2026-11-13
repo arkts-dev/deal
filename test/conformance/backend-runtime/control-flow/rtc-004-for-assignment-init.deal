@@ -11,4 +11,4 @@ export function test_for_assignment_init(): null {
   return null;
 }
 
-export function main(): null { return test_for_assignment_init(); }
+export function main(): void { test_for_assignment_init(); }

@@ -3,10 +3,10 @@
 // @expected: runtime-ok
 // @features: tables, assignment, contextual-typing
 
-export function main(): null {
+export function main(): void {
   let t: Record<string, unknown> = { answer: 42 };
   let value: number = 0;
   value = t.answer as number;
   if (value !== 42) { throw { name: "TEST_FAIL", message: "assignment context mismatch" }; }
-  return null;
+  return ;
 }

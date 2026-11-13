@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: stdlib, string, closures
 
-export function main(): null {
+export function main(): void {
   let effects = 0;
   let receiver = (): string => { effects = effects * 10 + 1; return " a😀b "; };
   let index = (n: number): number => { effects = effects * 10 + n; return n; };
@@ -22,5 +22,5 @@ export function main(): null {
       || String(-0) !== "0" || String(1/0) !== "Infinity") {
     throw { name: "UNITS", message: "split and conversion" };
   }
-  return null;
+  return ;
 }

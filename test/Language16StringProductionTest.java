@@ -95,7 +95,7 @@ public final class Language16StringProductionTest {
             function check(ok:boolean):void {
               if(!ok){throw {name:"TEST",message:"private nondata read"};}
             }
-            export function main():null {
+            export function main():void {
               for(let opaque of [false,true]) {
                 let graph:unknown[]=[1,9];let alias=graph;
                 host.corrupt(graph,opaque);
@@ -110,7 +110,7 @@ public final class Language16StringProductionTest {
                 host.repair();
                 check(graph===alias && (graph[0] as number)===7 && (graph[1] as number)===9);
               }
-              output.log("NONDATA_READ_OK");return null;
+              output.log("NONDATA_READ_OK");return ;
             }
             """, "NONDATA_READ_OK\n", root.resolve("products"), host, List.of(Backend.LLVM));
     }
@@ -126,7 +126,7 @@ public final class Language16StringProductionTest {
             function check(ok:boolean):void {
               if(!ok){throw {name:"TEST",message:"retained opaque graph"};}
             }
-            export function main():null {
+            export function main():void {
               let r:Record<string,unknown>={good:7};r.self=r;
               let old:Record<string,unknown>={marker:9};let destination=old;
               host.corrupt(r);
@@ -142,7 +142,7 @@ public final class Language16StringProductionTest {
               destination=r;
               check(destination===r && (r.self as Record<string,unknown>)===r);
               check((r.good as number)===7 && !Object.hasOwn(r,"bad"));
-              output.log("OPAQUE_REPAIR_OK");return null;
+              output.log("OPAQUE_REPAIR_OK");return ;
             }
             """, "OPAQUE_REPAIR_OK\n", root.resolve("products"), host, List.of(Backend.LLVM));
     }
@@ -161,7 +161,7 @@ public final class Language16StringProductionTest {
             function check(ok:boolean):void {
               if(!ok){throw {name:"TEST",message:"native text transport"};}
             }
-            export function main():null {
+            export function main():void {
               check(host.surrogateString()===`\\ud800`);
               check(host.embeddedSurrogateString()===`a\\ud800b`);
               let scalarRejected=false;
@@ -186,7 +186,7 @@ public final class Language16StringProductionTest {
               check(shared[0]===shared[1]);
               shared[0][0]="changed";
               check(shared[1][0]==="changed");
-              output.log("HOST_TEXT_OK");return null;
+              output.log("HOST_TEXT_OK");return ;
             }
             """, "HOST_TEXT_OK\n", root.resolve("products"), host, List.of(Backend.LLVM));
     }
@@ -210,7 +210,7 @@ public final class Language16StringProductionTest {
           });
           return recur;
         }
-        export function main():null {
+        export function main():void {
           let first=fresh(0);let second=fresh(20);
           require(first()===11 && second()===31 && first()===12,"fresh initializer cells");
           let escaped=recursive(3);let other=recursive(7);
@@ -271,7 +271,7 @@ public final class Language16StringProductionTest {
           require((decoded[high] as string)===low,"JSON lone key");
           c.log(`A\\ud800😀\\udc00B`);
           c.error(`E\\ud800😀\\udc00F`);
-          c.log("OK");return null;
+          c.log("OK");return ;
         }
         """;
 }

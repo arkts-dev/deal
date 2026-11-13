@@ -11,6 +11,6 @@ export function test_int_sub_overflow(): number {
   return result;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

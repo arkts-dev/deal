@@ -234,14 +234,14 @@ public class CrossModuleCallRealizationTest {
           return x * 2;
         }
 
-        export function main(): null {
+        export function main(): void {
           let a: number = lib.add(1, 2);
           let b: number = lib.fib(6);
           let c: number = twice(a);
           if (a !== 3 || b !== 8 || c !== 6) {
             throw { name: "PROBE_FAIL", message: "cross-module probe" };
           }
-          return null;
+          return ;
         }
         """;
 
@@ -287,9 +287,9 @@ public class CrossModuleCallRealizationTest {
         writeFileIn(root, "src/app.deal", """
             import * as lib from "./lib";
 
-            export function main(): null {
+            export function main(): void {
               let r: number = lib.boom(1);
-              return null;
+              return ;
             }
             """);
         Path entry = moduleRoot.resolve("app.deal").toAbsolutePath();

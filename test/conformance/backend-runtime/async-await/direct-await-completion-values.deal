@@ -34,6 +34,6 @@ export async function test_direct_await_completion_values(): Promise<number> {
   return sum;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

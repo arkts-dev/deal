@@ -9,6 +9,6 @@ export function test_number_modulo_floor(): null {
   return null;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

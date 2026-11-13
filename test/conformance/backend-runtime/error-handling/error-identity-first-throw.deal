@@ -142,7 +142,7 @@ export async function test_awaited_error_identity(): Promise<string> {
   return "awaited";
 }
 
-export function main(): null {
+export function main(): void {
   assertFirstThrowIdentity();
   console.log("OK|first-throw");
   assertRethrowIdentity();
@@ -151,5 +151,5 @@ export function main(): null {
   console.log("OK|nested-catch");
   assertErrorCrossingIdentity();
   console.log("OK|crossing");
-  return null;
+  return ;
 }

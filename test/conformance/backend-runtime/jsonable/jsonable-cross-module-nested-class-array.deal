@@ -16,6 +16,6 @@ export function test_jsonable_cross_module_nested_class_array(): null {
   throw { name: "TEST_FAIL", message: "cross-module nested class array fromJson failed" };
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

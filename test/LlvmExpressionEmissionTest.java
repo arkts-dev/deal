@@ -174,7 +174,7 @@ public final class LlvmExpressionEmissionTest {
         function kindOf(a: unknown): string { return typeof a; }
         function isError(a: unknown): boolean { return a instanceof Error; }
         function asNumber(a: unknown): number { return a as number; }
-        export function main(): null { return null; }
+        export function main(): void { return ; }
         """;
 
     /** Structured control flow, a checked assignment, and try/catch. */
@@ -218,7 +218,7 @@ public final class LlvmExpressionEmissionTest {
           return boxed;
         }
 
-        export function main(): null {
+        export function main(): void {
           let total: number = work(5);
           let skipped: number = skips(4);
           let boxed: unknown = 7;
@@ -230,7 +230,7 @@ public final class LlvmExpressionEmissionTest {
           } catch (e) {
             total = 1;
           }
-          return null;
+          return ;
         }
         """;
 
@@ -243,7 +243,7 @@ public final class LlvmExpressionEmissionTest {
           return a as number;
         }
 
-        export function main(): null {
+        export function main(): void {
           let n: number = 0;
           try {
             let bad: unknown = null;
@@ -251,7 +251,7 @@ public final class LlvmExpressionEmissionTest {
           } catch (e) {
             n = 1;
           }
-          return null;
+          return ;
         }
         """;
 
@@ -276,7 +276,7 @@ public final class LlvmExpressionEmissionTest {
         function andValue(a: boolean, b: boolean): boolean { return a && b; }
         function orValue(a: boolean, b: boolean): boolean { return a || b; }
 
-        export function main(): null {
+        export function main(): void {
           let truth: boolean = true;
           let falsity: boolean = false;
           if (!(andValue(falsity, truth) === false)) { let a: number = wrong(); }
@@ -323,7 +323,7 @@ public final class LlvmExpressionEmissionTest {
             andRan = true;
           }
           if (!(andRan === true)) { let l: number = wrong(); }
-          return null;
+          return ;
         }
         """;
 
@@ -341,7 +341,7 @@ public final class LlvmExpressionEmissionTest {
         function eq(a: unknown, b: unknown): boolean { return a === b; }
         function ne(a: unknown, b: unknown): boolean { return a !== b; }
 
-        export function main(): null {
+        export function main(): void {
           let one: unknown = 1;
           let other: unknown = 1;
           let two: unknown = 2;
@@ -356,7 +356,7 @@ public final class LlvmExpressionEmissionTest {
           if (!(eq(n, n) === true)) { let g: number = wrong(); }
           if (!(eq(u, u) === true)) { let h: number = wrong(); }
           if (!(ne(n, u) === true)) { let i: number = wrong(); }
-          return null;
+          return ;
         }
         """;
 
@@ -383,12 +383,12 @@ public final class LlvmExpressionEmissionTest {
           try { return n; } catch (e) { throw (e as Error); }
         }
 
-        export function main(): null {
+        export function main(): void {
           let a: number = fromTry(3);
           let b: number = fromIf(4);
           let c: number = fromLoop(5);
           let d: number = fromRethrow(6);
-          return null;
+          return ;
         }
         """;
 
@@ -403,10 +403,10 @@ public final class LlvmExpressionEmissionTest {
           return v as number;
         }
 
-        export function main(): null {
+        export function main(): void {
           let falsity: boolean = false;
           if (!(falsity || falsity)) { let x: number = wrong(); }
-          return null;
+          return ;
         }
         """;
 
@@ -420,9 +420,9 @@ public final class LlvmExpressionEmissionTest {
     private static final String FUNCTION_BOXED_RETURN_SOURCE = """
         function seven(): number { return 7; }
         function box(a: () => number): unknown { return a; }
-        export function main(): null {
+        export function main(): void {
           let u: unknown = box(seven);
-          return null;
+          return ;
         }
         """;
 
@@ -434,10 +434,10 @@ public final class LlvmExpressionEmissionTest {
     private static final String FUNCTION_BOXED_NULLISH_SOURCE = """
         function seven(): number { return 7; }
         function pick(a: (() => number) | null): unknown { return a; }
-        export function main(): null {
+        export function main(): void {
           let maybe: (() => number) | null = seven;
           let u: unknown = pick(maybe);
-          return null;
+          return ;
         }
         """;
 
@@ -449,9 +449,9 @@ public final class LlvmExpressionEmissionTest {
      */
     private static final String FUNCTION_BOXED_DECLARATION_SOURCE = """
         function seven(): number { return 7; }
-        export function main(): null {
+        export function main(): void {
           let boxed: unknown = seven;
-          return null;
+          return ;
         }
         """;
 
@@ -463,10 +463,10 @@ public final class LlvmExpressionEmissionTest {
      */
     private static final String FUNCTION_TYPEOF_SOURCE = """
         function seven(): number { return 7; }
-        export function main(): null {
+        export function main(): void {
           let kind: string = typeof seven;
           let count: unknown = 1;
-          return null;
+          return ;
         }
         """;
 
@@ -891,13 +891,13 @@ public final class LlvmExpressionEmissionTest {
           return doubled;
         }
 
-        export function main(): null {
+        export function main(): void {
           let sum: number = double(2.0);
           let flag: boolean = positive(2.0);
           let maybe: number | null = maybeNumber(2.0);
           let maybeFlag: boolean | undefined = maybeBoolean(2.0);
           let carried: unknown = anyValue(2.0);
-          return null;
+          return ;
         }
         """;
 
@@ -1262,7 +1262,7 @@ public final class LlvmExpressionEmissionTest {
         Path root = scratch.resolve("host-import");
         writeHostProject(root, """
             import * as probe from "host/probe";
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             """);
         CompileOutcome outcome = compile(root);
         check(outcome.success(), "the host-import project stages: "

@@ -27,4 +27,4 @@ export function test_json_stringify_nonfinite(): null {
   return null;
 }
 
-export function main(): null { return null; }
+export function main(): void { return ; }

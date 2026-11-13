@@ -201,7 +201,7 @@ public enum DiagnosticCode {
     E2010(Phase.FRONTEND, "Invalid project configuration or class identity"),
 
     /** Entry module 'main' has the wrong signature. */
-    E2011(Phase.FRONTEND, "Entry module 'main' must have non-async signature '(): null'"),
+    E2011(Phase.FRONTEND, "Entry module 'main' must have non-async signature '(): void'"),
 
     E2012(Phase.FRONTEND, "Entry module must export 'main'"),
 
@@ -316,8 +316,8 @@ public enum DiagnosticCode {
     E6002(Phase.BACKEND_LOWERING, "Cannot break/continue across try boundary"),
     /** Rest parameters are not part of the language (LuaJIT backend). */
     E6003(Phase.BACKEND_LOWERING, "Rest parameters are not part of the language"),
-    /** Entry module must export a non-async main(): null (entry contract). */
-    E6004(Phase.BACKEND_LOWERING, "Entry module must export non-async main(): null"),
+    /** Entry module must export a non-async main(): void (entry contract). */
+    E6004(Phase.BACKEND_LOWERING, "Entry module must export non-async main(): void"),
 
     E6005(Phase.BACKEND_LOWERING, "Common semantic lowering failed"),
 

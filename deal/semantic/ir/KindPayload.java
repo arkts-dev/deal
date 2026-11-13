@@ -1157,7 +1157,7 @@ public sealed interface KindPayload
 
     /**
      * {@code ENTRY_INVOKE} — the entry module and its exact
-     * {@code main(): null} function; delegates exactly one
+     * {@code main(): void} function; delegates exactly one
      * {@code CALL(DIRECT)} to main and exits the program after the
      * terminal; no separate boundary.
      */

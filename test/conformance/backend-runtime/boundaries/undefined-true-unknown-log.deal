@@ -4,4 +4,4 @@
 // @features: boundary-validation
 import * as printer from "std/console";
 export async function f():Promise<unknown>{printer.log("unused");return undefined;}
-export function main():null{return null;}
+export function main():void{return ;}

@@ -13,7 +13,7 @@ export class Batch {
   items: Item[];
 }
 
-export function main(): null {
+export function main(): void {
   let original: Batch = {name: "original", items: [{id: 7}]};
   let destination: Batch = original;
   let originalItems = original.items;
@@ -43,5 +43,5 @@ export function main(): null {
   if (!Object.hasOwn(valid.items[2], "note") || (valid.items[2].note as string) !== "n") {
     throw {name: "TEST_FAIL", message: "present optional value changed"};
   }
-  return null;
+  return ;
 }

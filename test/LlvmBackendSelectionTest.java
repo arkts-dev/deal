@@ -40,8 +40,8 @@ public final class LlvmBackendSelectionTest {
     private static final Path REPO = NativeCompiler.repository();
 
     private static final String APP_SOURCE = """
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -307,8 +307,8 @@ public final class LlvmBackendSelectionTest {
         Path root = tempProject();
         try {
             Files.writeString(root.resolve("src/main.deal"),
-                "export function main(): null {\n  let x: number = ;\n"
-                    + "  return null;\n}\n", StandardCharsets.UTF_8);
+                "export function main(): void {\n  let x: number = ;\n"
+                    + "  return ;\n}\n", StandardCharsets.UTF_8);
             Path output = root.resolve("build/llvm");
             Captured broken = capture(() -> Main.run(new String[] {
                 "compile", root.resolve("src/main.deal").toString(),

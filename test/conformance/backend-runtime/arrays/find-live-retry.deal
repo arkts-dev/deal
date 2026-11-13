@@ -5,7 +5,7 @@
 import * as host from "host/probe";
 class Item {x:number;stable:number;}
 function check(ok:boolean):void {if(!ok){throw {name:"FIND",message:"live mismatch"};}}
-export function main():null {
+export function main():void {
   let xs:number[]=[4,5,9];let alias=xs;let destination:number|undefined=123;let indexDestination=123;let calls=0;let caught=false;
   host.keep(xs);host.corrupt();
   try {destination=xs.find((value:number):boolean=>{calls=calls+1;return true;});}
@@ -47,5 +47,5 @@ export function main():null {
   let decoded:number[]=JSON.parse("[4,5,9]");host.keep(decoded);host.corrupt();caught=false;
   try {destination=decoded.find((value:number):boolean=>true);}catch(e){check((e as Error).name==="E8003");caught=true;}
   check(caught && (destination as number)===123 && decoded.length===3);host.repair();check(decoded.findIndex((value:number):boolean=>value===9)===2);
-  return null;
+  return ;
 }

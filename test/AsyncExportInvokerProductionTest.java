@@ -94,8 +94,8 @@ public class AsyncExportInvokerProductionTest {
           return 7;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -109,8 +109,8 @@ public class AsyncExportInvokerProductionTest {
           return null;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -124,8 +124,8 @@ public class AsyncExportInvokerProductionTest {
           return [7.0, 8];
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -139,8 +139,8 @@ public class AsyncExportInvokerProductionTest {
           return { a: 7 };
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -154,8 +154,8 @@ public class AsyncExportInvokerProductionTest {
           return { a: 7, xs: [7.0, 8], n: null };
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -172,8 +172,8 @@ public class AsyncExportInvokerProductionTest {
           return v;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -185,8 +185,8 @@ public class AsyncExportInvokerProductionTest {
           return [v, 8.25];
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -198,8 +198,8 @@ public class AsyncExportInvokerProductionTest {
           return v;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -215,8 +215,8 @@ public class AsyncExportInvokerProductionTest {
           return 2.5 * 2.0;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -232,8 +232,8 @@ public class AsyncExportInvokerProductionTest {
           return v;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -245,8 +245,8 @@ public class AsyncExportInvokerProductionTest {
           return v;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -262,8 +262,8 @@ public class AsyncExportInvokerProductionTest {
           return v;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -276,8 +276,8 @@ public class AsyncExportInvokerProductionTest {
           return n;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -291,8 +291,8 @@ public class AsyncExportInvokerProductionTest {
           return [];
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -303,8 +303,8 @@ public class AsyncExportInvokerProductionTest {
           return xs;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -315,8 +315,8 @@ public class AsyncExportInvokerProductionTest {
           return { a: 7, xs: xs, n: null };
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -327,8 +327,8 @@ public class AsyncExportInvokerProductionTest {
           return { a: t, b: t };
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -344,8 +344,8 @@ public class AsyncExportInvokerProductionTest {
           return t;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -364,8 +364,8 @@ public class AsyncExportInvokerProductionTest {
           return JSON.parse("{\\"x\\":0.30000000000000004,\\"xs\\":[5],\\"n\\":7.0}");
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -379,8 +379,8 @@ public class AsyncExportInvokerProductionTest {
           return JSON.parse("{\\"xs\\":[],\\"o\\":{\\"n\\":null}}");
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -395,8 +395,8 @@ public class AsyncExportInvokerProductionTest {
           return JSON.parse("{\\"xs\\":[1e17,1e-320,0]}");
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -411,8 +411,8 @@ public class AsyncExportInvokerProductionTest {
           return { xs: xs };
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -427,8 +427,8 @@ public class AsyncExportInvokerProductionTest {
           return { xs: xs };
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -446,8 +446,8 @@ public class AsyncExportInvokerProductionTest {
           return c;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -462,8 +462,8 @@ public class AsyncExportInvokerProductionTest {
           return [c];
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -478,8 +478,8 @@ public class AsyncExportInvokerProductionTest {
           return c;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -496,8 +496,8 @@ public class AsyncExportInvokerProductionTest {
           return f;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -508,8 +508,8 @@ public class AsyncExportInvokerProductionTest {
           return [f];
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -521,8 +521,8 @@ public class AsyncExportInvokerProductionTest {
           return strings.length;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -540,8 +540,8 @@ public class AsyncExportInvokerProductionTest {
           return { e: passThrough() };
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -555,8 +555,8 @@ public class AsyncExportInvokerProductionTest {
           return x;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -564,8 +564,8 @@ public class AsyncExportInvokerProductionTest {
     private static final String DELAYED_SOURCE = """
         import * as probe from "host/probe";
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
 
         export async function run(): Promise<number> {
@@ -623,8 +623,8 @@ public class AsyncExportInvokerProductionTest {
     private static final String MISMATCH_SOURCE = """
         import * as probe from "host/probe";
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
 
         export async function run(): Promise<number> {
@@ -665,8 +665,8 @@ public class AsyncExportInvokerProductionTest {
           return q;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -676,11 +676,11 @@ public class AsyncExportInvokerProductionTest {
           return 7;
         }
 
-        export function main(): null {
+        export function main(): void {
           let z: number[] = [1];
           let w: number = 0;
           let q: number = z[w + 1];
-          return null;
+          return ;
         }
         """;
 
@@ -694,8 +694,8 @@ public class AsyncExportInvokerProductionTest {
           throw { name: "E_USER", message: "unchanged\\nmessage" };
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -708,9 +708,9 @@ public class AsyncExportInvokerProductionTest {
     private static final String COUNTS_SOURCE = """
         import * as probe from "host/probe";
 
-        export function main(): null {
+        export function main(): void {
           probe.touchMain();
-          return null;
+          return ;
         }
 
         export async function run(): Promise<number> {
@@ -789,7 +789,7 @@ public class AsyncExportInvokerProductionTest {
     private static final String ARITY_EXTENSION_SOURCE = """
         import * as c from "std/console";
 
-        export function main(): null { return null; }
+        export function main(): void { return ; }
 
         export async function run(): Promise<null> {
           let trace: string = "";
@@ -867,7 +867,7 @@ public class AsyncExportInvokerProductionTest {
         String source = """
             class Node { value:number; next?:Node; }
             async function decode(text:string):Promise<Node> { return JSON.parse(text); }
-            export function main():null { return null; }
+            export function main():void { return ; }
             export async function run():Promise<number> {
               let text=`{"value":7,"next":{"value":9}}`;
               let value:Node=await decode(text);
@@ -900,7 +900,7 @@ public class AsyncExportInvokerProductionTest {
               };
               return recur;
             }
-            export function main():null{return null;}
+            export function main():void{return ;}
             export async function run():Promise<number> {
               let first=make(10);let other=make(30);
               if((await first(2))!==13 || (await other(1))!==32 || (await first(0))!==12){
@@ -933,7 +933,7 @@ public class AsyncExportInvokerProductionTest {
         for (String backend : List.of("luajit", "jvm")) {
             checkNumberCompletion(backend, "typed-arrows", """
                 async function done(): Promise<void> {}
-                export function main(): null { return null; }
+                export function main(): void { return ; }
                 export async function run(): Promise<number> {
                   let base = 2;
                   const value = async (x: number): Promise<number> => x + base;
@@ -1256,7 +1256,7 @@ public class AsyncExportInvokerProductionTest {
                   };
                   return result;
                 }
-                export function main(): null { return null; }
+                export function main(): void { return ; }
                 """, "@src/main.deal/Model",
                 "{\"child\":{\"value\":7},\"rows\":[{\"value\":7},null],\"data\":{\"ok\":true}}");
             assertRepresentationFailure(backend, "function-completion",
@@ -1609,7 +1609,7 @@ public class AsyncExportInvokerProductionTest {
             }
             Project caused = compile("caused-error-" + backend, backend,
                 String.format(PLAIN_MANIFEST, backend), """
-                    export function main(): null {return null;}
+                    export function main(): void {return ;}
                     export async function run(): Promise<number> {
                       try {let t: Record<string, unknown> = {value: "bad"}; let x: number = t.value as number; return x;}
                       catch(e) {throw {name: "OUTER", message: "outer"};}
@@ -2074,7 +2074,7 @@ public class AsyncExportInvokerProductionTest {
     private static final String CORNER_MAIN = """
         import * as c from "std/console";
         import * as helper from "./helper";
-        export function main(): null {return null;}
+        export function main(): void {return ;}
         export %sfunction run(): %s {%s}
         """;
 
@@ -2320,7 +2320,7 @@ public class AsyncExportInvokerProductionTest {
      * or a lost append completes 0.
      */
     private static final String AWAIT_ARRAY_WRITE_SUBJECT = """
-        export function main(): null {return null;}
+        export function main(): void {return ;}
         export async function run(): Promise<number> {
           let xs: number[] = [7];
           let alias: number[] = xs;

@@ -16,6 +16,6 @@ export function test_host_nullable_function_param_bad(): number {
   return host.register(source);
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

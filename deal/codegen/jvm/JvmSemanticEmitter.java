@@ -726,7 +726,7 @@ public final class JvmSemanticEmitter {
             if (trace) {
                 out.append("    try {\n");
                 out.append("      dealMain();\n");
-                out.append("      System.err.println(\"R|success|null\");\n");
+                out.append("      System.err.println(\"R|success|undefined\");\n");
                 out.append("      System.err.flush();\n");
                 out.append("    } catch (JvmRuntime.DealError e) {\n");
                 out.append("      System.err.println(\"R|failure|\" + JvmRuntime.errtext(e));\n");

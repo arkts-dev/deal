@@ -4,4 +4,4 @@
 // @features: boundary-validation
 import * as printer from "std/console";
 import * as m from "std/math";
-export function main():null{try{let x=m.sqrt(-1);if(x!==x){printer.log("NAN");}else{printer.log("WRONG");}}catch(e){printer.log("THREW");}return null;}
+export function main():void{try{let x=m.sqrt(-1);if(x!==x){printer.log("NAN");}else{printer.log("WRONG");}}catch(e){printer.log("THREW");}return ;}

@@ -17,6 +17,6 @@ export function test_host_boundary_apply_function(): number {
   return result;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

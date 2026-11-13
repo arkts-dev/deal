@@ -53,7 +53,7 @@ function bumpMarker(marker: Marker): number {
   return 1;
 }
 
-export function main(): null {
+export function main(): void {
   // --- parameter positions -------------------------------------------------
   check(needPair(one) === 3, "a direct call argument adapts one-to-two");
   let short: (x: number) => number = one;
@@ -142,5 +142,5 @@ export function main(): null {
   check(extraMarker.count === 1, "the ignored target argument evaluates exactly once");
 
   output.log("OK");
-  return null;
+  return ;
 }

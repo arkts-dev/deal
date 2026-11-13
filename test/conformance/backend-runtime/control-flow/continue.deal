@@ -16,6 +16,6 @@ export function test_continue(): number {
   return sum;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

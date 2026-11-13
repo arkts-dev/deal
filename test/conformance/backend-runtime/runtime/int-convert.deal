@@ -11,6 +11,6 @@ export function test_int(): number {
   return i;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

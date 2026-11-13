@@ -24,7 +24,7 @@ class FailingBox {
   xs: number[];
 }
 
-export function main(): null {
+export function main(): void {
   if (state.calls() !== 0 || state.order() !== "") {
     throw { name: "REGISTRATION_DEFAULT", message: "a producer executed at class registration" };
   }
@@ -66,5 +66,5 @@ export function main(): null {
     throw { name: "DEFAULT_FAILURE", message: "the failing producer retried, lost effects or published a partial target" };
   }
   c.log("default-call-shared-reference");
-  return null;
+  return ;
 }

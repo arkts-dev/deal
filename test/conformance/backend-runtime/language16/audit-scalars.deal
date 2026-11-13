@@ -6,7 +6,7 @@
 function check(ok:boolean):void{if(!ok){throw {name:"FAIL",message:"scalar audit contract"};}}
 function equal(a:unknown,b:unknown):boolean{check((a===b)!==(a!==b));return a===b;}
 export class U { missing:undefined; optional?:undefined; values:(null|undefined)[]; }
-export function main():null{
+export function main():void{
   let parsed:Record<string,unknown>=JSON.parse("{\"n\":null,\"z\":-0,\"f\":1.5,\"e\":1e2,\"b\":true,\"s\":\"same\",\"a\":[]}");
   let other:Record<string,unknown>=JSON.parse("{\"n\":null,\"a\":[]}");
   check(equal(parsed.n,null));check(equal(parsed.n,other.n));check(!equal(parsed.n,undefined));
@@ -21,5 +21,5 @@ export function main():null{
   for(let of of [of]){check(of===1);}
   let recurse:(n:number)=>number=function(n:number):number{if(n===0){return 0;}return recurse(n-1);};
   check(recurse(2)===0);
-  return null;
+  return ;
 }

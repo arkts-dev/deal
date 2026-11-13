@@ -23,6 +23,6 @@ export function test_plan_host_discriminator(): string {
   return "host discriminator ok";
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

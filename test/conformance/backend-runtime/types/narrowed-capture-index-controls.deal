@@ -22,7 +22,7 @@ function expectEqual(what: string, actual: number, expected: number): null {
   return null;
 }
 
-export function main(): null {
+export function main(): void {
   // The valid refinement flows through every index position unchanged: the
   // admission republishes the read and the chain consumes the admitted value.
   let row: number[] | null = [3, 4];
@@ -112,5 +112,5 @@ export function main(): null {
       expectCaught(e, "table receiver read", "E8001");
     }
   }
-  return null;
+  return ;
 }

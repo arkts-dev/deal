@@ -44,6 +44,6 @@ export function test_array_dynamic_boundary_ok(): string {
   return "dynamic number[] boundary ok";
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

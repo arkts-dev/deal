@@ -676,8 +676,8 @@ public final class CompilationOrchestrator {
         extractSignatures();
         if (hasErrors) { printDiagnostics(); return false; }
 
-        // DEAL v1.2 selected-entry rule: the entry module must export
-        // non-async main() with signature (): null.  The backend invokes
+        // DEAL v1.6 selected-entry rule: the entry module must export
+        // non-async main() with signature (): void.  The backend invokes
         // main() from that module.
         validateEntryMain();
 
@@ -1121,11 +1121,11 @@ public final class CompilationOrchestrator {
         if (mainType == null) {
             if (programSpan != null) {
                 error(DiagnosticCode.E2012,
-                    "Entry module must export 'main' with non-async signature '(): null'",
+                    "Entry module must export 'main' with non-async signature '(): void'",
                     programSpan);
             } else {
                 syntheticError(DiagnosticCode.E2012,
-                    "Entry module must export 'main' with non-async signature '(): null'",
+                    "Entry module must export 'main' with non-async signature '(): void'",
                     file,
                     "missing anchor: entry program span for module '" + file + "'");
             }
@@ -1135,15 +1135,15 @@ public final class CompilationOrchestrator {
         boolean validMain = mainType instanceof Type.Func f
             && f.paramTypes().isEmpty()
             && !f.isAsync()
-            && f.returnType() instanceof Type.Null;
+            && f.returnType() instanceof Type.Void;
         if (!validMain) {
             if (programSpan != null) {
                 error(DiagnosticCode.E2011,
-                    "Entry module 'main' must have non-async signature '(): null'",
+                    "Entry module 'main' must have non-async signature '(): void'",
                     programSpan);
             } else {
                 syntheticError(DiagnosticCode.E2011,
-                    "Entry module 'main' must have non-async signature '(): null'",
+                    "Entry module 'main' must have non-async signature '(): void'",
                     file,
                     "missing anchor: entry program span for module '" + file + "'");
             }

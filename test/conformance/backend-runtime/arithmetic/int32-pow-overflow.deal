@@ -7,6 +7,6 @@ export function test_int32_pow_overflow(): number {
   return 2 ** 62;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

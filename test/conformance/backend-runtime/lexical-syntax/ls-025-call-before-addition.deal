@@ -13,4 +13,4 @@ export function test_call_before_addition(): null {
   return null;
 }
 
-export function main(): null { return test_call_before_addition(); }
+export function main(): void { test_call_before_addition(); }

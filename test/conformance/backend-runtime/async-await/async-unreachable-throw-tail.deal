@@ -15,4 +15,4 @@ export async function check(): Promise<number> {
   return n;
 }
 
-export function main(): null { return null; }
+export function main(): void { return ; }

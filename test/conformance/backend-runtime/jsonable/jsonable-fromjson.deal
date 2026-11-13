@@ -16,4 +16,4 @@ export function test_fromJson(): null {
   return null;
 }
 
-export function main(): null { return null; }
+export function main(): void { return ; }

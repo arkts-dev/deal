@@ -10,6 +10,6 @@ export function test_source_location_array_read(): number {
   return flipped;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

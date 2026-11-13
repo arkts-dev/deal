@@ -13,6 +13,6 @@ export function test_int_infinity(): number {
   return result;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

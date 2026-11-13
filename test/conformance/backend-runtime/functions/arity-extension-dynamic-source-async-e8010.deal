@@ -15,6 +15,6 @@ export async function test_arity_extension_dynamic_source_async_e8010(): Promise
   return needPair(source);
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

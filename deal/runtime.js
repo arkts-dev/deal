@@ -3332,9 +3332,9 @@ const $rt = {
       return $failure("missing main");
     }
     if ($main === null || typeof $main !== "object"
-        || $main.$kind !== "function" || $main.$sig !== "()->null"
+        || $main.$kind !== "function" || $main.$sig !== "()->void"
         || typeof $main.$f !== "function") {
-      return $failure("main is not a null-returning function");
+      return $failure("main is not a void-returning function");
     }
     try {
       await $main.$f();

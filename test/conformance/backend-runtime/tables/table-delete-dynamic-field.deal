@@ -12,6 +12,6 @@ export function test_table_delete_dynamic_field(): null {
   return null;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

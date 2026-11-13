@@ -24,6 +24,6 @@ export function test_table_keys_decimal_string_names(): null {
   return null;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

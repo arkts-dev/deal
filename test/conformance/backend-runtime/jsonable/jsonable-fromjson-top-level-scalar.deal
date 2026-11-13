@@ -32,6 +32,6 @@ export function test_fromJson_empty_documents(): null {
   return null;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

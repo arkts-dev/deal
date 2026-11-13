@@ -33,6 +33,6 @@ export function test_array_write_single_evaluation(): null {
   return null;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

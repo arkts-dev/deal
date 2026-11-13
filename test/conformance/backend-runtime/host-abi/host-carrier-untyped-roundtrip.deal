@@ -54,6 +54,6 @@ export function test_untyped_array(): null {
   return null;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

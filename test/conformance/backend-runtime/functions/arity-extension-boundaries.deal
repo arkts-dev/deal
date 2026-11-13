@@ -44,7 +44,7 @@ function needLength(f: (text: string, extra: number) => number): number {
   return f("{}", 9);
 }
 
-export function main(): null {
+export function main(): void {
   check(pickPair(0)(5, 6) === 5,
     "a later RETURN than the boundary's first adapts one-to-two");
   check(pickPair(1)(5, 6) === 11,
@@ -67,5 +67,5 @@ export function main(): null {
     "an adapter over a cataloged stdlib callable invokes its row");
 
   output.log("OK");
-  return null;
+  return ;
 }

@@ -156,7 +156,7 @@ function checkParameterBinding(e: number | null): void {
     expectTrue("the parameter refinement after the catch", afterCatch === 17);
   }
 }
-export function main(): null {
+export function main(): void {
   checkIntRefinement();
   checkStringRefinement();
   checkNullRefinement();
@@ -168,5 +168,5 @@ export function main(): null {
   checkNestedTryCatchAssignment();
   checkParameterBinding(17);
   printer.log("OK");
-  return null;
+  return ;
 }

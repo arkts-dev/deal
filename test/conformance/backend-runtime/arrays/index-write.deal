@@ -16,6 +16,6 @@ export function test_array_write(): number {
   return result;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

@@ -11,4 +11,4 @@ export function test_relational_before_equality(): null {
   return null;
 }
 
-export function main(): null { return test_relational_before_equality(); }
+export function main(): void { test_relational_before_equality(); }

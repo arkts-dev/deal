@@ -3,7 +3,7 @@
 // @expected: runtime-error E8001
 // @features: type-system, nullable, narrowing, control-flow, runtime-errors
 
-export function main(): null {
+export function main(): void {
   let flag: boolean | null = true;
   let clear: () => null = function(): null {
     flag = null;
@@ -14,5 +14,5 @@ export function main(): null {
     { let v14Loop0: number = 0; while (flag) { let step: number = v14Loop0; {
     } v14Loop0 = step; v14Loop0 = v14Loop0 + 1; } }
   }
-  return null;
+  return ;
 }

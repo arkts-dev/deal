@@ -98,7 +98,7 @@ public final class LlvmDataClassEmissionTest {
               throw { name: code, message: `${text}` };
             }
 
-            export function main(): null {
+            export function main(): void {
               let greeting: string = "ab";
               let joined: string = `${greeting}-${greeting}!`;
               if (joined !== "ab-ab!") { report("S1", joined); }
@@ -291,7 +291,7 @@ public final class LlvmDataClassEmissionTest {
               throw { name: code, message: `${text}` };
             }
 
-            export function main(): null {
+            export function main(): void {
               let user: User = {
                 name: "Ada",
                 address: { city: "London", zip: 12345 },
@@ -457,7 +457,7 @@ public final class LlvmDataClassEmissionTest {
               throw { name: code, message: `${text}` };
             }
 
-            export function main(): null {
+            export function main(): void {
               let source = "{\\"title\\":\\"t\\",\\"inner\\":{\\"value\\":2},\\"items\\":[1,2],\\"maybe\\":\\"m\\",\\"optionalNull\\":null,\\"dynamic\\":{\\"k\\":true}}";
               let decoded: Outer = JSON.parse(source);
               if (!(decoded instanceof Outer)) { report("J1", "decode identity"); }
@@ -608,7 +608,7 @@ public final class LlvmDataClassEmissionTest {
               return sink;
             }
 
-            export function main(): null {
+            export function main(): void {
               let holder: Holder = { data: "start", text: "text", count: 1 };
               let pressure: string = churn();
               let stored: string = holder.data as string;
@@ -716,7 +716,7 @@ public final class LlvmDataClassEmissionTest {
               throw { name: code, message: `${text}` };
             }
 
-            export function main(): null {
+            export function main(): void {
               let absent: Box = { value: null, omitted: undefined };
               if (Object.hasOwn(absent, "n")) { report("D1", "absent own"); }
               let readAbsent = absent.n;
@@ -846,7 +846,7 @@ public final class LlvmDataClassEmissionTest {
               throw { name: code, message: `${text}` };
             }
 
-            export function main(): null {
+            export function main(): void {
               let carrier: Carrier = { text: "t" };
               if (Object.hasOwn(carrier, "data")) { report("U1", "absent own"); }
               let absent = carrier.data;
@@ -921,7 +921,7 @@ public final class LlvmDataClassEmissionTest {
               return result;
             }
 
-            export function main(): null {
+            export function main(): void {
               let n: number | null = 41;
               let total: number = 0;
               if (n === null) { total = total + 100; } else { total = total + n; }
@@ -1020,7 +1020,7 @@ public final class LlvmDataClassEmissionTest {
               return leaf(0);
             }
 
-            export function main(): null {
+            export function main(): void {
               let constructed: Error = { name: "E5", message: "constructed" };
               let marks: number[] = [];
               marks[0] = 1;
@@ -1125,7 +1125,7 @@ public final class LlvmDataClassEmissionTest {
               throw { name: code, message: `${text}` };
             }
 
-            export function main(): null {
+            export function main(): void {
               let zero: number = 0.0;
               let nan: number = zero / zero;
               let positiveInfinity: number = 1.0 / zero;
@@ -1233,10 +1233,10 @@ public final class LlvmDataClassEmissionTest {
               return inner(mixed);
             }
 
-            export function main(): null {
+            export function main(): void {
               let text: string = "not a number";
               let value: number = middle(text);
-              return null;
+              return ;
             }
             """;
     }
@@ -1491,13 +1491,13 @@ public final class LlvmDataClassEmissionTest {
               failure: Error;
             }
 
-            export function main(): null {
+            export function main(): void {
               let constructed: Error = { name: "C1", message: "m" };
               let boxed: unknown = constructed;
               let bag: Bag = { data: boxed, failure: constructed };
               let elements: unknown[] = [constructed];
               let kind: string = typeof constructed;
-              return null;
+              return ;
             }
             """);
         String module = Files.readString(published.resolve("main.ll"),
@@ -1754,7 +1754,7 @@ public final class LlvmDataClassEmissionTest {
             function check(ok: boolean): void {
               if (!ok) { throw {name: "TEST_FAIL", message: "callable storage"}; }
             }
-            export function main(): null {
+            export function main(): void {
               let functions: (() => number)[] = [];
               for (let n of [1, 2, 3]) {
                 let capture = function(): number { return n; };

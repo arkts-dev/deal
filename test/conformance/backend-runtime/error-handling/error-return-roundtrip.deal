@@ -16,6 +16,6 @@ export function test_error_return_roundtrip(): null {
   return null;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

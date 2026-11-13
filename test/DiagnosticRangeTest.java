@@ -1299,9 +1299,9 @@ public class DiagnosticRangeTest {
         // $ is the shortest identifier the leading position produces.
         String[] catchVars = { "$bad", "$", "bad$name", "b$ad", "bad$" };
         for (String catchVar : catchVars) {
-            String src = "export function main(): null {\n"
+            String src = "export function main(): void {\n"
                 + "  try { throw {}; } catch (" + catchVar + ") {}\n"
-                + "  return null;\n"
+                + "  return ;\n"
                 + "}\n";
             List<CompilerDiagnostic> diags = checkerDiagnostics(src,
                 "catch.deal");
@@ -1319,9 +1319,9 @@ public class DiagnosticRangeTest {
 
         // Nested catch scope: each identifier's range is its own token,
         // not the nested try statement and not the sibling catch.
-        String nested = "export function main(): null {\n"
+        String nested = "export function main(): void {\n"
             + "  try { try {} catch (inner$e) {} } catch (outer$e) {}\n"
-            + "  return null;\n"
+            + "  return ;\n"
             + "}\n";
         List<CompilerDiagnostic> nestedDiags = checkerDiagnostics(nested,
             "nested.deal");

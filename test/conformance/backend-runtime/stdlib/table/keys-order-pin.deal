@@ -18,6 +18,6 @@ export function test_table_keys_order_pin(): null {
   return null;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

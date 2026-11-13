@@ -4,7 +4,7 @@
 import * as host from "host/probe";
 class Item {x:number;stable:number;}
 function check(ok:boolean,label:string):void{if(!ok){throw {name:label,message:label};}}
-export function main():null {
+export function main():void {
   let live=host.make();let visits=0;
   let result=Array.from(live,(x:number,i:number):number=>{visits=visits+1;if(i===0){host.grow();}return x+i;});
   check(visits===3 && result.length===3 && result[0]===4 && result[1]===10 && result[2]===13 && host.size()===3,"host live growth");
@@ -22,5 +22,5 @@ export function main():null {
   let item:Item={x:7,stable:5};let items:Item[]=[item];visits=0;host.damage(item,false);caught=false;
   try{Array.from(items,(x:Item):number=>{visits=visits+1;return x.x;});}catch(e){check((e as Error).name==="E8001","nominal admission");caught=true;}
   check(caught && visits===0,"no nominal callback");host.damage(null,true);check(Array.from(items,(x:Item):number=>x.x)[0]===9,"nominal repaired");
-  return null;
+  return ;
 }

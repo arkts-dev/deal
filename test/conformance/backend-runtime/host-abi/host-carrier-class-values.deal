@@ -183,6 +183,6 @@ function mapShaped(): null {
   return null;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

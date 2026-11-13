@@ -22,6 +22,6 @@ export function test_nested_try_break_continue(): number {
   return total;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

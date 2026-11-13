@@ -11,4 +11,4 @@ export function test_parenthesized_function_expression_call(): null {
   return null;
 }
 
-export function main(): null { return test_parenthesized_function_expression_call(); }
+export function main(): void { test_parenthesized_function_expression_call(); }

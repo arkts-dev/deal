@@ -119,7 +119,7 @@ public final class LlvmConformanceTest {
             Files.delete(selectedSidecar);
             Files.delete(selectedHost);
             Files.delete(hostControls.resolve("selected.d.deal"));
-            String body = "export function main(): null { return null; }\n"
+            String body = "export function main(): void { return ; }\n"
                 + "export async function answer(): Promise<number> { return 42; }\n";
             Files.writeString(source, body);
             var fixture = new CorpusDiscovery.Fixture(source, "backend-runtime/control.deal",
@@ -202,8 +202,8 @@ public final class LlvmConformanceTest {
                     || variant.equals("json-walk") || variant.equals("json-unsupported");
                 boolean atCall = invalidText || runtimeCheck || variant.equals("opaque");
                 String body = "import * as host from \"host/probe\";\n"
-                    + (atCall ? "export function main(): null {\n  host.f();\n  return null;\n}\n"
-                        : "export function main(): null { return null; }\n");
+                    + (atCall ? "export function main(): void {\n  host.f();\n  return ;\n}\n"
+                        : "export function main(): void { return ; }\n");
                 Files.writeString(source, body);
                 Files.writeString(hosts.resolve("probe.d.deal"), variant.equals("opaque") ? "export function f(): unknown;\n"
                     : variant.equals("json-walk") ? "export class C { x: string; }\nexport function f(): string;\n"
@@ -445,7 +445,7 @@ public final class LlvmConformanceTest {
                 function check(value: boolean): void {
                   if (!value) { throw {name: "TRANSPORT_TEST", message: "transport contract"}; }
                 }
-                export function main(): null {
+                export function main(): void {
                   let held: Error = {name: "ORIGINAL", message: "unchanged"};
                   try { throw held; } catch (e) { check((e as Error) === held); }
                   host.capture(held);
@@ -461,7 +461,7 @@ public final class LlvmConformanceTest {
                     caught = true;
                   }
                   check(caught);
-                  return null;
+                  return ;
                 }
                 """;
             Files.writeString(source, body);
@@ -566,7 +566,7 @@ public final class LlvmConformanceTest {
                   if (n < 0) { throw failure; }
                   return n + 1;
                 }
-                export function main(): null {
+                export function main(): void {
                   let effects: number[] = [0];
                   let failure: Error = {name: "CALLBACK_ORIGINAL", message: "retain identity"};
                   let answer = host.invoke(41, effects, failure);
@@ -584,7 +584,7 @@ public final class LlvmConformanceTest {
                   if (!caught || effects[0] !== 2) {
                     throw {name: "CALLBACK_TEST", message: "callback failure identity or effects"};
                   }
-                  return null;
+                  return ;
                 }
                 """;
             Files.writeString(source, body);
@@ -686,7 +686,7 @@ public final class LlvmConformanceTest {
                 function check(value: boolean): void {
                   if (!value) { throw {name: "NUMERIC_TEST", message: "binary64 contract"}; }
                 }
-                export function main(): null {
+                export function main(): void {
                   let negative = math.sqrt(-1);
                   check(negative !== negative);
                   let nan = 0 / 0;
@@ -698,19 +698,19 @@ public final class LlvmConformanceTest {
                   check(a <= b); check(a <= a); check(!(b <= a));
                   check(b > a); check(!(a > b)); check(!(a > a));
                   check(b >= a); check(a >= a); check(!(a >= b));
-                  return null;
+                  return ;
                 }
                 """;
             String substring = """
                 import * as strings from "std/string";
-                export function main(): null {
+                export function main(): void {
                   if (strings.substring("abc", 0.5, 2) !== "ab"
                       || strings.substring("abc", 2, 0) !== "ab"
                       || strings.substring("abc", -1 / 0, 1 / 0) !== "abc"
                       || strings.substring("abc", 0 / 0, 1) !== "a") {
                     throw {name: "STRING_TEST", message: "substring clamp/truncate/swap"};
                   }
-                  return null;
+                  return ;
                 }
                 """;
             for (boolean bounds : new boolean[]{false, true}) {

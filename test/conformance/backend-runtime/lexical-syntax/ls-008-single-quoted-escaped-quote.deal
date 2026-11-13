@@ -11,4 +11,4 @@ export function test_single_quoted_escaped_quote(): null {
   return null;
 }
 
-export function main(): null { return test_single_quoted_escaped_quote(); }
+export function main(): void { test_single_quoted_escaped_quote(); }

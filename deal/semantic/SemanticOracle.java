@@ -5498,7 +5498,7 @@ private static IllegalStateException dynamicFunctionValueDefect(
 
         /**
          * ENTRY_INVOKE — delegates exactly one {@code CALL(DIRECT)} to
-         * {@code main}: null and exits the program after the terminal.
+         * {@code main}: void and exits the program after the terminal.
          */
         private String executeEntryInvoke(SemanticOp op) {
             // Only the entry module's ENTRY_INVOKE delegation runs: a

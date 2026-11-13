@@ -8,6 +8,6 @@ export function test_oob(): number {
   return xs[99];
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

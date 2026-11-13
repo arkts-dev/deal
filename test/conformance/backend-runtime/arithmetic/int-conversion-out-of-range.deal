@@ -11,6 +11,6 @@ export function test_int_conversion_out_of_range(): number {
   return result;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

@@ -11,7 +11,7 @@ function id(x: number): number {
   return x;
 }
 
-export function main(): null {
+export function main(): void {
   let a1: number[] = [1];
   let a2: number[] = [1];
   let aa: number[] = a1;
@@ -39,5 +39,5 @@ export function main(): null {
   if (a1[0] !== 9 || tableValue !== 8 || c1.value !== 7) {
     throw { name: "TEST_FAIL", message: "alias mutation not visible" };
   }
-  return null;
+  return ;
 }

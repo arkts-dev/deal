@@ -18,9 +18,9 @@ export function test_host_function_binding(): number {
   return result;
 }
 
-export function main(): null {
+export function main(): void {
   let observed: number = test_host_function_binding();
   let trace: string = host.trace();
   outputx.log(JSON.stringify({ host: observed, trace: trace }) as string);
-  return null;
+  return ;
 }

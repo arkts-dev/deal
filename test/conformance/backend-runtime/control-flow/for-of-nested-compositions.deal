@@ -8,7 +8,7 @@ function check(ok:boolean):void {
   if(!ok){throw {name:"TEST_FAIL",message:"nested for-of"};}
 }
 
-export function main():null {
+export function main():void {
   let total:number=0;
   for(let x of [1,2]){for(let y of [3,4]){total=total+x+y;}}
   check(total===20);
@@ -55,5 +55,5 @@ export function main():null {
   };
   check(run()===36);
   c.log("NESTED_OK");
-  return null;
+  return ;
 }

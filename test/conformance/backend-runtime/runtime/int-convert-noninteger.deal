@@ -7,6 +7,6 @@ export function test_int_noninteger(): number {
   return (3.7);
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

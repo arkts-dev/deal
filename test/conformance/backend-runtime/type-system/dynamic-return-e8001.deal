@@ -13,6 +13,6 @@ export function test_dynamic_return_runtime_error(): number {
   throw { name: "TEST_FAIL", message: "refined return branch skipped" };
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

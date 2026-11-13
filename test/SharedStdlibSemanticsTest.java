@@ -1453,8 +1453,8 @@ public class SharedStdlibSemanticsTest {
                 "main.deal", """
                     import * as lib from "./lib";
 
-                    export function main(): null {
-                      return null;
+                    export function main(): void {
+                      return ;
                     }
                     """,
                 "lib.deal", """
@@ -1500,9 +1500,9 @@ public class SharedStdlibSemanticsTest {
                       return null;
                     }
 
-                    function main(): null {
+                    function main(): void {
                       run();
-                      return null;
+                      return;
                     }
                     """), "main.deal");
             if (checked == null) {

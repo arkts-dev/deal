@@ -11,6 +11,6 @@ export function test_plain(): string {
   return s;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

@@ -5,7 +5,7 @@
 import * as host from "host/probe";
 class Item {x:number;stable:number;}
 function check(ok:boolean):void {if(!ok){throw {name:"PUSH",message:"live mismatch"};}}
-export function main():null {
+export function main():void {
   let xs=host.make();let alias=xs;
   check(xs.push(11)===3 && host.size()===3 && alias[2]===11);
   let item:Item={x:9,stable:4};let items:Item[]=[];let itemAlias=items;
@@ -31,5 +31,5 @@ export function main():null {
     check((functions.pop() as ()=>number)===callback && functions.length===0);
   }
   check(calls===2);
-  return null;
+  return ;
 }

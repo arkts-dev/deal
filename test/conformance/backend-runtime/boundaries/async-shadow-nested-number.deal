@@ -4,4 +4,4 @@
 // @features: boundary-validation
 
 export async function run():Promise<number>{let f: (f:number) => Promise<number> = async function(f:number):Promise<number>{return f;};await f(1);return 1;}
-export function main():null{return null;}
+export function main():void{return ;}

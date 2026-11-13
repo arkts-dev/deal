@@ -5,4 +5,4 @@
 import * as printer from "std/console";
 import * as host from "host/probe";
 class Node{x:number;next:Node|null;}class Box{n:Node;}function consume(n:Node):void{}function identity(n:Node):Node{return n;}
-export function main():null{let n:Node={x:1,next:null};n.next=n;host.mutate(n);try{let d=n as Node;printer.log("OK");}catch(e){printer.log("REJECT");}return null;}
+export function main():void{let n:Node={x:1,next:null};n.next=n;host.mutate(n);try{let d=n as Node;printer.log("OK");}catch(e){printer.log("REJECT");}return ;}

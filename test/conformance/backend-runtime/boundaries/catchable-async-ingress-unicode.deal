@@ -5,4 +5,4 @@
 import * as host from "host/probe";
 
 export async function run():Promise<number>{let u=await host.f();if((u as string)!==`\uD800`){throw {name:"TEST",message:"async lone unit lost"};}return 1;}
-export function main():null{return null;}
+export function main():void{return ;}

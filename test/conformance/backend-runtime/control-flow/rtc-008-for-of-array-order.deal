@@ -39,7 +39,7 @@ export function test_for_of_json_decoded_array_order(): null {
   return null;
 }
 
-export function main(): null {
+export function main(): void {
   test_for_of_array_order();
-  return test_for_of_json_decoded_array_order();
+  test_for_of_json_decoded_array_order();
 }

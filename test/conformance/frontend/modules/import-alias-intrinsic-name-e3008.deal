@@ -5,7 +5,7 @@
 
 import * as bytes from "./shadow_lib";
 
-export function main(): null {
+export function main(): void {
   let value: number = bytes(2);
-  return null;
+  return;
 }

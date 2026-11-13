@@ -5,4 +5,4 @@
 import * as printer from "std/console";
 import * as host from "host/probe";
 
-export function main():null{let r:Record<string,unknown>={};r.self=r;let u=host.echo(r);let t=u as Record<string,unknown>;if(t===r&&(t.self as Record<string,unknown>)===r){printer.log("OK");}else{printer.log("IDENTITY");}return null;}
+export function main():void{let r:Record<string,unknown>={};r.self=r;let u=host.echo(r);let t=u as Record<string,unknown>;if(t===r&&(t.self as Record<string,unknown>)===r){printer.log("OK");}else{printer.log("IDENTITY");}return ;}

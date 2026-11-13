@@ -20,6 +20,6 @@ export function test_string_length_unicode(): null {
   return null;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

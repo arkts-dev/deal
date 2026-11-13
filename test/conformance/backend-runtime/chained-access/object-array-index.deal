@@ -14,6 +14,6 @@ export function test_object_array_index(): number {
   return result;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

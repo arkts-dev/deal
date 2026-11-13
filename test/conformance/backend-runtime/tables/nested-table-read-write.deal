@@ -13,6 +13,6 @@ export function test_nested_table_read_write(): number {
   return result;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

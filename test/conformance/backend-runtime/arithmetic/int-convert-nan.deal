@@ -10,6 +10,6 @@ export function test_int_nan(): number {
   return n;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

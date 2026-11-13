@@ -13,6 +13,6 @@ export function test_host_nullable_function_return_ok(): null {
   return null;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

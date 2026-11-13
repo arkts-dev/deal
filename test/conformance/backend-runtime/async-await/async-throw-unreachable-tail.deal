@@ -16,4 +16,4 @@ export async function check(): Promise<number> {
   }
 }
 
-export function main(): null { return null; }
+export function main(): void { return ; }

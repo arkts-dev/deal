@@ -22,6 +22,6 @@ export function test_error_roundtrip(): string {
   return "error roundtrip ok";
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

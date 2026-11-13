@@ -21,6 +21,6 @@ export function test_trycatch(): string {
   return result;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

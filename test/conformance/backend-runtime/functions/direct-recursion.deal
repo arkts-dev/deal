@@ -20,6 +20,6 @@ export function test_direct_recursion(): number {
   return 0;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

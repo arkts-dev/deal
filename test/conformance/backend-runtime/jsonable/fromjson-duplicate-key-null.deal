@@ -29,6 +29,6 @@ export function test_fromjson_duplicate_key(): null {
   return null;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

@@ -210,7 +210,7 @@ public final class SourceModuleResolverTest {
     private static ProjectContext locateOrFail(Path dir, String entryName)
             throws IOException {
         Path entry = writeText(dir.resolve(entryName),
-            "export function main(): null {}\n");
+            "export function main(): void {}\n");
         ProjectLocator.LocateResult result = ProjectLocator.locate(entry.toString(), null);
         if (result.context() == null) {
             String failure = result.e2010() != null
@@ -323,7 +323,7 @@ public final class SourceModuleResolverTest {
                 + "  \"externals\": {\n"
                 + "    \"host\": {\"declaration\": \"decl/host.d.deal\"}\n"
                 + "  }\n}\n");
-        writeText(dir.resolve("entry.deal"), "export function main(): null {}\n");
+        writeText(dir.resolve("entry.deal"), "export function main(): void {}\n");
         // Rooted sources.
         writeText(dir.resolve("src/main.deal"), "// importer\n");
         writeText(dir.resolve("src/util.deal"), "export function util(): null {}\n");
@@ -986,7 +986,7 @@ public final class SourceModuleResolverTest {
         writeText(dir.resolve("deal.json"),
             "{\n  \"languageVersion\": \"1.6\",\n"
                 + "  \"moduleRoots\": [\"src\"]\n}\n");
-        writeText(dir.resolve("entry.deal"), "export function main(): null {}\n");
+        writeText(dir.resolve("entry.deal"), "export function main(): void {}\n");
         writeText(dir.resolve("src/main.deal"), "// importer\n");
         // The pinned file is itself a symlink to a real file outside the
         // surface and outside every configured root.

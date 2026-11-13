@@ -20,6 +20,6 @@ export function test_continue_in_try(): number {
   return sum;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

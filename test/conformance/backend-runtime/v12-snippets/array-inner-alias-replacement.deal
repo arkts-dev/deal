@@ -4,9 +4,9 @@
 // @features: v1.2, runtime, corner-case
 
 import * as c from "std/console";
-export function main(): null {
+export function main(): void {
  let xs:number[][]=[[1]]; let old:number[]=xs[0]; let alias:number[][]=xs;
  xs[0]=[2]; old[0]=9;
  if(alias[0][0]!==2 || old[0]!==9 || xs[0]===old) {throw {name:"TEST_FAIL",message:"nested slot replacement mutated previous array"};}
- c.log("array-inner-alias-replacement"); return null;
+ c.log("array-inner-alias-replacement"); return ;
 }

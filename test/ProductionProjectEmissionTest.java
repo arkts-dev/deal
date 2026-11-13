@@ -117,10 +117,10 @@ public class ProductionProjectEmissionTest {
     // ProductionProjectEmission directly)
     // =========================================================================
 
-    static final String SHADOWING_SOURCE = "export function main(): null {\n  let x: number = 3;\n  {\n    let x: number = x + 1;\n    if (x !== 4) { throw { name: \"SHADOW_FAIL\", message: \"shadowing initializer\" }; }\n  }\n  if (x !== 3) { throw { name: \"SHADOW_FAIL\", message: \"block outer restored\" }; }\n  if (true) {\n    let x: number = 9;\n    if (x !== 9) { throw { name: \"SHADOW_FAIL\", message: \"if-body shadow\" }; }\n  }\n  if (x !== 3) { throw { name: \"SHADOW_FAIL\", message: \"if-body outer restored\" }; }\n  while (false) {\n    let x: number = 11;\n    if (x !== 11) { throw { name: \"SHADOW_FAIL\", message: \"loop-body shadow\" }; }\n  }\n  if (x !== 3) { throw { name: \"SHADOW_FAIL\", message: \"loop-body outer restored\" }; }\n  let sum: number = 0;\n  let values: number[] = [1.0, 2];\n  for (let v of values) {\n    let before: number = v;\n    let v: number = 10;\n    sum = sum + before + v;\n  }\n  if (sum !== 23) { throw { name: \"SHADOW_FAIL\", message: \"for-of shadow\" }; }\n  let h: number = 3;\n  let hsum: number = 0;\n  { let v14Loop0: number = h + 1; while (hsum < 9) { let h: number = v14Loop0; { hsum = hsum + h; } v14Loop0 = h;  } }\n  if (hsum !== 12) { throw { name: \"SHADOW_FAIL\", message: \"for-head initializer\" }; }\n  if (h !== 3) { throw { name: \"SHADOW_FAIL\", message: \"for-head outer restored\" }; }\n  let nl: string | null = \"ab\";\n  if (nl !== null) {\n    { let v14Loop1: number = 0; while (false) { let nl: number = v14Loop1; {} v14Loop1 = nl;  } }\n    let nlText: string = nl;\n    if (nlText !== \"ab\") { throw { name: \"SHADOW_FAIL\", message: \"for-head shadow restored\" }; }\n  }\n  let nb: string | null = \"cd\";\n  if (nb !== null) {\n    { let nb: number = 0; if (true) {} else {} }\n    let nbText: string = nb;\n    if (nbText !== \"cd\") { throw { name: \"SHADOW_FAIL\", message: \"branch shadow restored\" }; }\n  }\n  try {\n    throw { name: \"SHADOW_X\", message: \"catch shadow\" };\n  } catch (e) {\n    let e: Error = e as Error;\n    if (e.name !== \"SHADOW_X\") { throw { name: \"SHADOW_FAIL\", message: \"catch shadow\" }; }\n  }\n  return null;\n}\n";
+    static final String SHADOWING_SOURCE = "export function main(): void {\n  let x: number = 3;\n  {\n    let x: number = x + 1;\n    if (x !== 4) { throw { name: \"SHADOW_FAIL\", message: \"shadowing initializer\" }; }\n  }\n  if (x !== 3) { throw { name: \"SHADOW_FAIL\", message: \"block outer restored\" }; }\n  if (true) {\n    let x: number = 9;\n    if (x !== 9) { throw { name: \"SHADOW_FAIL\", message: \"if-body shadow\" }; }\n  }\n  if (x !== 3) { throw { name: \"SHADOW_FAIL\", message: \"if-body outer restored\" }; }\n  while (false) {\n    let x: number = 11;\n    if (x !== 11) { throw { name: \"SHADOW_FAIL\", message: \"loop-body shadow\" }; }\n  }\n  if (x !== 3) { throw { name: \"SHADOW_FAIL\", message: \"loop-body outer restored\" }; }\n  let sum: number = 0;\n  let values: number[] = [1.0, 2];\n  for (let v of values) {\n    let before: number = v;\n    let v: number = 10;\n    sum = sum + before + v;\n  }\n  if (sum !== 23) { throw { name: \"SHADOW_FAIL\", message: \"for-of shadow\" }; }\n  let h: number = 3;\n  let hsum: number = 0;\n  { let v14Loop0: number = h + 1; while (hsum < 9) { let h: number = v14Loop0; { hsum = hsum + h; } v14Loop0 = h;  } }\n  if (hsum !== 12) { throw { name: \"SHADOW_FAIL\", message: \"for-head initializer\" }; }\n  if (h !== 3) { throw { name: \"SHADOW_FAIL\", message: \"for-head outer restored\" }; }\n  let nl: string | null = \"ab\";\n  if (nl !== null) {\n    { let v14Loop1: number = 0; while (false) { let nl: number = v14Loop1; {} v14Loop1 = nl;  } }\n    let nlText: string = nl;\n    if (nlText !== \"ab\") { throw { name: \"SHADOW_FAIL\", message: \"for-head shadow restored\" }; }\n  }\n  let nb: string | null = \"cd\";\n  if (nb !== null) {\n    { let nb: number = 0; if (true) {} else {} }\n    let nbText: string = nb;\n    if (nbText !== \"cd\") { throw { name: \"SHADOW_FAIL\", message: \"branch shadow restored\" }; }\n  }\n  try {\n    throw { name: \"SHADOW_X\", message: \"catch shadow\" };\n  } catch (e) {\n    let e: Error = e as Error;\n    if (e.name !== \"SHADOW_X\") { throw { name: \"SHADOW_FAIL\", message: \"catch shadow\" }; }\n  }\n  return ;\n}\n";
 
     static final String DYNAMIC_TABLE_SOURCE = """
-        export function main(): null {
+        export function main(): void {
           let t: Record<string, unknown> = { x: 7 };
           let k: string = "x";
           let n: number = t[k] as number;
@@ -147,7 +147,7 @@ public class ProductionProjectEmissionTest {
           order = 0;
           let ordered: number = receiver()[key()] as number;
           if (order !== 12 || ordered !== 11) { throw { name: "DYN_FAIL", message: "read evaluation order" }; }
-          return null;
+          return ;
         }
         """;
 
@@ -172,8 +172,8 @@ public class ProductionProjectEmissionTest {
     private static final String APP_SOURCE = """
         import * as lib from "./lib";
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
 
         export function label(): string {
@@ -186,9 +186,9 @@ public class ProductionProjectEmissionTest {
         import * as lib from "./lib";
         import * as output from "std/console";
 
-        export function main(): null {
+        export function main(): void {
           output.log("PROBE|MAIN-ONCE");
-          return null;
+          return ;
         }
 
         export function label(): string {
@@ -205,9 +205,9 @@ public class ProductionProjectEmissionTest {
         import * as output from "std/console";
         import * as str from "std/string";
 
-        export function main(): null {
+        export function main(): void {
           output.log("PROBE|STDLIB-IMPORT");
-          return null;
+          return ;
         }
         """;
 
@@ -217,8 +217,8 @@ public class ProductionProjectEmissionTest {
      * production entry.
      */
     private static final String DECLARATION_ORIGIN_APP_SOURCE = """
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
 
         function f(): number {
@@ -235,7 +235,7 @@ public class ProductionProjectEmissionTest {
         export class Widget { n: number; }
         export function decode(s: string): Widget { return JSON.parse(s); }
         export function encode(v: Widget): string { return JSON.stringify(v) as string; }
-        export function main(): null { return null; }
+        export function main(): void { return ; }
         """;
 
     /**
@@ -243,16 +243,16 @@ public class ProductionProjectEmissionTest {
      * type annotation is the declaration-owned descriptor subject the
      * counter-origin probe corrupts, plus the production entry.
      */
-    private static final String FOR_LET_COUNTER_APP_SOURCE = "export function main(): null {\n  { let v14Loop2: number = 0; while (v14Loop2 < 2) { let i: number = v14Loop2; { } v14Loop2 = i; v14Loop2 = v14Loop2 + 1; } }\n  return null;\n}\n";
+    private static final String FOR_LET_COUNTER_APP_SOURCE = "export function main(): void {\n  { let v14Loop2: number = 0; while (v14Loop2 < 2) { let i: number = v14Loop2; { } v14Loop2 = i; v14Loop2 = v14Loop2 + 1; } }\n  return ;\n}\n";
 
     /**
      * The ordinary array fixture stages through the container arm.
      */
     private static final String ARRAY_APP_SOURCE = """
-        export function main(): null {
+        export function main(): void {
           let n: number = 3;
           let b: number[] = [n];
-          return null;
+          return ;
         }
         """;
 
@@ -260,9 +260,9 @@ public class ProductionProjectEmissionTest {
     private static final String SYNC_CALL_APP_SOURCE = """
         import * as lib from "./lib";
 
-        export function main(): null {
+        export function main(): void {
           let x: number = lib.add(1, 2);
-          return null;
+          return ;
         }
         """;
 
@@ -276,8 +276,8 @@ public class ProductionProjectEmissionTest {
     private static final String HOST_APP_SOURCE = """
         import * as cfg from "host/cfg";
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -286,8 +286,8 @@ public class ProductionProjectEmissionTest {
      * rejected-op emission boundaries identify.
      */
     private static final String CLASS_DEFAULT_APP_SOURCE = """
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
 
         export class Point {
@@ -312,8 +312,8 @@ public class ProductionProjectEmissionTest {
     private static final String CROSS_ASYNC_APP_SOURCE = """
         import * as lib from "./lib";
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
 
         export async function worker(): Promise<number> {
@@ -328,8 +328,8 @@ public class ProductionProjectEmissionTest {
      * really execute the ASYNC_START(DEAL_BODY)/AWAIT path.
      */
     private static final String SAME_ASYNC_APP_SOURCE = """
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
 
         async function compute(): Promise<number> {
@@ -491,10 +491,10 @@ public class ProductionProjectEmissionTest {
 
     /** A local function cell exercises CALLS-family production emission. */
     private static final String NESTED_DECLARATION_APP_SOURCE = """
-        export function main(): null {
+        export function main(): void {
           let inner: () => number = function(): number { return 1; };
           let x: number = inner();
-          return null;
+          return ;
         }
         """;
 
@@ -512,7 +512,7 @@ public class ProductionProjectEmissionTest {
     private static final String ADAPTER_SOURCE_APP_SOURCE = """
         import * as c from "std/console";
 
-        export function main(): null {
+        export function main(): void {
           let f: (a: number, b: number) => number = make();
           let r: number = f(1, 2);
           if (r !== 1) {
@@ -523,7 +523,7 @@ public class ProductionProjectEmissionTest {
             throw { name: "ARITY_ADAPTER_ARGS", message: "the extra argument changed the result" };
           }
           c.log("ARITY_ADAPTER|OK");
-          return null;
+          return ;
         }
 
         function make(): (a: number) => number {
@@ -564,14 +564,14 @@ public class ProductionProjectEmissionTest {
     private static final String FORWARD_CLASS_APP_SOURCE = """
         import * as c from "std/console";
 
-        export function main(): null {
+        export function main(): void {
           let u: User = { name: "x" };
           let d: Defaulted = makeDefaulted();
           if (u.name !== "x" || d.tag !== 7) {
             throw { name: "FORWARD_CLASS", message: "the forward class shapes did not execute" };
           }
           c.log("FORWARD_CLASS|OK");
-          return null;
+          return ;
         }
 
         function makeDefaulted(): Defaulted {
@@ -692,7 +692,7 @@ public class ProductionProjectEmissionTest {
         import * as cfg2 from "host/cfg";
         import * as output from "std/console";
 
-        export function main(): null {
+        export function main(): void {
           if (cfg.alpha === cfg2.alpha) {
             throw { name: "JS_PROBE", message: "one typed surface per import" };
           }
@@ -715,7 +715,7 @@ public class ProductionProjectEmissionTest {
             throw { name: "JS_PROBE", message: "ordinary JSON encoder" };
           }
           output.log("PROBE|JS|MAIN");
-          return null;
+          return ;
         }
 
         export async function worker(): Promise<number> {
@@ -732,7 +732,7 @@ public class ProductionProjectEmissionTest {
     private static final String CALL_RESULT_ADAPTER_APP_SOURCE = """
         import * as output from "std/console";
 
-        export function main(): null {
+        export function main(): void {
           let c: Counter = {n: 0, x: 11};
           let f: (a: number, b: number) => number = make(c);
           let first: number = f(4, 5);
@@ -751,7 +751,7 @@ public class ProductionProjectEmissionTest {
             throw { name: "JS_PROBE", message: "nested later-class default" };
           }
           output.log("PROBE|JS|DECLARATION-ORDER");
-          return null;
+          return ;
         }
 
         class Holder {
@@ -818,8 +818,8 @@ public class ProductionProjectEmissionTest {
           return async function(a: number): Promise<number> { return a + 40; };
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -851,8 +851,8 @@ public class ProductionProjectEmissionTest {
           return async function(a: number): Promise<number> { return a + 40; };
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -862,7 +862,7 @@ public class ProductionProjectEmissionTest {
      */
     private static final String RECURSIVE_CALLABLE_APP_SOURCE = """
         import * as output from "std/console";
-        export function main(): null {
+        export function main(): void {
           let a: A = {makeB: makeB};
           let b: B = {n: 2, makeA: makeA};
           let self: Self = {n: 3, make: makeSelf};
@@ -870,7 +870,7 @@ public class ProductionProjectEmissionTest {
             throw {name: "JS_PROBE", message: "provided recursive callable"};
           }
           output.log("PROBE|JS|RECURSIVE-CALLABLES");
-          return null;
+          return ;
         }
         function makeA(): A { return {makeB: makeB}; }
         function makeB(): B { return {n: 2, makeA: makeA}; }
@@ -887,7 +887,7 @@ public class ProductionProjectEmissionTest {
     private static final String NESTED_RECURSIVE_FIELDS_APP_SOURCE = """
         import * as output from "std/console";
 
-        export function main(): null {
+        export function main(): void {
           let self: Self = {child: {child: null}};
           let child: Self | null = self.child;
           if (child !== null) {
@@ -912,7 +912,7 @@ public class ProductionProjectEmissionTest {
             throw { name: "JS_PROBE", message: "mutual default a" };
           }
           output.log("PROBE|JS|NESTED-FIELDS");
-          return null;
+          return ;
         }
 
         class Self {
@@ -1240,9 +1240,9 @@ public class ProductionProjectEmissionTest {
             + " failure --");
         Fixture fixture = compileProject(new LinkedHashMap<>(Map.of(
             "src/app.deal", """
-                export function main(): null {
+                export function main(): void {
                   let values: number[] = []; let x: number = values[0];
-                  return null;
+                  return ;
                 }
                 """)), Map.of());
         try {
@@ -1886,7 +1886,7 @@ public class ProductionProjectEmissionTest {
     private static final String SUPPLIED_RECURSIVE_FIELDS_APP_SOURCE = """
         import * as output from "std/console";
 
-        export function main(): null {
+        export function main(): void {
           let n: Node = { next: null };
           if (n.next !== null) {
             throw { name: "JS_PROBE", message: "override lost" };
@@ -1900,7 +1900,7 @@ public class ProductionProjectEmissionTest {
             throw { name: "JS_PROBE", message: "mutual override lost" };
           }
           output.log("PROBE|JS|SUPPLIED-FIELDS");
-          return null;
+          return ;
         }
 
         class Node {
@@ -1918,9 +1918,9 @@ public class ProductionProjectEmissionTest {
 
     /** A missing required nullable field rejects with E4001. */
     private static final String MISSING_RECURSIVE_FIELD_APP_SOURCE = """
-        export function main(): null {
+        export function main(): void {
           let n: Node = {};
-          return null;
+          return ;
         }
 
         class Node {
@@ -1936,9 +1936,9 @@ public class ProductionProjectEmissionTest {
                 class A { b: B = {}; }
                 class B { a: A = {}; }
 
-                export function main(): null {
+                export function main(): void {
                   let a: A = {};
-                  return null;
+                  return ;
                 }
                 """);
             Path out = root.resolve("out");
@@ -2166,7 +2166,7 @@ public class ProductionProjectEmissionTest {
         Path project = Files.createTempDirectory("production-js-dump-");
         try {
             writeFileIn(project, "src/app.deal",
-                "export function main(): null { return null; }\n");
+                "export function main(): void { return ; }\n");
             Path out = project.resolve("out");
             Path entry = project.resolve("src/app.deal").toAbsolutePath();
 
@@ -2203,7 +2203,7 @@ public class ProductionProjectEmissionTest {
                 """);
             writeFileIn(project, "src/app.deal", """
                 import * as json from "std/json";
-                export function main(): null { return null; }
+                export function main(): void { return ; }
                 """);
             // The previous live set carries an older dump: a rejected
             // compile publishes no dump, so that byte survives untouched.
@@ -2303,9 +2303,9 @@ public class ProductionProjectEmissionTest {
             writeFileIn(root, "src/app.deal", """
                 export class Box { v: number; }
 
-                export function main(): null {
+                export function main(): void {
                   let b: Box = {v: 1};
-                  return null;
+                  return ;
                 }
                 """);
             // Every stdlib implementation is deployed; only the runtime is
@@ -2740,10 +2740,10 @@ public class ProductionProjectEmissionTest {
     private static final String IMPORTED_CLASS_APP_SOURCE = """
         import * as Lib from "./lib";
 
-        export function main(): null {
+        export function main(): void {
           let p: Lib.Point = { x: 1, y: 2 };
           let s: number = p.x + p.y;
-          return null;
+          return ;
         }
         """;
 
@@ -3646,7 +3646,7 @@ public class ProductionProjectEmissionTest {
         verifySidecarCoordinates(libMap, luaLines, LIB_SOURCE, "-- ",
             "src/lib.deal");
         check(hasMappingAtSourceLine(appMap, 4),
-            "the entry sidecar maps the main body's return null");
+            "the entry sidecar maps the main body's bare return");
         check(hasMappingAtSourceLine(appMap, 8),
             "the entry sidecar maps the label body's return");
         check(hasMappingAtSourceLine(libMap, 2),
@@ -3951,13 +3951,13 @@ public class ProductionProjectEmissionTest {
         """;
     private static final String EMITTER_APP = """
         import * as lib from "./lib";
-        export function main(): null { return null; }
+        export function main(): void { return ; }
         export function label(): string { return "app"; }
         """;
     private static final String CONSOLE_EMITTER_APP = """
         import * as lib from "./lib";
         import * as output from "std/console";
-        export function main(): null { output.log("PROBE|MAIN-ONCE"); return null; }
+        export function main(): void { output.log("PROBE|MAIN-ONCE"); return ; }
         export function label(): string { return "app"; }
         """;
 
@@ -4084,7 +4084,7 @@ public class ProductionProjectEmissionTest {
                 }
             }
             try (PublishedEmitter overflow = publishedEmitter(backend, EMITTER_LIB,
-                    "export function main(): null { let values: number[] = []; let x: number = values[0]; return null; }")) {
+                    "export function main(): void { let values: number[] = []; let x: number = values[0]; return ; }")) {
                 assertEmitterRun(backend + " overflow terminal", runPublished(overflow, null), 1, "DEAL_ERROR_CODE: E8002\n");
             }
             try (PublishedEmitter host = publishedEmitter(backend,
@@ -4104,7 +4104,7 @@ public class ProductionProjectEmissionTest {
         String libMain = """
             import * as output from "std/console";
             export function add(a: number, b: number): number { return a + b; }
-            export function main(): null { output.log("PROBE|LIB-MAIN"); return null; }
+            export function main(): void { output.log("PROBE|LIB-MAIN"); return ; }
             """;
         try (PublishedEmitter nonentry = publishedEmitter(Backend.LUAJIT, libMain, CONSOLE_EMITTER_APP)) {
             for (ModuleId module : List.of(LIB, new ModuleId("app"))) {
@@ -4118,7 +4118,7 @@ public class ProductionProjectEmissionTest {
         for (int i = 0; i < 201; i++) {
             growth.append("export function f").append(String.format("%03d", i)).append("(): null { return null; }\n");
         }
-        growth.append("export function main(): null { f000(); f100(); f200(); return null; }");
+        growth.append("export function main(): void { f000(); f100(); f200(); return ; }");
         try (PublishedEmitter fixture = publishedEmitter(Backend.LUAJIT, EMITTER_LIB, growth.toString())) {
             assertEmitterRun("201-export chunk loads", runPublished(fixture, null), 0, "");
         }
@@ -4162,7 +4162,7 @@ public class ProductionProjectEmissionTest {
                 && !source.contains("io.stderr:write(\"R|"), "Lua production trace disabled");
             check(source.contains("error(__mainErr, 0)"), "Lua non-DEAL terminal rethrows");
             check(LuaSemanticEmitter.emitProject(project, result.tables(), result.registries())
-                .contains("io.stderr:write(\"R|success|null\\n\")"), "Lua trace entry remains distinct");
+                .contains("io.stderr:write(\"R|success|undefined\\n\")"), "Lua trace entry remains distinct");
             for (boolean tables : List.of(false, true)) {
                 try {
                     LuaSemanticEmitter.emitProductionProject(project, tables ? null : result.tables(),

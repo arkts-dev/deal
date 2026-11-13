@@ -23,6 +23,6 @@ export async function f_value(): Promise<string | null> {
   return result;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

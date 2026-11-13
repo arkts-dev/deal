@@ -27,6 +27,6 @@ export function test_json_deep_finite_roundtrip(): null {
   return null;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

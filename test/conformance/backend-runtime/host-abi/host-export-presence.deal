@@ -20,6 +20,6 @@ export function test_export_presence(): string {
 }
 
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

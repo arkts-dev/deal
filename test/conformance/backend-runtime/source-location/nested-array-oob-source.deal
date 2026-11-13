@@ -9,6 +9,6 @@ export function test_source_location_nested_array_oob(): number {
   return value;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

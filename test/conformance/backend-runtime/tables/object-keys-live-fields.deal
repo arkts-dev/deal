@@ -5,7 +5,7 @@ import * as host from "host/probe";
 class Item {x:number;stable:number;}
 function keys(xs:string[]):string {let text="";for(const name of xs){text=text+name+"|";}return text;}
 function check(ok:boolean):void{if(!ok){throw {name:"KEYS",message:"presence-only snapshot"};}}
-export function main():null {
+export function main():void {
   const item:Item={stable:4,x:9};const record:Record<string,unknown>={child:item};
   record.self=record;
   host.damage(item,false);
@@ -18,5 +18,5 @@ export function main():null {
   let effects="";const fail=():Record<string,unknown>=>{effects=effects+"!";throw {name:"STOP",message:"stop"};};
   let caught=false;try{Object.keys(fail());}catch(e){caught=(e as Error).name==="STOP";}
   check(caught && effects==="!");
-  return null;
+  return ;
 }

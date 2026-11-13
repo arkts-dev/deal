@@ -14,7 +14,7 @@ function staticFactorial(n:number):number{
   if(n===0){return 1;}
   return n*staticFactorial(n-1);
 }
-export function main():null{
+export function main():void{
   {
     // factorial-nonrecursive-control
     let f:(n:number)=>number=function(n:number):number{
@@ -139,5 +139,5 @@ export function main():null{
     check(f(1)===1 && visits===6 && escaped[0]()===13 && escaped[4]()===11);
   }
   c.log("ACTIVATION_OK");
-  return null;
+  return ;
 }

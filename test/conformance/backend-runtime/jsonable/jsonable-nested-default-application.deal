@@ -18,4 +18,4 @@ export function test_nested_default_application(): null {
   return null;
 }
 
-export function main(): null { return null; }
+export function main(): void { return ; }

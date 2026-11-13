@@ -24,6 +24,6 @@ export function test_return_in_try_loop(): number {
   return 5;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

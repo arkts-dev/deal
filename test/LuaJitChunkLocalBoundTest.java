@@ -170,7 +170,7 @@ public class LuaJitChunkLocalBoundTest {
         }
         source.append("}\n\n");
         int expected = GROUP_COUNT * GROUP_MEMBERS + DEFAULTED_FIELDS * 3;
-        source.append("export function main(): null {\n");
+        source.append("export function main(): void {\n");
         source.append("  let total: number = ");
         for (int i = 0; i < GROUP_COUNT; i++) {
             if (i > 0) {
@@ -194,7 +194,7 @@ public class LuaJitChunkLocalBoundTest {
         source.append("    throw { name: \"TEST_FAIL\", message: \"sum mismatch\" };\n");
         source.append("  }\n");
         source.append("  output.log(\"").append(FIXTURE_MARKER).append("\");\n");
-        source.append("  return null;\n}\n");
+        source.append("  return;\n}\n");
         return source.toString();
     }
 

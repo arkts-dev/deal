@@ -12,6 +12,6 @@ export function test_dynamic_null_to_nullable_class(): null {
   return null;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

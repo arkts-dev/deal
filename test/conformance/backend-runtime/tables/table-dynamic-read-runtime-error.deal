@@ -9,6 +9,6 @@ export function test_table_dynamic_read_runtime_error(): number {
   return result;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

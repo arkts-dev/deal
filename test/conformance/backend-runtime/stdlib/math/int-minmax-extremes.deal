@@ -21,6 +21,6 @@ export function test_math_int_extremes(): null {
   return null;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

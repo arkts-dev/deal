@@ -28,4 +28,4 @@ export function test_json_stringify_function_error(): null {
   return null;
 }
 
-export function main(): null { return null; }
+export function main(): void { return ; }

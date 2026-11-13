@@ -45,7 +45,7 @@ export function exportedNode(): unknown {
   return node;
 }
 
-export function main(): null {
+export function main(): void {
   tick();
   fall();
   let node: JsonNode = {tail: null, first: true};
@@ -286,5 +286,5 @@ export function main(): null {
   if (retainedFieldRhs(22) !== 22) { throw {name: "FAIL", message: "field original mutable RHS"}; }
   if (callbacks[0](23, 24) !== 23) { throw {name: "FAIL", message: "array stored adapter retains RHS"}; }
   if (callbackBox.callback(25, 26) !== 25) { throw {name: "FAIL", message: "field stored adapter retains RHS"}; }
-  return null;
+  return ;
 }

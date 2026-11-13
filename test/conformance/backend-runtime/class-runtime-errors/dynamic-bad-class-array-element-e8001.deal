@@ -18,6 +18,6 @@ export function test_dynamic_bad_class_array_element(): number {
   throw { name: "TEST_FAIL", message: "nominal element branch skipped" };
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

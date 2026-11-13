@@ -19,6 +19,6 @@ export function test_canonical_error_atom_roundtrip(): string {
   return "canonical error atom ok";
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

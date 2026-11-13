@@ -381,7 +381,7 @@ public final class Language16RuntimeTest {
                   if ((JSON.stringify(item) as string) !== '{"first":{"bad":"kept"},"name":"kept","grid":[[1]],"home":{"city":"kept"}}') {throw {name:"TEST",message:"transport repair"};}
                   return null;
                 }
-                export function main():null {return null;}
+                export function main():void {return ;}
                 """);
             Files.writeString(work.resolve("deal.json"),
                 "{\"languageVersion\":\"1.6\",\"stdlib\":\"1.6\",\"moduleRoots\":[\"src\"]}");
@@ -504,8 +504,8 @@ public final class Language16RuntimeTest {
             Path source = Files.createDirectories(work.resolve("src")).resolve("main.deal");
             Files.writeString(source, ConformanceHarnessMetadata.stripClassificationHeaders(Files.readString(
                 Path.of("test/conformance/backend-runtime/" + fixture)))
-                .replace("export function main():null", "export function run():null")
-                + "\nexport function main():null{return null;}\n");
+                .replace("export function main():void", "export function run():void")
+                + "\nexport function main():void{return ;}\n");
             Files.writeString(work.resolve("deal.json"),
                 "{\"languageVersion\":\"1.6\",\"stdlib\":\"1.6\",\"moduleRoots\":[\"src\"]}");
             var invocation = deal.semantic.CompilerProfileProvider.resolve(
@@ -534,7 +534,7 @@ public final class Language16RuntimeTest {
             var result = deal.semantic.SemanticOracle.invokeSyncEntry(project, tables, registries,
                 new deal.semantic.SemanticOracle.HostResponder() {}, compiler.checkedProject().input().entryModule(), "run", List.of());
             if (!(result.terminal() instanceof deal.semantic.SemanticRuntimeModel.Terminal.Success success)
-                    || !success.resultAtom().equals("null")) throw new AssertionError(result.comparisonReport());
+                    || !success.resultAtom().equals("undefined")) throw new AssertionError(result.comparisonReport());
             long tests = result.trace().stream().filter(e -> e.kind()==kind
                 && e.phase()==deal.semantic.SemanticRuntimeModel.Phase.SUCCESS).count();
             if (expected >= 0 && tests!=expected) throw new AssertionError(fixture + " Oracle population: " + tests);
@@ -571,14 +571,14 @@ public final class Language16RuntimeTest {
             Path entry = src.resolve("main.deal");
             Files.writeString(entry, "import * as lib from \"./lib\";\n" + failures + """
                 function choose(flag:boolean):()=>null { return flag ? fail : lib.fail; }
-                export function main():null {
+                export function main():void {
                   fail();
                   let dynamic:()=>null=choose(true);
                   dynamic();
                   let adapted:(ignored:number)=>null=dynamic;
                   adapted(7);
                   lib.fail();
-                  return null;
+                  return ;
                 }
                 """);
             var invocation = deal.semantic.CompilerProfileProvider.resolve(
@@ -593,7 +593,7 @@ public final class Language16RuntimeTest {
             project.modules().forEach((id,unit)->{tables.put(id,unit.bodyTable());registries.put(id,unit.classFactories());});
             var verdict = SemanticDifferentialHarness.runProject(project,tables,registries,
                 SemanticDifferentialHarness.Expectation.success("JSON operation origins across direct/dynamic/adapted/imported calls",
-                    List.of(),"null"),work.resolve("trace"));
+                    List.of(),"undefined"),work.resolve("trace"));
             if (!verdict.pass() || verdict.runs().size()!=3) throw new AssertionError(verdict.report());
             for (var run : verdict.runs()) {
                 var selected = run.trace().stream().filter(event -> event.phase()==deal.semantic.SemanticRuntimeModel.Phase.FAILURE
@@ -631,7 +631,7 @@ public final class Language16RuntimeTest {
             Files.writeString(entry, """
                 class Item { value:number; }
                 class Nullable { value:number|null; }
-                export function main():null {
+                export function main():void {
                   try { let n:number=JSON.parse(`"bad"`); } catch(e) {}
                   try { JSON.parse(`bad`); } catch(e) {}
                   try { let item:Item=JSON.parse(`{"extra":1}`); } catch(e) {}
@@ -646,7 +646,7 @@ public final class Language16RuntimeTest {
                   try { let item:Item=JSON.parse(`[]`); } catch(e) {}
                   let n:number=JSON.parse(`2`);
                   if(n!==2) { throw {name:"TEST",message:"parse value"}; }
-                  return null;
+                  return ;
                 }
                 """);
             var invocation = deal.semantic.CompilerProfileProvider.resolve(
@@ -660,7 +660,7 @@ public final class Language16RuntimeTest {
             var registries = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.ClassFactoryRegistry>();
             project.modules().forEach((id, unit) -> { tables.put(id, unit.bodyTable()); registries.put(id, unit.classFactories()); });
             var verdict = SemanticDifferentialHarness.runProject(project, tables, registries,
-                SemanticDifferentialHarness.Expectation.success("JSON.parse syntax/target/extra failure events", List.of(), "null"),
+                SemanticDifferentialHarness.Expectation.success("JSON.parse syntax/target/extra failure events", List.of(), "undefined"),
                 work.resolve("trace"));
             if (!verdict.pass() || verdict.runs().size() != 3) throw new AssertionError(verdict.report());
             for (var run : verdict.runs()) {
@@ -766,10 +766,10 @@ public final class Language16RuntimeTest {
                 Path source = src.resolve("main.deal");
                 String type = numeric ? "number" : "string";
                 String literal = numeric ? "7" : "\"foreign\"";
-                Files.writeString(source, "class Item{value:" + type + ";}export function main():null{"
+                Files.writeString(source, "class Item{value:" + type + ";}export function main():void{"
                     + "let item:Item=JSON.parse(`{\"value\":" + literal + "}`);"
                     + "if(item.value!==" + literal + "){throw {name:\"TEST\",message:\"foreign schema\"};}"
-                    + "return null;}");
+                    + "return ;}");
                 Path out = project.resolve("out");
                 var compiler = new deal.module.CompilationOrchestrator(source, out,
                     false, false, false, false, deal.codegen.Backend.JVM, Map.of(), List.of(src), null, null, invocation);
@@ -814,7 +814,7 @@ public final class Language16RuntimeTest {
                 + "export function run():number{let marker:unrelated.Marker={};let box:model.Box=JSON.parse(`{\"item\":{\"value\":7}}`);"
                 + "let local:Local=JSON.parse(`{\"box\":{\"item\":{\"value\":8}}}`);"
                 + "if(model.read(local.box)!==8){throw {name:\"TEST\",message:\"local-to-private schema\"};}return model.read(box);}"
-                + "export function main():null{return null;}");
+                + "export function main():void{return ;}");
             Files.writeString(src.resolve("other.deal"), "export class Marker{}");
             Files.writeString(src.resolve("model.deal"), "class Item{value:number;next?:Item;}export class Box{item:Item;}"
                 + "export function read(box:Box):number{return box.item.value;}");
@@ -965,8 +965,8 @@ public final class Language16RuntimeTest {
             Path host = work.resolve("probe.d.deal");
             Files.writeString(host, "class Inner{value:number;next?:Inner;}export class Leaf{value:number;child?:Inner;}");
             Files.writeString(source, "import * as host from \"host/probe\";import * as model from \"./model\";"
-                + "export function main():null{let box:model.Box=JSON.parse(`{\"item\":{\"value\":7}}`);"
-                + "let leaf:host.Leaf=JSON.parse(`{\"value\":8}`);return null;}");
+                + "export function main():void{let box:model.Box=JSON.parse(`{\"item\":{\"value\":7}}`);"
+                + "let leaf:host.Leaf=JSON.parse(`{\"value\":8}`);return ;}");
             Files.writeString(src.resolve("model.deal"), "class Item{value:number;}export class Box{item:Item;}");
             var invocation = deal.semantic.CompilerProfileProvider.resolve(
                 deal.semantic.ReleaseConfiguration.CURRENT_RELEASE_STATE,
@@ -1351,7 +1351,7 @@ public final class Language16RuntimeTest {
             Files.writeString(source, hostile ? """
                 import * as host from "host/probe";
                 class Item{x:number;stable:number;}
-                export function main():null{return null;}
+                export function main():void{return ;}
                 export function run():null{
                   const item:Item={x:9,stable:4};const r:Record<string,unknown>={f:():number=>9,child:item};
                   r.self=r;host.keep(r);host.corrupt();host.damage(item,false);
@@ -1363,8 +1363,8 @@ public final class Language16RuntimeTest {
                 }
                 """ : ConformanceHarnessMetadata.stripClassificationHeaders(Files.readString(
                     Path.of("test/conformance/backend-runtime/tables/builtin-object-keys.deal")))
-                    .replace("export function main():null", "export function run():null")
-                    + "\nexport function main():null{return null;}\n");
+                    .replace("export function main():void", "export function run():void")
+                    + "\nexport function main():void{return ;}\n");
             Path declaration = source.resolveSibling("probe.d.deal");
             Files.writeString(declaration, Files.readString(Path.of("test/conformance/host-fixtures/array_pop.d.deal")));
             Files.writeString(work.resolve("deal.json"),
@@ -1407,7 +1407,7 @@ public final class Language16RuntimeTest {
             var result = deal.semantic.SemanticOracle.invokeSyncEntry(project, tables, registries,
                 responder, compiler.checkedProject().input().entryModule(), "run", List.of());
             if (!(result.terminal() instanceof deal.semantic.SemanticRuntimeModel.Terminal.Success success)
-                    || !success.resultAtom().equals("null"))
+                    || !success.resultAtom().equals(hostile ? "null" : "undefined"))
                 throw new AssertionError("keys Oracle: " + result.comparisonReport());
             long snapshots = result.trace().stream().filter(e -> e.kind()==deal.semantic.ir.SemanticOpKind.OBJECT_KEYS
                 && e.phase()==deal.semantic.SemanticRuntimeModel.Phase.SUCCESS).count();
@@ -1425,8 +1425,8 @@ public final class Language16RuntimeTest {
             Path source = Files.createDirectories(work.resolve("src")).resolve("main.deal");
             Files.writeString(source, ConformanceHarnessMetadata.stripClassificationHeaders(Files.readString(
                 Path.of("test/conformance/backend-runtime/arrays/" + fixture + ".deal")))
-                .replace("export function main():null", "export function run():null")
-                + "\nexport function main():null{return null;}\n"
+                .replace("export function main():void", "export function run():void")
+                + "\nexport function main():void{return ;}\n"
                 + (map ? "export function hole():number{let xs:unknown[]=[undefined];host.keep(xs);host.corrupt();return "
                     + (skipMissing ? "holePredicates(xs);"
                         : fixture.startsWith("find") ? "xs.findIndex((value:unknown):boolean=>true);" : "xs.map((value:unknown):unknown=>value).length;") + "}\n"
@@ -1542,7 +1542,7 @@ public final class Language16RuntimeTest {
             var result = deal.semantic.SemanticOracle.invokeSyncEntry(project, tables, registries,
                 responder, compiler.checkedProject().input().entryModule(), "run", List.of());
             if (!(result.terminal() instanceof deal.semantic.SemanticRuntimeModel.Terminal.Success success)
-                    || !success.resultAtom().equals("null"))
+                    || !success.resultAtom().equals("undefined"))
                 throw new AssertionError("pop Oracle: " + result.comparisonReport() + "\n" + result.trace().stream()
                     .filter(e -> e.phase()==deal.semantic.SemanticRuntimeModel.Phase.FAILURE).toList());
             var failures = result.trace().stream().filter(e -> e.kind()==deal.semantic.ir.SemanticOpKind.valueOf(operation)
@@ -1604,7 +1604,7 @@ public final class Language16RuntimeTest {
             Path source = Files.createDirectories(work.resolve("src")).resolve("main.deal");
             Files.writeString(source, """
                 import * as host from "host/probe";
-                export function main():null{return null;}
+                export function main():void{return ;}
                 export function run():number {
                     try { let value=host.value(); return 0; } catch(e) { return 1; }
                 }
@@ -1671,7 +1671,7 @@ public final class Language16RuntimeTest {
             for (String boundary : List.of("Error", "unknown", "Record<string,unknown>")) {
                 String value = boundary.equals("Record<string,unknown>") ? "{unread:e}" : "e";
                 Files.writeString(source, "import * as host from \"host/probe\";"
-                    + "export function main():null{return null;}"
+                    + "export function main():void{return ;}"
                     + "export function run():number{let e:Error={name:\"X\",message:\"original\"};"
                     + "host.edit(e);try{let v:" + boundary + "=" + value
                     + ";return 0;}catch(x){return 1;}}");

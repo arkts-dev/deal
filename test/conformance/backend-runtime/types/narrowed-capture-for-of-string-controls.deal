@@ -216,12 +216,12 @@ export async function test_async_string_iterable_admission(): Promise<null> {
   return null;
 }
 
-export function main(): null {
+export function main(): void {
   checkClearedIterable();
   checkClearedParameter("x");
   checkOnceAdmittedAndEmpty();
   checkUnicodeScalars();
   checkFreshCapturedBindings();
   checkBreakContinue();
-  return null;
+  return ;
 }

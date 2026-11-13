@@ -50,6 +50,6 @@ export function test_canonical_nullable_boundary(): string {
   return "canonical nullable boundary ok";
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

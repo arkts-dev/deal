@@ -15,6 +15,6 @@ export function test_sum(): number {
   return total;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

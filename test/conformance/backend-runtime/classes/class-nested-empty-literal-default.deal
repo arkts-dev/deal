@@ -6,8 +6,8 @@
 class Address { zip: number; }
 class User { home: Address; }
 
-export function main(): null {
+export function main(): void {
   let u: User = { home: {zip: 90210} };
   if (u.home.zip !== 90210) { throw { name: "TEST_FAIL", message: "provided nested value absent" }; }
-  return null;
+  return ;
 }

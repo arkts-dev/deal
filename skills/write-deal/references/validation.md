@@ -16,7 +16,7 @@ Inspect fresh artifacts, execute every supported backend and check expected outp
 
 `<compiler-runtime>` is the absolute installation or checkout build directory containing runtime classes.
 
-Entry exports synchronous main(): null. Host examples need matching implementations and an isolated manifest outside the parent project. Invoke async exports through the embedding ABI. Do not weaken source to conceal unsupported cases.
+Entry exports synchronous main(): void. Host examples need matching implementations and an isolated manifest outside the parent project. Invoke async exports through the embedding ABI. Do not weaken source to conceal unsupported cases.
 
 The [main example](../examples/src/main.deal) throws on mismatch. Execute [serialization](../examples/serialization/main.deal) separately; its schema requires every nonoptional field. Keep output outside worker directories and follow the existing orchestrator.
 

@@ -28,6 +28,6 @@ export function test_parenthesized_nullable_array(): number {
   return count;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

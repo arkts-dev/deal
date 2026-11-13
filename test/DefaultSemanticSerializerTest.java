@@ -261,7 +261,7 @@ public class DefaultSemanticSerializerTest {
 
     private static final String EXPRESSIONS = """
         import * as L from "./lib";
-        export function main(): null { let n: number = L.expressions(); return null; }
+        export function main(): void { let n: number = L.expressions(); return ; }
         """;
     private static final String EXPRESSION_PROVIDER = """
         class HasBox { tag?: number; }
@@ -327,7 +327,7 @@ public class DefaultSemanticSerializerTest {
                 """;
             Compile body = compile.recompile(Map.of("src/lib.deal", statements, "src/main.deal", """
                 import * as L from "./lib";
-                export function main(): null { let n: number = L.allStatements(1, [1, 2]); return null; }
+                export function main(): void { let n: number = L.allStatements(1, [1, 2]); return ; }
                 """));
             successful(body);
             String all = body.providerContentOf("lib.deal", "allStatements");
@@ -348,7 +348,7 @@ public class DefaultSemanticSerializerTest {
     private static final String FUNCTION_MAIN = """
         import * as L from "./lib";
         class Consumer { n: number; }
-        export function main(): null { let c: Consumer = {n: L.outer(1)}; return null; }
+        export function main(): void { let c: Consumer = {n: L.outer(1)}; return ; }
         """;
     private static final String FUNCTION_LIB = """
         import * as S from "./other";
@@ -442,7 +442,7 @@ public class DefaultSemanticSerializerTest {
         String main = """
             import * as L from "./lib";
             export class Row { a: number; b?: string; c: number | null; }
-            export function main(): null { let r: Row = {a: L.pick(), c: null}; return null; }
+            export function main(): void { let r: Row = {a: L.pick(), c: null}; return ; }
             """;
         Compile base = project(main, "export function pick(): number { return 1; }");
         try {
@@ -485,7 +485,7 @@ public class DefaultSemanticSerializerTest {
     private static void testOrdinaryResourceCompletion() throws Exception {
         Compile compile = new Compile(Map.of("deal.json", MANIFEST, "src/main.deal", """
             import * as C from "./consumer";
-            export function main(): null {let n: number = C.run(); return null;}
+            export function main(): void {let n: number = C.run(); return ;}
             """, "src/consumer.deal", """
             import * as L from "./lib";
             import * as S from "../shared";
@@ -542,12 +542,12 @@ public class DefaultSemanticSerializerTest {
         Compile compile = new Compile(Map.of("deal.json", manifest, "src/main.deal", """
             import * as cfg from "host/cfg";
             import * as L from "./lib";
-            export function main(): null {
+            export function main(): void {
               let e: cfg.Endpoint = {};
               let d: string = cfg.describe(e);
               let p: L.Point = L.decode("{\\\"x\\\":1}");
               let text: string = L.encode({x: 2});
-              return null;
+              return ;
             }
             """, "src/lib.deal", "// @jsonable\nexport class Point {x: number;}\n"
                 + "export function decode(text:string):Point{return JSON.parse(text);}\n"
@@ -576,7 +576,7 @@ public class DefaultSemanticSerializerTest {
         Compile compile = project("""
             import * as L from "./lib";
             class Row {text: string;}
-            export function main(): null { let n: number = L.nested(2); return null; }
+            export function main(): void { let n: number = L.nested(2); return ; }
             """, """
             class Row {n: number;}
             export function nested(n: number): number {
@@ -603,13 +603,13 @@ public class DefaultSemanticSerializerTest {
             check(compile.serialize().equals(result), "serializer repeat is deterministic and immutable");
             Compile moved = compile.recompile(Map.of("src/main.deal", """
                 import * as L from "./other";
-                export function main(): null { let n: number = L.pick(); return null; }
+                export function main(): void { let n: number = L.pick(); return ; }
                 """, "src/other.deal", "export function pick(): number {return 7;}"));
             successful(moved);
             String other = moved.providerContentOf("other.deal", "pick");
             Compile relocated = moved.recompile(Map.of("src/main.deal", """
                 import * as L from "./relocated";
-                export function main(): null { let n: number = L.pick(); return null; }
+                export function main(): void { let n: number = L.pick(); return ; }
                 """, "src/relocated.deal", "export function pick(): number {return 7;}"));
             successful(relocated);
             check(other.equals(relocated.providerContentOf("relocated.deal", "pick")),
@@ -623,7 +623,7 @@ public class DefaultSemanticSerializerTest {
         Compile compile = new Compile(Map.of("deal.json", MANIFEST, "src/main.deal", """
             import * as L from "../outside";
             export class Outer {n: number;}
-            export function main(): null {let n: number = L.pick(); return null;}
+            export function main(): void {let n: number = L.pick(); return ;}
             """, "outside.deal", "export function pick(): number {return 7;}"), "src/main.deal");
         try {
             successful(compile);

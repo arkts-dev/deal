@@ -8,6 +8,6 @@ export function test_array_negative_read(): number {
   return xs[-1];
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

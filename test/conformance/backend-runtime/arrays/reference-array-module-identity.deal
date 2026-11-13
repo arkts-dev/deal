@@ -39,6 +39,6 @@ export function test_array_module_identity(): string {
   return "module-identity-ok";
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

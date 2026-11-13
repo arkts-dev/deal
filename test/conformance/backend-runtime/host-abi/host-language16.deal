@@ -78,4 +78,4 @@ export async function test_async(): Promise<void> {
   check(absent === undefined);
   await host.asyncVoid();
 }
-export function main(): null { return null; }
+export function main(): void { return ; }

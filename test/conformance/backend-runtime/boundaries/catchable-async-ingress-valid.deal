@@ -5,4 +5,4 @@
 import * as host from "host/probe";
 
 export async function run():Promise<number>{try{let u=await host.f();return 1;}catch(e){if(e instanceof Error){return 0;}return 0;}}
-export function main():null{return null;}
+export function main():void{return ;}

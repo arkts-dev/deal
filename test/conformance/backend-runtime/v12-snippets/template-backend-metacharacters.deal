@@ -4,8 +4,8 @@
 // @features: v1.2, runtime, corner-case
 
 import * as c from "std/console";
-export function main(): null {
+export function main(): void {
  let x:string="β"; let text:string=`<${x}> $x %s \\ " ' ]=]`;
  if(text!=="<β> $x %s \\ \" ' ]=]") {throw {name:"TEST_FAIL",message:"template escape or host interpolation"};}
- c.log("template-backend-metacharacters"); return null;
+ c.log("template-backend-metacharacters"); return ;
 }

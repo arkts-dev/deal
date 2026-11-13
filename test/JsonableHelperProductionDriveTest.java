@@ -1107,14 +1107,14 @@ public class JsonableHelperProductionDriveTest {
         StringBuilder source = new StringBuilder();
         source.append("import * as fx from \"./").append(fixtureStem)
             .append("\";\n\n");
-        source.append("export function main(): null {\n");
+        source.append("export function main(): void {\n");
         for (Export export : exports) {
             if ("main".equals(export.name())) {
                 continue;
             }
             source.append("  fx.").append(export.name()).append("();\n");
         }
-        return source.append("  return null;\n}\n").toString();
+        return source.append("  return;\n}\n").toString();
     }
 
     /**
@@ -1487,7 +1487,7 @@ public class JsonableHelperProductionDriveTest {
             Files.createDirectories(src);
             Files.writeString(src.resolve("plain.deal"),
                 "export class Plain {\n  name: string;\n}\n\n"
-                + "export function main(): null {\n  return null;\n}\n",
+                + "export function main(): void {\n  return ;\n}\n",
                 StandardCharsets.UTF_8);
             Files.writeString(root.resolve("deal.json"),
                 "{\n  \"languageVersion\": \"1.6\",\n  \"moduleRoots\": [\"src\"],\n"
@@ -1524,7 +1524,7 @@ public class JsonableHelperProductionDriveTest {
                     + "export function test_missing_helper(): null {\n"
                     + "  let s: string = Lib.Plain$toJson({ name: \"x\" });\n"
                     + "  return null;\n}\n\n"
-                    + "export function main(): null {\n  return null;\n}\n",
+                    + "export function main(): void {\n  return ;\n}\n",
                 StandardCharsets.UTF_8);
             Files.writeString(missing.resolve("deal.json"),
                 "{\n  \"languageVersion\": \"1.6\",\n  \"moduleRoots\": [\"src\"],\n"
@@ -1789,14 +1789,14 @@ public class JsonableHelperProductionDriveTest {
                     Path src = entryRoot.resolve("src");
                     Files.createDirectories(src);
                     Files.writeString(src.resolve("lib.deal"),
-                        "export function main(): null {\n  return null;\n}\n",
+                        "export function main(): void {\n  return ;\n}\n",
                         StandardCharsets.UTF_8);
                     Files.writeString(src.resolve("app.deal"),
                         "import * as Lib from \"./lib\";\n\n"
                             + "export function test_cross_module_main(): null {\n"
                             + "  Lib.main();\n"
                             + "  return null;\n}\n\n"
-                            + "export function main(): null {\n  return null;\n}\n",
+                            + "export function main(): void {\n  return ;\n}\n",
                         StandardCharsets.UTF_8);
                     Files.writeString(entryRoot.resolve("deal.json"),
                         "{\n  \"languageVersion\": \"1.6\",\n"
@@ -2029,8 +2029,8 @@ public class JsonableHelperProductionDriveTest {
               return apply(encode, w);
             }
 
-            export function main(): null {
-              return null;
+            export function main(): void {
+              return ;
             }
             """;
         Lowered lowered = driveHelperFailure("dynamic-encoder-origin", source, "JSON.stringify(w)",
@@ -2078,8 +2078,8 @@ public class JsonableHelperProductionDriveTest {
               return null;
             }
 
-            export function main(): null {
-              return null;
+            export function main(): void {
+              return ;
             }
             """;
         Compilation compilation = driveExactHelperProgram("helper-function-binding", source);
@@ -2199,8 +2199,8 @@ public class JsonableHelperProductionDriveTest {
               return JSON.stringify(w) as string;
             }
 
-            export function main(): null {
-              return null;
+            export function main(): void {
+              return ;
             }
             """;
         driveThreeConsumerParity("table-class-instance", source);
@@ -2290,7 +2290,7 @@ public class JsonableHelperProductionDriveTest {
             identifiers.appendTail(renamed);
             combined.append(renamed).append('\n');
         }
-        return combined.append("export function main(): null {\n  return null;\n}\n")
+        return combined.append("export function main(): void {\n  return ;\n}\n")
             .toString();
     }
 
@@ -2350,7 +2350,7 @@ public class JsonableHelperProductionDriveTest {
         return "\nexport class Child {\n  data: Record<string, unknown>;\n}\n\n"
             + "\nexport class Wrapper {\n  child: Child;\n}\n\n"
             + function
-            + "\nexport function main(): null {\n  return null;\n}\n";
+            + "\nexport function main(): void {\n  return ;\n}\n";
     }
 
     /**
@@ -2444,7 +2444,7 @@ public class JsonableHelperProductionDriveTest {
             + "export function test_nested_class_depth(): "
             + (expectedText != null ? "null" : "string") + " {\n"
             + body
-            + "}\n\nexport function main(): null {\n  return null;\n}\n";
+            + "}\n\nexport function main(): void {\n  return ;\n}\n";
     }
 
     /** The exact JSON text of a {@code Wrapper.child.data} chain of {@code links} links. */
@@ -2505,7 +2505,7 @@ public class JsonableHelperProductionDriveTest {
                 }
                 return null;
             }
-            export function main():null { return null; }
+            export function main():void { return ; }
             """);
     }
 
@@ -2670,7 +2670,7 @@ public class JsonableHelperProductionDriveTest {
             + "  }\n"
             + "  return null;\n"
             + "}\n\n"
-            + "export function main(): null {\n  return null;\n}\n";
+            + "export function main(): void {\n  return ;\n}\n";
         return source;
     }
 
@@ -2684,7 +2684,7 @@ public class JsonableHelperProductionDriveTest {
             + "  b.xs[0] = 9;\n"
             + "  return JSON.stringify(b) as string;\n"
             + "}\n\n"
-            + "export function main(): null {\n  return null;\n}\n";
+            + "export function main(): void {\n  return ;\n}\n";
         driveThreeConsumerParity("array-executor-view-delete", source);
         // The same replacement is visible through a Record-held array alias.
         String tableSource = "\nexport class Wrapper {\n"
@@ -2695,7 +2695,7 @@ public class JsonableHelperProductionDriveTest {
             + "  arr[0] = 9;\n"
             + "  return JSON.stringify(w) as string;\n"
             + "}\n\n"
-            + "export function main(): null {\n  return null;\n}\n";
+            + "export function main(): void {\n  return ;\n}\n";
         driveThreeConsumerParity("table-array-view-delete", tableSource);
     }
 
@@ -3011,7 +3011,7 @@ public class JsonableHelperProductionDriveTest {
             + "  }\n"
             + "  return null;\n"
             + "}\n\n"
-            + "export function main(): null {\n  return null;\n}\n";
+            + "export function main(): void {\n  return ;\n}\n";
         return source;
     }
 
@@ -3057,7 +3057,7 @@ public class JsonableHelperProductionDriveTest {
             + "  }\n"
             + "  return null;\n"
             + "}\n\n"
-            + "export function main(): null {\n  return null;\n}\n";
+            + "export function main(): void {\n  return ;\n}\n";
         return source;
     }
 
@@ -3102,7 +3102,7 @@ public class JsonableHelperProductionDriveTest {
             + "  }\n"
             + "  return null;\n"
             + "}\n\n"
-            + "export function main(): null {\n  return null;\n}\n";
+            + "export function main(): void {\n  return ;\n}\n";
         return source;
     }
 
@@ -3132,7 +3132,7 @@ public class JsonableHelperProductionDriveTest {
             + "  }\n"
             + "  return null;\n"
             + "}\n\n"
-            + "export function main(): null {\n  return null;\n}\n";
+            + "export function main(): void {\n  return ;\n}\n";
         return source;
     }
 
@@ -3190,7 +3190,7 @@ public class JsonableHelperProductionDriveTest {
             + "  }\n"
             + "  return null;\n"
             + "}\n\n"
-            + "export function main(): null {\n  return null;\n}\n";
+            + "export function main(): void {\n  return ;\n}\n";
 
         // The controls: a marked number slot keeps the closed decimal
         // spelling (the all-number literal), and one mixed array built
@@ -3223,7 +3223,7 @@ public class JsonableHelperProductionDriveTest {
             + "  }\n"
             + "  return null;\n"
             + "}\n\n"
-            + "export function main(): null {\n  return null;\n}\n";
+            + "export function main(): void {\n  return ;\n}\n";
         driveExactHelperProgram("declared-array-numeric-variants-and-controls",
             combineExactHelperSources(deficient, controls, readDerivedNumericCarriersSource()));
     }
@@ -3285,7 +3285,7 @@ public class JsonableHelperProductionDriveTest {
             + "  }\n"
             + "  throw { name: \"MISMATCH\", message: \"the explicit valid "
             + "document was rejected\" };\n}\n\n"
-            + "export function main(): null {\n  return null;\n}\n";
+            + "export function main(): void {\n  return ;\n}\n";
         driveExactHelperProgram("nested-default-numeric-carrier-and-nullable-arrays",
             combineExactHelperSources(source, nullableArrayElementsSource()));
     }
@@ -3302,7 +3302,7 @@ public class JsonableHelperProductionDriveTest {
     private static void testOracleDriverMainCoverage() throws Exception {
         System.out.println("-- the oracle's main coverage: a main-only fixture's "
             + "deliberate failure is captured by the main leg exactly once --");
-        String source = "export function main(): null {\n"
+        String source = "export function main(): void {\n"
             + "  throw { name: \"MAIN_REACHED\", message: \"ran\" };\n"
             + "}\n";
         List<Export> exports = exportsOf(source);
@@ -3539,7 +3539,7 @@ public class JsonableHelperProductionDriveTest {
               reject("{\\"name\\":\\"anon\\",\\"age\\":\\"bad\\",\\"home\\":{\\"city\\":\\"seed\\",\\"zip\\":10115}}",supplied);
               return null;
             }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             """, Map.of("owner", """
 
                 export class Address { city: string; zip: number; }

@@ -58,9 +58,9 @@ public final class NativeToolchainTest {
     private static final String APP_SOURCE = """
         import * as lib from "./lib";
 
-        export function main(): null {
+        export function main(): void {
           let ignored: null = lib.ping();
-          return ignored;
+          return;
         }
         """;
 
@@ -712,12 +712,12 @@ public final class NativeToolchainTest {
         //     bytes are in place and the earlier bytes are gone.
         Path changed = compileProject(scratch.resolve("changed-project"),
             Map.of("src/main.deal", """
-                export function main(): null {
+                export function main(): void {
                   let counter: number = 0;
                   while (counter < 3) {
                     counter = counter + 1;
                   }
-                  return null;
+                  return ;
                 }
                 """));
         NativeToolchain.build(NativeToolchain.plan(new NativeBuildRequest(
@@ -914,9 +914,9 @@ public final class NativeToolchainTest {
         System.out.println("-- deal native build|run defaults and options --");
         Path root = scratch.resolve("cli-project");
         writeProject(root, Map.of("src/main.deal", """
-            export function main(): null {
+            export function main(): void {
               let value: number = 2;
-              return null;
+              return ;
             }
             """), Map.of("backend", "luajit"));
         Path entry = root.resolve("src/main.deal");
@@ -996,8 +996,8 @@ public final class NativeToolchainTest {
         // deal native run builds and executes the product.
         Path runRoot = scratch.resolve("cli-run-project");
         writeProject(runRoot, Map.of("src/main.deal", """
-            export function main(): null {
-              return null;
+            export function main(): void {
+              return ;
             }
             """), Map.of());
         Captured run = capture(() -> Main.run(new String[] {
@@ -1030,8 +1030,8 @@ public final class NativeToolchainTest {
         System.out.println("-- the CLI rejects and reports each condition --");
         Path root = scratch.resolve("cli-reject-project");
         writeProject(root, Map.of("src/main.deal", """
-            export function main(): null {
-              return null;
+            export function main(): void {
+              return ;
             }
             """), Map.of());
         Path entry = root.resolve("src/main.deal");
@@ -1094,8 +1094,8 @@ public final class NativeToolchainTest {
         // and places nothing there.
         Path insideRoot = scratch.resolve("cli-inside-project");
         writeProject(insideRoot, Map.of("src/main.deal", """
-            export function main(): null {
-              return null;
+            export function main(): void {
+              return ;
             }
             """), Map.of());
         Captured insideProduct = capture(() -> Main.run(new String[] {
@@ -1136,8 +1136,8 @@ public final class NativeToolchainTest {
         System.out.println("-- the CLI fails closed with no clang on PATH --");
         Path root = scratch.resolve("cli-no-tool-project");
         writeProject(root, Map.of("src/main.deal", """
-            export function main(): null {
-              return null;
+            export function main(): void {
+              return ;
             }
             """), Map.of());
         Path emptyPath = Files.createDirectories(
@@ -1166,8 +1166,8 @@ public final class NativeToolchainTest {
         System.out.println("-- the CLI fails closed outside the version window --");
         Path root = scratch.resolve("cli-major-project");
         writeProject(root, Map.of("src/main.deal", """
-            export function main(): null {
-              return null;
+            export function main(): void {
+              return ;
             }
             """), Map.of());
         Path directory = Files.createDirectories(

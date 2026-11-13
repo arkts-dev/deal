@@ -841,7 +841,7 @@ public final class ModuleIdentityResolverTest {
         Path outside = Files.createDirectories(tmpDir.resolve("symlinked-stdlib-out"));
         Path other = Files.createDirectories(tmpDir.resolve("symlinked-stdlib-other"));
         Files.createDirectories(dir.resolve("std"));
-        writeText(dir.resolve("main.deal"), "export function main(): null { }\n");
+        writeText(dir.resolve("main.deal"), "export function main(): void { }\n");
         writeText(outside.resolve("console.d.deal"),
             "export function log(s: string): null;\n");
         writeText(other.resolve("console.d.deal"),
@@ -909,7 +909,7 @@ public final class ModuleIdentityResolverTest {
         Path overlapDir = Files.createDirectories(tmpDir.resolve("symlinked-overlap"));
         Files.createDirectories(overlapDir.resolve("std"));
         writeText(overlapDir.resolve("main.deal"),
-            "export function main(): null { }\n");
+            "export function main(): void { }\n");
         Files.createSymbolicLink(overlapDir.resolve("std/console.d.deal"),
             outside.resolve("console.d.deal"));
         writeText(overlapDir.resolve("deal.json"),
@@ -940,7 +940,7 @@ public final class ModuleIdentityResolverTest {
         Files.createDirectories(dir.resolve("std"));
         Path outside = Files.createDirectories(tmpDir.resolve("combined-outside"));
 
-        writeText(dir.resolve("main.deal"), "export function main(): null { }\n");
+        writeText(dir.resolve("main.deal"), "export function main(): void { }\n");
         writeText(dir.resolve("src/rooted.deal"), "export function f(): null { }\n");
         writeText(dir.resolve("src/sub/thing.deal"), "export function g(): null { }\n");
         writeText(dir.resolve("src/lib/nested.deal"), "export function h(): null { }\n");
@@ -1099,7 +1099,7 @@ public final class ModuleIdentityResolverTest {
         // see the both-match state.
         Path overlapDir = Files.createDirectories(tmpDir.resolve("combined-overlap"));
         writeText(overlapDir.resolve("main.deal"),
-            "export function main(): null { }\n");
+            "export function main(): void { }\n");
         writeText(overlapDir.resolve("deal.json"),
             "{\n  \"languageVersion\": \"1.6\",\n"
                 + "  \"externals\": {\n"

@@ -21,6 +21,6 @@ export function test_throw(): string {
   return "E_TEST";
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

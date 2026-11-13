@@ -62,4 +62,4 @@ function diagnostic():number {
   return 0;
 }
 
-export function main():null {run();return null;}
+export function main():void {run();return ;}

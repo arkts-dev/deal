@@ -11,4 +11,4 @@ export function test_double_quoted_backslash(): null {
   return null;
 }
 
-export function main(): null { return test_double_quoted_backslash(); }
+export function main(): void { test_double_quoted_backslash(); }

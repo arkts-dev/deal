@@ -11,6 +11,6 @@ export async function test_source_location_async_error(): Promise<number> {
   return await failAsync();
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

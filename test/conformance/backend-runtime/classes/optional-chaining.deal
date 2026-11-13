@@ -4,7 +4,7 @@ import * as left from "./same_name_sibling_a";
 import * as right from "./same_name_sibling_b";
 class Item { x:number; child:Item|null; f:(x:number)=>number; note?:string|null|undefined; }
 function require(ok:boolean, message:string):void { if(!ok){throw {name:"TEST",message:message};} }
-export function main():null {
+export function main():void {
  let calls=0;
  let key=():number=>{calls=calls+1;return 0;};
  let a:Item|null=null;
@@ -109,7 +109,7 @@ export function main():null {
  let holder:Record<string,unknown>={};
  holder[String(closures?.[0]?.()??0)]=a?.x;
  require((holder["8"] as number)===4,"optional key and RHS address ownership");
- return null;
+ return ;
 }
 function failure():number|undefined {
  let item:Item|null={x:1,child:null,f:(x:number):number=>x};

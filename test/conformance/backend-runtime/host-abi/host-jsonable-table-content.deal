@@ -134,6 +134,6 @@ export function test_host_table_cycle(): null {
   return null;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

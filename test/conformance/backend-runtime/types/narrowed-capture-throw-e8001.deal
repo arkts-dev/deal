@@ -3,7 +3,7 @@
 // @expected: runtime-error E8001
 // @features: type-system, nullable, narrowing, runtime-errors, error-handling
 
-export function main(): null {
+export function main(): void {
   let e: Error | null = { name: "CONSTRUCTED", message: "constructed" };
   let clear: () => null = function(): null {
     e = null;
@@ -13,5 +13,5 @@ export function main(): null {
     clear();
     throw e;
   }
-  return null;
+  return ;
 }

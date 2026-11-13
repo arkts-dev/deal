@@ -18,6 +18,6 @@ export function test_has_delete_optional_nullable(): null {
   return null;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

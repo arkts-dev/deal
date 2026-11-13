@@ -7,7 +7,7 @@ class Box {
   nick?: string | null;
 }
 
-export function main(): null {
+export function main(): void {
   let box: Box | null = { nick: "ada" };
   let clear: () => null = function(): null {
     box = null;
@@ -18,5 +18,5 @@ export function main(): null {
     let present: boolean = Object.hasOwn(box, "nick");
     throw { name: "TEST_FAIL", message: "the presence read must not return" };
   }
-  return null;
+  return ;
 }

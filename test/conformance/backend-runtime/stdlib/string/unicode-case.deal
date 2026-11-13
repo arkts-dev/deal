@@ -1,7 +1,7 @@
 // @spec: Standard library builtins — String
 // @expected: runtime-ok
 // @tags: string,builtin,utf16
-export function main():null {
+export function main():void {
   if ("Hello ÀÉ Ω Ж".toLowerCase() !== "hello àé ω ж") { throw {name:"TEST",message:"lower"}; }
   if ("Straße ﬃ ŉ ǰ ΐ".toUpperCase() !== "STRASSE FFI ʼN J̌ Ϊ́") { throw {name:"TEST",message:"expansion"}; }
   if ("Iİıi".toLowerCase() !== "ii\u0307ıi" || "Iİıi".toUpperCase() !== "IİII") { throw {name:"TEST",message:"locale independent"}; }
@@ -17,5 +17,5 @@ export function main():null {
   let destination: string = "kept";
   try { destination = failing().toLowerCase(); } catch (e) { let error = e as Error; if (error.message !== "operand") { throw error; } }
   if (destination !== "kept") { throw {name:"TEST",message:"rollback"}; }
-  return null;
+  return ;
 }

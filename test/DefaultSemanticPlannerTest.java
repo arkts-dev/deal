@@ -73,12 +73,12 @@ public final class DefaultSemanticPlannerTest {
                   f?: number | null;
                 }
                 function localHelper(): number { return 7; }
-                export function main(): null {
+                export function main(): void {
                   let rec: L.Rec = {tag: 5};
                   let outer: Outer = {a: localHelper(), b: L.makeRec(rec),
                     c: [rec], e: null};
                   let value: number = L.getTag(outer.b) + S.scale(2);
-                  return null;
+                  return ;
                 }
                 """,
             "src/lib.deal", """
@@ -124,14 +124,14 @@ public final class DefaultSemanticPlannerTest {
     private static void requiredPresence() throws Exception {
         Compile declaration = compile(Map.of("src/main.deal", """
             class Row { value: number; nullable: number | null; }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             """));
         check(declaration.success(), "required declarations need no initializer: "
             + declaration.diagnostics());
         Compile omitted = compile(Map.of("src/main.deal", """
             class Row { value: number; nullable: number | null; }
             function make(): Row { return {value: 1}; }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             """));
         check(!omitted.success() && omitted.error("E4001") != null,
             "required nullable omission fails: " + omitted.diagnostics());
@@ -151,10 +151,10 @@ public final class DefaultSemanticPlannerTest {
                 """,
             "src/main.deal", """
                 import * as cfg from "host/cfg";
-                export function main(): null {
+                export function main(): void {
                   let endpoint: cfg.Endpoint = {path: "/"};
                   let server: cfg.ServerConfig = {port: 80, endpoint: endpoint};
-                  return null;
+                  return ;
                 }
                 """,
             "bindings/cfg.d.deal", """
@@ -175,7 +175,7 @@ public final class DefaultSemanticPlannerTest {
                   value: number = %s;
                 }
                 async function source(): Promise<number> { return 3; }
-                export function main(): null { return null; }
+                export function main(): void { return ; }
                 """.formatted(expression)));
             CompilerDiagnostic rejected = run.error("E1007");
             check(!run.success() && rejected != null,
@@ -190,7 +190,7 @@ public final class DefaultSemanticPlannerTest {
               class Inner { value: number; }
               return null;
             }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             """));
         check(!local.success() && local.error("E1057") != null,
             "local class placement remains rejected");
@@ -200,9 +200,9 @@ public final class DefaultSemanticPlannerTest {
         Compile async = compile(Map.of("src/main.deal", """
             class Holder { f: () => Promise<number>; }
             async function source(): Promise<number> { return 3; }
-            export function main(): null {
+            export function main(): void {
               let holder: Holder = {f: async function(): Promise<number> { return await source(); }};
-              return null;
+              return ;
             }
             """));
         check(async.success(), "ordinary provided async closure survives: " + async.diagnostics());

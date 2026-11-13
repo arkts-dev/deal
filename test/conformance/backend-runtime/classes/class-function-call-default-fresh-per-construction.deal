@@ -11,10 +11,10 @@ class Counter {
   values: number[];
 }
 
-export function main(): null {
+export function main(): void {
   let first: Counter = {values: freshValues()};
   let second: Counter = {values: freshValues()};
   first.values[0] = 41;
   if (second.values.length !== 0) { throw { name: "TEST_FAIL", message: "provided function call was cached" }; }
-  return null;
+  return ;
 }

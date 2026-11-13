@@ -11,4 +11,4 @@ export function test_multiplicative_left_associative(): null {
   return null;
 }
 
-export function main(): null { return test_multiplicative_left_associative(); }
+export function main(): void { test_multiplicative_left_associative(); }

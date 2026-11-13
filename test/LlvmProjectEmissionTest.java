@@ -69,9 +69,9 @@ public final class LlvmProjectEmissionTest {
     private static final String APP_SOURCE = """
         import * as lib from "./lib";
 
-        export function main(): null {
+        export function main(): void {
           let ignored: null = lib.ping();
-          return ignored;
+          return;
         }
         """;
 
@@ -99,13 +99,13 @@ public final class LlvmProjectEmissionTest {
           total?: number;
         }
 
-        export function main(): null {
+        export function main(): void {
           let box: Box = { total: 42 };
           let value: number | null | undefined = box.total;
           if (value === null || value === undefined) {
             throw {name: "T", message: "n"};
           }
-          return null;
+          return ;
         }
         """;
 
@@ -510,8 +510,8 @@ public final class LlvmProjectEmissionTest {
         // production coverage rejection below.
         Path failing = scratch.resolve("scalar-failing");
         writeProject(failing, Map.of("src/main.deal",
-            "export function main(): null {\n  let x: number = ;\n"
-                + "  return null;\n}\n"), Map.of("backend", "llvm"));
+            "export function main(): void {\n  let x: number = ;\n"
+                + "  return ;\n}\n"), Map.of("backend", "llvm"));
         byte[] goodBytes = Files.readAllBytes(published.resolve("main.ll"));
         List<String> goodSet = filesUnder(published);
         CompileOutcome failedOutcome = compile(failing.resolve("src/main.deal"),
@@ -541,7 +541,7 @@ public final class LlvmProjectEmissionTest {
         System.out.println("-- a frontend error publishes nothing --");
         Path root = scratch.resolve("frontend-error");
         writeProject(root, Map.of("src/main.deal",
-            "export function main(): null {\n  let x: number = ;\n  return null;\n}\n"),
+            "export function main(): void {\n  let x: number = ;\n  return ;\n}\n"),
             Map.of("backend", "llvm"));
         Path output = root.resolve("build/llvm");
         CompileOutcome outcome = compile(root.resolve("src/main.deal"), output,
@@ -560,7 +560,7 @@ public final class LlvmProjectEmissionTest {
         Path root = scratch.resolve("unsupported-export");
         writeProject(root, Map.of("src/main.deal", """
             export function accepts(value: null): null { return value; }
-            export function main(): null { return accepts(null); }
+            export function main(): void { accepts(null); }
             """), Map.of("backend", "llvm"));
         Path entry = root.resolve("src/main.deal");
         Path fresh = root.resolve("build/llvm");

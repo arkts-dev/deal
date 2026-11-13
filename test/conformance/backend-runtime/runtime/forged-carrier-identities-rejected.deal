@@ -72,6 +72,6 @@ export function test_forged_carrier_identities(): null {
   return null;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

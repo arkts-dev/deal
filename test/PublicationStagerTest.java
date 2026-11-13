@@ -306,7 +306,7 @@ public class PublicationStagerTest {
         try {
             writeText(src.resolve("main.deal"),
                 "import * as lib from \"./lib\";\n"
-                    + "export function main(): null { return null; }\n"
+                    + "export function main(): void { return ; }\n"
                     + "export function run(): number { return lib.one(); }\n");
             writeText(src.resolve("lib.deal"),
                 "export function one(): number { return 1; }\n");
@@ -355,7 +355,7 @@ public class PublicationStagerTest {
         try {
             writeText(src.resolve("main.deal"),
                 "import * as lib from \"./lib\";\n"
-                    + "export function main(): null { return null; }\n");
+                    + "export function main(): void { return ; }\n");
             writeText(src.resolve("lib.deal"),
                 "export function value(): number { return 7; }\n");
 
@@ -378,7 +378,7 @@ public class PublicationStagerTest {
             Files.delete(src.resolve("lib.deal"));
             writeText(out.resolve("lib.lua"), "stale orphan\n");
             writeText(src.resolve("main.deal"),
-                "export function main(): null { return null; }\n");
+                "export function main(): void { return ; }\n");
             boolean second = compileProject(src, out, Backend.LUAJIT,
                 false, false, null);
             check(second, "the second compile after deleting lib succeeds");
@@ -405,7 +405,7 @@ public class PublicationStagerTest {
         Path out = base.resolve("out");
         try {
             writeText(src.resolve("main.deal"),
-                "export function main(): null { return null; }\n");
+                "export function main(): void { return ; }\n");
 
             // Pre-populate the live root with a stale stdlib copy, a
             // stale runtime pair, and an obsolete module artifact.
@@ -575,11 +575,11 @@ public class PublicationStagerTest {
         try {
             Path srcA = base.resolve("projA");
             writeText(srcA.resolve("main.deal"),
-                "export function main(): null { return null; }\n"
+                "export function main(): void { return ; }\n"
                     + "export function tag(): string { return \"A\"; }\n");
             Path srcB = base.resolve("projB");
             writeText(srcB.resolve("main.deal"),
-                "export function main(): null { return null; }\n"
+                "export function main(): void { return ; }\n"
                     + "export function tag(): string { return \"B\"; }\n");
             Path out = base.resolve("out");
 
@@ -646,7 +646,7 @@ public class PublicationStagerTest {
             Path out = base.resolve("out");
             writeText(src.resolve("main.deal"),
                 "import * as lib from \"./lib\";\n"
-                    + "export function main(): null { return null; }\n");
+                    + "export function main(): void { return ; }\n");
             writeText(src.resolve("lib.deal"),
                 "export function value(): number { return 7; }\n");
 
@@ -710,7 +710,7 @@ public class PublicationStagerTest {
 
             Path src = base.resolve("proj");
             writeText(src.resolve("main.deal"),
-                "export function main(): null { return null; }\n");
+                "export function main(): void { return ; }\n");
             Path out = base.resolve("out");
 
             System.setProperty(DistributionHome.DEAL_HOME_PROPERTY,
@@ -740,7 +740,7 @@ public class PublicationStagerTest {
                 // distribution present.
                 Path overrideSrc = base.resolve("proj-override");
                 writeText(overrideSrc.resolve("main.deal"),
-                    "export function main(): null { return null; }\n");
+                    "export function main(): void { return ; }\n");
                 writeText(overrideSrc.resolve("std/console.lua"),
                     "-- project-local console marker\n");
                 writeText(overrideSrc.resolve("deal/json.lua"),
@@ -786,8 +786,8 @@ public class PublicationStagerTest {
             writeText(src.resolve("std/json.js"), "throw Error('retired JSON wrapper executed');\n");
             for (Backend backend : List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM)) {
                 writeText(src.resolve("main.deal"),
-                    "export function main():null { let value:number=JSON.parse(\"1\");"
-                        + "JSON.stringify(value); return null; }\n");
+                    "export function main():void { let value:number=JSON.parse(\"1\");"
+                        + "JSON.stringify(value); return ; }\n");
                 check(compileProject(src, out, backend, false, false, null),
                     backend + " builtin JSON remains compilable with stray retired resources");
                 Map<String, byte[]> prior = treeBytes(out);
@@ -796,9 +796,9 @@ public class PublicationStagerTest {
                 for (String member : List.of("parse", "stringify")) {
                     writeText(src.resolve("main.deal"),
                         "import * as json from \"std/json\";\n"
-                            + "export function main():null { json." + member
+                            + "export function main():void { json." + member
                             + (member.equals("parse") ? "(\"1\");" : "(1);")
-                            + " return null; }\n");
+                            + " return ; }\n");
                     StringBuilder errors = new StringBuilder();
                     check(!compileProject(src, out, backend, false, false, errors),
                         backend + " rejects the retired " + member + " import");
@@ -829,7 +829,7 @@ public class PublicationStagerTest {
                 }
             }
             Path src = base.resolve("src");
-            writeText(src.resolve("main.deal"), "export function main(): null { return null; }\n");
+            writeText(src.resolve("main.deal"), "export function main(): void { return ; }\n");
             writeText(base.resolve("out/keep.txt"), "prior publication\n");
             List<String> classpath = new ArrayList<>();
             for (String entry : System.getProperty("java.class.path").split(
@@ -878,7 +878,7 @@ public class PublicationStagerTest {
             Path src = base.resolve("src");
             Path out = base.resolve("out");
             writeText(src.resolve("main.deal"),
-                "export function main(): null { return null; }\n");
+                "export function main(): void { return ; }\n");
             boolean first = compileProject(src, out, Backend.LUAJIT,
                 false, false, null);
             check(first, "the initial compile publishes the prior set");
@@ -982,7 +982,7 @@ public class PublicationStagerTest {
             Path src = base.resolve("src");
             Path out = base.resolve("out");
             writeText(src.resolve("main.deal"),
-                "export function main(): null { return null; }\n");
+                "export function main(): void { return ; }\n");
             boolean first = compileProject(src, out, Backend.LUAJIT,
                 false, false, null);
             check(first, "the initial compile publishes the prior set");
@@ -1028,7 +1028,7 @@ public class PublicationStagerTest {
             Path src = base.resolve("src");
             Path out = base.resolve("out");
             writeText(src.resolve("main.deal"),
-                "export function main(): null { return null; }\n"
+                "export function main(): void { return ; }\n"
                     + "export function tag(): string { return \"one\"; }\n");
             boolean first = compileProject(src, out, Backend.LUAJIT,
                 false, false, null);
@@ -1038,7 +1038,7 @@ public class PublicationStagerTest {
             // still succeeds (the live set is the new set) and the
             // retired sibling stays beside the live set.
             writeText(src.resolve("main.deal"),
-                "export function main(): null { return null; }\n"
+                "export function main(): void { return ; }\n"
                     + "export function tag(): string { return \"two\"; }\n");
             PublicationStager.installPublishFault(step -> {
                 if (PublicationStager.FAULT_STEP_DELETE_RETIRED.equals(
@@ -1068,7 +1068,7 @@ public class PublicationStagerTest {
             // The next publish start's recovery removes the leftover
             // retired sibling under the lock.
             writeText(src.resolve("main.deal"),
-                "export function main(): null { return null; }\n"
+                "export function main(): void { return ; }\n"
                     + "export function tag(): string { return \"three\"; }\n");
             boolean third = compileProject(src, out, Backend.LUAJIT,
                 false, false, null);

@@ -4,7 +4,7 @@
 // @features: arrays, functions
 class Item {x:number;}
 function check(ok:boolean):void {if(!ok){throw {name:"MAP",message:"map mismatch"};}}
-export function main():null {
+export function main():void {
   let xs:number[]=[1,2,3];let calls=0;
   let ys:string[]=xs.map((value:number,index:number,array:number[]):string=>{
     calls=calls+1;check(array===xs);
@@ -49,5 +49,5 @@ export function main():null {
   catch(e){check((e as Error).name==="CALLBACK");caught=true;}
   check(caught && seen===2 && destination===old && xs.length===4);
   let nested=xs.map((value:number):number=>[value].map((inner:number):number=>inner+1)[0]);check(nested[1]===21);
-  return null;
+  return ;
 }

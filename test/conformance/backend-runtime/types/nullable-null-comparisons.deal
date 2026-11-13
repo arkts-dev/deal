@@ -23,7 +23,7 @@ function expectFalse(what: string, condition: boolean): null {
   return null;
 }
 
-export function main(): null {
+export function main(): void {
   // A nullable false compared directly with null, in both operand orders
   // and with both operators.
   let falseFlag: boolean | null = false;
@@ -181,5 +181,5 @@ export function main(): null {
   expectTrue("deleted direct read is non-null", deletedRead !== null);
 
   printer.log("OK");
-  return null;
+  return ;
 }

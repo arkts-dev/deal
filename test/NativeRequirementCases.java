@@ -22,7 +22,7 @@ final class NativeRequirementCases {
                 function check(ok: boolean, site: string): void {
                   if (!ok) { throw {name: "REQUIREMENT_TEST", message: site}; }
                 }
-                export function main(): null {
+                export function main(): void {
                   let record: Record<string, unknown> = {present: 7, explicit: undefined, wrong: "bad"};
                   let first = record.present as number | undefined;
                   check(first !== undefined, "present");
@@ -60,7 +60,7 @@ final class NativeRequirementCases {
                   let imported = math.sqrt as (x: number) => number;
                   check(imported(9) === 3, "imported function");
                   check(math.sqrt(4) === 2, "imported");
-                  return null;
+                  return ;
                 }
                 """;
             Files.writeString(source, body);

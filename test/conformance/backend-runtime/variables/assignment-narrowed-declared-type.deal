@@ -12,6 +12,6 @@ export function test_assignment_declared_type(): boolean {
   return x === null;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

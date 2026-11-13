@@ -102,14 +102,14 @@ public class HostModuleLoadEmissionTest {
     private static final String ORDER_APP_TEMPLATE = """
         import * as cfg from "host/order";
 
-        export function main(): null {
+        export function main(): void {
           let c: cfg.Config = {%s};
           if (!Object.hasOwn(c, "fallback") || !Object.hasOwn(c, "peers")) { throw {name: "presence", message: "missing"}; }
           let fallback: number | undefined = c.fallback;
           if (fallback !== undefined) {
             if (fallback !== 3) { throw {name: "value", message: "fallback"}; }
           } else { throw {name: "value", message: "null fallback"}; }
-          return null;
+          return ;
         }
         """;
 
@@ -171,8 +171,8 @@ public class HostModuleLoadEmissionTest {
           return "unreachable";
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -181,8 +181,8 @@ public class HostModuleLoadEmissionTest {
         import * as probe from "host/abi_probe";
         import * as cfg from "host/cfg";
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -200,8 +200,8 @@ public class HostModuleLoadEmissionTest {
     private static final String ARRAY_APP_SOURCE = """
         import * as arr from "host/array_probe";
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -224,8 +224,8 @@ public class HostModuleLoadEmissionTest {
         import * as second from "host/abi_probe";
         import * as cfg from "host/cfg";
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -238,10 +238,10 @@ public class HostModuleLoadEmissionTest {
         import * as first from "host/abi_probe";
         import * as second from "host/abi_probe";
 
-        export function main(): null {
+        export function main(): void {
           let a: number = first.echoInt(1);
           let b: number = second.echoInt(2);
-          return null;
+          return ;
         }
         """;
 
@@ -268,8 +268,8 @@ public class HostModuleLoadEmissionTest {
           return null;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -356,8 +356,8 @@ public class HostModuleLoadEmissionTest {
           return err.builtinAliased();
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -520,7 +520,7 @@ public class HostModuleLoadEmissionTest {
         export function decode(text: string): Record<string, unknown> { return JSON.parse(text); }
         export function encode(value: unknown): string | undefined { return JSON.stringify(value); }
 
-        export function main(): null {
+        export function main(): void {
           let step: (x: number) => number = function(x: number): number { return x + 1; };
           let accept: (x: string, y: string) => boolean =
             function(x: string, y: string): boolean { return true; };
@@ -531,7 +531,7 @@ public class HostModuleLoadEmissionTest {
           let pair: native.Pair = { left: 4, right: 9.5 };
           let bundle: cfg.Bundle = { label: "b", action: step };
           let bumped: number = util.bump(1);
-          return null;
+          return ;
         }
         """;
 
@@ -546,9 +546,9 @@ public class HostModuleLoadEmissionTest {
           y: number;
         }
 
-        export function main(): null {
+        export function main(): void {
           let point: Point = { x: 1, y: 2 };
-          return null;
+          return ;
         }
         """;
 
@@ -733,7 +733,7 @@ public class HostModuleLoadEmissionTest {
             app.append("import * as ").append(stem).append(" from \"host/")
                 .append(stem).append("\";\n");
         }
-        app.append("\nexport function main(): null {\n  return null;\n}\n");
+        app.append("\nexport function main(): void {\n  return ;\n}\n");
         sources.put("src/app.deal", app.toString());
         return compileProject(sources, externals);
     }
@@ -1985,8 +1985,8 @@ public class HostModuleLoadEmissionTest {
 
         import * as host from "host/num_probe";
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
 
         export function run(): string {
@@ -2126,8 +2126,8 @@ public class HostModuleLoadEmissionTest {
 
         import * as host from "host/tab_probe";
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
 
         export function run(): string {
@@ -2418,8 +2418,8 @@ public class HostModuleLoadEmissionTest {
             + "\\n" + fifth + "\\n" + sixth;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -2584,8 +2584,8 @@ public class HostModuleLoadEmissionTest {
           return xs[0][0] + xs[1][1];
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -2789,8 +2789,8 @@ public class HostModuleLoadEmissionTest {
           return sum(xs);
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -3046,8 +3046,8 @@ public class HostModuleLoadEmissionTest {
           return "constructed";
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -3359,8 +3359,8 @@ public class HostModuleLoadEmissionTest {
           return "unreachable";
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -3763,8 +3763,8 @@ public class HostModuleLoadEmissionTest {
             + ":extra=" + check(marker.count === 3, "extra evaluation");
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -4248,8 +4248,8 @@ public class HostModuleLoadEmissionTest {
           return "null";
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -4725,8 +4725,8 @@ public class HostModuleLoadEmissionTest {
           return host.consumePair(same);
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -5270,8 +5270,8 @@ public class HostModuleLoadEmissionTest {
           }
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -5943,8 +5943,8 @@ public class HostModuleLoadEmissionTest {
         sources.put("src/app.deal", """
             import * as cfg from "host/cfg";
 
-            export function main(): null {
-              return null;
+            export function main(): void {
+              return ;
             }
             """);
         return compileProject(sources, Map.of(CFG_SPECIFIER, "src/cfg.d.deal"));

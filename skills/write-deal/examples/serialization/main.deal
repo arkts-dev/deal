@@ -1,6 +1,6 @@
 import * as settings from "./settings";
 
-export function main(): null {
+export function main(): void {
   let value: settings.Settings = JSON.parse("{\"enabled\":true,\"title\":\"Tools\",\"note\":null}");
   if (!value.enabled || value.title !== "Tools" || !Object.hasOwn(value, "note")) {
     throw { name: "EXAMPLE_FAILED", message: "JSON required fields and presence" };
@@ -19,5 +19,5 @@ export function main(): null {
   if (!rejected) {
     throw { name: "EXAMPLE_FAILED", message: "extra JSON key accepted" };
   }
-  return null;
+  return;
 }

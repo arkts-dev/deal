@@ -7,7 +7,7 @@ function check(ok:boolean):void {
   if (!ok) { throw {name:"TEST",message:"numeric builtin value"}; }
 }
 
-export function main():null {
+export function main():void {
   let nan = 0/0;
   let inf = 1/0;
   check(Number.isFinite(1) && Number.isFinite(-0) && Number.isFinite(5e-324));
@@ -38,5 +38,5 @@ export function main():null {
   order = "";
   try { Math.min(fail(),mark("b",2)); } catch(e) { check(order === "x"); }
   check(order === "x");
-  return null;
+  return ;
 }

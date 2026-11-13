@@ -906,34 +906,34 @@ public class ParserTest {
         System.out.println("-- Semicolon rules (v1.4) --");
 
         // Let before a following statement.
-        ParseResult beforeStatement = parse("export function main(): null {\n"
+        ParseResult beforeStatement = parse("export function main(): void {\n"
             + "  let n: number = 1\n"
             + "  one(n);\n"
-            + "  return null;\n"
+            + "  return ;\n"
             + "}\n");
         assertParseError(beforeStatement, "E1053",
             "let before an expression statement");
 
         // Let before return (the old whitelist admitted this).
-        ParseResult beforeReturn = parse("export function main(): null {\n"
+        ParseResult beforeReturn = parse("export function main(): void {\n"
             + "  let n: number = 1\n"
-            + "  return null;\n"
+            + "  return ;\n"
             + "}\n");
         assertParseError(beforeReturn, "E1053", "let before return");
 
         // Let before a try statement.
-        ParseResult beforeTry = parse("export function main(): null {\n"
+        ParseResult beforeTry = parse("export function main(): void {\n"
             + "  let n: number = 1\n"
             + "  try {} catch (e) {}\n"
-            + "  return null;\n"
+            + "  return ;\n"
             + "}\n");
         assertParseError(beforeTry, "E1053", "let before try");
 
         // Let before an async function declaration.
-        ParseResult beforeAsync = parse("export function main(): null {\n"
+        ParseResult beforeAsync = parse("export function main(): void {\n"
             + "  let n: number = 1\n"
             + "  async function f(): Promise<null> { return null; }\n"
-            + "  return null;\n"
+            + "  return ;\n"
             + "}\n");
         assertParseError(beforeAsync, "E1053", "let before async function");
 
@@ -965,7 +965,7 @@ public class ParserTest {
 
         // Explicit terminators compile clean, and block-ending forms need
         // no added ';'.
-        ParseResult ok = parse("export function main(): null {\n  let n: number = 1;\n  if (n === 1) { n = 2; } else { n = 3; }\n  while (n < 10) { n = n + 1; }\n  { let v14Loop1: number = 0; while (v14Loop1 < 1) { let i: number = v14Loop1; { n = n + 1; } v14Loop1 = i; v14Loop1 = v14Loop1 + 1; } }\n  try { n = 4; } catch (e) { n = 5; }\n  return null;\n}\nclass C { x: number; }\nfunction g(): null { return null; }\n");
+        ParseResult ok = parse("export function main(): void {\n  let n: number = 1;\n  if (n === 1) { n = 2; } else { n = 3; }\n  while (n < 10) { n = n + 1; }\n  { let v14Loop1: number = 0; while (v14Loop1 < 1) { let i: number = v14Loop1; { n = n + 1; } v14Loop1 = i; v14Loop1 = v14Loop1 + 1; } }\n  try { n = 4; } catch (e) { n = 5; }\n  return ;\n}\nclass C { x: number; }\nfunction g(): null { return null; }\n");
         assertNoParseErrors(ok, "explicit terminators and block endings");
     }
 
@@ -997,7 +997,7 @@ public class ParserTest {
         // Block level: a stray ';' as the first statement and after a
         // block-ending if statement.
         ParseResult blockStart = parse(
-            "export function main(): null {\n  ;\n  return null;\n}\n");
+            "export function main(): void {\n  ;\n  return ;\n}\n");
         assertParseError(blockStart, "E1059", "block-leading semicolon");
         ParseResult afterBlock = parse(
             "function f(): null { if (true) { } ; return null; }\n");
@@ -1006,7 +1006,7 @@ public class ParserTest {
 
         // The diagnostic is a SOURCE error at the ';' itself.
         ParseResult ranged = parseFile(
-            "export function main(): null {\n  ;\n  return null;\n}\n",
+            "export function main(): void {\n  ;\n  return ;\n}\n",
             "stray.deal");
         CompilerDiagnostic stray = diagOf(ranged, "E1059");
         if (stray == null) {
@@ -1030,9 +1030,9 @@ public class ParserTest {
         // A ';' that a production carries is that production's own
         // terminator — never a stray statement.
         ParseResult owned = parse(
-            "export function main(): null {\n"
+            "export function main(): void {\n"
             + "  let f: () => null = function(): null { return null; };\n"
-            + "  return null;\n"
+            + "  return ;\n"
             + "}\n");
         assertNoParseErrors(owned, "terminator owned by a declaration");
     }
@@ -2593,9 +2593,9 @@ public class ParserTest {
         // class field, parameter, return type, and inferred for-of binding.
         String positions = "class Holder { xs: null[]; }\n"
             + "function f(xs: null[]): null[] { return xs; }\n"
-            + "export function main(): null {\n"
+            + "export function main(): void {\n"
             + "  for (let row of [[null]]) { }\n"
-            + "  return null;\n"
+            + "  return ;\n"
             + "}";
         ParseResult atPositions = parse(positions);
         assertNoParseErrors(atPositions,

@@ -101,6 +101,6 @@ export function test_array_array_container_ops(): null {
   return null;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

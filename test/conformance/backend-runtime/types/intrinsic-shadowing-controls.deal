@@ -200,7 +200,7 @@ function capturedShadow(): number {
   return reader();
 }
 
-export function main(): null {
+export function main(): void {
   if (localShadow() !== 4) {
     throw { name: "TEST_FAIL", message: "local shadow result" };
   }
@@ -243,7 +243,7 @@ export function main(): null {
   if (capturedShadow() !== 4) {
     throw { name: "TEST_FAIL", message: "captured shadow result" };
   }
-  return null;
+  return ;
 }
 
 function int(value: number): number { return value; }

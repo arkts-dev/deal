@@ -3,4 +3,4 @@
 // @expected: runtime-ok
 // @features: boundary-validation
 export async function f():Promise<null|undefined>{return undefined;}
-export function main():null{return null;}
+export function main():void{return ;}

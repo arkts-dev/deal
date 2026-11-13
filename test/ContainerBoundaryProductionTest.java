@@ -216,7 +216,7 @@ public class ContainerBoundaryProductionTest {
     private static void testRejectedRawProfileLeavesNoScratch() throws Exception {
         Path input = Files.createTempDirectory("boundary-profile-input-");
         Path temp = Path.of(System.getProperty("java.io.tmpdir"));
-        String source = "export function main(): null { let n: number = 1; return null; }\n";
+        String source = "export function main(): void { let n: number = 1; return ; }\n";
         try {
             Files.writeString(input.resolve("late-profile.deal"), "\n".repeat(40)
                 + "// @profile: legacy-safe-number\n" + source, StandardCharsets.UTF_8);
@@ -317,7 +317,7 @@ public class ContainerBoundaryProductionTest {
             ? "  fx.main();\n"
             : "  let r: " + fixture.resultType() + " = fx." + fixture.export() + "();\n";
         return "import * as fx from \"./corpus/" + specifier + "\";\n\n"
-            + "export function main(): null {\n" + call + "  return null;\n}\n";
+            + "export function main(): void {\n" + call + "  return ;\n}\n";
     }
 
 
@@ -399,7 +399,7 @@ public class ContainerBoundaryProductionTest {
     }
 
     /** Invalid checked input must leave existing staged output unchanged. */
-    private static final String GUARD_SEED = "export function main(): null { let x: number = true; return null; }";
+    private static final String GUARD_SEED = "export function main(): void { let x: number = true; return ; }";
 
     /**
      * Contextual Record reconstruction retains nested JSON arrays as arrays.
@@ -409,12 +409,12 @@ public class ContainerBoundaryProductionTest {
     private static final String DECODED_NESTED_SOURCE = """
 
 
-        export function main(): null {
+        export function main(): void {
           let t: Record<string, unknown> = JSON.parse("{\\"values\\":[[\\"x\\"],[\\"y\\"]]}");
           let slots: Record<string, unknown>[][] = [[]];
           mutation.replaceFirst({slots: slots}, {value: t.values});
           let xs: Record<string, unknown>[][] = [slots[0]];
-          return null;
+          return ;
         }
         """;
 
@@ -423,12 +423,12 @@ public class ContainerBoundaryProductionTest {
      * landed refined token {@code array} at the same projection.
      */
     private static final String UNMARKED_NESTED_SOURCE = """
-        export function main(): null {
+        export function main(): void {
           let inner: number[] = [1];
           let slots: Record<string, unknown>[][] = [[]];
           mutation.replaceFirst({slots: slots}, {value: [inner]});
           let xs: Record<string, unknown>[][] = [slots[0]];
-          return null;
+          return ;
         }
         """;
 
@@ -440,12 +440,12 @@ public class ContainerBoundaryProductionTest {
     private static final String HOST_RETURNED_NESTED_SOURCE = """
         import * as host from "host/array_return";
 
-        export function main(): null {
+        export function main(): void {
           let inner: string[] = host.split("ignored");
           let slots: Record<string, unknown>[][] = [[]];
           mutation.replaceFirst({slots: slots}, {value: [inner]});
           let xs: Record<string, unknown>[][] = [slots[0]];
-          return null;
+          return ;
         }
         """;
 
@@ -458,12 +458,12 @@ public class ContainerBoundaryProductionTest {
     private static final String SPLIT_NESTED_SOURCE = """
         import * as strings from "std/string";
 
-        export function main(): null {
+        export function main(): void {
           let parts: string[] = strings.split("a,b", ",");
           let slots: Record<string, unknown>[][] = [[]];
           mutation.replaceFirst({slots: slots}, {value: [parts]});
           let xs: Record<string, unknown>[][] = [slots[0]];
-          return null;
+          return ;
         }
         """;
 
@@ -476,13 +476,13 @@ public class ContainerBoundaryProductionTest {
     private static final String KEYS_NESTED_SOURCE = """
         import * as tables from "std/table";
 
-        export function main(): null {
+        export function main(): void {
           let t: Record<string, unknown> = { a: 1 };
           let ks: string[] = tables.keys(t);
           let slots: Record<string, unknown>[][] = [[]];
           mutation.replaceFirst({slots: slots}, {value: [ks]});
           let xs: Record<string, unknown>[][] = [slots[0]];
-          return null;
+          return ;
         }
         """;
 
@@ -495,12 +495,12 @@ public class ContainerBoundaryProductionTest {
     private static final String DECODED_DEEP_NESTED_SOURCE = """
 
 
-        export function main(): null {
+        export function main(): void {
           let t: Record<string, unknown> = JSON.parse("{\\"values\\":[[[\\"x\\"]]]}");
           let slots: Record<string, unknown>[][][] = [[]];
           mutation.replaceFirst({slots: slots}, {value: t.values});
           let xs: Record<string, unknown>[][][] = [slots[0]];
-          return null;
+          return ;
         }
         """;
 
@@ -512,7 +512,7 @@ public class ContainerBoundaryProductionTest {
     private static final String DECODED_INERTNESS_SOURCE = """
 
 
-        export function main(): null {
+        export function main(): void {
           let t: Record<string, unknown> = JSON.parse("{\\"values\\":[[1.0,2.0],[3.0,4.0]]}");
           let xs: unknown[] = t.values as unknown[];
           let first: unknown[] = xs[0] as unknown[];
@@ -538,7 +538,7 @@ public class ContainerBoundaryProductionTest {
           if (JSON.stringify(JSON.parse(encoded)) !== JSON.stringify(JSON.parse("{\\"values\\":[[1,9],[3,4]]}"))) {
             throw { name: "TEST_FAIL", message: "decoded stringify: " + encoded };
           }
-          return null;
+          return ;
         }
         """;
 
@@ -550,10 +550,10 @@ public class ContainerBoundaryProductionTest {
 
         import * as tables from "std/table";
 
-        export function main(): null {
+        export function main(): void {
           let t: Record<string, unknown> = JSON.parse("{\\"values\\":[[1.0,2.0]]}");
           let ks: string[] = tables.keys(t.values as Record<string, unknown>);
-          return null;
+          return ;
         }
         """;
 
@@ -630,15 +630,15 @@ public class ContainerBoundaryProductionTest {
           values: number[];
         }
 
-        export function main(): null {
+        export function main(): void {
           let d: Doc | null = JSON.parse("{\\"values\\":[2147483648]}");
           if (d !== null) {
             let slots: string[] = [""];
             mutation.replaceFirst({slots: slots}, {value: d.values});
             let ys: string[] = slots;
-            return null;
+            return ;
           }
-          return null;
+          return ;
         }
         """;
 
@@ -655,15 +655,15 @@ public class ContainerBoundaryProductionTest {
           values: Record<string, unknown>;
         }
 
-        export function main(): null {
+        export function main(): void {
           let d: Nest | null = JSON.parse("{\\"values\\":{\\"xs\\":[[],2147483648.0]}}");
           if (d !== null) {
             let slots: string[][] = [[], []];
             mutation.replaceAt({slots: slots}, {value: d.values.xs}, 1);
             let ys: string[][] = slots;
-            return null;
+            return ;
           }
-          return null;
+          return ;
         }
         """;
 
@@ -678,15 +678,15 @@ public class ContainerBoundaryProductionTest {
           values: number[][];
         }
 
-        export function main(): null {
+        export function main(): void {
           let d: Deep | null = JSON.parse("{\\"values\\":[[2147483648]]}");
           if (d !== null) {
             let slots: string[] = [""];
             mutation.replaceFirst({slots: slots}, {value: d.values[0]});
             let ys: string[] = slots;
-            return null;
+            return ;
           }
-          return null;
+          return ;
         }
         """;
 
@@ -702,13 +702,13 @@ public class ContainerBoundaryProductionTest {
           values: Record<string, unknown>;
         }
 
-        export function main(): null {
+        export function main(): void {
           let d: Ok | null = JSON.parse("{\\"values\\":{\\"xs\\":[[\\"a\\"]]}}");
           if (d !== null) {
             let ys: unknown[] = d.values.xs as unknown[];
-            return null;
+            return ;
           }
-          return null;
+          return ;
         }
         """;
 
@@ -769,7 +769,7 @@ public class ContainerBoundaryProductionTest {
           f: (x: number) => number;
         }
 
-        export function main(): null {
+        export function main(): void {
           let inner: ((x: number) => number) | null = identity;
           let clear: () => null = function(): null {
             inner = null;
@@ -779,7 +779,7 @@ public class ContainerBoundaryProductionTest {
             clear();
             let b: Box = { f: inner };
           }
-          return null;
+          return ;
         }
         """;
 
@@ -801,11 +801,11 @@ public class ContainerBoundaryProductionTest {
           return "s";
         }
 
-        export function main(): null {
+        export function main(): void {
           let b: Box = { f: identity };
           signature.replaceSignature({value: identity}, "(number)->string");
           b.f = identity;
-          return null;
+          return ;
         }
         """;
 
@@ -852,11 +852,11 @@ public class ContainerBoundaryProductionTest {
           return "s";
         }
 
-        export function main(): null {
+        export function main(): void {
           let xs: ((x: number) => number)[] = [identity];
           signature.replaceSignature({value: identity}, "(number)->string");
           xs[0] = identity;
-          return null;
+          return ;
         }
         """;
 
@@ -875,11 +875,11 @@ public class ContainerBoundaryProductionTest {
           return "s";
         }
 
-        export function main(): null {
+        export function main(): void {
           let xs: (((x: number) => number) | null)[] = [identity];
           signature.replaceSignature({value: identity}, "(number)->string");
           xs[0] = identity;
-          return null;
+          return ;
         }
         """;
 
@@ -899,11 +899,11 @@ public class ContainerBoundaryProductionTest {
           fs: ((x: number) => number)[];
         }
 
-        export function main(): null {
+        export function main(): void {
           let inner: ((x: number) => number)[] = [identity];
           signature.replaceSignature({value: identity}, "(number)->string");
           let b: Box = { fs: inner };
-          return null;
+          return ;
         }
         """;
 
@@ -1722,9 +1722,9 @@ public class ContainerBoundaryProductionTest {
     private static final String EXTRA_STDOUT_SOURCE = """
         import * as output from "std/console";
 
-        export function main(): null {
+        export function main(): void {
           output.log("UNEXPECTED_STDOUT");
-          return null;
+          return ;
         }
         """;
 
@@ -1732,9 +1732,9 @@ public class ContainerBoundaryProductionTest {
     private static final String EXTRA_STDERR_SOURCE = """
         import * as output from "std/console";
 
-        export function main(): null {
+        export function main(): void {
           output.error("UNEXPECTED_STDERR");
-          return null;
+          return ;
         }
         """;
 

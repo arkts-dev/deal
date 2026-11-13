@@ -176,7 +176,7 @@ public final class LlvmAsyncRuntimeTest {
           return null;
         }
 
-        export function main(): null { return null; }
+        export function main(): void { return ; }
         """;
 
     /** The awaited DEAL Error identity and the boundary arms of C7. */
@@ -217,7 +217,7 @@ public final class LlvmAsyncRuntimeTest {
           return null;
         }
 
-        export function main(): null { return null; }
+        export function main(): void { return ; }
         """;
 
     /** The pending-completion app: the awaited export is completed elsewhere. */
@@ -231,7 +231,7 @@ public final class LlvmAsyncRuntimeTest {
           return null;
         }
 
-        export function main(): null { return null; }
+        export function main(): void { return ; }
         """;
 
     /** The status probe app: every closed completion status was as prescribed. */
@@ -245,7 +245,7 @@ public final class LlvmAsyncRuntimeTest {
           return null;
         }
 
-        export function main(): null { return null; }
+        export function main(): void { return ; }
         """;
 
     private static final String WRONG_KIND_APP = """
@@ -257,7 +257,7 @@ public final class LlvmAsyncRuntimeTest {
           return null;
         }
 
-        export function main(): null { return null; }
+        export function main(): void { return ; }
         """;
 
     private static final String MALFORMED_APP = """
@@ -269,7 +269,7 @@ public final class LlvmAsyncRuntimeTest {
           return null;
         }
 
-        export function main(): null { return null; }
+        export function main(): void { return ; }
         """;
 
     /** A declared async export that answers a carrier which is no operation. */
@@ -282,7 +282,7 @@ public final class LlvmAsyncRuntimeTest {
           return null;
         }
 
-        export function main(): null { return null; }
+        export function main(): void { return ; }
         """;
 
     /** The retired-token case: a second completion for a consumed operation. */
@@ -298,7 +298,7 @@ public final class LlvmAsyncRuntimeTest {
           return null;
         }
 
-        export function main(): null { return null; }
+        export function main(): void { return ; }
         """;
 
     private static final String PROTOCOL_APP = """
@@ -310,7 +310,7 @@ public final class LlvmAsyncRuntimeTest {
           return null;
         }
 
-        export function main(): null { return null; }
+        export function main(): void { return ; }
         """;
 
     /**
@@ -339,7 +339,7 @@ public final class LlvmAsyncRuntimeTest {
           return null;
         }
 
-        export function main(): null { return null; }
+        export function main(): void { return ; }
         """;
 
     /**
@@ -425,7 +425,7 @@ public final class LlvmAsyncRuntimeTest {
           return null;
         }
 
-        export function main(): null { return null; }
+        export function main(): void { return ; }
         """;
 
     /**
@@ -443,7 +443,7 @@ public final class LlvmAsyncRuntimeTest {
           return null;
         }
 
-        export function main(): null { return null; }
+        export function main(): void { return ; }
         """;
 
     /**
@@ -467,7 +467,7 @@ public final class LlvmAsyncRuntimeTest {
           return null;
         }
 
-        export function main(): null { return null; }
+        export function main(): void { return ; }
         """;
 
     private static int passed;
@@ -586,7 +586,7 @@ public final class LlvmAsyncRuntimeTest {
             export async function empty(): Promise<void> { return; }
             export async function managed(): Promise<string> { let n = "42"; return `answer:${n}`; }
             export async function failure(): Promise<number> { throw {name:"PUBLIC_FAIL",message:"failed"}; }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             """);
         String source = """
             #include "deal/native/entry.h"
@@ -953,7 +953,7 @@ public final class LlvmAsyncRuntimeTest {
               c.log("nested:rejected");
               return null;
             }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             """);
         runExecuted(scratch, rejected, "nested-ingress", 16,
             "nested:rejected\n", 0, "");
@@ -973,7 +973,7 @@ public final class LlvmAsyncRuntimeTest {
               c.log("raw:rejected");
               return null;
             }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             """);
         runExecuted(scratch, raw, "raw-function-ingress", 17,
             "raw:rejected\n", 0, "");
@@ -992,7 +992,7 @@ public final class LlvmAsyncRuntimeTest {
               c.log("opaque:rejected");
               return null;
             }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             """);
         runExecuted(scratch, opaque, "opaque-ingress", 18,
             "opaque:rejected\n", 0, "");

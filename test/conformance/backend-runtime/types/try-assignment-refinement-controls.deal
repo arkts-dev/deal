@@ -229,7 +229,7 @@ function declarationCallIsCatchable(): number {
   return 0;
 }
 
-export function main(): null {
+export function main(): void {
   expectEqual("shadow declaration", shadowDeclarationKeepsRefinement(), 11);
   expectEqual("shadow assignment", shadowAssignmentKeepsRefinement(), 11);
   expectEqual("null branch", nullBranchKeepsRefinement(), 1);
@@ -241,5 +241,5 @@ export function main(): null {
   expectEqual("nested catch write", nestedCatchWriteRevertsAndRenarrows(), 2);
   expectEqual("call-induced mutation", callInducedMutationIsCatchable(), 1);
   expectEqual("declaration call", declarationCallIsCatchable(), 1);
-  return null;
+  return ;
 }

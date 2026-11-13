@@ -5,7 +5,7 @@
 import * as host from "host/probe";
 class Item {x:number;stable:number;}
 function check(ok:boolean):void {if(!ok){throw {name:"PREDICATES",message:"live mismatch"};}}
-export function main():null {
+export function main():void {
   let xs:number[]=[4,5,9];let alias=xs;let destination:number[]=[123];let stable=destination;
   let booleanDestination=false;let calls=0;let caught=false;
   host.keep(xs);host.corrupt();
@@ -50,5 +50,5 @@ export function main():null {
   try {destination=decoded.filter((value:number):boolean=>true);}catch(e){check((e as Error).name==="E8003");caught=true;}
   check(caught && destination===stable && decoded.length===3);host.repair();
   check(decoded.some((value:number):boolean=>value===9) && decoded.every((value:number):boolean=>value>0));
-  return null;
+  return ;
 }

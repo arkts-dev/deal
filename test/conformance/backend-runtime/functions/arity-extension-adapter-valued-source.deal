@@ -52,7 +52,7 @@ function escapingCall(f: (x: number, y: number) => number): () => number {
   return call;
 }
 
-export function main(): null {
+export function main(): void {
   // --- a parameter position over an adapted binding ------------------------
   let pair: (x: number, y: number) => number = one;
   check(needTriple(pair) === 1, "an adapted binding adapts again at a parameter");
@@ -99,5 +99,5 @@ export function main(): null {
   check(needPair(exact) === 3, "an exact target stores the adapted value directly");
 
   output.log("OK");
-  return null;
+  return ;
 }

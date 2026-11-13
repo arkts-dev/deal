@@ -48,7 +48,7 @@ def main():
                     lines.extend(["value = value + 1;"] * statements)
                     lines.append("return value; }")
                 if module == 0:
-                    lines.append("export function main():null { let n:number=f0(0); return null; }")
+                    lines.append("export function main():void { let n:number=f0(0); return; }")
                 (project / "src" / f"m{module}.deal").write_text("\n".join(lines), encoding="utf-8")
             for backend in backends:
                 if name == "classes-100" and backend == "llvm":

@@ -5,4 +5,4 @@
 import * as printer from "std/console";
 import * as host from "host/probe";
 
-export function main():null{let r:Record<string,unknown>=JSON.parse("{\"a\":[[1]]}");let xs=r.a as unknown[];let child=xs[0] as unknown[];let out=host.f(xs);let y=out[0] as unknown[];if(child===y){printer.log("SAME");}else{printer.log("COPY");}return null;}
+export function main():void{let r:Record<string,unknown>=JSON.parse("{\"a\":[[1]]}");let xs=r.a as unknown[];let child=xs[0] as unknown[];let out=host.f(xs);let y=out[0] as unknown[];if(child===y){printer.log("SAME");}else{printer.log("COPY");}return ;}

@@ -103,6 +103,6 @@ export function test_array_nested_arrays(): null {
   return null;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

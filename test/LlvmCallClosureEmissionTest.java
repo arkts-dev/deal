@@ -106,7 +106,7 @@ public final class LlvmCallClosureEmissionTest {
         function use(f: (a: number, b: number) => number): number {
           return f(1, 2);
         }
-        export function main(): null {
+        export function main(): void {
           let c: () => number = counter(1);
           let first: number = c();
           let second: number = c();
@@ -118,9 +118,9 @@ public final class LlvmCallClosureEmissionTest {
           };
           if (first === 2 && second === 3 && adapted === 1 && count(4)) {
             let observed: string = (first as unknown) as string;
-            return null;
+            return ;
           }
-          return null;
+          return ;
         }
         """;
 
@@ -128,7 +128,7 @@ public final class LlvmCallClosureEmissionTest {
     private static final String STDLIB_SOURCE = """
         import * as math from "std/math";
         import * as time from "std/time";
-        export function main(): null {
+        export function main(): void {
           let a: number = math.floor(2.9);
           let b: number = math.ceil(1.1);
           let c: number = math.absNumber(0 - 4);
@@ -136,9 +136,9 @@ public final class LlvmCallClosureEmissionTest {
           let now: number = time.nowMillis();
           if (a === 2 && b === 2 && c === 4 && d === 3 && now > 0) {
             let observed: string = (a as unknown) as string;
-            return null;
+            return ;
           }
-          return null;
+          return ;
         }
         """;
 
@@ -149,14 +149,14 @@ public final class LlvmCallClosureEmissionTest {
      */
     private static final String SQRT_SOURCE = """
         import * as math from "std/math";
-        export function main(): null {
+        export function main(): void {
           let value: number = math.sqrt(0 - 1);
           let root: number = math.sqrt(4);
           if (value !== value && root === 2) {
             let observed: string = (value as unknown) as string;
-            return null;
+            return ;
           }
-          return null;
+          return ;
         }
         """;
 
@@ -168,8 +168,8 @@ public final class LlvmCallClosureEmissionTest {
           if (value === 2) { return null; }
           return null;
         }
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -195,16 +195,16 @@ public final class LlvmCallClosureEmissionTest {
                              f: (n: number) => number): number {
           return g(f);
         }
-        export function main(): null {
+        export function main(): void {
           let passthrough = function(value: unknown): number { return 7; };
           let applied: number = callFunction(apply1);
           let g: (v: unknown) => number = passthrough;
           let carried: number = callUnknown(g, one);
           if (applied === 1 && carried === 7) {
             let observed: string = (applied as unknown) as string;
-            return null;
+            return ;
           }
-          return null;
+          return ;
         }
         """;
 
@@ -215,11 +215,11 @@ public final class LlvmCallClosureEmissionTest {
      */
     private static final String FUNCTION_UNKNOWN_SOURCE = """
         function one(n: number): number { return n; }
-        export function main(): null {
+        export function main(): void {
           let a: (n: number) => number = one;
           let boxed: unknown = a;
           let back: string = boxed as string;
-          return null;
+          return ;
         }
         """;
 
@@ -230,11 +230,11 @@ public final class LlvmCallClosureEmissionTest {
      */
     private static final String NULLISH_FUNCTION_SOURCE = """
         function one(n: number): number { return n; }
-        export function main(): null {
+        export function main(): void {
           let empty: ((n: number) => number) | null = null;
           let boxed: unknown = empty;
           let back: string = boxed as string;
-          return null;
+          return ;
         }
         """;
 
@@ -247,14 +247,14 @@ public final class LlvmCallClosureEmissionTest {
     private static final String STDLIB_BOXING_SOURCE = """
 
         function one(n: number): number { return n; }
-        export function main(): null {
+        export function main(): void {
           let numberText: string | undefined = JSON.stringify(1);
           let booleanText: string | undefined = JSON.stringify(true);
           let nullText: string | undefined = JSON.stringify(null);
           let functionText: string | undefined = JSON.stringify(one);
           let value: number = 3;
           let observed: string = (value as unknown) as string;
-          return null;
+          return ;
         }
         """;
 
@@ -276,15 +276,15 @@ public final class LlvmCallClosureEmissionTest {
           n = n + 2;
           return read() + n;
         }
-        export function main(): null {
+        export function main(): void {
           let captured: number = capture(7)();
           let bumped: number = reassign(41)();
           let shared: number = alias(1);
           if (captured === 7 && bumped === 42 && shared === 6) {
             let observed: string = (captured as unknown) as string;
-            return null;
+            return ;
           }
-          return null;
+          return ;
         }
         """;
 
@@ -300,30 +300,30 @@ public final class LlvmCallClosureEmissionTest {
         function use2(f: (a: number, b: number) => number): number {
           return f(1, 2);
         }
-        export function main(): null {
+        export function main(): void {
           let h: (a: number, b: number) => number = one;
           let y: (n: number) => number = (h = one);
           let stored: number = use2(h);
           let direct: number = y(5);
           if (stored === 1 && direct === 5) {
             let observed: string = (stored as unknown) as string;
-            return null;
+            return ;
           }
-          return null;
+          return ;
         }
         """;
 
     private static final String APP_SOURCE = """
         import * as util from "./lib";
-        export function main(): null {
+        export function main(): void {
           let direct: boolean = util.isTwo(util.double(1));
           let fn: (n: number) => number = util.double;
           let dynamic: number = fn(1);
           if (direct && dynamic === 2) {
             let observed: string = (dynamic as unknown) as string;
-            return null;
+            return ;
           }
-          return null;
+          return ;
         }
         """;
 
@@ -507,14 +507,14 @@ public final class LlvmCallClosureEmissionTest {
           }
           return sum;
         }
-        export function main(): null {
+        export function main(): void {
           let total: number = build();
           let sum: number = counted();
           if (total === 30 && sum === 107) {
             let observed: string = (total as unknown) as string;
-            return null;
+            return ;
           }
-          return null;
+          return ;
         }
         """;
 
@@ -532,14 +532,14 @@ public final class LlvmCallClosureEmissionTest {
           return out;
         }
         function total(): number { return 4; }
-        export function main(): null {
+        export function main(): void {
           let values: unknown[] = build();
           let count: number = total();
           if (values.length === 2 && count === 4) {
             let observed: string = (count as unknown) as string;
-            return null;
+            return ;
           }
-          return null;
+          return ;
         }
         """;
 
@@ -803,15 +803,15 @@ public final class LlvmCallClosureEmissionTest {
         }
         function makeArray(): number[] { return [6, 7]; }
         function dynamicReturnArray(f: () => number[]): number[] { return f(); }
-        export function main(): null {
+        export function main(): void {
           let indexed: number = captureArray()();
           let field: number = captureClass()();
           let through: number[] = dynamicReturnArray(makeArray);
           if (indexed === 5 && field === 9 && through[0] === 6) {
             let observed: string = (indexed as unknown) as string;
-            return null;
+            return ;
           }
-          return null;
+          return ;
         }
         """;
 
@@ -824,15 +824,15 @@ public final class LlvmCallClosureEmissionTest {
         import * as strings from "std/string";
         import * as table from "std/table";
 
-        export function main(): null {
+        export function main(): void {
           let parts: string[] = strings.split("a,b,c", ",");
           let record: Record<string, unknown> = JSON.parse("{\\"x\\":1,\\"y\\":2}");
           let names: string[] = table.keys(record);
           if (parts.length === 3 && names.length === 2) {
             let observed: string = (parts.length as unknown) as string;
-            return null;
+            return ;
           }
-          return null;
+          return ;
         }
         """;
 
@@ -878,14 +878,14 @@ public final class LlvmCallClosureEmissionTest {
         import * as c from "std/console";
         function tick(): void { return; }
         function counter(n: number): void { let v: number = n + 1; }
-        export function main(): null {
+        export function main(): void {
           c.log("void-log");
           c.error("void-error");
           let f: () => void = tick;
           f();
           let g: (n: number) => void = counter;
           g(1);
-          return null;
+          return ;
         }
         """;
 
@@ -901,7 +901,7 @@ public final class LlvmCallClosureEmissionTest {
           await asyncTick();
           return null;
         }
-        export function main(): null { return null; }
+        export function main(): void { return ; }
         """;
 
     private static void testVoidResults(Path scratch) throws Exception {
@@ -1103,8 +1103,8 @@ public final class LlvmCallClosureEmissionTest {
           if (value === 2) { return null; }
           return null;
         }
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -1120,7 +1120,7 @@ public final class LlvmCallClosureEmissionTest {
           if (value === 2) { return null; }
           return null;
         }
-        export function main(): null { return null; }
+        export function main(): void { return ; }
         """;
 
     // =========================================================================
@@ -1136,7 +1136,7 @@ public final class LlvmCallClosureEmissionTest {
     private static final String RECURSIVE_GROUP_SOURCE = """
         function left(): null { let rightRef: () => null = right; return null; }
         function right(): null { let leftRef: () => null = left; return null; }
-        export function main(): null { return null; }
+        export function main(): void { return ; }
         """;
 
     /**
@@ -1155,13 +1155,13 @@ public final class LlvmCallClosureEmissionTest {
           let step: (n: number) => number = left;
           return step(n - 1) + 1;
         }
-        export function main(): null {
+        export function main(): void {
           let total: number = left(4);
           let other: number = right(6);
           if (total === 4 && other === 6) {
             let observed: string = (total as unknown) as string;
           }
-          return null;
+          return ;
         }
         """;
 
@@ -1197,13 +1197,13 @@ public final class LlvmCallClosureEmissionTest {
      */
     private static final String ADAPTER_IMPORT_SOURCE = """
         import * as util from "./lib";
-        export function main(): null {
+        export function main(): void {
           let fromImport: (a: number, b: number) => number = util.ident;
           let value: number = fromImport(1, 2);
           if (value === 1) {
             let observed: string = (value as unknown) as string;
           }
-          return null;
+          return ;
         }
         """;
 
@@ -1217,7 +1217,7 @@ public final class LlvmCallClosureEmissionTest {
      */
     private static final String ADAPTER_FACTORY_SOURCE = """
         function ident(n: number): number { return n; }
-        export function main(): null {
+        export function main(): void {
           let calls: number = 0;
           let tick = function(): number { calls = calls + 1; return calls; };
           let maker = function(): (n: number) => number { tick(); return ident; };
@@ -1228,7 +1228,7 @@ public final class LlvmCallClosureEmissionTest {
           if (before === 1 && first === 1 && second === 3 && calls === 1) {
             let observed: string = (calls as unknown) as string;
           }
-          return null;
+          return ;
         }
         """;
 
@@ -1241,7 +1241,7 @@ public final class LlvmCallClosureEmissionTest {
           let add = function(n: number): number { return n + k; };
           return add;
         }
-        export function main(): null {
+        export function main(): void {
           let base: number = 10;
           let fromCall: (a: number, b: number) => number = maker(base);
           let first: number = fromCall(1, 2);
@@ -1249,7 +1249,7 @@ public final class LlvmCallClosureEmissionTest {
           if (first === 11 && second === 13) {
             let observed: string = (first as unknown) as string;
           }
-          return null;
+          return ;
         }
         """;
 
@@ -1262,14 +1262,14 @@ public final class LlvmCallClosureEmissionTest {
           let n: number = 0;
           return function(): number { n = n + 1; return n; };
         }
-        export function main(): null {
+        export function main(): void {
           let h: (a: number) => number = maker();
           let first: number = h(0);
           let second: number = h(0);
           if (first === 1 && second === 2) {
             let observed: string = (first as unknown) as string;
           }
-          return null;
+          return ;
         }
         """;
 
@@ -1333,7 +1333,7 @@ public final class LlvmCallClosureEmissionTest {
                 output.log("factory");
                 return one;
             }
-            export function main(): null {
+            export function main(): void {
                 let source: () => number = one;
                 let saved: (ignored: number) => number = source;
                 source = two;
@@ -1358,7 +1358,7 @@ public final class LlvmCallClosureEmissionTest {
                 live = 4;
                 check(adapted(0) === 4);
                 output.log("OK");
-                return null;
+                return ;
             }
             """);
         for (int level : new int[] {0, 2}) {
@@ -1382,7 +1382,7 @@ public final class LlvmCallClosureEmissionTest {
     private static final String ASSERTION_SOURCE = """
         import * as strings from "std/string";
         function one(n: number): number { return n + 1; }
-        export function main(): null {
+        export function main(): void {
           let a: (n: number) => number = one;
           let boxed: unknown = a;
           let back: (n: number) => number = boxed as (n: number) => number;
@@ -1395,29 +1395,29 @@ public final class LlvmCallClosureEmissionTest {
               let observed: string = (applied as unknown) as string;
             }
           }
-          return null;
+          return ;
         }
         """;
 
     /** A recovered function value of the wrong signature (the E8010 arm). */
     private static final String ASSERTION_SIGNATURE_MISMATCH_SOURCE = """
         function id(x: string): string { return x; }
-        export function main(): null {
+        export function main(): void {
           let f: (x: string) => string = id;
           let boxed: unknown = f;
           let wrong: (n: number) => number = boxed as (n: number) => number;
           let applied: number = wrong(2);
-          return null;
+          return ;
         }
         """;
 
     /** A nullish assertion over a value the declared base never admits. */
     private static final String ASSERTION_NULLISH_MISMATCH_SOURCE = """
-        export function main(): null {
+        export function main(): void {
           let text: unknown = 1;
           let nullish: string | null = text as string | null;
-          if (nullish === null) { return null; }
-          return null;
+          if (nullish === null) { return ; }
+          return ;
         }
         """;
 
@@ -1487,7 +1487,7 @@ public final class LlvmCallClosureEmissionTest {
           if (flag) { return s; }
           return undefined;
         }
-        export function main(): null { return null; }
+        export function main(): void { return ; }
         """;
 
     /**
@@ -1501,7 +1501,7 @@ public final class LlvmCallClosureEmissionTest {
           if (flag === 1) { return one; }
           return null;
         }
-        export function main(): null { return null; }
+        export function main(): void { return ; }
         """;
 
     /**
@@ -1511,9 +1511,9 @@ public final class LlvmCallClosureEmissionTest {
      */
     private static final String ADAPTER_ONLY_SOURCE = """
         function one(n: number): number { return n; }
-        export function main(): null {
+        export function main(): void {
           let h: (a: number, b: number) => number = one;
-          return null;
+          return ;
         }
         """;
 
@@ -1607,12 +1607,12 @@ public final class LlvmCallClosureEmissionTest {
         function use2(f: (a: unknown, b: number) => number, mixed: unknown): number {
           return f(mixed, 2);
         }
-        export function main(): null {
+        export function main(): void {
           let h: (n: unknown) => number = one;
           let wide: (a: unknown, b: number) => number = h;
           let text: string = "not a number";
           let value: number = use2(wide, text);
-          return null;
+          return ;
         }
         """;
 
@@ -1629,11 +1629,11 @@ public final class LlvmCallClosureEmissionTest {
         function use2(f: (a: number, b: number) => number): number {
           return f(1, 2);
         }
-        export function main(): null {
+        export function main(): void {
           let text: string = "not a number";
           let wide: (a: number, b: number) => number = maker(text);
           let value: number = use2(wide);
-          return null;
+          return ;
         }
         """;
 
@@ -1650,11 +1650,11 @@ public final class LlvmCallClosureEmissionTest {
         function use2(f: (a: number, b: number) => number): number {
           return f(1, 2);
         }
-        export function main(): null {
+        export function main(): void {
           let h: (n: number) => number = one;
           let wide: (a: number, b: number) => number = h;
           let value: number = use2(wide);
-          return null;
+          return ;
         }
         """;
 
@@ -1672,7 +1672,7 @@ public final class LlvmCallClosureEmissionTest {
         function use2(f: (a: unknown, b: number) => number, mixed: unknown): number {
           return f(mixed, 2);
         }
-        export function main(): null {
+        export function main(): void {
           let h: (n: unknown) => number = one;
           let wide: (a: unknown, b: number) => number = h;
           let text: string = "not a number";
@@ -1689,7 +1689,7 @@ public final class LlvmCallClosureEmissionTest {
             round = round + 1;
           }
           let observed: string = (caught as unknown) as string;
-          return null;
+          return ;
         }
         """;
 
@@ -1908,7 +1908,7 @@ public final class LlvmCallClosureEmissionTest {
                     + "function fail(): null {\n" + body + "}\n"
                     + "function spare(): null { return null; }\n"
                     + "function choose(value:boolean): () => null { if (value) { return fail; } return spare; }\n"
-                    + "export function main(): null { " + call + " return null; }\n";
+                    + "export function main(): void { " + call + " return ; }\n";
                 String library = "export function remote(): null {\n" + body + "}\n";
                 String name = "json-origin-" + (parse ? "parse-" : "stringify-") + mode;
                 Path root = scratch.resolve(name);

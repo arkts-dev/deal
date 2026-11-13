@@ -32,7 +32,7 @@ function expectTrue(what: string, condition: boolean): null {
   return null;
 }
 
-export function main(): null {
+export function main(): void {
   // A call between the narrowing and the member read does not invalidate the
   // refinement, and the valid value flows through every member position
   // unchanged: the admission republishes the read and the member operation
@@ -139,5 +139,5 @@ export function main(): null {
     let keptAgain: unknown = keep.a;
     expectTrue("the aliased member is still present", keptAgain !== null);
   }
-  return null;
+  return ;
 }

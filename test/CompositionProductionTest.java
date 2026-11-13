@@ -165,7 +165,7 @@ public final class CompositionProductionTest {
             import * as host from "host/probe";
             import * as model from "./model";
             function check(ok:boolean,step:number):void{if(!ok){throw {name:"TEST"+String(step),message:"declaration schema"};}}
-            export function main():null{
+            export function main():void{
               let leaf:host.Leaf=JSON.parse(`{"value":8,"child":{"value":9,"next":{"value":10}}}`);
               check(host.read(leaf)===8,1);
               check((JSON.stringify(leaf) as string)===`{"value":8,"child":{"value":9,"next":{"value":10}}}`,2);
@@ -177,7 +177,7 @@ public final class CompositionProductionTest {
               try{box=JSON.parse(`{"item":{"value":7,"foreign":{"value":11,"child":{"value":"bad"}}}}`);}
               catch(e){check((e as Error).name==="E8001",5);caught=true;}
               check(caught && box===original && model.read(box)===11,6);
-              return null;
+              return ;
             }
             """, "", "", root.resolve("json-parse-declaration-provider"), host,
             List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM), Map.of(
@@ -228,7 +228,7 @@ public final class CompositionProductionTest {
                 "test/conformance/backend-runtime/arrays/splice-live-retry.deal")), "arrays/splice-live-retry.deal"),
                 "", root.resolve("splice-live"), popHost,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
-            String popCallable = "import * as host from \"host/probe\";export function main():null{"
+            String popCallable = "import * as host from \"host/probe\";export function main():void{"
                 + "let fn=():number=>9;let fs:((()=>number)|null)[]=[fn];"
                 + "let r:Record<string,unknown>={f:fn};let rs:Record<string,unknown>[]=[r];let us:unknown[]=[r];"
                 + "host.poison(fn);let caught=0;try{fs.pop();}catch(e){if((e as Error).name===\"E8003\"){caught=caught+1;}}"
@@ -237,7 +237,7 @@ public final class CompositionProductionTest {
                 + "if(caught!==3 || fs.length!==1 || rs.length!==1 || us.length!==1){throw {name:\"POISON\",message:\"pop changed storage\"};}"
                 + "host.restoreFunction();let got=fs.pop() as ()=>number;"
                 + "if(got!==fn || got()!==9 || (rs.pop() as Record<string,unknown>)!==r || (us.pop() as Record<string,unknown>)!==r){"
-                + "throw {name:\"RETRY\",message:\"pop identity\"};}return null;}";
+                + "throw {name:\"RETRY\",message:\"pop identity\"};}return ;}";
             execute(popCallable, "", root.resolve("pop-callable"), popHost,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             execute(popCallable.replace("host.poison(fn)", "host.poisonSignature(fn)"), "",
@@ -248,22 +248,22 @@ public final class CompositionProductionTest {
             execute(popCallable.replace(".pop()", ".splice(0,1)[0]").replace("host.poison(fn)", "host.poisonSignature(fn)"), "",
                 root.resolve("splice-callable-signature"), popHost,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
-            String decodedPop = "export function main():null{"
+            String decodedPop = "export function main():void{"
                 + "let r:Record<string,unknown>=JSON.parse(\"{\\\"xs\\\":[1,-0,null,2]}\");let xs=r.xs as unknown[];let alias=xs;"
                 + "if((xs.pop() as number)!==2 || xs.pop()!==null || 1/(xs.pop() as number)!==-1/0 || xs.length!==1){"
                 + "throw {name:\"DECODED\",message:\"pop values\"};}"
                 + "xs[xs.length]=3;if(alias.length!==2 || (alias.pop() as number)!==3 || (xs.pop() as number)!==1"
                 + " || xs.pop()!==undefined || (JSON.stringify(r) as string)!==\"{\\\"xs\\\":[]}\"){"
-                + "throw {name:\"DECODED\",message:\"pop metadata\"};}return null;}";
+                + "throw {name:\"DECODED\",message:\"pop metadata\"};}return ;}";
             execute(decodedPop, "", root.resolve("pop-decoded"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
-            String decodedSplice = "export function main():null{"
+            String decodedSplice = "export function main():void{"
                 + "let r:Record<string,unknown>=JSON.parse(\"{\\\"xs\\\":[1,-0,null,2,3]}\");let xs=r.xs as unknown[];let alias=xs;"
                 + "let out=xs.splice(1,2);if(out.length!==2 || 1/(out[0] as number)!==-1/0 || out[1]!==null"
                 + " || alias.length!==3 || (alias[1] as number)!==2 || (JSON.stringify(r) as string)!==\"{\\\"xs\\\":[1,2,3]}\"){"
                 + "throw {name:\"DECODED\",message:\"splice shift\"};}xs[xs.length]=4;out[out.length]=9;"
                 + "if((alias.splice(1,9)[2] as number)!==4 || (JSON.stringify(r) as string)!==\"{\\\"xs\\\":[1]}\")"
-                + "{throw {name:\"DECODED\",message:\"splice append\"};}return null;}";
+                + "{throw {name:\"DECODED\",message:\"splice append\"};}return ;}";
             execute(decodedSplice, "", root.resolve("splice-decoded"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             execute(ConformanceHarnessMetadata.productionCorpusSource(Files.readString(Path.of(
@@ -304,15 +304,15 @@ public final class CompositionProductionTest {
                 + "let f: (fail: boolean) => number = function(fail: boolean): number {"
                 + "try {return value(fail);}catch(e){} return 11;};return f(fail);}"
                 + "export async function probe(): Promise<number> {return await asyncValue(true);}"
-                + "export function main(): null {done();"
+                + "export function main(): void {done();"
                 + "if(value(false)!==7 || value(true)!==9){throw {name:\"TEST\",message:\"catch path\"};}"
                 + "let f: () => number = function(): number {try {throw {name:\"X\",message:\"x\"};}"
                 + "catch(e){}return 13;};"
-                + "if(f()!==13){throw {name:\"TEST\",message:\"catch expression\"};}return null;}";
+                + "if(f()!==13){throw {name:\"TEST\",message:\"catch expression\"};}return ;}";
             execute(catchPaths, "", root.resolve("catch-paths"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             String constBindings = "class Cell {value:number;}"
-                + "export function main():null {const base:number=3;const xs:number[]=[1,2,3]; const c:Cell={value:0};"
+                + "export function main():void {const base:number=3;const xs:number[]=[1,2,3]; const c:Cell={value:0};"
                 + "const r:Record<string,unknown>={old:1}; r.next=base; delete r.old;"
                 + "xs[0]=4; c.value=xs[0];"
                 + "let fs:(()=>number)[]=[]; for(const x of xs){"
@@ -320,10 +320,10 @@ public final class CompositionProductionTest {
                 + "const down:(n:number)=>number=function(n:number):number{"
                 + "if(n===0){return base;}return down(n-1);};"
                 + "if(fs[0]()!==4 || fs[1]()!==2 || fs[2]()!==3 || c.value!==4 || down(5)!==3){"
-                + "throw {name:\"TEST\",message:\"const identity or capture\"};}return null;}";
+                + "throw {name:\"TEST\",message:\"const identity or capture\"};}return ;}";
             execute(constBindings, "", root.resolve("const-bindings"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
-            String remainders = "export function main():null {"
+            String remainders = "export function main():void {"
                 + "let a:number[]=[5,-5,5,-5,5.5,-5.5,0,-0,1,0,1/0,1,1];"
                 + "let b:number[]=[2,2,-2,-2,2,2,2,2,0,0,2,1/0,0/0];"
                 + "let want:number[]=[1,-1,1,-1,1.5,-1.5,0,-0,0/0,0/0,0/0,1,0/0];"
@@ -331,7 +331,7 @@ public final class CompositionProductionTest {
                 + "if(expected!==expected){if(got===got){throw {name:\"TEST\",message:\"remainder NaN\"};}}"
                 + "else {if(got!==expected || (got===0 && 1/got!==1/expected)){"
                 + "throw {name:\"TEST\",message:\"remainder sign/value\"};}}i=i+1;}"
-                + "if(20%6*2!==4 || 20/2%3!==1){throw {name:\"TEST\",message:\"remainder precedence\"};}return null;}";
+                + "if(20%6*2!==4 || 20/2%3!==1){throw {name:\"TEST\",message:\"remainder precedence\"};}return ;}";
             execute(remainders, "", root.resolve("remainders"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             String arrowFixture = "functions/typed-arrows.deal";
@@ -339,11 +339,11 @@ public final class CompositionProductionTest {
                 Path.of("test/conformance/backend-runtime").resolve(arrowFixture)), arrowFixture);
             execute(arrows, "", root.resolve("arrows"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
-            String escapes = "export function main():null{"
+            String escapes = "export function main():void{"
                 + "if(\"\\r\\x41\\u0042\\u{1f600}\\uD800\" !== `\\rAB😀\\uD800`"
                 + " || \"\\u{000000000000000000000000041}\" !== \"A\""
                 + " || '\\x27' !== \"'\" || \"\\x22\" !== '\"'){"
-                + "throw {name:\"TEST\",message:\"escape decoding\"};}return null;}";
+                + "throw {name:\"TEST\",message:\"escape decoding\"};}return ;}";
             execute(escapes, "", root.resolve("string-escapes"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             // Node supplies an independent ECMAScript reference, never a host
@@ -373,7 +373,7 @@ public final class CompositionProductionTest {
                 expectedNumbers.add(referenceLines.get(2*i));
                 expectedJson.add(referenceLines.get(2*i+1));
             }
-            StringBuilder numericSource = new StringBuilder("class Numeric{v:number;}export function main():null{let values:number[]=[");
+            StringBuilder numericSource = new StringBuilder("class Numeric{v:number;}export function main():void{let values:number[]=[");
             for (int i=0;i<numberSamples.size();i++) {
                 if(i>0) numericSource.append(',');
                 double value = numberSamples.get(i);
@@ -396,10 +396,10 @@ public final class CompositionProductionTest {
                 + " || (JSON.stringify(values[i]) as string)!==jsonExpected[i]"
                 + " || (JSON.stringify([values[i]]) as string)!==\"[\"+jsonExpected[i]+\"]\""
                 + " || (JSON.stringify(item) as string)!==\"{\\\"v\\\":\"+jsonExpected[i]+\"}\"){"
-                + "throw {name:\"NUMBER_TEXT\",message:`${i}: ${values[i]}`};}i=i+1;}return null;}");
+                + "throw {name:\"NUMBER_TEXT\",message:`${i}: ${values[i]}`};}i=i+1;}return;}");
             execute(numericSource.toString(), "", root.resolve("number-text-reference"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
-            String interpolation = "export function main():null{"
+            String interpolation = "export function main():void{"
                 + "let values:number[]=[0,-0,1,-1,1.5,0/0,1/0,-1/0,1e-6,1e-7,1e20,1e21,"
                 + "5e-324,1.7976931348623157e308,1000000000000000100,2.2250738585072014e-308];"
                 + "let expected:string[]=[\"0\",\"0\",\"1\",\"-1\",\"1.5\",\"NaN\",\"Infinity\",\"-Infinity\","
@@ -416,19 +416,19 @@ public final class CompositionProductionTest {
                 + "if(String(step(4))!==\"4\" || state!==1234){throw {name:\"STRING\",message:\"String effects\"};}"
                 + "try{let text=String(fail());}catch(e){}"
                 + "let refined:unknown=1.5;if(typeof refined===\"number\"){if(String(refined)!==\"1.5\"){"
-                + "throw {name:\"REFINED\",message:\"String refinement\"};}}return null;}";
+                + "throw {name:\"REFINED\",message:\"String refinement\"};}}return ;}";
             execute(interpolation, "", root.resolve("numeric-templates"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
-            String builtins = "export function main():null{"
+            String builtins = "export function main():void{"
                 + "if(Math.floor(1.5)!==1 || Math.ceil(-1.5)!==-1 || Math.abs(-2)!==2 || Math.sqrt(4)!==2"
                 + " || 1/Math.ceil(-0.1)!==-1/0 || 1/Math.abs(-0)!==1/0 || 1/Math.sqrt(-0)!==-1/0"
                 + " || Math.sqrt(-1)===Math.sqrt(-1) || Date.now()<0){throw {name:\"MATH\",message:\"builtin values\"};}"
                 + "let state=0;let arg=():number=>{state=state+1;return -2;};"
                 + "if(Math.abs(arg())!==2 || state!==1){throw {name:\"ORDER\",message:\"builtin effect\"};}"
-                + "console.log(String(Math.abs(-1/0)));console.error(\"BUILTIN\");return null;}";
+                + "console.log(String(Math.abs(-1/0)));console.error(\"BUILTIN\");return ;}";
             execute(builtins, "Infinity\n", "BUILTIN\n", root.resolve("builtin-namespaces"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
-            String arrayPop = "class Item{v:number;}export function main():null{"
+            String arrayPop = "class Item{v:number;}export function main():void{"
                 + "const xs:number[]=[1,-0,0/0];let alias=xs;let nan=xs.pop() as number;"
                 + "if(nan===nan || xs.length!==2 || alias.length!==2 || 1/(alias.pop() as number)!==-1/0"
                 + " || (xs.pop() as number)!==1 || xs.length!==0 || xs.pop()!==undefined || xs.length!==0){"
@@ -450,11 +450,11 @@ public final class CompositionProductionTest {
                 + "if(maybe!==null){invalidate();try{maybe.pop();}catch(e){if((e as Error).name===\"E8001\"){caught=true;}}}"
                 + "if(!caught){throw {name:\"STALE\",message:\"receiver\"};}"
                 + "let nils:(null|undefined)[]=[null,undefined];if(nils.pop()!==undefined || nils.pop()!==null || nils.pop()!==undefined){"
-                + "throw {name:\"NIL\",message:\"pop\"};}return null;}";
+                + "throw {name:\"NIL\",message:\"pop\"};}return ;}";
             execute(arrayPop, "", root.resolve("array-pop"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             String jsonEncoding = "class Item{z:number;a?:string;b:null;c:undefined;}"
-                + "export function main():null{let f=():number=>1;let mixed:unknown[]=[undefined,f,0/0,1/0,-0];"
+                + "export function main():void{let f=():number=>1;let mixed:unknown[]=[undefined,f,0/0,1/0,-0];"
                 + "if(JSON.stringify(undefined)!==undefined || JSON.stringify(f)!==undefined"
                 + " || (JSON.stringify(null) as string)!==\"null\" || (JSON.stringify(true) as string)!==\"true\""
                 + " || (JSON.stringify(mixed) as string)!==\"[null,null,null,null,0]\"){"
@@ -474,7 +474,7 @@ public final class CompositionProductionTest {
                 + "if((JSON.stringify(arg()) as string)!==\"2\" || state!==1){throw {name:\"ONCE\",message:\"JSON argument\"};}"
                 + "let fail=():unknown=>{throw {name:\"ARG\",message:\"stop\"};};"
                 + "try{JSON.stringify(fail());}catch(e){if(e instanceof Error){if(e.name!==\"ARG\"){throw e;}state=2;}}"
-                + "if(state!==2 || JSON.stringify(shared)===undefined){throw {name:\"RETRY\",message:\"JSON repair\"};}return null;}";
+                + "if(state!==2 || JSON.stringify(shared)===undefined){throw {name:\"RETRY\",message:\"JSON repair\"};}return ;}";
             execute(jsonEncoding, "", root.resolve("json-encoding"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             String parseFixture = "stdlib/json/contextual-parse.deal";
@@ -488,7 +488,7 @@ public final class CompositionProductionTest {
                 import * as right from "./right";
                 class Envelope { first:left.Node; second:right.Node; }
                 function verify(ok:boolean):void{if(!ok){throw {name:"TEST",message:"parse provider"};}}
-                export function main():null {
+                export function main():void {
                   let a:left.Node=JSON.parse(`{"z":1,"a":2,"next":{"z":3,"a":4}}`);
                   let b:right.Node=JSON.parse(`{"z":5,"a":6}`);
                   let c:again.Node=a;
@@ -502,27 +502,27 @@ public final class CompositionProductionTest {
                   try{let wrong:left.Node=rawB as left.Node;}catch(e){caught=caught+1;}
                   verify(caught===2);
                   verify((JSON.stringify(a) as string)===`{"z":1,"a":2,"next":{"z":3,"a":4}}`);
-                  return null;
+                  return ;
                 }
                 """, "", "", root.resolve("json-parse-providers"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM), Map.of(
                     "left.deal", "export class Node{z:number;a:number;next?:Node;}export function read(n:Node):number{return n.z;}",
                     "right.deal", "export class Node{a:number;z:number;next?:Node;}export function read(n:Node):number{return n.a;}"));
-            execute("import * as model from \"./model\";class Local{box:model.Box;}export function main():null{"
+            execute("import * as model from \"./model\";class Local{box:model.Box;}export function main():void{"
                 + "let box:model.Box=JSON.parse(`{\"item\":{\"value\":7}}`);"
                 + "let local:Local=JSON.parse(`{\"box\":{\"item\":{\"value\":8,\"next\":{\"value\":9}}}}`);"
-                + "if(model.read(box)!==7 || model.read(local.box)!==8){throw {name:\"TEST\",message:\"private schema provider\"};}return null;}",
+                + "if(model.read(box)!==7 || model.read(local.box)!==8){throw {name:\"TEST\",message:\"private schema provider\"};}return ;}",
                 "", "", root.resolve("json-parse-private-provider"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM), Map.of(
                     "model.deal", "class Item{value:number;next?:Item;}export class Box{item:Item;}"
                         + "export function read(box:Box):number{return box.item.value;}"));
-            execute("import * as model from \"./model\";class Local{box:model.Box;}export function main():null{"
+            execute("import * as model from \"./model\";class Local{box:model.Box;}export function main():void{"
                 + "let local:Local=JSON.parse(`{\"box\":{\"item\":{\"payload\":{\"node\":{\"value\":7,\"next\":{\"value\":8}}}}}}`);"
                 + "if(model.read(local.box)!==15){throw {name:\"TEST\",message:\"transitive private schema\"};}"
                 + "let original=local;let caught=false;"
                 + "try{local=JSON.parse(`{\"box\":{\"item\":{\"payload\":{\"node\":{\"value\":7,\"next\":{\"value\":\"bad\"}}}}}}`);}"
                 + "catch(e){if((e as Error).name!==\"E8001\"){throw e as Error;}caught=true;}"
-                + "if(!caught || local!==original || model.read(local.box)!==15){throw {name:\"TEST\",message:\"transitive rollback\"};}return null;}",
+                + "if(!caught || local!==original || model.read(local.box)!==15){throw {name:\"TEST\",message:\"transitive rollback\"};}return ;}",
                 "", "", root.resolve("json-parse-transitive-private"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM), Map.of(
                     "model.deal", "import * as leaf from \"./leaf\";class Item{payload:leaf.Payload;}export class Box{item:Item;}"
@@ -534,7 +534,7 @@ public final class CompositionProductionTest {
                 "", "", root.resolve("json-serialization-example"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM), Map.of(
                     "settings.deal", Files.readString(Path.of("skills/write-deal/examples/serialization/settings.deal"))));
-            execute("import * as data from \"./data\";export function main():null{return data.exercise();}",
+            execute("import * as data from \"./data\";export function main():void{data.exercise();}",
                 "", "", root.resolve("json-data-example"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM), Map.of(
                     "data.deal", Files.readString(Path.of("skills/write-deal/examples/src/data.deal")),
@@ -546,26 +546,26 @@ public final class CompositionProductionTest {
             String classInput = "`" + opening.repeat(2500) + "`+\n`"
                 + opening.repeat(2500) + "null" + "}".repeat(5000) + "`";
             String arrayInput = "`" + "[".repeat(20000) + "-0" + "]".repeat(20000) + "`";
-            String deepParse = "class Node{value:number;next:Node|null;} export function main():null{"
+            String deepParse = "class Node{value:number;next:Node|null;} export function main():void{"
                 + "let text=" + classInput + ";\nlet node:Node|null=JSON.parse(text);"
                 + "if((JSON.stringify(node) as string)!==text){throw {name:\"TEST\",message:\"deep class\"};}"
                 + "\ntext=" + arrayInput + ";\nlet value:unknown=JSON.parse(text);"
                 + "let output=JSON.stringify(value) as string;"
                 + "if(output.length!==40001 || !output.includes(\"0\")){throw {name:\"TEST\",message:\"deep array\"};}"
-                + "return null;}";
+                + "return ;}";
             execute(deepParse, "", "", root.resolve("json-parse-deep"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM), Map.of(), true);
             String failedClassInput = "`" + opening.repeat(2500) + "`+\n`"
                 + opening.repeat(2500) + "{\"value\":\"bad\",\"next\":null}" + "}".repeat(5000) + "`";
-            String deepFailure = "class Node{value:number;next:Node|null;} export function main():null{"
+            String deepFailure = "class Node{value:number;next:Node|null;} export function main():void{"
                 + "let original:Node={value:7,next:null};let destination=original;let rejected=false;"
                 + "try{destination=JSON.parse(" + failedClassInput + ");}catch(e){"
                 + "if(e instanceof Error){rejected=e.name===\"E8001\" && e.message===\"expected number\";}}"
                 + "if(!rejected || destination!==original || destination.value!==7 || destination.next!==null){"
-                + "throw {name:\"TEST\",message:\"deep parse failure lost rollback or leaf\"};}return null;}";
+                + "throw {name:\"TEST\",message:\"deep parse failure lost rollback or leaf\"};}return ;}";
             execute(deepFailure, "", "", root.resolve("json-parse-deep-failure"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM), Map.of(), true);
-            execute("export function main():null{try{JSON.parse(`bad`);}catch(e){}return null;}",
+            execute("export function main():void{try{JSON.parse(`bad`);}catch(e){}return ;}",
                 "", root.resolve("json-parse-builtin-only"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             String jsonFixture = "stdlib/json/builtin-stringify.deal";
@@ -573,7 +573,7 @@ public final class CompositionProductionTest {
                 Path.of("test/conformance/backend-runtime").resolve(jsonFixture)), jsonFixture),
                 "", root.resolve("json-corpus"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
-            String receiverStrings = "export function main():null{let state=0;"
+            String receiverStrings = "export function main():void{let state=0;"
                 + "let receiver=():string=>{state=state*10+1;return \"  a😀b  \";};"
                 + "let index=(n:number):number=>{state=state*10+n;return n;};"
                 + "let text=receiver().substring(index(2),index(3));"
@@ -590,13 +590,13 @@ public final class CompositionProductionTest {
                 + "let maybe:string|null=s;if(maybe!==null){if(maybe.trim()!==s){throw {name:\"REFINE\",message:\"receiver\"};}}"
                 + "let invalidated:string|null=s;let clear=():void=>{invalidated=null;};"
                 + "if(invalidated!==null){clear();try{invalidated.trim();throw {name:\"MISSED\",message:\"stale\"};}catch(e){"
-                + "if(e instanceof Error){if(e.name!==\"E8001\"){throw e;}}}}return null;}";
+                + "if(e instanceof Error){if(e.name!==\"E8001\"){throw e;}}}}return ;}";
             execute(receiverStrings, "", root.resolve("receiver-strings"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
-            String multiline = "export function main():null{"
+            String multiline = "export function main():void{"
                 + "if(`A\r\nB\rC\nD` !== \"A\\nB\\nC\\nD\""
                 + " || `A\\\r\nB` !== \"AB\" || `x${`a\nb`}y` !== \"xa\\nby\"){"
-                + "throw {name:\"TEST\",message:\"multiline decoding\"};}return null;}";
+                + "throw {name:\"TEST\",message:\"multiline decoding\"};}return ;}";
             execute(multiline, "", root.resolve("multiline-templates"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             // Each seed changes values and composition depth, not the language
@@ -619,8 +619,8 @@ public final class CompositionProductionTest {
                     body = "let f:()=>number=function():number{" + body + "};return f();";
                 String source = "import * as c from \"std/console\";"
                     + "function run():number{let state:number=" + base + ";" + body + "}"
-                    + "export function main():null{if(run()!==" + (base + delta)
-                    + "){throw {name:\"TEST\",message:\"value\"};}c.log(\"COMPOSE_OK\");return null;}";
+                    + "export function main():void{if(run()!==" + (base + delta)
+                    + "){throw {name:\"TEST\",message:\"value\"};}c.log(\"COMPOSE_OK\");return ;}";
                 execute(source, "COMPOSE_OK\n", root.resolve("seed" + seed), null);
             }
             knownSkips.remaining("composition", skippedCompositions);

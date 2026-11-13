@@ -21,6 +21,6 @@ export async function test_cross_module_greet(): Promise<string> {
   return s;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

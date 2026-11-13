@@ -4,7 +4,7 @@
 // @features: functions, arrows, closures, async
 
 class Box { value: number; }
-export function main(): null {
+export function main(): void {
   let n = 0;
   const bump = (): void => { n = n + 1; };
   const run = (): void => bump();
@@ -22,7 +22,7 @@ export function main(): null {
       || fs[0]() !== 1 || fs[1]() !== 2) {
     throw {name: "TEST", message: "arrow semantics"};
   }
-  return null;
+  return ;
 }
 export async function drive(): Promise<number> {
   let base = 2;

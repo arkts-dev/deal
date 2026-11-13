@@ -9,4 +9,4 @@ export function test_int_power_zero(): null {
   return null;
 }
 
-export function main(): null { return test_int_power_zero(); }
+export function main(): void { test_int_power_zero(); }

@@ -4,7 +4,7 @@ DEAL: a strict TypeScript syntax subset with distinct semantics. Authority: [v1.
 
 ## Syntax
 
-Imports precede module-level functions, classes and exports; executable statements stay inside functions. Use let or const, braces and semicolons. Const requires an initializer and forbids binding reassignment, including captured and for-of bindings; referenced arrays, Records and class instances remain mutable. Entry exports synchronous main(): null returning null; no-result helpers use void.
+Imports precede module-level functions, classes and exports; executable statements stay inside functions. Use let or const, braces and semicolons. Const requires an initializer and forbids binding reassignment, including captured and for-of bindings; referenced arrays, Records and class instances remain mutable. Entry exports synchronous main(): void; use a bare return or fall through. No-result helpers also use void.
 
 Comments: // or /* ... */. `$` bindings are compiler-owned. Property keys need explicit values. Assign with x = x + 1. Function expressions use function or explicitly typed arrows, such as (x: number): number => x * 2. Arrows admit block or expression bodies; a void expression body must itself produce void. Async arrows use Promise<T> results and await normally. Keep async with its parameter opening and the result annotation with => on the same line.
 

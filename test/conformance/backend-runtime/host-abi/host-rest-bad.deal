@@ -18,6 +18,6 @@ export function test_host_rest_bad(): string {
   throw { name: "TEST_FAIL", message: "refined array branch skipped" };
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

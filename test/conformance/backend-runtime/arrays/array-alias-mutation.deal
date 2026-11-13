@@ -13,6 +13,6 @@ export function test_array_alias_mutation(): number {
   return result;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

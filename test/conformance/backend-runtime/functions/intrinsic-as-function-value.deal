@@ -12,8 +12,8 @@ export function test_intrinsic_as_function_value(): number {
   return result;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }
 
 function int(value: number): number { return value; }

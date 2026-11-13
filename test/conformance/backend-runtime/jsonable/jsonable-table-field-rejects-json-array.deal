@@ -20,6 +20,6 @@ export function test_table_field_rejects_json_array(): null {
   return null;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

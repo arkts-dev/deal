@@ -3,7 +3,7 @@
 // @features: tables, classes, closures
 class Item {value:number;optional?:number|null;empty:undefined;}
 function check(ok:boolean,label:string):void{if(!ok){throw {name:label,message:label};}}
-export function main():null {
+export function main():void {
   const item:Item={empty:undefined,value:9};
   check(Object.hasOwn(item,"value") && Object.hasOwn(item,"empty") && !Object.hasOwn(item,"optional"),"class absent");
   item.optional=null;check(Object.hasOwn(item,"optional"),"class null");
@@ -25,5 +25,5 @@ export function main():null {
   const fail=():Record<string,unknown>=>{throw {name:"STOP",message:"stop"};};
   caught=false;effects="";try{Object.hasOwn(fail(),key());}catch(e){caught=(e as Error).name==="STOP";}
   check(caught && effects==="","abrupt receiver");
-  return null;
+  return ;
 }

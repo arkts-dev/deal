@@ -100,8 +100,8 @@ public class JsBackendTest {
                     String assertion = operation == 1 ? ""
                         : "if((a[0] as number)!==9){throw {name:\"TEST\",message:\"stale projection\"};}output.log(\"LIVE\");";
                     Files.writeString(host.resolve("probe.js"), "module.exports={f:v=>{" + mutations[operation] + "}};");
-                    CompositionProductionTest.execute(imports + "export function main():null{" + array
-                        + "host.f(a);" + assertion + "return null;}",
+                    CompositionProductionTest.execute(imports + "export function main():void{" + array
+                        + "host.f(a);" + assertion + "return ;}",
                         operation == 1 ? "COHERENT\n" : "LIVE\n",
                         root.resolve("projection-" + parsed + "-" + operation), host, List.of(Backend.JS));
                     check(true, "native JS array projection: parsed=" + parsed + " operation=" + operation);
@@ -135,11 +135,11 @@ public class JsBackendTest {
                 String array = parsed
                     ? "let r:Record<string,unknown>=JSON.parse(\"{\\\"a\\\":[1,2]}\");let a=r.a as unknown[];"
                     : "let a:unknown[]=[1,2];";
-                CompositionProductionTest.execute(imports + "export function main():null{" + array + """
+                CompositionProductionTest.execute(imports + "export function main():void{" + array + """
                     let alias:unknown[]=a;
                     host.f(a);
                     if(a!==alias || alias.length!==1 || (alias[0] as number)!==9){throw {name:"TEST",message:"retry lost live storage"};}
-                    output.log("LIVE");return null;
+                    output.log("LIVE");return ;
                 }
                 """, "LIVE\n", root.resolve("reject-repair-retry-" + parsed), host, List.of(Backend.JS));
                 check(true, "native JS rejected reflection preserves live storage and permits retry: parsed=" + parsed);
@@ -161,10 +161,10 @@ public class JsBackendTest {
                 String arrays = parsed
                     ? "let a:unknown[]=JSON.parse(\"[[1,2]]\");let child:unknown[]=a[0] as unknown[];a[a.length]=child;"
                     : "let child:unknown[]=[1,2];let a:unknown[]=[child,child];";
-                CompositionProductionTest.execute(imports + "export function main():null{" + arrays + """
+                CompositionProductionTest.execute(imports + "export function main():void{" + arrays + """
                     host.f(a);
                     if((a[0] as unknown[])!==child || (a[1] as unknown[])!==child || (child[0] as number)!==9){throw {name:"TEST",message:"nested alias lost storage"};}
-                    output.log("LIVE");return null;
+                    output.log("LIVE");return ;
                 }
                 """, "LIVE\n", root.resolve("nested-reflection-" + parsed), host, List.of(Backend.JS));
                 check(true, "nested native JS descriptors preserve projected aliases: parsed=" + parsed);
@@ -531,7 +531,7 @@ public class JsBackendTest {
                 : "Main.deal";
             sources.put(entry, "import * as subject from \""
                 + relativeImport(entry, subject) + "\";\n"
-                + "export function main(): null { return null; }\n");
+                + "export function main(): void { return ; }\n");
         }
         CompiledProject compiled = compileProject(sources, entry);
         String artifact = compiled.artifacts().get(
@@ -753,7 +753,7 @@ public class JsBackendTest {
             String exportName, String returnDescriptor) throws Exception {
         CompiledProject compiled = compileProject(Map.of(
             "Main.deal", "import * as lib from \"./lib\";\n"
-                + "export function main(): null { return null; }\n",
+                + "export function main(): void { return ; }\n",
             "lib.deal", source), "Main.deal");
         if (!compiled.success()) {
             throw new RuntimeException("compilation errors: "
@@ -869,7 +869,7 @@ public class JsBackendTest {
         ProductionNodeRun run = runProductionInvokerNode("""
             import * as c from "std/console";
 
-            export function main(): null { return null; }
+            export function main(): void { return ; }
 
             export async function run(): Promise<null> {
               let trace: string = "";
@@ -919,7 +919,7 @@ public class JsBackendTest {
               let x: number = t.value as number;
               return x;
             }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             export async function oracle(): Promise<number> { return await fail(); }
             """, "async-detail"));
         NodeResult result = runArtifactScript(res, String.join("\n",
@@ -1112,7 +1112,7 @@ public class JsBackendTest {
         System.out.println("-- Node: the await-capable array write keeps the"
             + " receiver/index/RHS order before the bounds gate --");
         NodeResult run = runInvokerNode("""
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             export async function oracle(): Promise<number> {
               let xs: number[] = [7];
               let alias: number[] = xs;
@@ -1328,7 +1328,7 @@ public class JsBackendTest {
         String.join("\n",
             "import * as c from \"std/console\";",
             "import * as helper from \"./helper\";",
-            "export function main(): null {return null;}",
+            "export function main(): void {return ;}",
             "export function run(): number {return helper.fail();}",
             "");
 
@@ -1643,7 +1643,7 @@ public class JsBackendTest {
             StandardCharsets.UTF_8);
         Path entry = proj.resolve("src/cli_js_main.deal");
         Files.writeString(entry, """
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             export function run(): number { return 1; }
             """);
 
@@ -2082,20 +2082,20 @@ public class JsBackendTest {
         writeFile("xjson_proj/src/xjson_main.deal", """
             import * as B from "./lib_b";
             import * as output from "std/console";
-            export function main(): null {
+            export function main(): void {
               let w: B.Wrap = B.make(7);
               let json: string = JSON.stringify(w) as string;
               let w2: B.Wrap | null = JSON.parse(json);
               if (w2 === null) {
                 output.log("xmod-jsonable-null");
-                return null;
+                return ;
               } else {
                 if ((w2 as B.Wrap) === w || w2.inner === w.inner || w2.children === w.children
-                    || w2.children[0] === w.children[0]) { output.log("xmod-jsonable-alias-mismatch"); return null; }
-                if (w2.inner.v !== 7) { output.log("xmod-jsonable-inner-mismatch"); return null; }
-                if (w2.children[0].v !== 8) { output.log("xmod-jsonable-array-mismatch"); return null; }
+                    || w2.children[0] === w.children[0]) { output.log("xmod-jsonable-alias-mismatch"); return ; }
+                if (w2.inner.v !== 7) { output.log("xmod-jsonable-inner-mismatch"); return ; }
+                if (w2.children[0].v !== 8) { output.log("xmod-jsonable-array-mismatch"); return ; }
                 output.log("xmod-jsonable-ok");
-                return null;
+                return ;
               }
             }
             """);
@@ -2412,7 +2412,7 @@ public class JsBackendTest {
         System.out.println("-- Entry shim and the entry-main gate --");
 
         JsEmission entry = generateEntry("""
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             """, "entry", "main");
         check(entry != null && !entry.hasErrors(), "entry codegen clean: "
             + (entry == null ? "<null>" : entry.diagnostics()));
@@ -2432,7 +2432,7 @@ public class JsBackendTest {
             export function run(): number { return 1; }
             """, "entry-nomain", "main");
         check(noMain != null && noMain.hasErrors(),
-            "an entry without main(): null carries an error");
+            "an entry without main(): void carries an error");
         if (noMain != null) {
             check(noMain.diagnostics().stream().anyMatch(
                     d -> "E2012".equals(d.code())),
@@ -2443,7 +2443,7 @@ public class JsBackendTest {
         }
 
         JsEmission notEntry = generate("""
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             """, "entry-notentry", "main", Map.of(), false);
         check(notEntry != null && !notEntry.hasErrors(),
             "non-entry main compiles clean");
@@ -2765,7 +2765,7 @@ public class JsBackendTest {
         CompiledProject externCompiled = compileProjectWithExternals(
             Map.of("Main.deal", """
                 import * as ffi from "myffi";
-                export function main(): null { return null; }
+                export function main(): void { return ; }
                 """), "Main.deal",
             Map.of("myffi", """
                 // @extern-c
@@ -2835,9 +2835,9 @@ public class JsBackendTest {
         CompiledProject nestedCompiled = compileProjectWithExternals(
             Map.of("app/main.deal", """
                 import * as h from "host/mod";
-                export function main(): null {
-                  if (h.hostFn(1) !== 2) { return null; }
-                  return null;
+                export function main(): void {
+                  if (h.hostFn(1) !== 2) { return ; }
+                  return ;
                 }
                 """), "app/main.deal",
             Map.of("host/mod", fnDeclSource));
@@ -2922,7 +2922,7 @@ public class JsBackendTest {
         CompiledProject classCompiled = compileProjectWithExternals(
             Map.of("Main.deal", """
                 import * as cfg from "hostmod";
-                export function main(): null { return null; }
+                export function main(): void { return ; }
                 """), "Main.deal",
             Map.of("hostmod", declSource));
         check(classCompiled.success(),
@@ -2980,7 +2980,7 @@ public class JsBackendTest {
             """);
         writeFile("hostjs_proj/src/hostjs_main.deal", """
             import * as cfg from "host/cfg";
-            export function main(): null {
+            export function main(): void {
               let s: cfg.ServerConfig = {
                 port: 9090,
                 endpoint: { path: "/api" },
@@ -2991,7 +2991,7 @@ public class JsBackendTest {
               if (described !== "/api:9090") {
                 throw { name: "TEST_FAIL", message: "described" };
               }
-              return null;
+              return ;
             }
             """);
 
@@ -3284,7 +3284,7 @@ public class JsBackendTest {
             import * as h1 from "host/echo";
             import * as h2 from "host/echo";
             import * as util from "./occ_util";
-            export function main(): null {
+            export function main(): void {
               if (h1.alpha !== h1.alpha) {
                 throw { name: "SAME_IMPORT_IDENTITY", message: "same import" };
               }
@@ -3322,7 +3322,7 @@ public class JsBackendTest {
               if (once !== 3) {
                 throw { name: "ITERABLE_ONCE", message: "iterable" };
               }
-              return null;
+              return ;
             }
             """);
         Path entryFile = tmpDir.resolve(
@@ -3415,14 +3415,14 @@ public class JsBackendTest {
             """);
         writeFile("ord_proj/src/ord_main.deal", """
             import * as h from "host/ord";
-            export function main(): null {
+            export function main(): void {
               if (h.alpha() !== 7) {
                 throw { name: "ALPHA", message: "alpha" };
               }
               if (h.zeta() !== 9) {
                 throw { name: "ZETA", message: "zeta" };
               }
-              return null;
+              return ;
             }
             """);
         Path ordEntry = tmpDir.resolve(
@@ -3545,7 +3545,7 @@ public class JsBackendTest {
             + "warning retired --");
 
         writeFile("src/sm_main.deal",
-            "export function main(): null { return null; }\n"
+            "export function main(): void { return ; }\n"
             + "export function run(): number { return 1; }\n");
         Path entryFile = tmpDir.resolve("src/sm_main.deal").toAbsolutePath();
         Path outputDir = tmpDir.resolve("build/sm_js");
@@ -3687,9 +3687,9 @@ public class JsBackendTest {
             "export function ping(): string { return \"pong\"; }");
         writeFile("js_int32_proj/src/app/main.deal",
             "import * as lib from \"./lib\";\n"
-                + "export function main(): null {\n"
-                + "  if (lib.ping() === \"pong\") { return null; }\n"
-                + "  return null;\n"
+                + "export function main(): void {\n"
+                + "  if (lib.ping() === \"pong\") { return ; }\n"
+                + "  return ;\n"
                 + "}\n");
 
         Path entryFile = tmpDir.resolve("js_int32_proj/src/app/main.deal")
@@ -4137,7 +4137,7 @@ public class JsBackendTest {
             """);
         writeFile("arrayx_proj/src/array_closure_main.deal", """
             import * as lib from "./array_closure_lib";
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             export function syncBridge(): number {
               let b: number[] = [0, 0];
               b[1] = 3;
@@ -5600,7 +5600,7 @@ public class JsBackendTest {
               return result;
             }
 
-            export function main(): null { return null; }
+            export function main(): void { return ; }
 
             export async function probe(): Promise<number> {
               let t: Record<string, unknown> = hostData("{\\"xs\\":[7.5,1]}");
@@ -5777,7 +5777,7 @@ public class JsBackendTest {
             export class HostArrays { items?: string[]; nums?: (number | null)[]; ms?: number[]; tags?: string[]; }
             function decodeArrays(text:string):HostArrays { return JSON.parse(text); }
 
-            export function main(): null { return null; }
+            export function main(): void { return ; }
 
             export function run(): string {
               let t: Record<string, unknown> = JSON.parse("{\\"items\\":[\\"a\\",\\"b\\"]}");
@@ -5985,7 +5985,7 @@ public class JsBackendTest {
               n: number;
             }
 
-            export function main(): null { return null; }
+            export function main(): void { return ; }
 
             export async function decoded(): Promise<Record<string, unknown>> {
               return JSON.parse("{\\"n\\":1e17,\\"i\\":2,\\"xs\\":[1.5,1],\\"z\\":null}");
@@ -6285,7 +6285,7 @@ public class JsBackendTest {
               return b;
             }
             class Holder { f: (b: number[]) => Promise<number[]>; }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             export async function oracle(): Promise<null> {
               let b: number[] = [0, 0];
               b[0] = 1;
@@ -6323,7 +6323,7 @@ public class JsBackendTest {
         // error, never a false runtime-error pass.
         PreparedJs negatives = prepareJs("""
             export class Payload { v: number; }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             export async function oracle(): Promise<null> { return null; }
             export async function takes(i: number): Promise<number> { return i; }
             """, "invoker-wrong-name");
@@ -6334,7 +6334,7 @@ public class JsBackendTest {
                 INVOKER_RUNNER_SOURCE);
             for (List<String> c : List.of(
                     List.of("nope", "null", "export not found: nope"),
-                    List.of("main", "null", "sync export: expected async()->null, got ()->null"),
+                    List.of("main", "null", "sync export: expected async()->null, got ()->void"),
                     List.of("takes", "number", "parameterized export: expected async()->number, got async(number)->number"),
                     List.of("oracle", "number", "descriptor mismatch: expected async()->number, got async()->null"),
                     List.of("Payload", "null", "export is not a function: expected async()->null"))) {
@@ -6362,7 +6362,7 @@ public class JsBackendTest {
             async function bomb(): Promise<number> {
               let xs: number[] = []; return xs[0];
             }
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             export async function oracle(): Promise<null> {
               await bomb();
               return null;
@@ -6385,7 +6385,7 @@ public class JsBackendTest {
             (async () => {
               let $fail = "";
               const $entry = {
-                main: $rt.function("()->null", function() { return null; }),
+                main: $rt.function("()->void", function() {}),
                 oracle: { $kind: "function", $sig: "async()->null",
                   $f: async function() { return 42; } },
               };
@@ -6395,7 +6395,7 @@ public class JsBackendTest {
               if ($r.$error === null || typeof $r.$error !== "object") $fail = "error-shape";
               if ($r.$error.$kind !== "class" || $r.$error.$classname !== "Error") $fail = "error-tags";
               if ($r.$error.code !== "E8001" || $r.$error.message !== "expected null") $fail = "error-fields";
-              const $rm = { main: { $kind: "function", $sig: "()->null",
+              const $rm = { main: { $kind: "function", $sig: "()->void",
                 $f: function() { $rt.fail("E8001", "main boom", "probe.js", 7, 3); } },
                 oracle: $rt.function("async()->null", async function() { return null; }) };
               const $r2 = await $rt.invokeAsyncExport($rm, "oracle", "null");
@@ -6422,7 +6422,7 @@ public class JsBackendTest {
         // exactly one main call and one export call across one
         // main-then-invoke run.
         NodeResult counted = runCounterNode("""
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             export async function oracle(): Promise<null> { return null; }
             """, "invoker-once");
         check(counted.exitCode() == 0 && counted.output().equals(
@@ -6445,9 +6445,9 @@ public class JsBackendTest {
             }""");
         writeFile("js_proj/src/orch_main.deal", """
             import * as output from "std/console";
-            export function main(): null {
+            export function main(): void {
               output.log("js-orchestrator-main");
-              return null;
+              return ;
             }
             function add(a: number, b: number): number { return a + b; }
             export function run(): number { return add(20, 22); }
@@ -6536,9 +6536,9 @@ public class JsBackendTest {
         writeFile("nest_proj/src/app/main.deal", """
             import * as lib from "./lib";
             import * as output from "std/console";
-            export function main(): null {
+            export function main(): void {
               output.log(lib.tag());
-              return null;
+              return ;
             }
             """);
 
@@ -6606,7 +6606,7 @@ public class JsBackendTest {
             """);
         writeFile("rej_proj/src/rej_main.deal", """
             import * as lib from "./lib";
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             export function run(): number { return 1; }
             """);
 
@@ -6657,7 +6657,7 @@ public class JsBackendTest {
                 "{\n  \"languageVersion\": \"1.6\",\n  \"backend\": \"js\"\n}\n",
                 StandardCharsets.UTF_8);
             Files.writeString(projectDir.resolve("main.deal"),
-                "export function main(): null { return null; }\n",
+                "export function main(): void { return ; }\n",
                 StandardCharsets.UTF_8);
             ProjectLocator.LocateResult result = ProjectLocator.locate(
                 projectDir.resolve("main.deal").toString(), null);
@@ -6708,7 +6708,7 @@ public class JsBackendTest {
                 StandardCharsets.UTF_8);
             Path entry = projectDir.resolve("main.deal");
             Files.writeString(entry,
-                "export function main(): null { return null; }\n",
+                "export function main(): void { return ; }\n",
                 StandardCharsets.UTF_8);
 
             Path buildDir = Path.of("build").toAbsolutePath().normalize();
@@ -6759,9 +6759,9 @@ public class JsBackendTest {
           else if (n === 2) { r = 20; }
           return r;
         }
-        export function main(): null {
+        export function main(): void {
           if (pick(2) === 20) { output.log("pick ok"); }
-          return null;
+          return ;
         }
         """;
 
@@ -6930,9 +6930,9 @@ public class JsBackendTest {
             Path entry = projectDir.resolve("main.deal");
             Files.writeString(entry,
                 "import * as c from \"std/console\";\n"
-                    + "export function main(): null {\n"
+                    + "export function main(): void {\n"
                     + "  c.log(\"deploy\");\n"
-                    + "  return null;\n"
+                    + "  return ;\n"
                     + "}\n",
                 StandardCharsets.UTF_8);
 
@@ -6993,9 +6993,9 @@ public class JsBackendTest {
             Path entry = projectDir.resolve("main.deal");
             Files.writeString(entry,
                 "import * as ffi from \"ffi\";\n"
-                    + "export function main(): null {\n"
+                    + "export function main(): void {\n"
                     + "  let v: number = ffi.missing(1);\n"
-                    + "  return null;\n"
+                    + "  return ;\n"
                     + "}\n",
                 StandardCharsets.UTF_8);
 

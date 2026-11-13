@@ -13,6 +13,6 @@ export function test_error_inside_while_loop(): number {
   return 0;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

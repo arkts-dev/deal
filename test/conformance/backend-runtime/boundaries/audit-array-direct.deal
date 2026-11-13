@@ -5,4 +5,4 @@
 import * as printer from "std/console";
 import * as host from "host/probe";
 
-export function main():null{let xs=host.strings();let x=xs[0];if(x!==undefined){if(x==="x"){printer.log("DIRECT_OK");}}return null;}
+export function main():void{let xs=host.strings();let x=xs[0];if(x!==undefined){if(x==="x"){printer.log("DIRECT_OK");}}return ;}

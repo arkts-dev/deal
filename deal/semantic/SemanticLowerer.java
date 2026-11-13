@@ -5308,24 +5308,17 @@ public final class SemanticLowerer {
                 } finally {
                     if (reservedContext != null) {
                         if (bodyComplete) {
-                            // The implicit trailing return of an
-                            // unterminated null-returning body ("a
-                            // function with return type null returns the
-                            // null value through the boundary"). The
-                            // closed terminator analysis decides: a body
-                            // whose block is not OPEN (a leaf transfer or a
-                            // terminating composite) carries no implicit
-                            // return and never fails closed; only a
-                            // genuinely unterminated non-null body keeps
-                            // the fail-closed arm.
+                            // Only an OPEN Void body gets implicit resultless
+                            // completion. A terminating leaf/composite carries
+                            // no implicit return; a non-Void OPEN body fails
+                            // closed after the checker's definite-return analysis.
                             if (exitStateOf(bodyBlock) == BlockExitState.OPEN) {
                                 if (!(reservedContext.signature.returnType()
                                         instanceof RuntimeDescriptor.Void)) {
                                     throw new ConstructUnlowered("function '"
                                         + function.name()
                                         + "' body is not terminated and its return type is "
-                                        + "not null (the carrier slice lowers the pinned "
-                                        + "implicit null return only)", function.span());
+                                        + "not void (implicit completion is resultless only)", function.span());
                                 }
                                 lowerImplicitReturn(reservedContext, function.body().span());
                             }
@@ -5491,16 +5484,13 @@ public final class SemanticLowerer {
                             if (bodyComplete
                                     && exitStateOf(bodyBlock)
                                         == BlockExitState.OPEN) {
-                                // The implicit trailing return of an
-                                // unterminated null-returning member body
-                                // (the closed terminator analysis decides:
-                                // a non-OPEN body carries no implicit
-                                // return and never fails closed).
+                                // Only an OPEN Void member gets implicit
+                                // resultless completion.
                                 if (!(reservedContext.signature.returnType()
                                         instanceof RuntimeDescriptor.Void)) {
                                     throw new ConstructUnlowered("group member '"
                                         + member.name() + "' body is not terminated"
-                                        + " and its return type is not null", member.span());
+                                        + " and its return type is not void", member.span());
                                 }
                                 lowerImplicitReturn(reservedContext,
                                     member.body().span());
@@ -11617,10 +11607,10 @@ public final class SemanticLowerer {
                 return null;
             }
             if (!main.signature.paramTypes().isEmpty()
-                    || !(main.signature.returnType() instanceof RuntimeDescriptor.Null)
+                    || !(main.signature.returnType() instanceof RuntimeDescriptor.Void)
                     || main.signature.isAsync()) {
                 throw new ConstructUnlowered("entry main must have the pinned non-async "
-                    + "signature '(): null' (the orchestrator's E2011 pins this)");
+                    + "signature '(): void' (the orchestrator's E2011 pins this)");
             }
             if (main.callSiteUsed) {
                 throw new ConstructUnlowered("entry main is called from source and "
@@ -11644,7 +11634,7 @@ public final class SemanticLowerer {
                             main.bodyBlock)),
                     main.signature, List.of(), main.returnBoundaryOpId, null,
                     main.bodyBlock, null),
-                result, ContainerPayloadDescriptors.resultDescriptorOf(Type.Null.INSTANCE),
+                result, RuntimeDescriptor.Void.INSTANCE,
                 List.of(), List.of(), FailurePolicyId.NO_DEAL_FAILURE, origin));
         }
 
@@ -11687,9 +11677,6 @@ public final class SemanticLowerer {
             SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(programSpan),
                 SourceOriginKind.SYNTHETIC, anchor, currentParent());
             emitEntryMainCallOp(main, result, origin);
-            emitNullOp(SemanticOpKind.DISCARD, new KindPayload.DiscardPayload(result),
-                programSpan, FailurePolicyId.NO_DEAL_FAILURE, SourceOriginKind.SYNTHETIC,
-                null);
         }
 
         // ---------------------------------------------------------------------
@@ -12332,17 +12319,13 @@ public final class SemanticLowerer {
                     if (reservedClosureContext != null) {
                         if (closureBodyComplete
                                 && exitStateOf(bodyBlock) == BlockExitState.OPEN) {
-                            // The implicit trailing return of an
-                            // unterminated null-returning closure body (the
-                            // closed terminator analysis decides: a
-                            // non-OPEN body carries no implicit return and
-                            // never fails closed).
+                            // Only an OPEN Void closure gets implicit
+                            // resultless completion.
                             if (!(signature.returnType()
                                     instanceof RuntimeDescriptor.Void)) {
                                 throw new ConstructUnlowered("closure body is not "
-                                    + "terminated and its return type is not null "
-                                    + "(the E7 slice lowers the pinned implicit null "
-                                    + "return only)", functionExpr.span());
+                                    + "terminated and its return type is not void "
+                                    + "(implicit completion is resultless only)", functionExpr.span());
                             }
                             lowerImplicitReturn(reservedClosureContext,
                                 functionExpr.body().span());

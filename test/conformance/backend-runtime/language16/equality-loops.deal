@@ -11,7 +11,7 @@ function equal(a: unknown, b: unknown): boolean {
 function require(value: boolean): void {
   if (!value) { throw {name: "FAIL", message: "unknown equality or loop refinement"}; }
 }
-export function main(): null {
+export function main(): void {
   require(equal(undefined, undefined));
   require(equal(null, null));
   require(!equal(null, undefined));
@@ -72,5 +72,5 @@ export function main(): null {
     break;
   }
   require(rejected);
-  return null;
+  return ;
 }

@@ -8,6 +8,6 @@ export function test_nested_array_oob(): number {
   return rows[1][5];
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }

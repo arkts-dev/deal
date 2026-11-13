@@ -235,13 +235,13 @@ public class ProjectLoweringTest {
           return inner.x;
         }
 
-        export function main(): null {
+        export function main(): void {
           let a: A = {x: combine(state.calls(), build())};
           if (a.x !== 1100) {
             throw { name: "OPERAND_OVERWRITE", message: "a nested attempt overwrote the enclosing operands" };
           }
           output.log("ok");
-          return null;
+          return ;
         }
         """;
 
@@ -279,7 +279,7 @@ public class ProjectLoweringTest {
           return 7;
         }
 
-        export function main(): null {
+        export function main(): void {
           let a: A = {x: state.calls(), y: build()};
           if (a.x !== 0) {
             throw { name: "ATTEMPT_VALUE_OVERWRITE", message: "a nested attempt overwrote the enclosing attempt's first default value" };
@@ -288,7 +288,7 @@ public class ProjectLoweringTest {
             throw { name: "ATTEMPT_VALUE_LOST", message: "the enclosing attempt's second default value is wrong" };
           }
           output.log("ok");
-          return null;
+          return ;
         }
         """;
 
@@ -341,7 +341,7 @@ public class ProjectLoweringTest {
         import * as lib from "lib";
         import * as state from "host/retained_default";
 
-        export function main(): null {
+        export function main(): void {
           let a: lib.A = {x: state.calls(), y: lib.build()};
           if (a.x !== 0) {
             throw { name: "ATTEMPT_VALUE_OVERWRITE", message: "a nested attempt overwrote the transferred default value" };
@@ -350,7 +350,7 @@ public class ProjectLoweringTest {
             throw { name: "ATTEMPT_VALUE_LOST", message: "the transferred second default value is wrong" };
           }
           output.log("ok");
-          return null;
+          return ;
         }
         """;
 
@@ -367,13 +367,13 @@ public class ProjectLoweringTest {
           return u.add(x, 1);
         }
 
-        export function main(): null {
+        export function main(): void {
           let f: (x: number) => number = inc;
           let h: (a: number, b: number) => number = f;
           let total: number = helper(2);
           let extended: number = h(3, 9);
           let doubled: number = u.twice(3);
-          return null;
+          return ;
         }
         """;
 
@@ -382,9 +382,9 @@ public class ProjectLoweringTest {
         import * as u from "util";
         import * as cfg from "host/cfg";
 
-        export function main(): null {
+        export function main(): void {
           let e: cfg.Endpoint = {path: "p"};
-          return null;
+          return ;
         }
         """;
 
@@ -416,9 +416,9 @@ public class ProjectLoweringTest {
     private static final String HOST_CLASS_REFERENCE_APP_SOURCE = """
         import * as cfg from "host/cfg";
 
-        export function main(): null {
+        export function main(): void {
           let h: cfg.Hidden = {secret: "s"};
-          return null;
+          return ;
         }
         """;
 
@@ -426,9 +426,9 @@ public class ProjectLoweringTest {
     private static final String ERROR_APP_SOURCE = """
         import * as cfg from "host/cfg";
 
-        export function main(): null {
+        export function main(): void {
           let e: Error = {name: "E1", message: "boom"};
-          return null;
+          return ;
         }
         """;
 
@@ -459,9 +459,9 @@ public class ProjectLoweringTest {
     private static final String CLASS_APP_SOURCE = """
         import * as u from "util";
 
-        export function main(): null {
+        export function main(): void {
           let p: u.Point = u.makePoint(4);
-          return null;
+          return ;
         }
         """;
 
@@ -483,11 +483,11 @@ public class ProjectLoweringTest {
     private static final String IMPORTED_CLASS_APP_SOURCE = """
         import * as u from "util";
 
-        export function main(): null {
+        export function main(): void {
           let p: u.Point = {x: 5, y: 1};
           let s: u.Segment = {length: 3};
           let q: u.Point = u.makePoint(7);
-          return null;
+          return ;
         }
         """;
 
@@ -530,7 +530,7 @@ public class ProjectLoweringTest {
           b: beta.Point;
         }
 
-        export function main(): null {
+        export function main(): void {
           let a: alpha.Point = { x: 1 };
           a.x = 5;
           a.nick = "n";
@@ -558,7 +558,7 @@ public class ProjectLoweringTest {
           } else {
             throw { name: "WRONG_JSON_NULL", message: "back" };
           }
-          return null;
+          return ;
         }
         """;
 
@@ -589,7 +589,7 @@ public class ProjectLoweringTest {
           items: ir.Ir[];
         }
 
-        export function main(): null {
+        export function main(): void {
           let direct: ir.Ir = {a: 7};
           if (direct.a !== 7) { throw { name: "WRONG_DIRECT", message: "a" }; }
           if (ir.useIr({a: 7}) !== 7) { throw { name: "WRONG_CALL", message: "a" }; }
@@ -598,7 +598,7 @@ public class ProjectLoweringTest {
           if (h.items[0].a !== 7) { throw { name: "WRONG_ARRAY", message: "a" }; }
           let xs: ir.Ir[] = [{a: 7}];
           if (xs[0].a !== 7) { throw { name: "WRONG_LITERAL_ARRAY", message: "a" }; }
-          return null;
+          return ;
         }
         """;
 
@@ -629,7 +629,7 @@ public class ProjectLoweringTest {
 
         class Point { nick: string; }
 
-        export function main(): null {
+        export function main(): void {
           let x: ir.Ir = {a: 7};
           x.a = 5;
           if (x.a !== 5) { throw { name: "WRONG_IR_READ", message: "a" }; }
@@ -641,7 +641,7 @@ public class ProjectLoweringTest {
           if (y.nick !== 2) { throw { name: "WRONG_OTHER", message: "nick" }; }
           let p: Point = {nick: ""};
           if (p.nick !== "") { throw { name: "WRONG_LOCAL", message: "nick" }; }
-          return null;
+          return ;
         }
         """;
 
@@ -676,11 +676,11 @@ public class ProjectLoweringTest {
         // @jsonable
         export class Wrap { item: ir.Ir; }
 
-        export function main(): null {
+        export function main(): void {
           let w: Wrap = JSON.parse(`{"item":{"a":7}}`);
           let s: string = JSON.stringify(w) as string;
           if (s === "") { throw { name: "WRONG", message: "s" }; }
-          return null;
+          return ;
         }
         """;
 
@@ -707,13 +707,13 @@ public class ProjectLoweringTest {
         // @jsonable
         export class Wrap { p: Point; }
 
-        export function main(): null {
+        export function main(): void {
           let w: Wrap = JSON.parse(`{"p":{"nick":"l"}}`);
           let s: string = JSON.stringify(w) as string;
           if (s !== "{\\\"p\\\":{\\\"nick\\\":\\\"l\\\"}}") {
             throw { name: "WRONG", message: s };
           }
-          return null;
+          return ;
         }
         """;
 
@@ -749,7 +749,7 @@ public class ProjectLoweringTest {
         // @jsonable
         export class Wrap { p: other.Point; }
 
-        export function main(): null {
+        export function main(): void {
           let w: Wrap = {p: {a: 7}};
           let s: string = JSON.stringify(w) as string;
           if (s !== "{\\\"p\\\":{\\\"a\\\":7}}") {
@@ -761,7 +761,7 @@ public class ProjectLoweringTest {
           } else {
             throw { name: "WRONG_NULL", message: "null" };
           }
-          return null;
+          return ;
         }
         """;
 
@@ -797,12 +797,12 @@ public class ProjectLoweringTest {
 
         class Holder { f: Ir; }
 
-        export function main(): null {
+        export function main(): void {
           let p: Ir = id({a: 5});
           let q: Holder = {f: id({a: 5})};
           if (p.a !== 5) { throw { name: "WRONG_P", message: "p.a" }; }
           if (q.f.a !== 5) { throw { name: "WRONG_F", message: "q.f.a" }; }
-          return null;
+          return ;
         }
         """;
 
@@ -821,10 +821,10 @@ public class ProjectLoweringTest {
         import * as ir from "./ir";
         import * as codec from "./codec";
 
-        export function main(): null {
+        export function main(): void {
           let p: codec.Ir = codec.id({a: 93});
           if (p.a !== 93) { throw { name: "WRONG_CODEC", message: "p.a" }; }
-          return null;
+          return ;
         }
         """;
 
@@ -875,7 +875,7 @@ public class ProjectLoweringTest {
 
         function wrap(): ir.Ir { return { a: 7 }; }
 
-        export function main(): null {
+        export function main(): void {
           let v: number = ir.make().a;
           let f: (x: ir.Ir) => number = ir.useIr;
           let n: number = f({a: 7});
@@ -889,7 +889,7 @@ public class ProjectLoweringTest {
           if (v !== 7 || n !== 7 || w !== 11 || q !== 7 || had) {
             throw { name: "WRONG", message: "call receiver" };
           }
-          return null;
+          return ;
         }
         """;
 
@@ -926,7 +926,7 @@ public class ProjectLoweringTest {
             + "function g(x: ir.Ir): number { return x.a; }\n"
             + "function make(): ir.Ir { return {a: 7}; }\n"
             + "\n"
-            + "export function main(): null {\n"
+            + "export function main(): void {\n"
             + "  let n: number = ir.useIr({a: 7});\n"
             + "  if (n !== 7) { throw { name: \"WRONG_PARAM\", message: \"n\" }; }\n"
             + "  let m: number = g({a: 7});\n"
@@ -934,11 +934,11 @@ public class ProjectLoweringTest {
             + "  let r: ir.Ir = make();\n"
             + "  if (r.a !== 7) { throw { name: \"WRONG_RETURN\", message: \"r\" }; }\n"
             + (localFieldsOnly
-                ? "  return null;\n"
+                ? "  return ;\n"
                 : "  let local: Ir = {a: 5};\n"
                     + "  if (local.a !== 5) { throw { name: \"WRONG_LOCAL\","
                     + " message: \"local\" }; }\n"
-                    + "  return null;\n")
+                    + "  return ;\n")
             + "}\n";
     }
 
@@ -955,8 +955,8 @@ public class ProjectLoweringTest {
           return null;
         }
 
-        export function main(): null {
-          return null;
+        export function main(): void {
+          return ;
         }
         """;
 
@@ -1002,13 +1002,13 @@ public class ProjectLoweringTest {
           return x + x;
         }
 
-        export function main(): null {
+        export function main(): void {
           let p: u.Point = {x: 5, label: "p"};
           let c: () => number = u.makeCounter(1, 2);
           let a: (x: number, y: number) => number = twice;
           let h: (x: number) => number = cfg.pick();
           let n: number = c();
-          return null;
+          return ;
         }
         """;
 
@@ -1040,11 +1040,11 @@ public class ProjectLoweringTest {
         import * as u from "util";
         import * as m from "mid";
 
-        export function main(): null {
+        export function main(): void {
           let p: u.Point = {x: 4, y: 1};
           let c: () => number = u.makeCounter(1);
           let v: number = m.answer();
-          return null;
+          return ;
         }
         """;
 
@@ -2686,11 +2686,11 @@ public class ProjectLoweringTest {
 
                 class Point { nick: string; }
 
-                export function main(): null {
+                export function main(): void {
                   let y: other.Point = {nick: 1};
                   let p: Point = y;
                   let s: string = p.nick;
-                  return null;
+                  return ;
                 }
                 """);
             assertCrossingRejected(proj,
@@ -2803,9 +2803,9 @@ public class ProjectLoweringTest {
             writeFileIn(proj, "src/app.deal", """
                 import * as a from "./a@b";
 
-                export function main(): null {
+                export function main(): void {
                   let x: a.Item = a.make();
-                  return null;
+                  return ;
                 }
                 """);
             for (Backend backend : List.of(Backend.LUAJIT, Backend.JVM,
@@ -2835,12 +2835,12 @@ public class ProjectLoweringTest {
 
         function f(x: ir.Ir): Ir { return {b: "local"}; }
 
-        export function main(): null {
+        export function main(): void {
           let p: Ir = f(ir.g({a: 7}));
           let n: number = ir.g({a: 7}).a;
           if (n !== 7) { throw { name: "WRONG_N", message: "n" }; }
           if (p.b !== "local") { throw { name: "WRONG_B", message: "b" }; }
-          return null;
+          return ;
         }
         """;
 
@@ -2935,13 +2935,13 @@ public class ProjectLoweringTest {
 
     private static final String NESTED_FIELD_APP_SOURCE = """
         import * as ir from "./m/ir";
-        export function main(): null {
+        export function main(): void {
           let x: ir.Ir = { inner: {b: 93}, a: 7 };
           let b: number = x.inner.b;
           if (b !== 93) { throw { name: "WRONG_B", message: "b" }; }
           let a: number = x.a;
           if (a !== 7) { throw { name: "WRONG_A", message: "a" }; }
-          return null;
+          return ;
         }
         """;
 
@@ -3051,11 +3051,11 @@ public class ProjectLoweringTest {
 
     private static final String TRANSITIVE_APP_SOURCE = """
         import * as ir from "./m/ir";
-        export function main(): null {
+        export function main(): void {
           let x: ir.Outer = { inner: {b: 93} };
           let b: number = x.inner.b;
           if (b !== 93) { throw { name: "WRONG_B", message: "b" }; }
-          return null;
+          return ;
         }
         """;
 
@@ -3898,11 +3898,11 @@ public class ProjectLoweringTest {
             + "local declaration --");
         String app = "import * as ir from \"./ir\";\n\n"
             + "class Ir { a: number; }\n\n"
-            + "export function main(): null {\n"
+            + "export function main(): void {\n"
             + "  let f: (x: ir.Ir) => number = ir.useIr;\n"
             + "  let n: number = f({a: 7});\n"
             + "  if (n !== 7) { throw { name: \"WRONG_N\", message: \"n\" }; }\n"
-            + "  return null;\n"
+            + "  return ;\n"
             + "}\n";
         RealProject project = compileProject(app,
             Map.of("src/ir.deal", PARAM_RETURN_PROVIDER_IR_SOURCE), Map.of());
@@ -5555,7 +5555,7 @@ public class ProjectLoweringTest {
     private static void testSeedImplementationReferenceAndPrivateFieldRead() throws Exception {
         RealProject imported = compileProject("""
             import * as cfg from "host/cfg";
-            export function main(): null { return null; }
+            export function main(): void { return ; }
             """, Map.of("src/util.deal", "export class Point { x: number; }",
                 "src/cfg.d.deal", """
                     import * as u from "util";
@@ -5582,10 +5582,10 @@ public class ProjectLoweringTest {
         for (boolean optional : List.of(false, true)) {
             RealProject hidden = compileProject("""
                 import * as cfg from "host/cfg";
-                export function main(): null {
+                export function main(): void {
                   let h = cfg.get();
                 """ + (optional ? "let s: string | undefined = h.secret;" : "let s: string = h.secret;")
-                    + " return null; }", Map.of("src/cfg.d.deal",
+                    + " return ; }", Map.of("src/cfg.d.deal",
                         "class Hidden { secret" + (optional ? "?" : "")
                             + ": string; } export function get(): Hidden;"), Map.of());
             try {
@@ -6726,10 +6726,10 @@ public class ProjectLoweringTest {
     private static void testRetainedExternalAdapterAdmission() throws Exception {
         RealProject fixture = compileProject("""
             import * as util from "./util";
-            export function main(): null {
+            export function main(): void {
               let saved: (ignored: number) => number = util.one;
               let value: number = saved(0);
-              return null;
+              return ;
             }
             """, Map.of("src/util.deal", """
                 export function one(): number { return 1; }

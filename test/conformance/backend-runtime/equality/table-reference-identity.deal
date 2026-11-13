@@ -16,6 +16,6 @@ export function test_table_reference_identity(): null {
   return null;
 }
 
-export function main(): null {
-  return null;
+export function main(): void {
+  return ;
 }
