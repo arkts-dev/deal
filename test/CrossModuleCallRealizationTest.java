@@ -239,7 +239,7 @@ public class CrossModuleCallRealizationTest {
           let b: number = lib.fib(6);
           let c: number = twice(a);
           if (a !== 3 || b !== 8 || c !== 6) {
-            throw { code: "PROBE_FAIL", message: "cross-module probe" };
+            throw { name: "PROBE_FAIL", message: "cross-module probe" };
           }
           return null;
         }
@@ -281,7 +281,7 @@ public class CrossModuleCallRealizationTest {
         writeFileIn(root, "src/lib.deal", """
             export function boom(n: number): number {
               let doubled: number = n * 2;
-              throw { code: "BOOM", message: "callee failure" };
+              throw { name: "BOOM", message: "callee failure" };
             }
             """);
         writeFileIn(root, "src/app.deal", """

@@ -12,7 +12,7 @@ function box(v: number): Box { return { value: v }; }
 export function test_array_index_then_field(): number {
   let xs: Box[] = [box(4), box(9)];
   let result: number = xs[1].value;
-  if (result !== 9) { throw { code: "TEST_FAIL", message: "arr[0].field lowering failed" }; }
+  if (result !== 9) { throw { name: "TEST_FAIL", message: "arr[0].field lowering failed" }; }
   return result;
 }
 

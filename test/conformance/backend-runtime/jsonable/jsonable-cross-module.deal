@@ -8,11 +8,11 @@ import * as Lib from "./jsonable_lib";
 export function test_cross_module(): null {
   let w: Lib.Widget = JSON.parse("{\"label\":\"test\",\"count\":5}");
   if (w.label !== "test" || w.count !== 5 || !(w instanceof Lib.Widget)) {
-    throw {code: "TEST_FAIL", message: "cross-module reconstruction mismatch"};
+    throw {name: "TEST_FAIL", message: "cross-module reconstruction mismatch"};
   }
   let w2: Lib.Widget = JSON.parse(JSON.stringify(w) as string);
   if (w2.label !== "test" || w2.count !== 5 || w2 === w || !(w2 instanceof Lib.Widget)) {
-    throw {code: "TEST_FAIL", message: "cross-module fresh roundtrip mismatch"};
+    throw {name: "TEST_FAIL", message: "cross-module fresh roundtrip mismatch"};
   }
   return null;
 }

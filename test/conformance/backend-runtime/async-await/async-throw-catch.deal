@@ -12,15 +12,15 @@ export async function f(): Promise<string> {
 
   try {
     try {
-      throw { code: "E_TEST", message: "test error" };
+      throw { name: "E_TEST", message: "test error" };
       normalRan = true;
     } catch (e) {
       intendedCatchRan = true;
-      intendedCode = (e as Error).code;
+      intendedCode = (e as Error).name;
     }
   } catch (e) {
     fallbackCatchRan = true;
-    fallbackCode = (e as Error).code;
+    fallbackCode = (e as Error).name;
   }
 
   if (intendedCatchRan !== true ||
@@ -28,7 +28,7 @@ export async function f(): Promise<string> {
       normalRan !== false ||
       intendedCode !== "E_TEST" ||
       fallbackCode !== "") {
-    throw { code: "TEST_FAIL", message: "E_TEST must reach only the intended same-async catch with empty fallback state" };
+    throw { name: "TEST_FAIL", message: "E_TEST must reach only the intended same-async catch with empty fallback state" };
   }
 
   return "E_TEST";

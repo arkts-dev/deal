@@ -11,7 +11,7 @@ export class Note {
 }
 
 function require(what: string, condition: boolean): null {
-  if (!condition) { throw {code: "TEST_FAIL", message: what}; }
+  if (!condition) { throw {name: "TEST_FAIL", message: what}; }
   return null;
 }
 
@@ -41,7 +41,7 @@ export function main(): null {
   let original = decodedMissing;
   let rejected = false;
   try { decodedMissing = JSON.parse("{\"label\":\"c\",\"n\":1}"); }
-  catch (e) { let error = e as Error; rejected = error.code === "E8001" && error.message === "expected null"; }
+  catch (e) { let error = e as Error; rejected = error.name === "E8001" && error.message === "expected null"; }
   require("non-null value is rejected without publication", rejected && decodedMissing === original);
   require("failed decode preserves missing field", !Object.hasOwn(decodedMissing, "n"));
   printer.log("OK");

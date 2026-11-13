@@ -4,7 +4,7 @@
 // @features: throw, catch, functions, runtime-errors
 
 function inner(): null {
-  throw { code: "CROSS_FUNCTION_RETHROW", message: "boom" };
+  throw { name: "CROSS_FUNCTION_RETHROW", message: "boom" };
 }
 
 function outer(): null {

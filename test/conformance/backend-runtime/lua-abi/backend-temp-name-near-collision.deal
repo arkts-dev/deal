@@ -7,8 +7,8 @@ export function test_backend_temp_name_near_collision(): number {
   let __idx: number = 100;
   let xs: number[] = [1, 2, 3];
   let value: number = xs[1];
-  if (__idx !== 100) { throw { code: "TEST_FAIL", message: "temporary index collision" }; }
-  if (value !== 2) { throw { code: "TEST_FAIL", message: "array value mismatch" }; }
+  if (__idx !== 100) { throw { name: "TEST_FAIL", message: "temporary index collision" }; }
+  if (value !== 2) { throw { name: "TEST_FAIL", message: "array value mismatch" }; }
   return __idx + value;
 }
 

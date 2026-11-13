@@ -6,11 +6,11 @@
 export function test_array_index(): number {
   let xs: number[] = [10, 20, 30];
   if (xs.length !== 3) {
-    throw { code: "TEST_FAIL", message: "array index read length mismatch" };
+    throw { name: "TEST_FAIL", message: "array index read length mismatch" };
   }
   let value: number = xs[1]; // should be 20
   if (value !== 20) {
-    throw { code: "TEST_FAIL", message: "array index read value mismatch" };
+    throw { name: "TEST_FAIL", message: "array index read value mismatch" };
   }
   return value;
 }

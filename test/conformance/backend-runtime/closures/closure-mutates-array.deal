@@ -11,7 +11,7 @@ export function test_closure_mutates_array(): number {
   };
   bump();
   let result: number = xs[0];
-  if (result !== 6) { throw { code: "TEST_FAIL", message: "closure array mutation failed" }; }
+  if (result !== 6) { throw { name: "TEST_FAIL", message: "closure array mutation failed" }; }
   return result;
 }
 

@@ -443,10 +443,10 @@ public final class LlvmConformanceTest {
             String body = """
                 import * as host from "host/probe";
                 function check(value: boolean): void {
-                  if (!value) { throw {code: "TRANSPORT_TEST", message: "transport contract"}; }
+                  if (!value) { throw {name: "TRANSPORT_TEST", message: "transport contract"}; }
                 }
                 export function main(): null {
-                  let held: Error = {code: "ORIGINAL", message: "unchanged"};
+                  let held: Error = {name: "ORIGINAL", message: "unchanged"};
                   try { throw held; } catch (e) { check((e as Error) === held); }
                   host.capture(held);
                   let fail: () => number = function(): number { throw held; };
@@ -456,7 +456,7 @@ public final class LlvmConformanceTest {
                   try { host.relay(fail); } catch (e) {
                     let error = e as Error;
                     check(error === held);
-                    check(error.code === "ORIGINAL" && error.message === "unchanged");
+                    check(error.name === "ORIGINAL" && error.message === "unchanged");
                     check(host.sameFacts(error));
                     caught = true;
                   }
@@ -568,21 +568,21 @@ public final class LlvmConformanceTest {
                 }
                 export function main(): null {
                   let effects: number[] = [0];
-                  let failure: Error = {code: "CALLBACK_ORIGINAL", message: "retain identity"};
+                  let failure: Error = {name: "CALLBACK_ORIGINAL", message: "retain identity"};
                   let answer = host.invoke(41, effects, failure);
                   if (answer !== 42 || effects[0] !== 1) {
-                    throw {code: "CALLBACK_TEST", message: "callback result or effects"};
+                    throw {name: "CALLBACK_TEST", message: "callback result or effects"};
                   }
                   let caught: boolean = false;
                   try { host.invoke(-1, effects, failure); }
                   catch (e) {
                     if (e instanceof Error) {
                       caught = e === failure
-                        && e.code === "CALLBACK_ORIGINAL" && e.message === "retain identity";
+                        && e.name === "CALLBACK_ORIGINAL" && e.message === "retain identity";
                     }
                   }
                   if (!caught || effects[0] !== 2) {
-                    throw {code: "CALLBACK_TEST", message: "callback failure identity or effects"};
+                    throw {name: "CALLBACK_TEST", message: "callback failure identity or effects"};
                   }
                   return null;
                 }
@@ -684,7 +684,7 @@ public final class LlvmConformanceTest {
             String success = """
                 import * as math from "std/math";
                 function check(value: boolean): void {
-                  if (!value) { throw {code: "NUMERIC_TEST", message: "binary64 contract"}; }
+                  if (!value) { throw {name: "NUMERIC_TEST", message: "binary64 contract"}; }
                 }
                 export function main(): null {
                   let negative = math.sqrt(-1);
@@ -708,7 +708,7 @@ public final class LlvmConformanceTest {
                       || strings.substring("abc", 2, 0) !== "ab"
                       || strings.substring("abc", -1 / 0, 1 / 0) !== "abc"
                       || strings.substring("abc", 0 / 0, 1) !== "a") {
-                    throw {code: "STRING_TEST", message: "substring clamp/truncate/swap"};
+                    throw {name: "STRING_TEST", message: "substring clamp/truncate/swap"};
                   }
                   return null;
                 }

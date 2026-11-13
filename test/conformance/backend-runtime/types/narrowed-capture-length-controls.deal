@@ -4,21 +4,21 @@
 // @features: type-system, nullable, narrowing, arrays, runtime-errors
 
 function expectNoError(what: string): null {
-  throw { code: "CONTROL_FAIL", message: what + ": no error was raised" };
+  throw { name: "CONTROL_FAIL", message: what + ": no error was raised" };
 }
 
 function expectCaught(value: unknown, what: string, code: string, message: string): null {
   let e: Error = value as Error;
-  if (e.code !== code || e.message !== message) {
-    throw { code: "CONTROL_FAIL", message: what + ": expected " + code + " " + message
-      + ", got " + e.code + " " + e.message };
+  if (e.name !== code || e.message !== message) {
+    throw { name: "CONTROL_FAIL", message: what + ": expected " + code + " " + message
+      + ", got " + e.name + " " + e.message };
   }
   return null;
 }
 
 function expectEqual(what: string, actual: number, expected: number): null {
   if (actual !== expected) {
-    throw { code: "CONTROL_FAIL", message: what + " changed the value" };
+    throw { name: "CONTROL_FAIL", message: what + " changed the value" };
   }
   return null;
 }
@@ -36,7 +36,7 @@ export function main(): null {
     expectEqual("valid array length", xs.length, 2);
     alias = xs;
     if (alias !== xs) {
-      throw { code: "CONTROL_FAIL", message: "the reference capture lost the array identity" };
+      throw { name: "CONTROL_FAIL", message: "the reference capture lost the array identity" };
     }
     preserveCall();
     expectEqual("call-preserved array length", xs.length, 2);
@@ -85,7 +85,7 @@ export function main(): null {
       directCaught = true;
     }
     if (!directCaught) {
-      throw { code: "CONTROL_FAIL", message: "direct length: the caught flag stayed false" };
+      throw { name: "CONTROL_FAIL", message: "direct length: the caught flag stayed false" };
     }
 
     // Composed-expression paths: the arithmetic operand, the comparison
@@ -100,7 +100,7 @@ export function main(): null {
       arithmeticCaught = true;
     }
     if (!arithmeticCaught) {
-      throw { code: "CONTROL_FAIL", message: "arithmetic length: the caught flag stayed false" };
+      throw { name: "CONTROL_FAIL", message: "arithmetic length: the caught flag stayed false" };
     }
     let comparisonCaught: boolean = false;
     try {
@@ -113,7 +113,7 @@ export function main(): null {
       comparisonCaught = true;
     }
     if (!comparisonCaught) {
-      throw { code: "CONTROL_FAIL", message: "comparison length: the caught flag stayed false" };
+      throw { name: "CONTROL_FAIL", message: "comparison length: the caught flag stayed false" };
     }
     let loopCaught: boolean = false;
     try {
@@ -126,7 +126,7 @@ export function main(): null {
       loopCaught = true;
     }
     if (!loopCaught) {
-      throw { code: "CONTROL_FAIL", message: "loop length: the caught flag stayed false" };
+      throw { name: "CONTROL_FAIL", message: "loop length: the caught flag stayed false" };
     }
     let keyCaught: boolean = false;
     try {
@@ -137,7 +137,7 @@ export function main(): null {
       keyCaught = true;
     }
     if (!keyCaught) {
-      throw { code: "CONTROL_FAIL", message: "chain key length: the caught flag stayed false" };
+      throw { name: "CONTROL_FAIL", message: "chain key length: the caught flag stayed false" };
     }
     // The failed append wrote nothing.
     expectEqual("alias length after failed append", alias.length, 3);

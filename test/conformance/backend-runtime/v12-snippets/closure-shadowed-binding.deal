@@ -10,9 +10,9 @@ export function main(): null {
  { let x: number = 10; inner = function(): number {x = x + 1; return x;}; }
  x = 2;
  let a:number=inner(); let b:number=outer(); let d:number=inner();
- if(a!==11) {throw {code:"INNER_FIRST",message:"shadowed inner first value"};}
- if(b!==2) {throw {code:"OUTER_VALUE",message:"shadowed outer closure"};}
- if(d!==12) {throw {code:"INNER_SECOND",message:"shadowed inner second value"};}
- if(x!==2) {throw {code:"OUTER_STORAGE",message:"shadowed outer storage"};}
+ if(a!==11) {throw {name:"INNER_FIRST",message:"shadowed inner first value"};}
+ if(b!==2) {throw {name:"OUTER_VALUE",message:"shadowed outer closure"};}
+ if(d!==12) {throw {name:"INNER_SECOND",message:"shadowed inner second value"};}
+ if(x!==2) {throw {name:"OUTER_STORAGE",message:"shadowed outer storage"};}
  c.log("closure-shadowed-binding"); return null;
 }

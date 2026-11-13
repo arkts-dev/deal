@@ -39,13 +39,13 @@ export function test_canonical_nullable_boundary(): string {
   let m1: number = maybeApply(incr, 1);
   let m2: number = maybeApply(null, 1);
   if (la !== "seven" || lb !== "null") {
-    throw { code: "TEST_FAIL", message: "nullable int boundary value mismatch" };
+    throw { name: "TEST_FAIL", message: "nullable int boundary value mismatch" };
   }
   if (fa !== "ok" || fn !== "null") {
-    throw { code: "TEST_FAIL", message: "nullable array boundary value mismatch" };
+    throw { name: "TEST_FAIL", message: "nullable array boundary value mismatch" };
   }
   if (m1 !== 2 || m2 !== 1) {
-    throw { code: "TEST_FAIL", message: "nullable function boundary value mismatch" };
+    throw { name: "TEST_FAIL", message: "nullable function boundary value mismatch" };
   }
   return "canonical nullable boundary ok";
 }

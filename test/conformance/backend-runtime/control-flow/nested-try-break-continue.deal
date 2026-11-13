@@ -18,7 +18,7 @@ export function test_nested_try_break_continue(): number {
       total = total + 1000;
     }
   } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }
-  if (total !== 5) { throw { code: "TEST_FAIL", message: "nested try break/continue failed" }; }
+  if (total !== 5) { throw { name: "TEST_FAIL", message: "nested try break/continue failed" }; }
   return total;
 }
 

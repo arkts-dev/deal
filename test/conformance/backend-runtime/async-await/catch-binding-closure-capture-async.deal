@@ -4,7 +4,7 @@
 // @features: async-await, await, closures, catch, binding, mutation, loops
 
 function errorOf(value: unknown): Error { return value as Error; }
-function replacement(code: string, message: string): Error { return {code: code, message: message}; }
+function replacement(code: string, message: string): Error { return {name: code, message: message}; }
 
 async function identityText(x: string): Promise<string> {
   return x;
@@ -12,14 +12,14 @@ async function identityText(x: string): Promise<string> {
 
 function expectTrue(what: string, condition: boolean): null {
   if (!condition) {
-    throw { code: "TEST_FAIL", message: what };
+    throw { name: "TEST_FAIL", message: what };
   }
   return null;
 }
 
 export async function testAsyncCaptureAfterAwait(): Promise<number> {
   let read: () => string = function(): string { return ""; };
-  try { throw { code: "E_AA", message: "awaited" }; }
+  try { throw { name: "E_AA", message: "awaited" }; }
   catch (e) {
     let echoed: string = await identityText("resume");
     expectTrue("the awaited resumption completes", echoed === "resume");
@@ -33,7 +33,7 @@ export async function testAsyncCaptureAfterAwait(): Promise<number> {
 
 export async function testAsyncEarlyCaptureSurvivesAwait(): Promise<number> {
   let read: () => string = function(): string { return ""; };
-  try { throw { code: "E_EA", message: "early" }; }
+  try { throw { name: "E_EA", message: "early" }; }
   catch (e) {
     read = function(): string { return errorOf(e).message; };
     let echoed: string = await identityText("resume");
@@ -46,7 +46,7 @@ export async function testAsyncEarlyCaptureSurvivesAwait(): Promise<number> {
 export async function testAsyncStoreAcrossAwait(): Promise<string> {
   let store: () => null = function(): null { return null; };
   let read: () => string = function(): string { return ""; };
-  try { throw { code: "E_SA", message: "before" }; }
+  try { throw { name: "E_SA", message: "before" }; }
   catch (e) {
     store = function(): null { e = replacement("E_SA2", "rewritten"); return null; };
     read = function(): string { return errorOf(e).message; };
@@ -61,7 +61,7 @@ export async function testAsyncStoreAcrossAwait(): Promise<string> {
 
 export async function testAsyncCaptureAcrossOuterAwait(): Promise<number> {
   let read: () => string = function(): string { return ""; };
-  try { throw { code: "E_OA", message: "outer await" }; }
+  try { throw { name: "E_OA", message: "outer await" }; }
   catch (e) { read = function(): string { return errorOf(e).message; }; }
   let echoed: string = await identityText("after");
   expectTrue("the outer awaited resumption completes", echoed === "after");
@@ -73,7 +73,7 @@ export async function testAsyncLoopCatches(): Promise<number> {
   let messages: string[] = ["first", "second"];
   let readers: (() => string)[] = [];
   { let v14Loop0: number = 0; while (v14Loop0 < 2) { let i: number = v14Loop0; {
-    try { throw { code: "E_AL", message: messages[i] }; }
+    try { throw { name: "E_AL", message: messages[i] }; }
     catch (e) {
       let echoed: string = await identityText(messages[i]);
       expectTrue("the loop catch's awaited resumption completes", echoed === messages[i]);
@@ -87,7 +87,7 @@ export async function testAsyncLoopCatches(): Promise<number> {
 
 export async function testAsyncAsyncClosure(): Promise<string> {
   let read: () => Promise<string> = async function(): Promise<string> { return ""; };
-  try { throw { code: "E_AC", message: "async closure" }; }
+  try { throw { name: "E_AC", message: "async closure" }; }
   catch (e) {
     read = async function(): Promise<string> {
       let echoed: string = await identityText("inner");

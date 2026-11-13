@@ -462,8 +462,8 @@ static void observe_reference_array_encoding(void) {
             deal_data_of_reference(DEAL_DATA_ARRAY, array), &call_origin);
         (void)deal_root_scope_hold_data(&encoded.value);
         const char *expected = index == 0u ? "[null]" : index == 1u ? "[null,null]"
-            : index == 2u ? "[{\"code\":\"KEPT\",\"message\":\"message\"}]"
-            : "[{\"code\":\"KEPT\",\"message\":\"message\"},null]";
+            : index == 2u ? "[{\"name\":\"KEPT\",\"message\":\"message\"}]"
+            : "[{\"name\":\"KEPT\",\"message\":\"message\"},null]";
         check(encoded.error == NULL && encoded.value.tag == DEAL_DATA_STRING,
             "reference-array JSON encoding succeeds");
         if (encoded.error == NULL && encoded.value.tag == DEAL_DATA_STRING) {

@@ -11,7 +11,7 @@ export function test_break(): number {
     total = total + x;
   }
   if (total !== 3) {
-    throw { code: "TEST_FAIL", message: "for-of break path mismatch" };
+    throw { name: "TEST_FAIL", message: "for-of break path mismatch" };
   }
   return total;
 }
@@ -24,7 +24,7 @@ export function test_continue(): number {
     total = total + x;
   }
   if (total !== 12) {
-    throw { code: "TEST_FAIL", message: "for-of continue path mismatch" };
+    throw { name: "TEST_FAIL", message: "for-of continue path mismatch" };
   }
   return total;
 }

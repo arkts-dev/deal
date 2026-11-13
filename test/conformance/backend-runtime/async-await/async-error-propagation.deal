@@ -4,7 +4,7 @@
 // @features: async, await, error-handling, runtime
 
 async function inner(): Promise<number> {
-  throw { code: "E_INNER", message: "inner error" };
+  throw { name: "E_INNER", message: "inner error" };
   return 0;
 }
 
@@ -21,15 +21,15 @@ export async function outer(): Promise<string> {
       normalRan = true;
     } catch (e) {
       intendedCatchRan = true;
-      intendedCode = (e as Error).code;
+      intendedCode = (e as Error).name;
     }
   } catch (outerErr) {
     fallbackCatchRan = true;
-    fallbackCode = (outerErr as Error).code;
+    fallbackCode = (outerErr as Error).name;
   }
 
   if (!intendedCatchRan || fallbackCatchRan || normalRan || intendedCode !== "E_INNER" || fallbackCode !== "") {
-    throw { code: "TEST_FAIL", message: "awaited E_INNER must be caught only by the caller catch with no normal or fallback path" };
+    throw { name: "TEST_FAIL", message: "awaited E_INNER must be caught only by the caller catch with no normal or fallback path" };
   }
 
   return "E_INNER";

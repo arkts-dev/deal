@@ -15,6 +15,7 @@ TEST_MAINS=(
   'fg|=== Running v1.6 Production Runtime Contracts ===|java -ea -cp build deal.test.Language16RuntimeTest'
   'fg|=== Running Nullish Coalescing Contracts ===|java -ea -cp build deal.test.NullishCoalescingTest'
   'fg|=== Running Optional Chaining Contracts ===|java -ea -cp build deal.test.OptionalChainingTest'
+  'fg|=== Running Error Name Message Contracts ===|java -ea -cp build deal.test.ErrorNameMessageTest'
   'bg|=== Launching Production Corpus Conformance (JS/LuaJIT/JVM) ===|java -ea -cp build deal.test.CorpusConformanceTest test/conformance/'
   'fg|=== Checking Exact LLVM Known-Skip Controls ===|java -ea -cp build deal.test.NativeKnownSkips'
   'bg|=== Running Native Corpus Conformance O0/O2 with Explicit Known Skips ===|java -ea -cp build deal.test.LlvmConformanceTest --known-skips test/llvm-known-skips.tsv'

@@ -11,25 +11,25 @@ export async function f(): Promise<number> {
   let stage: number = 0;
   let x: number = await a();
   if (x !== 1) {
-    throw { code: "TEST_FAIL", message: "first awaited completion mismatch" };
+    throw { name: "TEST_FAIL", message: "first awaited completion mismatch" };
   }
   stage = stage + 1;
   let y: number = await b();
   if (y !== 2) {
-    throw { code: "TEST_FAIL", message: "second awaited completion mismatch" };
+    throw { name: "TEST_FAIL", message: "second awaited completion mismatch" };
   }
   stage = stage + 1;
   let z: number = await c();
   if (z !== 3) {
-    throw { code: "TEST_FAIL", message: "third awaited completion mismatch" };
+    throw { name: "TEST_FAIL", message: "third awaited completion mismatch" };
   }
   stage = stage + 1;
   if (stage !== 3) {
-    throw { code: "TEST_FAIL", message: "multiple awaits stage sequence mismatch" };
+    throw { name: "TEST_FAIL", message: "multiple awaits stage sequence mismatch" };
   }
   let sum: number = x + y + z;
   if (sum !== 6) {
-    throw { code: "TEST_FAIL", message: "multiple awaits sum mismatch" };
+    throw { name: "TEST_FAIL", message: "multiple awaits sum mismatch" };
   }
   return sum;
 }

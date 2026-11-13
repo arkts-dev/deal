@@ -11,7 +11,7 @@ export async function test_multiple_await_state(): Promise<null> {
   v = await inc(v);
   v = await inc(v);
   if (v !== 3) {
-    throw { code: "TEST_FAIL", message: "state after multiple awaits mismatch" };
+    throw { name: "TEST_FAIL", message: "state after multiple awaits mismatch" };
   }
   return null;
 }

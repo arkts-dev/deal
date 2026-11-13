@@ -19,7 +19,7 @@ function testDeclarationInitializerAndReassignment(): void {
     if (visits > 4) { break; }
   } v14Loop0 = f; v14Loop0 = two; } }
   if (visits !== 1) {
-    throw { code: "TEST_FAIL", message: "the function-typed counter visited wrongly" };
+    throw { name: "TEST_FAIL", message: "the function-typed counter visited wrongly" };
   }
   return;
 }
@@ -33,7 +33,7 @@ function testExpressionInitializer(): void {
     if (visits > 4) { break; }
   } v14Loop1 = f; v14Loop1 = one; } }
   if (visits !== 1) {
-    throw { code: "TEST_FAIL", message: "the expression-initialized counter visited wrongly" };
+    throw { name: "TEST_FAIL", message: "the expression-initialized counter visited wrongly" };
   }
   return;
 }
@@ -48,7 +48,7 @@ function testOmittedUpdateWithBodyAssignment(): void {
     if (visits > 4) { break; }
   } v14Loop2 = f;  } }
   if (visits !== 1) {
-    throw { code: "TEST_FAIL", message: "the update-less counter lost the body assignment" };
+    throw { name: "TEST_FAIL", message: "the update-less counter lost the body assignment" };
   }
   return;
 }
@@ -63,7 +63,7 @@ function testNeverAssignedCounter(): void {
     if (visits === 3) { break; }
   } v14Loop3 = f;  } }
   if (visits !== 3) {
-    throw { code: "TEST_FAIL", message: "the never-assigned counter stopped re-testing" };
+    throw { name: "TEST_FAIL", message: "the never-assigned counter stopped re-testing" };
   }
   return;
 }
@@ -83,7 +83,7 @@ function testCapturedPerIterationValues(): void {
     visits = visits + 1;
   } v14Loop4 = f; v14Loop4 = two; } }
   if (fs[0]() !== 1 || fs[1]() !== 2) {
-    throw { code: "TEST_FAIL", message: "the per-iteration captures are not fresh" };
+    throw { name: "TEST_FAIL", message: "the per-iteration captures are not fresh" };
   }
   return;
 }
@@ -98,7 +98,7 @@ function testAliasInitializer(): void {
     if (visits > 4) { break; }
   } v14Loop5 = f; v14Loop5 = one; } }
   if (visits !== 1 || alias() !== 2) {
-    throw { code: "TEST_FAIL", message: "the alias-initialized counter visited wrongly" };
+    throw { name: "TEST_FAIL", message: "the alias-initialized counter visited wrongly" };
   }
   return;
 }
@@ -112,7 +112,7 @@ function testCallResultInitializer(): void {
     if (visits > 4) { break; }
   } v14Loop6 = f; v14Loop6 = one; } }
   if (visits !== 1) {
-    throw { code: "TEST_FAIL", message: "the call-result counter visited wrongly" };
+    throw { name: "TEST_FAIL", message: "the call-result counter visited wrongly" };
   }
   return;
 }
@@ -127,7 +127,7 @@ function testArityAdapterCounter(): void {
     if (visits > 4) { break; }
   } v14Loop7 = f; v14Loop7 = two; } }
   if (visits !== 1) {
-    throw { code: "TEST_FAIL", message: "the adapted counter visited wrongly" };
+    throw { name: "TEST_FAIL", message: "the adapted counter visited wrongly" };
   }
   return;
 }
@@ -143,7 +143,7 @@ function testContinueRunsUpdate(): void {
     { v14Loop8 = f; v14Loop8 = two; continue; }
   } v14Loop8 = f; v14Loop8 = two; } }
   if (visits !== 1) {
-    throw { code: "TEST_FAIL", message: "the continue path lost the counter update" };
+    throw { name: "TEST_FAIL", message: "the continue path lost the counter update" };
   }
   return;
 }
@@ -157,7 +157,7 @@ function testBreakSkipsUpdate(): void {
     break;
   } v14Loop9 = f; v14Loop9 = two; } }
   if (visits !== 1) {
-    throw { code: "TEST_FAIL", message: "the break path ran the counter update" };
+    throw { name: "TEST_FAIL", message: "the break path ran the counter update" };
   }
   return;
 }
@@ -187,7 +187,7 @@ function testRecursiveCounterValues(): void {
     if (visits > 4) { break; }
   } v14Loop10 = f; v14Loop10 = one; } }
   if (visits !== 1) {
-    throw { code: "TEST_FAIL", message: "the recursive counter visited wrongly" };
+    throw { name: "TEST_FAIL", message: "the recursive counter visited wrongly" };
   }
   return;
 }
@@ -199,7 +199,7 @@ function testMutuallyRecursiveCounterValues(): void {
     if (visits > 4) { break; }
   } v14Loop11 = f; v14Loop11 = isOdd; } }
   if (visits !== 1) {
-    throw { code: "TEST_FAIL", message: "the mutually recursive counter visited wrongly" };
+    throw { name: "TEST_FAIL", message: "the mutually recursive counter visited wrongly" };
   }
   return;
 }
@@ -215,7 +215,7 @@ function testLexicalScopeOfTheCounter(): void {
     if (visits === 2) { break; }
   } v14Loop12 = f;  } }
   if (visits !== 2 || f() !== 2) {
-    throw { code: "TEST_FAIL", message: "the counter leaked into the enclosing scope" };
+    throw { name: "TEST_FAIL", message: "the counter leaked into the enclosing scope" };
   }
   return;
 }
@@ -228,7 +228,7 @@ function testShadowedInitializerReadsTheEnclosingBinding(): void {
     if (visits === 2) { break; }
   } v14Loop13 = f;  } }
   if (visits !== 2) {
-    throw { code: "TEST_FAIL", message: "the shadowed initializer did not read the enclosing binding" };
+    throw { name: "TEST_FAIL", message: "the shadowed initializer did not read the enclosing binding" };
   }
   return;
 }
@@ -242,7 +242,7 @@ function testIntrinsicCounter(): void {
     break;
   } v14Loop14 = f;  } }
   if (visits !== 1) {
-    throw { code: "TEST_FAIL", message: "the intrinsic counter visited wrongly" };
+    throw { name: "TEST_FAIL", message: "the intrinsic counter visited wrongly" };
   }
   return;
 }
@@ -257,7 +257,7 @@ function testNullableFunctionCounter(): void {
     if (visits > 4) { break; }
   } v14Loop15 = f; v14Loop15 = null; } }
   if (visits !== 1) {
-    throw { code: "TEST_FAIL", message: "the nullable counter visited wrongly" };
+    throw { name: "TEST_FAIL", message: "the nullable counter visited wrongly" };
   }
   return;
 }

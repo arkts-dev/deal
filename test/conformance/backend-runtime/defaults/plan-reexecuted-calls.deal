@@ -13,10 +13,10 @@ export function test_plan_reexecuted_calls(): null {
   let a: Counter = {value: probe.nextValue()};
   let b: Counter = {value: probe.nextValue()};
   if (probe.valueCount() !== 2) {
-    throw { code: "TEST_FAIL", message: "provided calls did not execute independently" };
+    throw { name: "TEST_FAIL", message: "provided calls did not execute independently" };
   }
   if (a.value !== 10 || b.value !== 20) {
-    throw { code: "TEST_FAIL", message: "per-attempt provided results mismatch" };
+    throw { name: "TEST_FAIL", message: "per-attempt provided results mismatch" };
   }
   return null;
 }

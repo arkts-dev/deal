@@ -9,12 +9,12 @@ class Item {
 
 export function test_has_delete_optional_nullable(): null {
   let item: Item = { tag: null };
-  if (!Object.hasOwn(item, "tag")) { throw { code: "TEST_FAIL", message: "tag should be present" }; }
+  if (!Object.hasOwn(item, "tag")) { throw { name: "TEST_FAIL", message: "tag should be present" }; }
   delete item.tag;
-  if (Object.hasOwn(item, "tag")) { throw { code: "TEST_FAIL", message: "tag should be missing after delete" }; }
-  if (item.tag !== undefined) { throw { code: "TEST_FAIL", message: "deleted read should be undefined" }; }
+  if (Object.hasOwn(item, "tag")) { throw { name: "TEST_FAIL", message: "tag should be missing after delete" }; }
+  if (item.tag !== undefined) { throw { name: "TEST_FAIL", message: "deleted read should be undefined" }; }
   item.tag = "ok";
-  if (!Object.hasOwn(item, "tag")) { throw { code: "TEST_FAIL", message: "tag should be present after write" }; }
+  if (!Object.hasOwn(item, "tag")) { throw { name: "TEST_FAIL", message: "tag should be present after write" }; }
   return null;
 }
 

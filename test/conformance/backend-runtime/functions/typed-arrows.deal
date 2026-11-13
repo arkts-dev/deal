@@ -20,7 +20,7 @@ export function main(): null {
   for (const x of [1, 2]) { fs[fs.length] = (): number => x; }
   if (make(3).value !== 3 || rec(5) !== 5 || sum(6) !== 10 || n !== 1
       || fs[0]() !== 1 || fs[1]() !== 2) {
-    throw {code: "TEST", message: "arrow semantics"};
+    throw {name: "TEST", message: "arrow semantics"};
   }
   return null;
 }

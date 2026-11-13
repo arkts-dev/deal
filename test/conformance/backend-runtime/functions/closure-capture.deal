@@ -11,7 +11,7 @@ export function test_closure(): number {
   x = 2;
   let result: number = f(); // closure invoked once after x = 2
   if (result !== 2) {
-    throw { code: "TEST_FAIL", message: "closure capture result mismatch after x = 2" };
+    throw { name: "TEST_FAIL", message: "closure capture result mismatch after x = 2" };
   }
   return result; // should return 2
 }

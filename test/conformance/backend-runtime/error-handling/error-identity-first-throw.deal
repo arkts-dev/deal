@@ -23,7 +23,7 @@ function rethrowCaught(e: Error): number {
 }
 
 function assertFirstThrowIdentity(): null {
-  let original: Error = { code: "X", message: "x" };
+  let original: Error = { name: "X", message: "x" };
   let alias: Error = original;
   let caughtOnce: boolean = false;
   try {
@@ -32,24 +32,24 @@ function assertFirstThrowIdentity(): null {
     let e: Error = caught as Error;
     caughtOnce = true;
     if (e !== original || e !== alias) {
-      throw { code: "TEST_FAIL", message: "the first throw lost the Error identity" };
+      throw { name: "TEST_FAIL", message: "the first throw lost the Error identity" };
     }
     e.message = "changed";
     if (original.message !== "changed" || alias.message !== "changed") {
-      throw { code: "TEST_FAIL", message: "the caught Error is not the alias-visible instance" };
+      throw { name: "TEST_FAIL", message: "the caught Error is not the alias-visible instance" };
     }
   }
   if (!caughtOnce) {
-    throw { code: "TEST_FAIL", message: "the first throw did not reach its catch" };
+    throw { name: "TEST_FAIL", message: "the first throw did not reach its catch" };
   }
   if (original.message !== "changed" || alias.message !== "changed") {
-    throw { code: "TEST_FAIL", message: "the alias field write is not visible after the catch" };
+    throw { name: "TEST_FAIL", message: "the alias field write is not visible after the catch" };
   }
   return null;
 }
 
 function assertRethrowIdentity(): null {
-  let original: Error = { code: "R", message: "r" };
+  let original: Error = { name: "R", message: "r" };
   let caughtAgain: boolean = false;
   try {
     let x: number = rethrowCaught(original);
@@ -57,27 +57,27 @@ function assertRethrowIdentity(): null {
     let again: Error = caught as Error;
     caughtAgain = true;
     if (again !== original) {
-      throw { code: "TEST_FAIL", message: "the rethrow lost the Error identity" };
+      throw { name: "TEST_FAIL", message: "the rethrow lost the Error identity" };
     }
     if (again.message !== "r") {
-      throw { code: "TEST_FAIL", message: "the rethrown Error lost its message" };
+      throw { name: "TEST_FAIL", message: "the rethrown Error lost its message" };
     }
   }
   if (!caughtAgain) {
-    throw { code: "TEST_FAIL", message: "the rethrown Error did not reach its catch" };
+    throw { name: "TEST_FAIL", message: "the rethrown Error did not reach its catch" };
   }
   return null;
 }
 
 function assertNestedCatchIdentity(): null {
-  let outer: Error = { code: "OUTER", message: "outer" };
+  let outer: Error = { name: "OUTER", message: "outer" };
   let handled: boolean = false;
   try {
     try {
-      throw { code: "INNER", message: "inner" };
+      throw { name: "INNER", message: "inner" };
     } catch (inner) {
-      if ((inner as Error).code !== "INNER") {
-        throw { code: "TEST_FAIL", message: "the handled Error lost its code" };
+      if ((inner as Error).name !== "INNER") {
+        throw { name: "TEST_FAIL", message: "the handled Error lost its name" };
       }
       throw outer;
     }
@@ -85,27 +85,27 @@ function assertNestedCatchIdentity(): null {
     let o: Error = caught as Error;
     handled = true;
     if (o !== outer) {
-      throw { code: "TEST_FAIL", message: "the handler's replacement lost the Error identity" };
+      throw { name: "TEST_FAIL", message: "the handler's replacement lost the Error identity" };
     }
-    o.code = "OUTER2";
+    o.name = "OUTER2";
   }
   if (!handled) {
-    throw { code: "TEST_FAIL", message: "the handler's replacement did not reach the enclosing catch" };
+    throw { name: "TEST_FAIL", message: "the handler's replacement did not reach the enclosing catch" };
   }
-  if (outer.code !== "OUTER2") {
-    throw { code: "TEST_FAIL", message: "the enclosing catch did not bind the thrown instance" };
+  if (outer.name !== "OUTER2") {
+    throw { name: "TEST_FAIL", message: "the enclosing catch did not bind the thrown instance" };
   }
   return null;
 }
 
 function assertErrorCrossingIdentity(): null {
-  let original: Error = { code: "P", message: "p" };
+  let original: Error = { name: "P", message: "p" };
   let returned: Error = mutateReturned(original);
   if (returned !== original) {
-    throw { code: "TEST_FAIL", message: "the returned Error is not the passed instance" };
+    throw { name: "TEST_FAIL", message: "the returned Error is not the passed instance" };
   }
   if (original.message !== "returned") {
-    throw { code: "TEST_FAIL", message: "the callee's field write is not visible through the caller's alias" };
+    throw { name: "TEST_FAIL", message: "the callee's field write is not visible through the caller's alias" };
   }
   return null;
 }
@@ -115,7 +115,7 @@ function assertErrorCrossingIdentity(): null {
 // its field write is visible through both aliases. Driven as the
 // fixture's declared zero-arity assertion export on every lane.
 export async function test_awaited_error_identity(): Promise<string> {
-  let original: Error = { code: "A", message: "a" };
+  let original: Error = { name: "A", message: "a" };
   let alias: Error = original;
 
   let asyncThrow = async function(): Promise<number> {
@@ -129,15 +129,15 @@ export async function test_awaited_error_identity(): Promise<string> {
     let e: Error = caughtError as Error;
     caught = true;
     if (e !== original || e !== alias) {
-      throw { code: "TEST_FAIL", message: "the awaited error lost the Error identity" };
+      throw { name: "TEST_FAIL", message: "the awaited error lost the Error identity" };
     }
-    e.code = "A2";
-    if (original.code !== "A2" || alias.code !== "A2") {
-      throw { code: "TEST_FAIL", message: "the awaited error is not the alias-visible instance" };
+    e.name = "A2";
+    if (original.name !== "A2" || alias.name !== "A2") {
+      throw { name: "TEST_FAIL", message: "the awaited error is not the alias-visible instance" };
     }
   }
   if (!caught) {
-    throw { code: "TEST_FAIL", message: "the awaited error did not reach its catch" };
+    throw { name: "TEST_FAIL", message: "the awaited error did not reach its catch" };
   }
   return "awaited";
 }

@@ -166,6 +166,9 @@ static int (*const accessor_frame)(deal_error *, int32_t, const char **) =
     deal_error_frame;
 static int (*const accessor_cause)(deal_error *, const char **) =
     deal_error_cause_code;
+static deal_string *(*const accessor_name_value)(deal_error *) = deal_error_name_value;
+static const char *(*const accessor_name_span)(deal_error *, size_t *) = deal_error_name_bytes;
+static void (*const setter_name_value)(deal_error *, deal_string *) = deal_error_set_name_value;
 static const char *(*const accessor_code_span)(deal_error *, size_t *) = deal_error_code_bytes;
 static const char *(*const accessor_message_span)(deal_error *, size_t *) = deal_error_message_bytes;
 static const char *(*const accessor_cause_span)(deal_error *, size_t *) = deal_error_cause_code_bytes;
@@ -227,6 +230,8 @@ void deal_abi_signature_references(void) {
             || accessor_column == NULL || accessor_expected == NULL
             || accessor_actual == NULL || accessor_frame_count == NULL
             || accessor_frame == NULL || accessor_cause == NULL
+            || accessor_name_value == NULL || accessor_name_span == NULL
+            || setter_name_value == NULL
             || accessor_code_span == NULL || accessor_message_span == NULL
             || accessor_cause_span == NULL) {
         referenced += 1;

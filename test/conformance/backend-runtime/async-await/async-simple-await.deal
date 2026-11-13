@@ -8,7 +8,7 @@ async function g(): Promise<number> { return 42; }
 export async function f(): Promise<number> {
   let x: number = await g();
   if (x !== 42) {
-    throw { code: "TEST_FAIL", message: "simple await value mismatch" };
+    throw { name: "TEST_FAIL", message: "simple await value mismatch" };
   }
   return x;
 }

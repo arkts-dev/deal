@@ -5,7 +5,7 @@
 
 export function test_int_power_zero(): null {
   let value: number = 7 ** 0;
-  if (value !== 1) { throw { code: "TEST_FAIL", message: "integer zero exponent did not return one" }; }
+  if (value !== 1) { throw { name: "TEST_FAIL", message: "integer zero exponent did not return one" }; }
   return null;
 }
 

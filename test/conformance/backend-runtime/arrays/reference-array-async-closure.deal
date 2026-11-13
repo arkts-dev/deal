@@ -16,7 +16,7 @@ async function applyBytes(f: (b: number[]) => Promise<number[]>, b: number[]): P
 }
 
 async function failEcho(b: number[]): Promise<number[]> {
-  throw { code: "E_TEST", message: "boom" };
+  throw { name: "E_TEST", message: "boom" };
 }
 
 export class Holder {
@@ -29,7 +29,7 @@ export async function test_array_async_closure(): Promise<number> {
   let f: (b: number[]) => Promise<number[]> = echo;
   let out: number[] = await f([0, 0]);
   if (out.length !== 2) {
-    throw { code: "TEST_FAIL", message: "async number[] value failed" };
+    throw { name: "TEST_FAIL", message: "async number[] value failed" };
   }
   let fs: (((b: number[]) => Promise<number[]>) | null)[] = [];
   fs[fs.length] = echo;
@@ -38,10 +38,10 @@ export async function test_array_async_closure(): Promise<number> {
   if (g !== null) {
     let again: number[] = await g([0, 0, 0]);
     if (again[0] !== 0) {
-      throw { code: "TEST_FAIL", message: "containerized async invoke failed" };
+      throw { name: "TEST_FAIL", message: "containerized async invoke failed" };
     }
   } else {
-    throw { code: "TEST_FAIL", message: "containerized async value lost" };
+    throw { name: "TEST_FAIL", message: "containerized async value lost" };
   }
   // async function expression: awaited value roundtrip
   let f2: (b: number[]) => Promise<number[]> = async function(b: number[]): Promise<number[]> {
@@ -51,18 +51,18 @@ export async function test_array_async_closure(): Promise<number> {
   };
   let r2: number[] = await f2([0]);
   if (r2.length !== 1 || r2[0] !== 0) {
-    throw { code: "TEST_FAIL", message: "async fn expr await failed" };
+    throw { name: "TEST_FAIL", message: "async fn expr await failed" };
   }
   // number[][] signature through await
   let arr: number[][] = [[0, 0], [0, 0, 0]];
   let n: number = await countArr(arr);
   if (n !== 2) {
-    throw { code: "TEST_FAIL", message: "number[][] async signature failed" };
+    throw { name: "TEST_FAIL", message: "number[][] async signature failed" };
   }
   // callback position: an async number[] fn passed as a parameter
   let via: number[] = await applyBytes(echo, [0, 0, 0, 0]);
   if (via.length !== 4) {
-    throw { code: "TEST_FAIL", message: "async number[] callback failed" };
+    throw { name: "TEST_FAIL", message: "async number[] callback failed" };
   }
   // discard await evaluates exactly once with the completion check
   let hits: number = 0;
@@ -72,38 +72,38 @@ export async function test_array_async_closure(): Promise<number> {
   };
   await counter([0]);
   if (hits !== 1) {
-    throw { code: "TEST_FAIL", message: "discard await count failed" };
+    throw { name: "TEST_FAIL", message: "discard await count failed" };
   }
   // error propagation through await
   let caught: boolean = false;
   try {
     await failEcho([0]);
   } catch (e) {
-    caught = (e as Error).code === "E_TEST";
+    caught = (e as Error).name === "E_TEST";
   }
   if (!caught) {
-    throw { code: "TEST_FAIL", message: "async error propagation failed" };
+    throw { name: "TEST_FAIL", message: "async error propagation failed" };
   }
   // class fields hold async number[] fn references (wrapper identity,
   // the DEAL null for the nullable field)
   let h: Holder = { cb: echo, maybe: null, n: 9 };
   let viaField: number[] = await h.cb([0, 0, 0, 0, 0]);
   if (viaField.length !== 5 || h.n !== 9) {
-    throw { code: "TEST_FAIL", message: "class field async invoke failed" };
+    throw { name: "TEST_FAIL", message: "class field async invoke failed" };
   }
   let m: ((b: number[]) => Promise<number[]>) | null = h.maybe;
   if (m !== null) {
-    throw { code: "TEST_FAIL", message: "nullable field default failed" };
+    throw { name: "TEST_FAIL", message: "nullable field default failed" };
   }
   h.maybe = echo;
   let m2: ((b: number[]) => Promise<number[]>) | null = h.maybe;
   if (m2 !== null) {
     let viaMaybe: number[] = await m2([0, 0, 0, 0, 0, 0]);
     if (viaMaybe.length !== 6) {
-      throw { code: "TEST_FAIL", message: "nullable field invoke failed" };
+      throw { name: "TEST_FAIL", message: "nullable field invoke failed" };
     }
   } else {
-    throw { code: "TEST_FAIL", message: "nullable field write failed" };
+    throw { name: "TEST_FAIL", message: "nullable field write failed" };
   }
   return 0;
 }

@@ -8,7 +8,7 @@ function add(a: number, b: number): number { return a + b; }
 
 export async function test_await_in_call_arg(): Promise<number> {
   let result: number = add(await one(), 2);
-  if (result !== 3) { throw { code: "TEST_FAIL", message: "await in call arg failed" }; }
+  if (result !== 3) { throw { name: "TEST_FAIL", message: "await in call arg failed" }; }
   return result;
 }
 

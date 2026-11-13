@@ -3,7 +3,7 @@
 Own resolution, typing, narrowing and facts. Diagnostics are deterministic/target-neutral; downstream phases cannot rediscover meaning.
 
 - Resolve classes through exact declarations/providers in annotations, calls, arrays, fields and contextual literals. Same-spelled siblings remain nominally distinct; reject textual/first-identity substitution. Publish construction/per-expression facts.
-- Resolve even unused field annotations. Comments never grant schema/export authority or synthetic callable symbols. Reject $ in every user declaration, including declaration-file functions; string data and Record keys remain unrestricted. Recursive class declarations are legal; JSON schema restrictions apply only at contextual parse targets. Validate supplied literals against exact fields; require nonoptional fields, including nullable fields and Error code/message.
+- Resolve even unused field annotations. Comments never grant schema/export authority or synthetic callable symbols. Reject $ in every user declaration, including declaration-file functions; string data and Record keys remain unrestricted. Recursive class declarations are legal; JSON schema restrictions apply only at contextual parse targets. Validate supplied literals against exact fields; require nonoptional fields, including nullable fields and Error name/message.
 - Record scope-correct refined reads in `CheckResult.narrowedReads`. Calls preserve refinements; consuming boundaries validate stale values. Assignment/await/closures retain specified invalidation; conditions/typed boundaries retain their projections.
 - Track null/undefined independently. Optional reads add undefined; presence never refines values. Write/delete context applies only to the outer storage target: receiver and key subexpressions remain reads, including asserted optional descendants. Record reads infer unknown; concrete consumption requires checked extraction or supported identifier refinement.
 - Record instanceof targets' resolved nominal types. Negation reverses nominal, typeof and nullish branch polarity. Never infer object/function types from typeof.
@@ -28,7 +28,7 @@ String receiver length is read-only and number-typed. Resolve receiver methods f
 
 Array push, pop, splice and slice are direct-call-only receiver intrinsics selected by checked array type. Push takes exactly one element-compatible argument and returns number, with contextual construction and ordinary function arity adaptation. Pop takes no arguments and returns the optional element type, including independent null/undefined flags. Splice and slice take exactly two numbers and return the same array element type in fresh storage; slice bounds are required, not optional or undefined-admitting. Class/Record callable fields with these names remain ordinary values.
 
-Object.hasOwn accepts Record/class receivers and string keys without field narrowing; class keys must be literal declared-field names, including Error code/message. Reject detached or wrong-arity builtin calls.
+Object.hasOwn accepts Record/class receivers and string keys without field narrowing; class keys must be literal declared-field names, including Error name/message. Reject detached or wrong-arity builtin calls.
 
 Object.keys is direct-call-only with exactly one checked Record/class argument and a string[] result; unknown, arrays, functions and nullish receivers require appropriate extraction/narrowing. It grants no contextual extraction and never narrows fields.
 

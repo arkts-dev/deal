@@ -5,7 +5,7 @@
 
 export function main(): null {
   if (false) {
-    throw ({ code: "X", message: "x" });
+    throw ({ name: "X", message: "x" });
   }
   return null;
 }

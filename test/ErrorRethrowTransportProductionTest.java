@@ -76,11 +76,11 @@ public class ErrorRethrowTransportProductionTest {
 
         export function withCause(): number {
           try { return inner(); }
-          catch (e) { throw { code: "WRAPPED", message: "wrapped" }; }
+          catch (e) { throw { name: "WRAPPED", message: "wrapped" }; }
         }
 
         export function relay(original: Error): number {
-          try { throw { code: "B", message: "second" }; }
+          try { throw { name: "B", message: "second" }; }
           catch (other) { throw original; }
         }
 
@@ -105,7 +105,7 @@ public class ErrorRethrowTransportProductionTest {
      * {@code raiseOuter} catches it as {@code e}, retains the alias in
      * {@code saved}, and raises the fresh constructed OUTER failure (which
      * links the E8001 as its cause); {@code probe} catches OUTER, edits the
-     * retained E8001 alias's code and message, and rethrows OUTER. The
+     * retained E8001 alias's name and message, and rethrows OUTER. The
      * linked cause must keep the transport captured at catch time on every
      * consumer — never the later alias edit.
      */
@@ -117,19 +117,19 @@ public class ErrorRethrowTransportProductionTest {
         }
 
         export function probe(): number {
-          let saved: Error = { code: "seed", message: "seed" };
+          let saved: Error = { name: "seed", message: "seed" };
 
           let raiseOuter: () => number = function(): number {
             try { return inner(); }
             catch (e) {
               saved = e as Error;
-              throw { code: "OUTER", message: "outer" };
+              throw { name: "OUTER", message: "outer" };
             }
           };
 
           try { return raiseOuter(); }
           catch (o) {
-            saved.code = "CHANGED";
+            saved.name = "CHANGED";
             saved.message = "changed";
             throw o as Error;
           }
@@ -433,12 +433,12 @@ public class ErrorRethrowTransportProductionTest {
 
         export function echo(e: Error): number { throw e; }
         export function alias(): boolean {
-          let first: Error = { code: "seed", message: "seed" };
-          try { throw { code: "X", message: "x" }; } catch (caught) { first = caught as Error; }
-          first.code = "Z";
-          let again: Error = { code: "seed", message: "seed" };
+          let first: Error = { name: "seed", message: "seed" };
+          try { throw { name: "X", message: "x" }; } catch (caught) { first = caught as Error; }
+          first.name = "Z";
+          let again: Error = { name: "seed", message: "seed" };
           try { throw first; } catch (caught) { again = caught as Error; }
-          return first === again && again.code === "Z";
+          return first === again && again.name === "Z";
         }
         """;
 
@@ -472,18 +472,18 @@ public class ErrorRethrowTransportProductionTest {
         export function overflow(): number { return helper.boom(); }
         export function replaced(): number {
           try { return helper.fail(); }
-          catch (e) { throw { code: "REPLACED", message: "handled" }; }
+          catch (e) { throw { name: "REPLACED", message: "handled" }; }
         }
         export function echo(e: Error): number { return helper.echo(e); }
         export function alias(): boolean { return helper.alias(); }
         export function mutate(): number {
-          let saved: Error = { code: "seed", message: "seed" };
+          let saved: Error = { name: "seed", message: "seed" };
           let step: () => number = function(): number {
             try {
               try { return helper.fail(); }
-              catch (e) { saved = e as Error; throw { code: "OUTER", message: "outer" }; }
+              catch (e) { saved = e as Error; throw { name: "OUTER", message: "outer" }; }
             } catch (o) {
-              saved.code = "CHANGED";
+              saved.name = "CHANGED";
               saved.message = "changed";
               throw o as Error;
             }

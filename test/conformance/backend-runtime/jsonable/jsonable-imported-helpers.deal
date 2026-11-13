@@ -12,7 +12,7 @@ export function test_imported_helpers(): null {
   let text: string = encode(a);
   let b: models.Model = decode(text);
   if (b.name !== "" || !(b instanceof models.Model) || b === a || encode !== models.encode || decode !== models.decode) {
-    throw {code: "TEST_FAIL", message: "imported JSON function identity or reconstruction"};
+    throw {name: "TEST_FAIL", message: "imported JSON function identity or reconstruction"};
   }
   return null;
 }

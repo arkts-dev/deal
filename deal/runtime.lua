@@ -197,6 +197,7 @@ function __rt.error_value(code, message, file, line, column)
   return {
     [__K.kind] = "class",
     [__K.classname] = "Error",
+    name = code,
     code = code,
     message = message,
     file = file,
@@ -605,7 +606,7 @@ function __rt.validate_data(root, file, line, column)
       if kind == "async-operation" then reject(v) end
       if kind == "function" and not __rt.valid_function(v) then reject(v) end
       if rawget(v, __K.d) or v[__K.classname] == "Error" then
-        __rt.check_string(v.code, file, line, column)
+        __rt.check_string(v.name, file, line, column)
         local message = v.message
         if rawget(v, __K.d) then message = v.m end
         __rt.check_string(message, file, line, column)
@@ -1080,7 +1081,7 @@ local function check_canonical_ast(ast, v, file, line, column, seen)
           .. tostring(actual_class), file, line, column, ast.name, actual_class))
     end
     if ast.name == "Error" then
-      __rt.check_string(v.code, file, line, column)
+      __rt.check_string(v.name, file, line, column)
       local message = v.message
       if v[__K.d] then message = v.m end
       __rt.check_string(message, file, line, column)

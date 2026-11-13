@@ -4,7 +4,7 @@
 // @features: arrays, host-abi
 import * as host from "host/probe";
 class Item {x:number; stable:number;}
-function check(ok:boolean):void {if(!ok){throw {code:"SPLICE",message:"mismatch"};}}
+function check(ok:boolean):void {if(!ok){throw {name:"SPLICE",message:"mismatch"};}}
 function normalization(start:number,count:number,want:string,left:string):void {
   let xs:number[]=[1,2,3,4]; let alias=xs;
   let result=xs.splice(start,count);
@@ -31,12 +31,12 @@ export function main():null {
   let matrix:number[][]=[[1],xs];let dynamic:unknown[]=[xs];let original:unknown=xs;
   host.keep(xs); host.corrupt(); let caught=false;
   try{matrix.splice(0,2);}catch(e){
-    check((e as Error).code==="E8003" && (e as Error).message==="array element 2 type mismatch");caught=true;
+    check((e as Error).name==="E8003" && (e as Error).message==="array element 2 type mismatch");caught=true;
   }
   check(caught && matrix.length===2 && matrix[0][0]===1 && host.size()===3);
   check(dynamic.splice(0,1)[0]===original);caught=false;
   try{xs.splice(0,3);}catch(e){
-    check((e as Error).code==="E8003" && (e as Error).message==="array element 3 type mismatch");caught=true;
+    check((e as Error).name==="E8003" && (e as Error).message==="array element 3 type mismatch");caught=true;
   }
   check(caught && host.size()===3 && alias.length===3 && xs[0]===4 && xs[1]===5);
   // Unremoved hostile data is shifted without being consumed or re-admitted.
@@ -49,7 +49,7 @@ export function main():null {
   live[live.length]=13; check(host.size()===3 && liveAlias.splice(1,2)[1]===13 && host.size()===1);
   let item:Item={x:9,stable:4}; let items:Item[]=[item,item];
   host.damage(item,false);caught=false;
-  try{items.splice(0,2);}catch(e){check((e as Error).code==="E8003");caught=true;}
+  try{items.splice(0,2);}catch(e){check((e as Error).name==="E8003");caught=true;}
   check(caught && items.length===2);host.damage(null,true);
   let objects=items.splice(0,2);check(objects[0]===item && objects[1]===item && items.length===0);
   let nested:number[][]=[[1],[2]];let inside=nested[1];check(nested.splice(1,1)[0]===inside && nested.length===1);
@@ -63,11 +63,11 @@ export function main():null {
   let receiver=():number[]=>{order=order+"r";return target;};
   let start=():number=>{order=order+"s";return 1;};let count=():number=>{order=order+"c";return 1;};
   check(receiver().splice(start(),count())[0]===2 && order==="rsc");
-  let fail=():number=>{order=order+"!";throw {code:"STOP",message:"stop"};};order="";
-  try{receiver().splice(fail(),count());}catch(e){check((e as Error).code==="STOP");}
+  let fail=():number=>{order=order+"!";throw {name:"STOP",message:"stop"};};order="";
+  try{receiver().splice(fail(),count());}catch(e){check((e as Error).name==="STOP");}
   check(order==="r!" && target.length===2);
   let stale:number[]|null=[1];let clear=():void=>{stale=null;};caught=false;
-  if(stale!==null){clear();try{stale.splice(0,1);}catch(e){check((e as Error).code==="E8001");caught=true;}}
+  if(stale!==null){clear();try{stale.splice(0,1);}catch(e){check((e as Error).name==="E8001");caught=true;}}
   check(caught);
   return null;
 }

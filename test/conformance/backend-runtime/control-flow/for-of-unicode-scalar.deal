@@ -8,11 +8,11 @@ export function main(): null {
   for (let c of "é") {
     count = count + 1;
     if (c !== "é") {
-      throw { code: "TEST_FAIL", message: "for-of unicode: scalar value mismatch" };
+      throw { name: "TEST_FAIL", message: "for-of unicode: scalar value mismatch" };
     }
   }
   if (count !== 1) {
-    throw { code: "TEST_FAIL", message: "for-of unicode: iteration count mismatch" };
+    throw { name: "TEST_FAIL", message: "for-of unicode: iteration count mismatch" };
   }
   return null;
 }

@@ -9,7 +9,7 @@ export function test_nested_table_read_write(): number {
   let inner: Record<string, unknown> = t.inner as Record<string, unknown>;
   inner.value = 7;
   let result: number = inner.value as number;
-  if (result !== 7) { throw { code: "TEST_FAIL", message: "nested table read/write failed" }; }
+  if (result !== 7) { throw { name: "TEST_FAIL", message: "nested table read/write failed" }; }
   return result;
 }
 

@@ -7,6 +7,6 @@ import * as c from "std/console";
 function fallback(): string | null {c.log("forbidden-default"); return "fallback";}
 class C {value: string | null;}
 export function main(): null {
- let x: C = {value:null}; if(x.value !== null) {throw {code:"TEST_FAIL",message:"null treated as omitted"};}
+ let x: C = {value:null}; if(x.value !== null) {throw {name:"TEST_FAIL",message:"null treated as omitted"};}
  c.log("provided-null-skips-default"); return null;
 }

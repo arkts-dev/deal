@@ -9,7 +9,7 @@ export function test_table_keys_string_inclusion(): null {
   let t: Record<string, unknown> = { alpha: 1, beta: "b", gamma: null };
   let ks: string[] = tables.keys(t);
   if (ks.length !== 3) {
-    throw { code: "TEST_FAIL", message: "keys length mismatch" };
+    throw { name: "TEST_FAIL", message: "keys length mismatch" };
   }
   let found: Record<string, unknown> = { alpha: false, beta: false, gamma: false };
   let i: number = 0;
@@ -24,7 +24,7 @@ export function test_table_keys_string_inclusion(): null {
   let betaHit: boolean = found.beta as boolean;
   let gammaHit: boolean = found.gamma as boolean;
   if (!alphaHit || !betaHit || !gammaHit) {
-    throw { code: "TEST_FAIL", message: "a string key is missing" };
+    throw { name: "TEST_FAIL", message: "a string key is missing" };
   }
   return null;
 }

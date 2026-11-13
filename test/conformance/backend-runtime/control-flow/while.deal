@@ -9,7 +9,7 @@ export function test_while(): number {
     x = x + 1;
   }
   if (x !== 10) {
-    throw { code: "TEST_FAIL", message: "while loop terminated at the wrong value" };
+    throw { name: "TEST_FAIL", message: "while loop terminated at the wrong value" };
   }
   return x;
 }

@@ -23,25 +23,25 @@ function applyAll(fs: (((b: number[]) => number[]) | null)[], b: number[]): numb
 export function test_array_descriptor_boundary(): string {
   let xs: number[][] = [[0], [0, 0]];
   if (firstByte(xs) !== 0) {
-    throw { code: "TEST_FAIL", message: "number[] array boundary mismatch" };
+    throw { name: "TEST_FAIL", message: "number[] array boundary mismatch" };
   }
   let filled: number[] = fillByte([0, 0, 0], 200);
   if (filled[0] !== 200) {
-    throw { code: "TEST_FAIL", message: "number[] function boundary mismatch" };
+    throw { name: "TEST_FAIL", message: "number[] function boundary mismatch" };
   }
   let through: number[] | null = passNullable([0, 0]);
   let nothing: number[] | null = passNullable(null);
   let id: (b: number[]) => number[] = function(b: number[]): number[] { return b; };
   let tagged: number[] = id([0, 0]);
   if (tagged.length !== 2) {
-    throw { code: "TEST_FAIL", message: "function number[] boundary mismatch" };
+    throw { name: "TEST_FAIL", message: "function number[] boundary mismatch" };
   }
   let fs: (((b: number[]) => number[]) | null)[] = [];
   fs[fs.length] = id;
   fs[fs.length] = null;
   let acc: number[] = applyAll(fs, [0, 0, 0]);
   if (acc.length !== 3) {
-    throw { code: "TEST_FAIL", message: "nullable function array boundary mismatch" };
+    throw { name: "TEST_FAIL", message: "nullable function array boundary mismatch" };
   }
   return "canonical number[] descriptor boundary ok";
 }

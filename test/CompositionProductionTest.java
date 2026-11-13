@@ -164,7 +164,7 @@ public final class CompositionProductionTest {
         execute("""
             import * as host from "host/probe";
             import * as model from "./model";
-            function check(ok:boolean,step:number):void{if(!ok){throw {code:"TEST"+String(step),message:"declaration schema"};}}
+            function check(ok:boolean,step:number):void{if(!ok){throw {name:"TEST"+String(step),message:"declaration schema"};}}
             export function main():null{
               let leaf:host.Leaf=JSON.parse(`{"value":8,"child":{"value":9,"next":{"value":10}}}`);
               check(host.read(leaf)===8,1);
@@ -175,7 +175,7 @@ public final class CompositionProductionTest {
               check(!model.hasForeign(omitted),4);
               let original=box;let caught=false;
               try{box=JSON.parse(`{"item":{"value":7,"foreign":{"value":11,"child":{"value":"bad"}}}}`);}
-              catch(e){check((e as Error).code==="E8001",5);caught=true;}
+              catch(e){check((e as Error).name==="E8001",5);caught=true;}
               check(caught && box===original && model.read(box)===11,6);
               return null;
             }
@@ -231,13 +231,13 @@ public final class CompositionProductionTest {
             String popCallable = "import * as host from \"host/probe\";export function main():null{"
                 + "let fn=():number=>9;let fs:((()=>number)|null)[]=[fn];"
                 + "let r:Record<string,unknown>={f:fn};let rs:Record<string,unknown>[]=[r];let us:unknown[]=[r];"
-                + "host.poison(fn);let caught=0;try{fs.pop();}catch(e){if((e as Error).code===\"E8003\"){caught=caught+1;}}"
-                + "try{rs.pop();}catch(e){if((e as Error).code===\"E8003\"){caught=caught+1;}}"
-                + "try{us.pop();}catch(e){if((e as Error).code===\"E8003\"){caught=caught+1;}}"
-                + "if(caught!==3 || fs.length!==1 || rs.length!==1 || us.length!==1){throw {code:\"POISON\",message:\"pop changed storage\"};}"
+                + "host.poison(fn);let caught=0;try{fs.pop();}catch(e){if((e as Error).name===\"E8003\"){caught=caught+1;}}"
+                + "try{rs.pop();}catch(e){if((e as Error).name===\"E8003\"){caught=caught+1;}}"
+                + "try{us.pop();}catch(e){if((e as Error).name===\"E8003\"){caught=caught+1;}}"
+                + "if(caught!==3 || fs.length!==1 || rs.length!==1 || us.length!==1){throw {name:\"POISON\",message:\"pop changed storage\"};}"
                 + "host.restoreFunction();let got=fs.pop() as ()=>number;"
                 + "if(got!==fn || got()!==9 || (rs.pop() as Record<string,unknown>)!==r || (us.pop() as Record<string,unknown>)!==r){"
-                + "throw {code:\"RETRY\",message:\"pop identity\"};}return null;}";
+                + "throw {name:\"RETRY\",message:\"pop identity\"};}return null;}";
             execute(popCallable, "", root.resolve("pop-callable"), popHost,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             execute(popCallable.replace("host.poison(fn)", "host.poisonSignature(fn)"), "",
@@ -251,19 +251,19 @@ public final class CompositionProductionTest {
             String decodedPop = "export function main():null{"
                 + "let r:Record<string,unknown>=JSON.parse(\"{\\\"xs\\\":[1,-0,null,2]}\");let xs=r.xs as unknown[];let alias=xs;"
                 + "if((xs.pop() as number)!==2 || xs.pop()!==null || 1/(xs.pop() as number)!==-1/0 || xs.length!==1){"
-                + "throw {code:\"DECODED\",message:\"pop values\"};}"
+                + "throw {name:\"DECODED\",message:\"pop values\"};}"
                 + "xs[xs.length]=3;if(alias.length!==2 || (alias.pop() as number)!==3 || (xs.pop() as number)!==1"
                 + " || xs.pop()!==undefined || (JSON.stringify(r) as string)!==\"{\\\"xs\\\":[]}\"){"
-                + "throw {code:\"DECODED\",message:\"pop metadata\"};}return null;}";
+                + "throw {name:\"DECODED\",message:\"pop metadata\"};}return null;}";
             execute(decodedPop, "", root.resolve("pop-decoded"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             String decodedSplice = "export function main():null{"
                 + "let r:Record<string,unknown>=JSON.parse(\"{\\\"xs\\\":[1,-0,null,2,3]}\");let xs=r.xs as unknown[];let alias=xs;"
                 + "let out=xs.splice(1,2);if(out.length!==2 || 1/(out[0] as number)!==-1/0 || out[1]!==null"
                 + " || alias.length!==3 || (alias[1] as number)!==2 || (JSON.stringify(r) as string)!==\"{\\\"xs\\\":[1,2,3]}\"){"
-                + "throw {code:\"DECODED\",message:\"splice shift\"};}xs[xs.length]=4;out[out.length]=9;"
+                + "throw {name:\"DECODED\",message:\"splice shift\"};}xs[xs.length]=4;out[out.length]=9;"
                 + "if((alias.splice(1,9)[2] as number)!==4 || (JSON.stringify(r) as string)!==\"{\\\"xs\\\":[1]}\")"
-                + "{throw {code:\"DECODED\",message:\"splice append\"};}return null;}";
+                + "{throw {name:\"DECODED\",message:\"splice append\"};}return null;}";
             execute(decodedSplice, "", root.resolve("splice-decoded"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             execute(ConformanceHarnessMetadata.productionCorpusSource(Files.readString(Path.of(
@@ -305,10 +305,10 @@ public final class CompositionProductionTest {
                 + "try {return value(fail);}catch(e){} return 11;};return f(fail);}"
                 + "export async function probe(): Promise<number> {return await asyncValue(true);}"
                 + "export function main(): null {done();"
-                + "if(value(false)!==7 || value(true)!==9){throw {code:\"TEST\",message:\"catch path\"};}"
-                + "let f: () => number = function(): number {try {throw {code:\"X\",message:\"x\"};}"
+                + "if(value(false)!==7 || value(true)!==9){throw {name:\"TEST\",message:\"catch path\"};}"
+                + "let f: () => number = function(): number {try {throw {name:\"X\",message:\"x\"};}"
                 + "catch(e){}return 13;};"
-                + "if(f()!==13){throw {code:\"TEST\",message:\"catch expression\"};}return null;}";
+                + "if(f()!==13){throw {name:\"TEST\",message:\"catch expression\"};}return null;}";
             execute(catchPaths, "", root.resolve("catch-paths"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             String constBindings = "class Cell {value:number;}"
@@ -320,7 +320,7 @@ public final class CompositionProductionTest {
                 + "const down:(n:number)=>number=function(n:number):number{"
                 + "if(n===0){return base;}return down(n-1);};"
                 + "if(fs[0]()!==4 || fs[1]()!==2 || fs[2]()!==3 || c.value!==4 || down(5)!==3){"
-                + "throw {code:\"TEST\",message:\"const identity or capture\"};}return null;}";
+                + "throw {name:\"TEST\",message:\"const identity or capture\"};}return null;}";
             execute(constBindings, "", root.resolve("const-bindings"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             String remainders = "export function main():null {"
@@ -328,10 +328,10 @@ public final class CompositionProductionTest {
                 + "let b:number[]=[2,2,-2,-2,2,2,2,2,0,0,2,1/0,0/0];"
                 + "let want:number[]=[1,-1,1,-1,1.5,-1.5,0,-0,0/0,0/0,0/0,1,0/0];"
                 + "let i:number=0;while(i<a.length){let got:number=a[i]%b[i];let expected:number=want[i];"
-                + "if(expected!==expected){if(got===got){throw {code:\"TEST\",message:\"remainder NaN\"};}}"
+                + "if(expected!==expected){if(got===got){throw {name:\"TEST\",message:\"remainder NaN\"};}}"
                 + "else {if(got!==expected || (got===0 && 1/got!==1/expected)){"
-                + "throw {code:\"TEST\",message:\"remainder sign/value\"};}}i=i+1;}"
-                + "if(20%6*2!==4 || 20/2%3!==1){throw {code:\"TEST\",message:\"remainder precedence\"};}return null;}";
+                + "throw {name:\"TEST\",message:\"remainder sign/value\"};}}i=i+1;}"
+                + "if(20%6*2!==4 || 20/2%3!==1){throw {name:\"TEST\",message:\"remainder precedence\"};}return null;}";
             execute(remainders, "", root.resolve("remainders"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             String arrowFixture = "functions/typed-arrows.deal";
@@ -343,7 +343,7 @@ public final class CompositionProductionTest {
                 + "if(\"\\r\\x41\\u0042\\u{1f600}\\uD800\" !== `\\rAB😀\\uD800`"
                 + " || \"\\u{000000000000000000000000041}\" !== \"A\""
                 + " || '\\x27' !== \"'\" || \"\\x22\" !== '\"'){"
-                + "throw {code:\"TEST\",message:\"escape decoding\"};}return null;}";
+                + "throw {name:\"TEST\",message:\"escape decoding\"};}return null;}";
             execute(escapes, "", root.resolve("string-escapes"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             // Node supplies an independent ECMAScript reference, never a host
@@ -396,7 +396,7 @@ public final class CompositionProductionTest {
                 + " || (JSON.stringify(values[i]) as string)!==jsonExpected[i]"
                 + " || (JSON.stringify([values[i]]) as string)!==\"[\"+jsonExpected[i]+\"]\""
                 + " || (JSON.stringify(item) as string)!==\"{\\\"v\\\":\"+jsonExpected[i]+\"}\"){"
-                + "throw {code:\"NUMBER_TEXT\",message:`${i}: ${values[i]}`};}i=i+1;}return null;}");
+                + "throw {name:\"NUMBER_TEXT\",message:`${i}: ${values[i]}`};}i=i+1;}return null;}");
             execute(numericSource.toString(), "", root.resolve("number-text-reference"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             String interpolation = "export function main():null{"
@@ -406,25 +406,25 @@ public final class CompositionProductionTest {
                 + "\"0.000001\",\"1e-7\",\"100000000000000000000\",\"1e+21\",\"5e-324\","
                 + "\"1.7976931348623157e+308\",\"1000000000000000100\",\"2.2250738585072014e-308\"];"
                 + "let i=0;while(i<values.length){if(`${values[i]}`!==expected[i]){"
-                + "throw {code:\"TEXT\",message:`${i}: ${values[i]}`};}i=i+1;}"
+                + "throw {name:\"TEXT\",message:`${i}: ${values[i]}`};}i=i+1;}"
                 + "let state=0;let step=(n:number):number=>{state=state*10+n;return n;};"
                 + "if(`a${step(1)}b${step(2)}c`!==\"a1b2c\" || state!==12){"
-                + "throw {code:\"ORDER\",message:\"interpolation order\"};}"
-                + "let fail=():number=>{throw {code:\"STOP\",message:\"stop\"};};"
+                + "throw {name:\"ORDER\",message:\"interpolation order\"};}"
+                + "let fail=():number=>{throw {name:\"STOP\",message:\"stop\"};};"
                 + "try{let text=`${step(3)}${fail()}${step(4)}`;}catch(e){}"
-                + "if(state!==123){throw {code:\"ABRUPT\",message:\"interpolation failure\"};}"
-                + "if(String(step(4))!==\"4\" || state!==1234){throw {code:\"STRING\",message:\"String effects\"};}"
+                + "if(state!==123){throw {name:\"ABRUPT\",message:\"interpolation failure\"};}"
+                + "if(String(step(4))!==\"4\" || state!==1234){throw {name:\"STRING\",message:\"String effects\"};}"
                 + "try{let text=String(fail());}catch(e){}"
                 + "let refined:unknown=1.5;if(typeof refined===\"number\"){if(String(refined)!==\"1.5\"){"
-                + "throw {code:\"REFINED\",message:\"String refinement\"};}}return null;}";
+                + "throw {name:\"REFINED\",message:\"String refinement\"};}}return null;}";
             execute(interpolation, "", root.resolve("numeric-templates"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             String builtins = "export function main():null{"
                 + "if(Math.floor(1.5)!==1 || Math.ceil(-1.5)!==-1 || Math.abs(-2)!==2 || Math.sqrt(4)!==2"
                 + " || 1/Math.ceil(-0.1)!==-1/0 || 1/Math.abs(-0)!==1/0 || 1/Math.sqrt(-0)!==-1/0"
-                + " || Math.sqrt(-1)===Math.sqrt(-1) || Date.now()<0){throw {code:\"MATH\",message:\"builtin values\"};}"
+                + " || Math.sqrt(-1)===Math.sqrt(-1) || Date.now()<0){throw {name:\"MATH\",message:\"builtin values\"};}"
                 + "let state=0;let arg=():number=>{state=state+1;return -2;};"
-                + "if(Math.abs(arg())!==2 || state!==1){throw {code:\"ORDER\",message:\"builtin effect\"};}"
+                + "if(Math.abs(arg())!==2 || state!==1){throw {name:\"ORDER\",message:\"builtin effect\"};}"
                 + "console.log(String(Math.abs(-1/0)));console.error(\"BUILTIN\");return null;}";
             execute(builtins, "Infinity\n", "BUILTIN\n", root.resolve("builtin-namespaces"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
@@ -432,25 +432,25 @@ public final class CompositionProductionTest {
                 + "const xs:number[]=[1,-0,0/0];let alias=xs;let nan=xs.pop() as number;"
                 + "if(nan===nan || xs.length!==2 || alias.length!==2 || 1/(alias.pop() as number)!==-1/0"
                 + " || (xs.pop() as number)!==1 || xs.length!==0 || xs.pop()!==undefined || xs.length!==0){"
-                + "throw {code:\"POP\",message:\"numeric/empty/alias\"};}"
-                + "xs[xs.length]=7;if((alias.pop() as number)!==7){throw {code:\"GROW\",message:\"persistent array\"};}"
-                + "let item:Item={v:3};let items:Item[]=[item];if((items.pop() as Item)!==item){throw {code:\"ID\",message:\"class\"};}"
+                + "throw {name:\"POP\",message:\"numeric/empty/alias\"};}"
+                + "xs[xs.length]=7;if((alias.pop() as number)!==7){throw {name:\"GROW\",message:\"persistent array\"};}"
+                + "let item:Item={v:3};let items:Item[]=[item];if((items.pop() as Item)!==item){throw {name:\"ID\",message:\"class\"};}"
                 + "let fn=():number=>9;let fns:(()=>number)[]=[fn];let got=fns.pop() as ()=>number;"
-                + "if(got!==fn || got()!==9){throw {code:\"FN\",message:\"function\"};}"
+                + "if(got!==fn || got()!==9){throw {name:\"FN\",message:\"function\"};}"
                 + "let nulls:(number|null|undefined)[]=[null,undefined,5];"
                 + "if((nulls.pop() as number)!==5 || nulls.pop()!==undefined || nulls.pop()!==null || nulls.length!==0){"
-                + "throw {code:\"NULLISH\",message:\"elements\"};}"
-                + "let flags:boolean[]=[false,true];if((flags.pop() as boolean)!==true || (flags.pop() as boolean)!==false || flags.pop()!==undefined){throw {code:\"BOOL\",message:\"pop\"};}"
+                + "throw {name:\"NULLISH\",message:\"elements\"};}"
+                + "let flags:boolean[]=[false,true];if((flags.pop() as boolean)!==true || (flags.pop() as boolean)!==false || flags.pop()!==undefined){throw {name:\"BOOL\",message:\"pop\"};}"
                 + "let optionalFns:((()=>number)|null|undefined)[]=[fn,null,undefined];"
-                + "if(optionalFns.pop()!==undefined || optionalFns.pop()!==null || (optionalFns.pop() as ()=>number)!==fn){throw {code:\"OPT_FN\",message:\"pop\"};}"
-                + "let texts:string[]=[\"\\uD800\",\"ok\"];if((texts.pop() as string)!==\"ok\" || (texts.pop() as string)!==\"\\uD800\"){throw {code:\"TEXT\",message:\"pop\"};}"
+                + "if(optionalFns.pop()!==undefined || optionalFns.pop()!==null || (optionalFns.pop() as ()=>number)!==fn){throw {name:\"OPT_FN\",message:\"pop\"};}"
+                + "let texts:string[]=[\"\\uD800\",\"ok\"];if((texts.pop() as string)!==\"ok\" || (texts.pop() as string)!==\"\\uD800\"){throw {name:\"TEXT\",message:\"pop\"};}"
                 + "let count=0;let receiver=():number[]=>{count=count+1;return xs;};receiver().pop();"
-                + "if(count!==1){throw {code:\"ONCE\",message:\"receiver\"};}"
+                + "if(count!==1){throw {name:\"ONCE\",message:\"receiver\"};}"
                 + "let maybe:number[]|null=[3];let invalidate=():void=>{maybe=null;};let caught=false;"
-                + "if(maybe!==null){invalidate();try{maybe.pop();}catch(e){if((e as Error).code===\"E8001\"){caught=true;}}}"
-                + "if(!caught){throw {code:\"STALE\",message:\"receiver\"};}"
+                + "if(maybe!==null){invalidate();try{maybe.pop();}catch(e){if((e as Error).name===\"E8001\"){caught=true;}}}"
+                + "if(!caught){throw {name:\"STALE\",message:\"receiver\"};}"
                 + "let nils:(null|undefined)[]=[null,undefined];if(nils.pop()!==undefined || nils.pop()!==null || nils.pop()!==undefined){"
-                + "throw {code:\"NIL\",message:\"pop\"};}return null;}";
+                + "throw {name:\"NIL\",message:\"pop\"};}return null;}";
             execute(arrayPop, "", root.resolve("array-pop"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             String jsonEncoding = "class Item{z:number;a?:string;b:null;c:undefined;}"
@@ -458,23 +458,23 @@ public final class CompositionProductionTest {
                 + "if(JSON.stringify(undefined)!==undefined || JSON.stringify(f)!==undefined"
                 + " || (JSON.stringify(null) as string)!==\"null\" || (JSON.stringify(true) as string)!==\"true\""
                 + " || (JSON.stringify(mixed) as string)!==\"[null,null,null,null,0]\"){"
-                + "throw {code:\"ROOTS\",message:\"JSON roots and substitution\"};}"
+                + "throw {name:\"ROOTS\",message:\"JSON roots and substitution\"};}"
                 + "let r:Record<string,unknown>={b:1};r[\"10\"]=10;r[\"2\"]=2;r.a=null;r.drop=f;r.u=undefined;"
                 + "if((JSON.stringify(r) as string)!==\"{\\\"2\\\":2,\\\"10\\\":10,\\\"b\\\":1,\\\"a\\\":null}\"){"
-                + "throw {code:\"ORDER\",message:\"JSON own keys/omission\"};}"
+                + "throw {name:\"ORDER\",message:\"JSON own keys/omission\"};}"
                 + "let c:Item={c:undefined,b:null,z:1e21};"
                 + "if((JSON.stringify(c) as string)!==\"{\\\"z\\\":1e+21,\\\"b\\\":null}\"){"
-                + "throw {code:\"CLASS\",message:\"JSON declaration order/presence\"};}"
+                + "throw {name:\"CLASS\",message:\"JSON declaration order/presence\"};}"
                 + "let child:Record<string,unknown>={v:1};let shared:Record<string,unknown>={x:child,y:child};"
                 + "if((JSON.stringify(shared) as string)!==\"{\\\"x\\\":{\\\"v\\\":1},\\\"y\\\":{\\\"v\\\":1}}\"){"
-                + "throw {code:\"SHARED\",message:\"JSON shared acyclic children\"};}"
+                + "throw {name:\"SHARED\",message:\"JSON shared acyclic children\"};}"
                 + "let caught=0;child.cycle=child;try{JSON.stringify(shared);}catch(e){caught=1;}"
-                + "if(caught!==1){throw {code:\"CYCLE\",message:\"JSON cycle\"};}delete child.cycle;"
+                + "if(caught!==1){throw {name:\"CYCLE\",message:\"JSON cycle\"};}delete child.cycle;"
                 + "let state=0;let arg=():number=>{state=state+1;return 2;};"
-                + "if((JSON.stringify(arg()) as string)!==\"2\" || state!==1){throw {code:\"ONCE\",message:\"JSON argument\"};}"
-                + "let fail=():unknown=>{throw {code:\"ARG\",message:\"stop\"};};"
-                + "try{JSON.stringify(fail());}catch(e){if(e instanceof Error){if(e.code!==\"ARG\"){throw e;}state=2;}}"
-                + "if(state!==2 || JSON.stringify(shared)===undefined){throw {code:\"RETRY\",message:\"JSON repair\"};}return null;}";
+                + "if((JSON.stringify(arg()) as string)!==\"2\" || state!==1){throw {name:\"ONCE\",message:\"JSON argument\"};}"
+                + "let fail=():unknown=>{throw {name:\"ARG\",message:\"stop\"};};"
+                + "try{JSON.stringify(fail());}catch(e){if(e instanceof Error){if(e.name!==\"ARG\"){throw e;}state=2;}}"
+                + "if(state!==2 || JSON.stringify(shared)===undefined){throw {name:\"RETRY\",message:\"JSON repair\"};}return null;}";
             execute(jsonEncoding, "", root.resolve("json-encoding"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             String parseFixture = "stdlib/json/contextual-parse.deal";
@@ -487,7 +487,7 @@ public final class CompositionProductionTest {
                 import * as again from "././left";
                 import * as right from "./right";
                 class Envelope { first:left.Node; second:right.Node; }
-                function verify(ok:boolean):void{if(!ok){throw {code:"TEST",message:"parse provider"};}}
+                function verify(ok:boolean):void{if(!ok){throw {name:"TEST",message:"parse provider"};}}
                 export function main():null {
                   let a:left.Node=JSON.parse(`{"z":1,"a":2,"next":{"z":3,"a":4}}`);
                   let b:right.Node=JSON.parse(`{"z":5,"a":6}`);
@@ -511,18 +511,18 @@ public final class CompositionProductionTest {
             execute("import * as model from \"./model\";class Local{box:model.Box;}export function main():null{"
                 + "let box:model.Box=JSON.parse(`{\"item\":{\"value\":7}}`);"
                 + "let local:Local=JSON.parse(`{\"box\":{\"item\":{\"value\":8,\"next\":{\"value\":9}}}}`);"
-                + "if(model.read(box)!==7 || model.read(local.box)!==8){throw {code:\"TEST\",message:\"private schema provider\"};}return null;}",
+                + "if(model.read(box)!==7 || model.read(local.box)!==8){throw {name:\"TEST\",message:\"private schema provider\"};}return null;}",
                 "", "", root.resolve("json-parse-private-provider"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM), Map.of(
                     "model.deal", "class Item{value:number;next?:Item;}export class Box{item:Item;}"
                         + "export function read(box:Box):number{return box.item.value;}"));
             execute("import * as model from \"./model\";class Local{box:model.Box;}export function main():null{"
                 + "let local:Local=JSON.parse(`{\"box\":{\"item\":{\"payload\":{\"node\":{\"value\":7,\"next\":{\"value\":8}}}}}}`);"
-                + "if(model.read(local.box)!==15){throw {code:\"TEST\",message:\"transitive private schema\"};}"
+                + "if(model.read(local.box)!==15){throw {name:\"TEST\",message:\"transitive private schema\"};}"
                 + "let original=local;let caught=false;"
                 + "try{local=JSON.parse(`{\"box\":{\"item\":{\"payload\":{\"node\":{\"value\":7,\"next\":{\"value\":\"bad\"}}}}}}`);}"
-                + "catch(e){if((e as Error).code!==\"E8001\"){throw e as Error;}caught=true;}"
-                + "if(!caught || local!==original || model.read(local.box)!==15){throw {code:\"TEST\",message:\"transitive rollback\"};}return null;}",
+                + "catch(e){if((e as Error).name!==\"E8001\"){throw e as Error;}caught=true;}"
+                + "if(!caught || local!==original || model.read(local.box)!==15){throw {name:\"TEST\",message:\"transitive rollback\"};}return null;}",
                 "", "", root.resolve("json-parse-transitive-private"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM), Map.of(
                     "model.deal", "import * as leaf from \"./leaf\";class Item{payload:leaf.Payload;}export class Box{item:Item;}"
@@ -548,10 +548,10 @@ public final class CompositionProductionTest {
             String arrayInput = "`" + "[".repeat(20000) + "-0" + "]".repeat(20000) + "`";
             String deepParse = "class Node{value:number;next:Node|null;} export function main():null{"
                 + "let text=" + classInput + ";\nlet node:Node|null=JSON.parse(text);"
-                + "if((JSON.stringify(node) as string)!==text){throw {code:\"TEST\",message:\"deep class\"};}"
+                + "if((JSON.stringify(node) as string)!==text){throw {name:\"TEST\",message:\"deep class\"};}"
                 + "\ntext=" + arrayInput + ";\nlet value:unknown=JSON.parse(text);"
                 + "let output=JSON.stringify(value) as string;"
-                + "if(output.length!==40001 || !output.includes(\"0\")){throw {code:\"TEST\",message:\"deep array\"};}"
+                + "if(output.length!==40001 || !output.includes(\"0\")){throw {name:\"TEST\",message:\"deep array\"};}"
                 + "return null;}";
             execute(deepParse, "", "", root.resolve("json-parse-deep"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM), Map.of(), true);
@@ -560,9 +560,9 @@ public final class CompositionProductionTest {
             String deepFailure = "class Node{value:number;next:Node|null;} export function main():null{"
                 + "let original:Node={value:7,next:null};let destination=original;let rejected=false;"
                 + "try{destination=JSON.parse(" + failedClassInput + ");}catch(e){"
-                + "if(e instanceof Error){rejected=e.code===\"E8001\" && e.message===\"expected number\";}}"
+                + "if(e instanceof Error){rejected=e.name===\"E8001\" && e.message===\"expected number\";}}"
                 + "if(!rejected || destination!==original || destination.value!==7 || destination.next!==null){"
-                + "throw {code:\"TEST\",message:\"deep parse failure lost rollback or leaf\"};}return null;}";
+                + "throw {name:\"TEST\",message:\"deep parse failure lost rollback or leaf\"};}return null;}";
             execute(deepFailure, "", "", root.resolve("json-parse-deep-failure"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM), Map.of(), true);
             execute("export function main():null{try{JSON.parse(`bad`);}catch(e){}return null;}",
@@ -577,26 +577,26 @@ public final class CompositionProductionTest {
                 + "let receiver=():string=>{state=state*10+1;return \"  a😀b  \";};"
                 + "let index=(n:number):number=>{state=state*10+n;return n;};"
                 + "let text=receiver().substring(index(2),index(3));"
-                + "if(state!==123 || text!==\"a\" || receiver().length!==8){throw {code:\"ORDER\",message:text};}"
+                + "if(state!==123 || text!==\"a\" || receiver().length!==8){throw {name:\"ORDER\",message:text};}"
                 + "let s=\"a😀b\";if(s.length!==4 || s.substring(3,1)!==\"😀\" || s.substring(-1,1/0)!==s"
                 + " || !s.includes(\"\\ud83d\") || !s.startsWith(\"a\") || !s.endsWith(\"b\")"
                 + " || s.replace(\"😀\",\"$&$&\")!==\"a😀😀b\" || \"  x\\r\\n\".trim()!==\"x\"){"
-                + "throw {code:\"STRINGS\",message:\"receiver algorithms\"};}"
+                + "throw {name:\"STRINGS\",message:\"receiver algorithms\"};}"
                 + "let parts=s.split(\"\");if(parts.length!==4 || parts[1]!==\"\\ud83d\" || parts[2]!==\"\\ude00\"){"
-                + "throw {code:\"UNITS\",message:\"split\"};}"
-                + "let broken=():number=>{state=7;throw {code:\"STOP\",message:\"argument\"};};"
+                + "throw {name:\"UNITS\",message:\"split\"};}"
+                + "let broken=():number=>{state=7;throw {name:\"STOP\",message:\"argument\"};};"
                 + "try{receiver().substring(broken(),index(8));}catch(e){}"
-                + "if(state!==7){throw {code:\"ABRUPT\",message:\"argument order\"};}"
-                + "let maybe:string|null=s;if(maybe!==null){if(maybe.trim()!==s){throw {code:\"REFINE\",message:\"receiver\"};}}"
+                + "if(state!==7){throw {name:\"ABRUPT\",message:\"argument order\"};}"
+                + "let maybe:string|null=s;if(maybe!==null){if(maybe.trim()!==s){throw {name:\"REFINE\",message:\"receiver\"};}}"
                 + "let invalidated:string|null=s;let clear=():void=>{invalidated=null;};"
-                + "if(invalidated!==null){clear();try{invalidated.trim();throw {code:\"MISSED\",message:\"stale\"};}catch(e){"
-                + "if(e instanceof Error){if(e.code!==\"E8001\"){throw e;}}}}return null;}";
+                + "if(invalidated!==null){clear();try{invalidated.trim();throw {name:\"MISSED\",message:\"stale\"};}catch(e){"
+                + "if(e instanceof Error){if(e.name!==\"E8001\"){throw e;}}}}return null;}";
             execute(receiverStrings, "", root.resolve("receiver-strings"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             String multiline = "export function main():null{"
                 + "if(`A\r\nB\rC\nD` !== \"A\\nB\\nC\\nD\""
                 + " || `A\\\r\nB` !== \"AB\" || `x${`a\nb`}y` !== \"xa\\nby\"){"
-                + "throw {code:\"TEST\",message:\"multiline decoding\"};}return null;}";
+                + "throw {name:\"TEST\",message:\"multiline decoding\"};}return null;}";
             execute(multiline, "", root.resolve("multiline-templates"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             // Each seed changes values and composition depth, not the language
@@ -604,23 +604,23 @@ public final class CompositionProductionTest {
             for (int seed = 0; seed < 4; seed++) {
                 int base = seed + 1, delta = seed + 3, depth = seed + 1;
                 String body = "let captured:()=>number=function():number{return 0;};"
-                    + "let original:Error={code:\"C\",message:\"old\"};"
+                    + "let original:Error={name:\"C\",message:\"old\"};"
                     + "try{throw original;}catch(e){"
                     + "captured=function():number{if((e as Error)===original){return state;}return -1000;};"
                     + "(e as Error).message=\"new\";}"
                     + "state=state+" + delta + ";"
-                    + "if(original.message!==\"new\"){throw {code:\"TEST\",message:\"identity\"};}"
+                    + "if(original.message!==\"new\"){throw {name:\"TEST\",message:\"identity\"};}"
                     + "let text=JSON.stringify({value:captured(),drop:captured});"
-                    + "if(text===undefined){throw {code:\"TEST\",message:\"json\"};}"
+                    + "if(text===undefined){throw {name:\"TEST\",message:\"json\"};}"
                     + "let parsed:Record<string,unknown>=JSON.parse(text as string);"
-                    + "if(Object.hasOwn(parsed,\"drop\")){throw {code:\"TEST\",message:\"omission\"};}"
+                    + "if(Object.hasOwn(parsed,\"drop\")){throw {name:\"TEST\",message:\"omission\"};}"
                     + "return parsed.value as number;";
                 for (int i = 0; i < depth; i++)
                     body = "let f:()=>number=function():number{" + body + "};return f();";
                 String source = "import * as c from \"std/console\";"
                     + "function run():number{let state:number=" + base + ";" + body + "}"
                     + "export function main():null{if(run()!==" + (base + delta)
-                    + "){throw {code:\"TEST\",message:\"value\"};}c.log(\"COMPOSE_OK\");return null;}";
+                    + "){throw {name:\"TEST\",message:\"value\"};}c.log(\"COMPOSE_OK\");return null;}";
                 execute(source, "COMPOSE_OK\n", root.resolve("seed" + seed), null);
             }
             knownSkips.remaining("composition", skippedCompositions);

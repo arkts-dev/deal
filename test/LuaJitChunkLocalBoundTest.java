@@ -191,7 +191,7 @@ public class LuaJitChunkLocalBoundTest {
         }
         source.append(";\n");
         source.append("  if (total !== ").append(expected).append(") {\n");
-        source.append("    throw { code: \"TEST_FAIL\", message: \"sum mismatch\" };\n");
+        source.append("    throw { name: \"TEST_FAIL\", message: \"sum mismatch\" };\n");
         source.append("  }\n");
         source.append("  output.log(\"").append(FIXTURE_MARKER).append("\");\n");
         source.append("  return null;\n}\n");

@@ -15,7 +15,7 @@ function b(n: number): number {
 
 export function test_abi_mutual_recursion_predeclare(): number {
   let result: number = a(5);
-  if (result !== 5) { throw { code: "TEST_FAIL", message: "mutual recursion ABI failed" }; }
+  if (result !== 5) { throw { name: "TEST_FAIL", message: "mutual recursion ABI failed" }; }
   return result;
 }
 

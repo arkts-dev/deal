@@ -2,20 +2,20 @@
 // @expected: runtime-ok
 // @tags: string,builtin,utf16
 export function main():null {
-  if ("Hello ÀÉ Ω Ж".toLowerCase() !== "hello àé ω ж") { throw {code:"TEST",message:"lower"}; }
-  if ("Straße ﬃ ŉ ǰ ΐ".toUpperCase() !== "STRASSE FFI ʼN J̌ Ϊ́") { throw {code:"TEST",message:"expansion"}; }
-  if ("Iİıi".toLowerCase() !== "ii\u0307ıi" || "Iİıi".toUpperCase() !== "IİII") { throw {code:"TEST",message:"locale independent"}; }
-  if ("ΟΣ ΟΣΑ Σ ΑΣ\u0301 ΑΣ'Α ΑΣ' ΣΣ".toLowerCase() !== "ος οσα σ ας\u0301 ασ'α ας' σς") { throw {code:"TEST",message:"final sigma"}; }
-  if ("\uD801\uDC00\uD801\uDC28".toLowerCase() !== "\uD801\uDC28\uD801\uDC28" || "\uD801\uDC28".toUpperCase() !== "\uD801\uDC00") { throw {code:"TEST",message:"supplementary"}; }
-  if ("\uD800A\0\uDC00ß".toUpperCase() !== "\uD800A\0\uDC00SS" || "\uD800A\0\uDC00".toLowerCase() !== "\uD800a\0\uDC00") { throw {code:"TEST",message:"lone units"}; }
-  if ("\u1C89".toLowerCase() !== "\u1C8A" || "\u1C8A".toUpperCase() !== "\u1C89") { throw {code:"TEST",message:"Unicode version"}; }
-  if ("".toLowerCase() !== "" || "123 !".toUpperCase() !== "123 !") { throw {code:"TEST",message:"unchanged"}; }
+  if ("Hello ÀÉ Ω Ж".toLowerCase() !== "hello àé ω ж") { throw {name:"TEST",message:"lower"}; }
+  if ("Straße ﬃ ŉ ǰ ΐ".toUpperCase() !== "STRASSE FFI ʼN J̌ Ϊ́") { throw {name:"TEST",message:"expansion"}; }
+  if ("Iİıi".toLowerCase() !== "ii\u0307ıi" || "Iİıi".toUpperCase() !== "IİII") { throw {name:"TEST",message:"locale independent"}; }
+  if ("ΟΣ ΟΣΑ Σ ΑΣ\u0301 ΑΣ'Α ΑΣ' ΣΣ".toLowerCase() !== "ος οσα σ ας\u0301 ασ'α ας' σς") { throw {name:"TEST",message:"final sigma"}; }
+  if ("\uD801\uDC00\uD801\uDC28".toLowerCase() !== "\uD801\uDC28\uD801\uDC28" || "\uD801\uDC28".toUpperCase() !== "\uD801\uDC00") { throw {name:"TEST",message:"supplementary"}; }
+  if ("\uD800A\0\uDC00ß".toUpperCase() !== "\uD800A\0\uDC00SS" || "\uD800A\0\uDC00".toLowerCase() !== "\uD800a\0\uDC00") { throw {name:"TEST",message:"lone units"}; }
+  if ("\u1C89".toLowerCase() !== "\u1C8A" || "\u1C8A".toUpperCase() !== "\u1C89") { throw {name:"TEST",message:"Unicode version"}; }
+  if ("".toLowerCase() !== "" || "123 !".toUpperCase() !== "123 !") { throw {name:"TEST",message:"unchanged"}; }
   let calls: number = 0;
   let receiver = (): string => { calls = calls + 1; return "ß"; };
-  if (receiver().toUpperCase() !== "SS" || calls !== 1) { throw {code:"TEST",message:"receiver once"}; }
-  let failing = (): string => { throw {code:"TEST",message:"operand"}; };
+  if (receiver().toUpperCase() !== "SS" || calls !== 1) { throw {name:"TEST",message:"receiver once"}; }
+  let failing = (): string => { throw {name:"TEST",message:"operand"}; };
   let destination: string = "kept";
   try { destination = failing().toLowerCase(); } catch (e) { let error = e as Error; if (error.message !== "operand") { throw error; } }
-  if (destination !== "kept") { throw {code:"TEST",message:"rollback"}; }
+  if (destination !== "kept") { throw {name:"TEST",message:"rollback"}; }
   return null;
 }

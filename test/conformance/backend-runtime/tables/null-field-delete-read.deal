@@ -7,15 +7,15 @@ export function test_table_null_and_delete(): null {
   let t: Record<string, unknown> = {};
   t.x = null;
   let before: string | null = t.x as string | null;
-  if (!Object.hasOwn(t, "x")) { throw { code: "TEST_FAIL", message: "null field absent" }; }
+  if (!Object.hasOwn(t, "x")) { throw { name: "TEST_FAIL", message: "null field absent" }; }
   if (before !== null) {
-    throw { code: "TEST_FAIL", message: "explicit null read mismatch" };
+    throw { name: "TEST_FAIL", message: "explicit null read mismatch" };
   }
   delete t.x;
   let after: string | undefined = t.x as string | undefined;
-  if (Object.hasOwn(t, "x")) { throw { code: "TEST_FAIL", message: "deleted field present" }; }
+  if (Object.hasOwn(t, "x")) { throw { name: "TEST_FAIL", message: "deleted field present" }; }
   if (after !== undefined) {
-    throw { code: "TEST_FAIL", message: "deleted field should read as undefined" };
+    throw { name: "TEST_FAIL", message: "deleted field should read as undefined" };
   }
   return null;
 }

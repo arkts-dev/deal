@@ -10,31 +10,31 @@ export function test_array_module_identity(): string {
   let a: number[] = getShared();
   let b: number[] = getShared();
   if (!(a === b)) {
-    throw { code: "TEST_FAIL", message: "imported closure lost the captured number[] identity across calls" };
+    throw { name: "TEST_FAIL", message: "imported closure lost the captured number[] identity across calls" };
   }
   a[1] = 99;
   if (getShared()[1] !== 99) {
-    throw { code: "TEST_FAIL", message: "mutation invisible through the imported closure" };
+    throw { name: "TEST_FAIL", message: "mutation invisible through the imported closure" };
   }
   let echoed: number[] = Lib.echo(a);
   if (!(echoed === a)) {
-    throw { code: "TEST_FAIL", message: "imported echo lost reference identity" };
+    throw { name: "TEST_FAIL", message: "imported echo lost reference identity" };
   }
   let f: (x: number[]) => number[] = Lib.makeTransform();
   let c: number[] = [0, 0];
   let ret: number[] = f(c);
   if (!(ret === c)) {
-    throw { code: "TEST_FAIL", message: "imported transform lost reference identity" };
+    throw { name: "TEST_FAIL", message: "imported transform lost reference identity" };
   }
   if (c[0] !== 1) {
-    throw { code: "TEST_FAIL", message: "imported transform content mismatch" };
+    throw { name: "TEST_FAIL", message: "imported transform content mismatch" };
   }
   let holder: Record<string, unknown> = { f: f };
   let g: (x: number[]) => number[] = holder.f as (x: number[]) => number[];
   let d: number[] = [0];
   let ret2: number[] = g(d);
   if (!(ret2 === d) || d[0] !== 1) {
-    throw { code: "TEST_FAIL", message: "imported function value failed after the dynamic descriptor-checked round trip" };
+    throw { name: "TEST_FAIL", message: "imported function value failed after the dynamic descriptor-checked round trip" };
   }
   return "module-identity-ok";
 }

@@ -13,7 +13,7 @@ export function test_imported_function_binding(): number {
   f = Values.dec;
   let result: number = call();
   if (result !== 0) {
-    throw { code: "TEST_FAIL", message: "the imported read observes the current binding" };
+    throw { name: "TEST_FAIL", message: "the imported read observes the current binding" };
   }
   return result;
 }

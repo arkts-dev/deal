@@ -233,7 +233,7 @@ static deal_host_result make_config_impl(const deal_value *args, size_t argc) {
   return ok_result(object);
 }
 
-/* One host-built builtin `Error` (H2 verification 4): the declared `code` and
+/* One host-built builtin `Error` (H2 verification 4): the declared `name` and
  * `message` fields are set on a class carrier whose atom is `Error`, and the
  * crossing materializes it into the managed Error instance. */
 static deal_host_result make_error_impl(const deal_value *args, size_t argc) {
@@ -247,7 +247,7 @@ static deal_host_result make_error_impl(const deal_value *args, size_t argc) {
       || deal_class_new(atom, &object) != DEAL_OK
       || deal_string_new("E_HOST_BUILT", 12, &code) != DEAL_OK
       || deal_string_new("the host built this error", 25, &message) != DEAL_OK
-      || deal_field_set(object, "code", code) != DEAL_OK
+      || deal_field_set(object, "name", code) != DEAL_OK
       || deal_field_set(object, "message", message) != DEAL_OK) {
     return host_failure("E_HOST", "error construction");
   }
@@ -398,7 +398,7 @@ static deal_status applied_failure(const deal_value function,
   deal_value code;
   const void *bytes = NULL;
   size_t length = 0;
-  if (deal_field_get(record->value, "code", &code) != DEAL_OK
+  if (deal_field_get(record->value, "name", &code) != DEAL_OK
       || deal_as_string(code, &bytes, &length) != DEAL_OK
       || length != strlen("E_APPLY_MUTATED")
       || memcmp(bytes, "E_APPLY_MUTATED", length) != 0) {
@@ -491,7 +491,7 @@ static deal_host_result probe_empty_impl(const deal_value *args, size_t argc) {
     return host_failure("E_HOST", "the zero-declared-field class identity");
   }
   int present = 1;
-  if (deal_field_has(args[0], "code", &present)
+  if (deal_field_has(args[0], "name", &present)
           != DEAL_STATUS_UNKNOWN_FIELD) {
     return host_failure("E_HOST", "the zero-declared-field class presence");
   }
@@ -504,7 +504,7 @@ static deal_host_result probe_empty_impl(const deal_value *args, size_t argc) {
   if (deal_number(1.0, &one) != DEAL_OK) {
     return host_failure("E_HOST", "observation construction");
   }
-  if (deal_field_set(args[0], "code", one) != DEAL_STATUS_UNKNOWN_FIELD) {
+  if (deal_field_set(args[0], "name", one) != DEAL_STATUS_UNKNOWN_FIELD) {
     return host_failure("E_HOST", "the zero-declared-field class store");
   }
   return ok_result(one);
@@ -962,7 +962,7 @@ static deal_host_result make_broken_error_impl(const deal_value *args,
   if (deal_class_atom("Error", &atom) != DEAL_OK
       || deal_class_new(atom, &object) != DEAL_OK
       || deal_string_new("E_HOST_PARTIAL", 15, &code) != DEAL_OK
-      || deal_field_set(object, "code", code) != DEAL_OK) {
+      || deal_field_set(object, "name", code) != DEAL_OK) {
     return host_failure("E_HOST", "partial error construction");
   }
   return ok_result(object);

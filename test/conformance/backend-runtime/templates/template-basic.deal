@@ -7,7 +7,7 @@ export function test_greet(): string {
   let name: string = "World";
   let result: string = `Hello, ${name}!`;
   if (result !== "Hello, World!") {
-    throw { code: "TEST_FAIL", message: "template basic interpolation produced wrong byte string" };
+    throw { name: "TEST_FAIL", message: "template basic interpolation produced wrong byte string" };
   }
   return result;
 }

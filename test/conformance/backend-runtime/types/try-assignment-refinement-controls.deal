@@ -5,21 +5,21 @@
 
 function expectEqual(what: string, actual: number, expected: number): null {
   if (actual !== expected) {
-    throw { code: "CONTROL_FAIL", message: what + ": value mismatch" };
+    throw { name: "CONTROL_FAIL", message: what + ": value mismatch" };
   }
   return null;
 }
 
 function expectTrue(what: string, condition: boolean): null {
   if (!condition) {
-    throw { code: "CONTROL_FAIL", message: what + ": condition is false" };
+    throw { name: "CONTROL_FAIL", message: what + ": condition is false" };
   }
   return null;
 }
 
 function expectCode(what: string, actual: string, expected: string): null {
   if (actual !== expected) {
-    throw { code: "CONTROL_FAIL", message: what + ": expected " + expected + ", got " + actual };
+    throw { name: "CONTROL_FAIL", message: what + ": expected " + expected + ", got " + actual };
   }
   return null;
 }
@@ -178,7 +178,7 @@ function nestedCatchWriteRevertsAndRenarrows(): number {
   if (n !== null) {
     try {
       try {
-        throw { code: "INNER", message: "inner" };
+        throw { name: "INNER", message: "inner" };
       } catch (e) {
         n = null;
       }
@@ -205,7 +205,7 @@ function callInducedMutationIsCatchable(): number {
       let x: number = n;
       return x + 100;
     } catch (e) {
-      expectCode("closure call", (e as Error).code, "E8001");
+      expectCode("closure call", (e as Error).name, "E8001");
       return 1;
     }
   }
@@ -222,7 +222,7 @@ function declarationCallIsCatchable(): number {
       let x: number = n;
       return x + 100;
     } catch (e) {
-      expectCode("inferred function expression", (e as Error).code, "E8001");
+      expectCode("inferred function expression", (e as Error).name, "E8001");
       return 1;
     }
   }

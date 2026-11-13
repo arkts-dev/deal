@@ -13,10 +13,10 @@ export function test_trycatch(): string {
     result = "caught";
   }
   if (catchRan !== false) {
-    throw { code: "TEST_FAIL", message: "forbidden catch executed" };
+    throw { name: "TEST_FAIL", message: "forbidden catch executed" };
   }
   if (result !== "tried") {
-    throw { code: "TEST_FAIL", message: "try body post-state mismatch" };
+    throw { name: "TEST_FAIL", message: "try body post-state mismatch" };
   }
   return result;
 }

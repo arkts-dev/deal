@@ -10,7 +10,7 @@ class X {
 }
 
 function check(ok: boolean): void {
-  if (!ok) { throw { code: "TEST", message: "syntax control" }; }
+  if (!ok) { throw { name: "TEST", message: "syntax control" }; }
 }
 
 export function main(): null {

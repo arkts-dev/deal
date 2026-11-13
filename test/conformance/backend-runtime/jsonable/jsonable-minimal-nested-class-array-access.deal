@@ -9,7 +9,7 @@ export class Parent { children: Child[]; }
 export function test_jsonable_minimal_nested_class_array_access(): null {
   let p: Parent = JSON.parse("{\"children\":[{\"value\":5}]}");
   if (p.children[0].value !== 5 || !(p.children[0] instanceof Child)) {
-    throw {code: "TEST_FAIL", message: "minimal nested class array access failed"};
+    throw {name: "TEST_FAIL", message: "minimal nested class array access failed"};
   }
   return null;
 }

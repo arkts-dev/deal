@@ -112,22 +112,22 @@ public final class ErrorIdentityProductionTest {
     /**
      * The mutated-rethrow fixture: the first throw of a constructed Error
      * happens in {@code lib.failer}, its own handler mutates the caught
-     * instance's code/message and rethrows it, and the failure escapes. The
+     * instance's name/message and rethrows it, and the failure escapes. The
      * escaping failure is the first throw's failure with the instance's
      * current fields — its origin stays the FIRST throw's site and no cause
      * is invented.
      */
     private static final String MUTATED_LIB_SOURCE = """
         export function raise(): number {
-          let original: Error = { code: "FIRST", message: "first" };
+          let original: Error = { name: "FIRST", message: "first" };
           let alias: Error = original;
           try {
             throw original;
           } catch (value) { let caught: Error = value as Error;
             if (caught !== original || caught !== alias) {
-              throw { code: "TEST_FAIL", message: "the first throw lost the identity" };
+              throw { name: "TEST_FAIL", message: "the first throw lost the identity" };
             }
-            caught.code = "SECOND";
+            caught.name = "SECOND";
             caught.message = "second";
             throw caught;
           }
@@ -158,7 +158,7 @@ public final class ErrorIdentityProductionTest {
         }
 
         export function raise(): number {
-          let replacement: Error = { code: "OUTER", message: "outer" };
+          let replacement: Error = { name: "OUTER", message: "outer" };
           try {
             return inner();
           } catch (e) {
@@ -468,13 +468,13 @@ public final class ErrorIdentityProductionTest {
         Map<String, SemanticRuntimeModel.ErrorSnapshot> snapshots = matrix(lowered,
             SemanticDifferentialHarness.Expectation.failure(
                 "a mutated first-throw rethrow keeps the first throw's origin",
-                List.of(), "SECOND", null), "error-identity-mutated-");
+                List.of(), "FIRST", null), "error-identity-mutated-");
         checkEq(3, snapshots.size(), "every consumer published the escaped failure");
         for (Map.Entry<String, SemanticRuntimeModel.ErrorSnapshot> entry
                 : snapshots.entrySet()) {
             String consumer = entry.getKey();
             SemanticRuntimeModel.ErrorSnapshot error = entry.getValue();
-            checkEq("SECOND", error.code(), consumer + ": the rethrown failure "
+            checkEq("FIRST", error.code(), consumer + ": the rethrown failure "
                 + "publishes the instance's current code");
             checkEq("second", error.message(), consumer + ": the rethrown failure "
                 + "publishes the instance's current message");
@@ -559,9 +559,9 @@ public final class ErrorIdentityProductionTest {
             + run.output());
         checkEq("", run.stdout(), "js: the uncaught terminal writes no stdout: "
             + run.output());
-        checkEq("DEAL_ERROR_CODE: SECOND second at " + lib + ":5:5\n",
+        checkEq("DEAL_ERROR_CODE: FIRST second at " + lib + ":5:5\n",
             run.stderr(), "js: the uncaught terminal carries the instance's "
-                + "current code/message at the FIRST throw's own source "
+                + "saved diagnostic code and current message at the FIRST throw's own source "
                 + "location: " + run.output());
         deleteRecursively(project.root());
     }

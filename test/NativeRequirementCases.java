@@ -20,7 +20,7 @@ final class NativeRequirementCases {
 
                 export class Cell { value: number; }
                 function check(ok: boolean, site: string): void {
-                  if (!ok) { throw {code: "REQUIREMENT_TEST", message: site}; }
+                  if (!ok) { throw {name: "REQUIREMENT_TEST", message: site}; }
                 }
                 export function main(): null {
                   let record: Record<string, unknown> = {present: 7, explicit: undefined, wrong: "bad"};
@@ -36,7 +36,7 @@ final class NativeRequirementCases {
                   try { let bad = record.wrong as number | undefined; }
                   catch (failure) {
                     if (failure instanceof Error) {
-                      rejected = failure.code === "E8001"
+                      rejected = failure.name === "E8001"
                         && failure.message === "expected number";
                       if (!rejected) { throw failure; }
                     }
@@ -51,7 +51,7 @@ final class NativeRequirementCases {
                   try { cell = JSON.parse(`{"value":"bad"}`); }
                   catch (failure) {
                     if (failure instanceof Error) {
-                      rejected = failure.code === "E8001"
+                      rejected = failure.name === "E8001"
                         && failure.message === "expected number";
                       if (!rejected) { throw failure; }
                     }

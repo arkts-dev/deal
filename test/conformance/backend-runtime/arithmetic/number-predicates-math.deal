@@ -4,7 +4,7 @@
 // @features: number, binary64, builtin
 
 function check(ok:boolean):void {
-  if (!ok) { throw {code:"TEST",message:"numeric builtin value"}; }
+  if (!ok) { throw {name:"TEST",message:"numeric builtin value"}; }
 }
 
 export function main():null {
@@ -34,7 +34,7 @@ export function main():null {
   check(Number.isNaN(Math.min(mark("a",nan),mark("b",1))) && order === "ab");
   order = "";
   check(Math.max(mark("a",1),mark("b",2)) === 2 && order === "ab");
-  let fail = ():number=>{order=order+"x";throw {code:"STOP",message:"stop"};};
+  let fail = ():number=>{order=order+"x";throw {name:"STOP",message:"stop"};};
   order = "";
   try { Math.min(fail(),mark("b",2)); } catch(e) { check(order === "x"); }
   check(order === "x");

@@ -4,7 +4,7 @@
 // @features: string, builtin, utf16
 
 function check(ok:boolean):void {
-  if(!ok){throw {code:"TEST",message:"substring omitted end"};}
+  if(!ok){throw {name:"TEST",message:"substring omitted end"};}
 }
 
 export function main():null {
@@ -24,14 +24,14 @@ export function main():null {
   let start=():number=>{ events=events+"s";return 1; };
   check(receiver().substring(start())==="bc");
   check(events==="rs");
-  let fail=():string=>{ events=events+"f";throw {code:"TEST",message:"receiver"}; };
+  let fail=():string=>{ events=events+"f";throw {name:"TEST",message:"receiver"}; };
   events="";
   let destination="kept";
   try { destination=fail().substring(start()); }
   catch(e) { check((e as Error).message==="receiver"); }
   check(events==="f" && destination==="kept");
   events="";
-  let failStart=():number=>{ events=events+"t";throw {code:"TEST",message:"start"}; };
+  let failStart=():number=>{ events=events+"t";throw {name:"TEST",message:"start"}; };
   try { destination=receiver().substring(failStart()); }
   catch(e) { check((e as Error).message==="start"); }
   check(events==="rt" && destination==="kept");

@@ -18,23 +18,23 @@ export function test_host_class_default_isolation(): string {
     tags: ["two"],
     note: null,
   };
-  if (Object.hasOwn(a, "tags") || Object.hasOwn(a, "note")) { throw {code: "TEST_FAIL", message: "omitted fields became present"}; }
+  if (Object.hasOwn(a, "tags") || Object.hasOwn(a, "note")) { throw {name: "TEST_FAIL", message: "omitted fields became present"}; }
   if (a.port !== 9090) {
-    throw { code: "TEST_FAIL", message: "first instance port mismatch" };
+    throw { name: "TEST_FAIL", message: "first instance port mismatch" };
   }
   if (b.port !== 8080) {
-    throw { code: "TEST_FAIL", message: "default table shared across instances" };
+    throw { name: "TEST_FAIL", message: "default table shared across instances" };
   }
   let tags: string[] | undefined = b.tags;
   if (tags !== undefined) {
     if (tags[0] !== "two") {
-      throw { code: "TEST_FAIL", message: "second instance tag value mismatch" };
+      throw { name: "TEST_FAIL", message: "second instance tag value mismatch" };
     }
   } else {
-    throw { code: "TEST_FAIL", message: "second instance optional field lost" };
+    throw { name: "TEST_FAIL", message: "second instance optional field lost" };
   }
   if (b.note !== null) {
-    throw { code: "TEST_FAIL", message: "second instance nullable field mismatch" };
+    throw { name: "TEST_FAIL", message: "second instance nullable field mismatch" };
   }
   return "host class default isolation ok";
 }

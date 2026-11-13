@@ -7,9 +7,9 @@ function probeParameter(e: number | null): number {
   if (e !== null) {
     try {
       try {
-        throw { code: "C_PARAM_INNER", message: "parameter inner" };
+        throw { name: "C_PARAM_INNER", message: "parameter inner" };
       } catch (e) {
-        let replacement: Error = { code: "C_PARAM_REPLACED", message: "parameter replaced" };
+        let replacement: Error = { name: "C_PARAM_REPLACED", message: "parameter replaced" };
         e = replacement;
         let checked: Error = e as Error;
         let message: string = checked.message;
@@ -27,9 +27,9 @@ export function main(): null {
   if (e !== null) {
     try {
       try {
-        throw { code: "C_INNER", message: "inner" };
+        throw { name: "C_INNER", message: "inner" };
       } catch (e) {
-        let replacement: Error = { code: "C_REPLACED", message: "replaced" };
+        let replacement: Error = { name: "C_REPLACED", message: "replaced" };
         e = replacement;
         let checked: Error = e as Error;
         let message: string = checked.message;
@@ -43,9 +43,9 @@ export function main(): null {
   if (text !== null) {
     try {
       try {
-        throw { code: "C_TEXT", message: "text" };
+        throw { name: "C_TEXT", message: "text" };
       } catch (text) {
-        let replacement: Error = { code: "C_TEXT_REPLACED", message: "text replaced" };
+        let replacement: Error = { name: "C_TEXT_REPLACED", message: "text replaced" };
         text = replacement;
         let checked: Error = text as Error;
         let replaced: string = checked.message;

@@ -1551,7 +1551,7 @@ static deal_error *deal_host_materialize_error(deal_host_crossing *crossing,
      * required fields are (H2/R11). A required field the host omitted renders
      * its own no-value host arm; the platform fault stays reserved for a
      * genuinely malformed protocol shape. */
-    static const char *const names[] = {"code", "message"};
+    static const char *const names[] = {"name", "message"};
     const size_t field_count = sizeof names / sizeof names[0];
     deal_descriptor *declared = deal_descriptor_intern("string");
     deal_check_input checked[sizeof names / sizeof names[0]];
@@ -3863,10 +3863,10 @@ deal_status deal_field_get(deal_value object, const char *field,
         deal_host_class_access_of_instance(instance, &atom);
     if (access == NULL) {
         deal_error *error = instance;
-        if (deal_host_text_equal(field, "code")) {
-            deal_string *code = deal_error_code_value(error);
-            return code == NULL ? DEAL_STATUS_ABSENT
-                                : deal_host_issue_view(code, out);
+        if (deal_host_text_equal(field, "name")) {
+            deal_string *name = deal_error_name_value(error);
+            return name == NULL ? DEAL_STATUS_ABSENT
+                                : deal_host_issue_view(name, out);
         }
         if (deal_host_text_equal(field, "message")) {
             deal_string *message = deal_error_message_value(error);
@@ -3954,9 +3954,9 @@ deal_status deal_field_set(deal_value object, const char *field,
     if (access == NULL) {
         /* The builtin Error instance's two declared fields are strings (C3). */
         deal_error *error = instance;
-        int code = deal_host_text_equal(field, "code");
+        int name = deal_host_text_equal(field, "name");
         int message = deal_host_text_equal(field, "message");
-        if (code == 0 && message == 0) {
+        if (name == 0 && message == 0) {
             return DEAL_STATUS_UNKNOWN_FIELD;
         }
         deal_host_memo memo = {0};
@@ -3968,8 +3968,8 @@ deal_status deal_field_set(deal_value object, const char *field,
             deal_host_memo_release(&memo);
             return status == DEAL_OK ? DEAL_STATUS_KIND : status;
         }
-        if (code != 0) {
-            deal_error_set_code_value(error, checked.datum.reference);
+        if (name != 0) {
+            deal_error_set_name_value(error, checked.datum.reference);
         } else {
             deal_error_set_message_value(error, checked.datum.reference);
         }
@@ -4038,7 +4038,7 @@ deal_status deal_field_has(deal_value object, const char *field, int *present) {
     const deal_host_class_access *access =
         deal_host_class_access_of_instance(instance, &atom);
     if (access == NULL) {
-        static const char *const builtinFields[] = {"code", "message"};
+        static const char *const builtinFields[] = {"name", "message"};
         for (size_t index = 0; index < 2u; index += 1u) {
             if (deal_host_text_equal(field, builtinFields[index])) {
                 *present = 1;

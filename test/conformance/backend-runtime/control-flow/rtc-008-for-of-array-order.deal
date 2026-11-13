@@ -8,7 +8,7 @@
 export function test_for_of_array_order(): null {
   let digits: number = 0;
   for (let value of [1, 2, 3]) { digits = digits * 10 + value; }
-  if (digits !== 123) { throw { code: "TEST_FAIL", message: "for-of array order changed" }; }
+  if (digits !== 123) { throw { name: "TEST_FAIL", message: "for-of array order changed" }; }
   return null;
 }
 
@@ -25,16 +25,16 @@ export function test_for_of_json_decoded_array_order(): null {
     collected = collected + item;
   }
   if (count !== 3) {
-    throw { code: "TEST_FAIL", message: "for-of decoded array iteration count mismatch" };
+    throw { name: "TEST_FAIL", message: "for-of decoded array iteration count mismatch" };
   }
   if (first !== "Ada") {
-    throw { code: "TEST_FAIL", message: "for-of decoded array first element mismatch" };
+    throw { name: "TEST_FAIL", message: "for-of decoded array first element mismatch" };
   }
   if (collected !== "AdaBobCara") {
-    throw { code: "TEST_FAIL", message: "for-of decoded array element order mismatch" };
+    throw { name: "TEST_FAIL", message: "for-of decoded array element order mismatch" };
   }
   if ((JSON.stringify(data) as string) !== "{\"items\":[\"Ada\",\"Bob\",\"Cara\"]}") {
-    throw { code: "TEST_FAIL", message: "for-of decoded array table round-trip mismatch" };
+    throw { name: "TEST_FAIL", message: "for-of decoded array table round-trip mismatch" };
   }
   return null;
 }

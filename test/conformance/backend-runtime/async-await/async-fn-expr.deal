@@ -9,7 +9,7 @@ export async function test_async_expr(): Promise<number> {
   };
   let result: number = await f();
   if (result !== 42) {
-    throw { code: "TEST_FAIL", message: "async function expression awaited result mismatch" };
+    throw { name: "TEST_FAIL", message: "async function expression awaited result mismatch" };
   }
   return result;
 }

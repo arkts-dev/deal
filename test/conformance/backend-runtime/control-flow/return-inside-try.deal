@@ -15,7 +15,7 @@ export function test_return_inside_try(): number {
   };
   let got: number = attemptReturn();
   if (got !== 7 || catchRan !== false) {
-    throw { code: "TEST_FAIL", message: "return inside try: wrong result or catch executed" };
+    throw { name: "TEST_FAIL", message: "return inside try: wrong result or catch executed" };
   }
   return 7;
 }

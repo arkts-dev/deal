@@ -26,10 +26,10 @@ export function main(): null {
   let f2: (x: number) => number = function(x: number): number { return x; };
 
   if (a1 === a2 || a1 !== aa || t1 === t2 || t1 !== ta) {
-    throw { code: "TEST_FAIL", message: "array or table identity mismatch" };
+    throw { name: "TEST_FAIL", message: "array or table identity mismatch" };
   }
   if (c1 === c2 || c1 !== ca || f1 !== fa || f1 === f2) {
-    throw { code: "TEST_FAIL", message: "class or function identity mismatch" };
+    throw { name: "TEST_FAIL", message: "class or function identity mismatch" };
   }
 
   aa[0] = 9;
@@ -37,7 +37,7 @@ export function main(): null {
   ca.value = 7;
   let tableValue: number = t1.value as number;
   if (a1[0] !== 9 || tableValue !== 8 || c1.value !== 7) {
-    throw { code: "TEST_FAIL", message: "alias mutation not visible" };
+    throw { name: "TEST_FAIL", message: "alias mutation not visible" };
   }
   return null;
 }

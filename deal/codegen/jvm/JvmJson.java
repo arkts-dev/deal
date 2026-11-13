@@ -128,7 +128,7 @@ public final class JvmJson {
             } else if (source instanceof deal.semantic.ir.ClassOpsExecutor.Value.Class instance) {
                 if (frame.index() == instance.fields().size()) continue;
                 var layout = instance.classId().equals(deal.semantic.ir.ClassId.ERROR)
-                    ? List.of("code", "message") : java.util.Arrays.stream(plans.get(instance.classId().text()).fields).map(f -> f.name).toList();
+                    ? List.of("name", "message") : java.util.Arrays.stream(plans.get(instance.classId().text()).fields).map(f -> f.name).toList();
                 key = layout.get(frame.index());
                 var field = instance.fields().get(frame.index());
                 stack.push(new DecodeFrame(source, frame.target(), frame.index() + 1));

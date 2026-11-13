@@ -124,7 +124,7 @@ public final class JsonDecodingSemanticsTest {
         rejectsSchema(node, Map.of(nodeId, new ClassLayout(nodeId, List.of(field("optional", fn, false)))));
         rejectsSchema(node, Map.of(nodeId, new ClassLayout(nodeId, List.of(field("next", node, false), field("later", fn, false)))));
         value("{\"payload\":{\"run\":{},\"next\":[]},\"value\":1}", node, layouts);
-        value("{\"code\":\"X\",\"message\":\"message\"}", new RuntimeDescriptor.Class(ClassId.ERROR), Map.of());
+        value("{\"name\":\"X\",\"message\":\"message\"}", new RuntimeDescriptor.Class(ClassId.ERROR), Map.of());
         for (String document : List.of("{\"x\":1,\"\\u0078\":2}", "{\"child\":{\"x\":1,\"x\":2}}", "[", "null garbage")) {
             var rejected = failure(document, unknown, Map.of());
             check(rejected.policy() == FailurePolicyId.JSON_PARSE_SYNTAX);

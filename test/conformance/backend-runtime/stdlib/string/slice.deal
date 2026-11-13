@@ -4,7 +4,7 @@
 // @features: string, builtin, utf16
 
 function check(ok:boolean):void {
-  if(!ok){throw {code:"TEST",message:"string slice"};}
+  if(!ok){throw {name:"TEST",message:"string slice"};}
 }
 
 export function main():null {
@@ -40,17 +40,17 @@ export function main():null {
   events="";
   check(receiver().slice(start())==="bcd" && events==="rs");
   let destination="kept";
-  let failReceiver=():string=>{events=events+"f";throw {code:"TEST",message:"receiver"};};
+  let failReceiver=():string=>{events=events+"f";throw {name:"TEST",message:"receiver"};};
   events="";
   try {destination=failReceiver().slice(start(),end());}
   catch(e){check((e as Error).message==="receiver");}
   check(events==="f" && destination==="kept");
-  let failStart=():number=>{events=events+"t";throw {code:"TEST",message:"start"};};
+  let failStart=():number=>{events=events+"t";throw {name:"TEST",message:"start"};};
   events="";
   try {destination=receiver().slice(failStart(),end());}
   catch(e){check((e as Error).message==="start");}
   check(events==="rt" && destination==="kept");
-  let failEnd=():number=>{events=events+"u";throw {code:"TEST",message:"end"};};
+  let failEnd=():number=>{events=events+"u";throw {name:"TEST",message:"end"};};
   events="";
   try {destination=receiver().slice(start(),failEnd());}
   catch(e){check((e as Error).message==="end");}

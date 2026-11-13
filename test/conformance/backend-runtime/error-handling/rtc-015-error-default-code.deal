@@ -1,12 +1,12 @@
 // @spec: Error handling
-// @description: An explicitly provided empty Error.code survives throw/catch unchanged
+// @description: An explicitly provided empty Error.name survives throw/catch unchanged
 // @expected: runtime-ok
 // @features: errors, error-type
 
 export function test_error_default_code(): null {
   let code: string = "unset";
-  try { throw { code: "", message: "expected" }; } catch (e) { code = (e as Error).code; }
-  if (code !== "") { throw { code: "TEST_FAIL", message: "explicit Error code was not empty" }; }
+  try { throw { name: "", message: "expected" }; } catch (e) { code = (e as Error).name; }
+  if (code !== "") { throw { name: "TEST_FAIL", message: "explicit Error name was not empty" }; }
   return null;
 }
 

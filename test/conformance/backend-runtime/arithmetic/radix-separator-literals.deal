@@ -4,7 +4,7 @@
 // @features: number, binary64, numeric-separator, radix
 
 function check(ok:boolean):void {
-  if (!ok) { throw {code:"TEST",message:"numeric literal value"}; }
+  if (!ok) { throw {name:"TEST",message:"numeric literal value"}; }
 }
 
 export function main():null {

@@ -10,7 +10,7 @@ async function echoInt(value: number): Promise<number> {
 async function probe(e: number | null): Promise<number> {
   if (e !== null) {
     try {
-      throw { code: "C_AWAIT", message: "await" };
+      throw { name: "C_AWAIT", message: "await" };
     } catch (e) {
       let captured: Error = e as Error;
       let resumed: number = await echoInt(1);

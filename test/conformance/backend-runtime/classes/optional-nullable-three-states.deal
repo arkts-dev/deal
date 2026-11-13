@@ -9,24 +9,24 @@ class Tri {
 
 export function test_optional_nullable_states(): null {
   let missing: Tri = {};
-  if (Object.hasOwn(missing, "field")) { throw { code: "TEST_FAIL", message: "missing should not have field" }; }
+  if (Object.hasOwn(missing, "field")) { throw { name: "TEST_FAIL", message: "missing should not have field" }; }
 
   let explicitNull: Tri = { field: null };
-  if (!Object.hasOwn(explicitNull, "field")) { throw { code: "TEST_FAIL", message: "explicit null should be present" }; }
-  if (explicitNull.field !== null) { throw { code: "TEST_FAIL", message: "explicit null mismatch" }; }
+  if (!Object.hasOwn(explicitNull, "field")) { throw { name: "TEST_FAIL", message: "explicit null should be present" }; }
+  if (explicitNull.field !== null) { throw { name: "TEST_FAIL", message: "explicit null mismatch" }; }
 
   let value: Tri = { field: 5 };
-  if (!Object.hasOwn(value, "field")) { throw { code: "TEST_FAIL", message: "value should be present" }; }
-  if (missing.field !== undefined) { throw { code: "TEST_FAIL", message: "missing read must be undefined" }; }
+  if (!Object.hasOwn(value, "field")) { throw { name: "TEST_FAIL", message: "value should be present" }; }
+  if (missing.field !== undefined) { throw { name: "TEST_FAIL", message: "missing read must be undefined" }; }
   let field: number | null | undefined = value.field;
   if (field !== null) {
     if (field !== undefined) {
-      if (field !== 5) { throw { code: "TEST_FAIL", message: "value mismatch" }; }
+      if (field !== 5) { throw { name: "TEST_FAIL", message: "value mismatch" }; }
     } else {
-      throw { code: "TEST_FAIL", message: "value became undefined" };
+      throw { name: "TEST_FAIL", message: "value became undefined" };
     }
   } else {
-    throw { code: "TEST_FAIL", message: "value became null" };
+    throw { name: "TEST_FAIL", message: "value became null" };
   }
   return null;
 }

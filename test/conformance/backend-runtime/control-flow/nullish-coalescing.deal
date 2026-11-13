@@ -2,7 +2,7 @@
 // @expected: runtime-ok
 // @features: control-flow, classes, closures, arrays
 class Item {x:number;}
-function check(ok:boolean,label:string):void{if(!ok){throw {code:label,message:label};}}
+function check(ok:boolean,label:string):void{if(!ok){throw {name:label,message:label};}}
 function assertionFallback():number{let bad:unknown="wrong";return bad as number;}
 function badSelection():number{let absent:number|null=null;return absent??assertionFallback();}
 export async function asyncCoalescing():Promise<number>{
@@ -44,12 +44,12 @@ export function main():null {
   const alias:Item[]=xs??[];check(alias===fallback && alias[0]===fallback[0],"array identity");
   let nothing:null|undefined=null;check((nothing??undefined??rhs())===7 && calls===4,"left association");
   check((null??7)===7 && (undefined??8)===8,"singletons");
-  const fail=():number=>{throw {code:"STOP",message:"stop"};};
+  const fail=():number=>{throw {name:"STOP",message:"stop"};};
   let result=19;let caught=false;n=2;result=n??fail();check(result===2,"skip failure");n=null;
-  try{result=n??fail();}catch(e){caught=(e as Error).code==="STOP";}
+  try{result=n??fail();}catch(e){caught=(e as Error).name==="STOP";}
   check(caught && result===2,"abrupt destination");
-  const first=():number|null=>{throw {code:"FIRST",message:"first"};};caught=false;
-  try{result=first()??rhs();}catch(e){caught=(e as Error).code==="FIRST";}
+  const first=():number|null=>{throw {name:"FIRST",message:"first"};};caught=false;
+  try{result=first()??rhs();}catch(e){caught=(e as Error).name==="FIRST";}
   check(caught && result===2 && calls===4,"abrupt left");
   const capture=(value:number):()=>number=>{let f:(()=>number)|null=null;return f??(():number=>value);};
   check(capture(21)()===21 && capture(22)()===22,"fresh captures");

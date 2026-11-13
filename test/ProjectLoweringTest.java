@@ -238,7 +238,7 @@ public class ProjectLoweringTest {
         export function main(): null {
           let a: A = {x: combine(state.calls(), build())};
           if (a.x !== 1100) {
-            throw { code: "OPERAND_OVERWRITE", message: "a nested attempt overwrote the enclosing operands" };
+            throw { name: "OPERAND_OVERWRITE", message: "a nested attempt overwrote the enclosing operands" };
           }
           output.log("ok");
           return null;
@@ -282,10 +282,10 @@ public class ProjectLoweringTest {
         export function main(): null {
           let a: A = {x: state.calls(), y: build()};
           if (a.x !== 0) {
-            throw { code: "ATTEMPT_VALUE_OVERWRITE", message: "a nested attempt overwrote the enclosing attempt's first default value" };
+            throw { name: "ATTEMPT_VALUE_OVERWRITE", message: "a nested attempt overwrote the enclosing attempt's first default value" };
           }
           if (a.y !== 7) {
-            throw { code: "ATTEMPT_VALUE_LOST", message: "the enclosing attempt's second default value is wrong" };
+            throw { name: "ATTEMPT_VALUE_LOST", message: "the enclosing attempt's second default value is wrong" };
           }
           output.log("ok");
           return null;
@@ -328,7 +328,7 @@ public class ProjectLoweringTest {
 
     private static String failedNestedDefault(String source, String message) {
         return source.replace("return 100;",
-                "throw { code: \"INNER_FAIL\", message: \"" + message + "\" };")
+                "throw { name: \"INNER_FAIL\", message: \"" + message + "\" };")
             .replace("  let inner: A = {x: combine(state.calls(), build())};",
                 "  try {\n    let inner: A = {x: combine(state.calls(), build())};\n  } catch (e) {\n  }")
             .replace("  let inner: A = {x: state.calls(), y: build()};",
@@ -344,10 +344,10 @@ public class ProjectLoweringTest {
         export function main(): null {
           let a: lib.A = {x: state.calls(), y: lib.build()};
           if (a.x !== 0) {
-            throw { code: "ATTEMPT_VALUE_OVERWRITE", message: "a nested attempt overwrote the transferred default value" };
+            throw { name: "ATTEMPT_VALUE_OVERWRITE", message: "a nested attempt overwrote the transferred default value" };
           }
           if (a.y !== 7) {
-            throw { code: "ATTEMPT_VALUE_LOST", message: "the transferred second default value is wrong" };
+            throw { name: "ATTEMPT_VALUE_LOST", message: "the transferred second default value is wrong" };
           }
           output.log("ok");
           return null;
@@ -427,7 +427,7 @@ public class ProjectLoweringTest {
         import * as cfg from "host/cfg";
 
         export function main(): null {
-          let e: Error = {code: "E1", message: "boom"};
+          let e: Error = {name: "E1", message: "boom"};
           return null;
         }
         """;
@@ -536,27 +536,27 @@ public class ProjectLoweringTest {
           a.nick = "n";
           let hadNick: boolean = Object.hasOwn(a, "nick");
           delete a.nick;
-          if (a.x !== 5) { throw { code: "WRONG_X", message: "x" }; }
+          if (a.x !== 5) { throw { name: "WRONG_X", message: "x" }; }
           if (!hadNick || Object.hasOwn(a, "nick")) {
-            throw { code: "WRONG_PRESENCE", message: "nick" };
+            throw { name: "WRONG_PRESENCE", message: "nick" };
           }
           let b: beta.Point = { y: "s" };
           let xs: beta.Point[] = [{ y: "a" }];
-          if (xs[0].y !== "a") { throw { code: "WRONG_ARRAY", message: "array" }; }
+          if (xs[0].y !== "a") { throw { name: "WRONG_ARRAY", message: "array" }; }
           let n: alpha.Point | null = { x: 2 };
-          if (n === null) { throw { code: "WRONG_NULLABLE", message: "n" }; }
+          if (n === null) { throw { name: "WRONG_NULLABLE", message: "n" }; }
           let w: Wrap = {a: {x: 1}, b: {y: "s"}};
           let json: string = JSON.stringify(w) as string;
           if (json !== "{\\\"a\\\":{\\\"x\\\":1},\\\"b\\\":{\\\"y\\\":\\\"s\\\"}}") {
-            throw { code: "WRONG_JSON", message: json };
+            throw { name: "WRONG_JSON", message: json };
           }
           let back: Wrap | null = JSON.parse(json);
           if (back !== null) {
             if (back.a.x !== 1 || back.b.y !== "s") {
-              throw { code: "WRONG_JSON_FIELDS", message: "back" };
+              throw { name: "WRONG_JSON_FIELDS", message: "back" };
             }
           } else {
-            throw { code: "WRONG_JSON_NULL", message: "back" };
+            throw { name: "WRONG_JSON_NULL", message: "back" };
           }
           return null;
         }
@@ -591,13 +591,13 @@ public class ProjectLoweringTest {
 
         export function main(): null {
           let direct: ir.Ir = {a: 7};
-          if (direct.a !== 7) { throw { code: "WRONG_DIRECT", message: "a" }; }
-          if (ir.useIr({a: 7}) !== 7) { throw { code: "WRONG_CALL", message: "a" }; }
+          if (direct.a !== 7) { throw { name: "WRONG_DIRECT", message: "a" }; }
+          if (ir.useIr({a: 7}) !== 7) { throw { name: "WRONG_CALL", message: "a" }; }
           let h: Holder = {inner: {a: 7}, items: [{a: 7}]};
-          if (h.inner.a !== 7) { throw { code: "WRONG_NESTED", message: "a" }; }
-          if (h.items[0].a !== 7) { throw { code: "WRONG_ARRAY", message: "a" }; }
+          if (h.inner.a !== 7) { throw { name: "WRONG_NESTED", message: "a" }; }
+          if (h.items[0].a !== 7) { throw { name: "WRONG_ARRAY", message: "a" }; }
           let xs: ir.Ir[] = [{a: 7}];
-          if (xs[0].a !== 7) { throw { code: "WRONG_LITERAL_ARRAY", message: "a" }; }
+          if (xs[0].a !== 7) { throw { name: "WRONG_LITERAL_ARRAY", message: "a" }; }
           return null;
         }
         """;
@@ -632,15 +632,15 @@ public class ProjectLoweringTest {
         export function main(): null {
           let x: ir.Ir = {a: 7};
           x.a = 5;
-          if (x.a !== 5) { throw { code: "WRONG_IR_READ", message: "a" }; }
+          if (x.a !== 5) { throw { name: "WRONG_IR_READ", message: "a" }; }
           let had: boolean = Object.hasOwn(x, "nick");
           delete x.nick;
-          if (had || Object.hasOwn(x, "nick")) { throw { code: "WRONG_IR_DELETE", message: "nick" }; }
+          if (had || Object.hasOwn(x, "nick")) { throw { name: "WRONG_IR_DELETE", message: "nick" }; }
           let y: other.Point = {nick: 1};
           y.nick = 2;
-          if (y.nick !== 2) { throw { code: "WRONG_OTHER", message: "nick" }; }
+          if (y.nick !== 2) { throw { name: "WRONG_OTHER", message: "nick" }; }
           let p: Point = {nick: ""};
-          if (p.nick !== "") { throw { code: "WRONG_LOCAL", message: "nick" }; }
+          if (p.nick !== "") { throw { name: "WRONG_LOCAL", message: "nick" }; }
           return null;
         }
         """;
@@ -679,7 +679,7 @@ public class ProjectLoweringTest {
         export function main(): null {
           let w: Wrap = JSON.parse(`{"item":{"a":7}}`);
           let s: string = JSON.stringify(w) as string;
-          if (s === "") { throw { code: "WRONG", message: "s" }; }
+          if (s === "") { throw { name: "WRONG", message: "s" }; }
           return null;
         }
         """;
@@ -711,7 +711,7 @@ public class ProjectLoweringTest {
           let w: Wrap = JSON.parse(`{"p":{"nick":"l"}}`);
           let s: string = JSON.stringify(w) as string;
           if (s !== "{\\\"p\\\":{\\\"nick\\\":\\\"l\\\"}}") {
-            throw { code: "WRONG", message: s };
+            throw { name: "WRONG", message: s };
           }
           return null;
         }
@@ -753,13 +753,13 @@ public class ProjectLoweringTest {
           let w: Wrap = {p: {a: 7}};
           let s: string = JSON.stringify(w) as string;
           if (s !== "{\\\"p\\\":{\\\"a\\\":7}}") {
-            throw { code: "WRONG", message: s };
+            throw { name: "WRONG", message: s };
           }
           let w2: Wrap | null = JSON.parse(`{"p":{"a":7}}`);
           if (w2 !== null) {
-            if (w2.p.a !== 7) { throw { code: "WRONG_A", message: "a" }; }
+            if (w2.p.a !== 7) { throw { name: "WRONG_A", message: "a" }; }
           } else {
-            throw { code: "WRONG_NULL", message: "null" };
+            throw { name: "WRONG_NULL", message: "null" };
           }
           return null;
         }
@@ -800,8 +800,8 @@ public class ProjectLoweringTest {
         export function main(): null {
           let p: Ir = id({a: 5});
           let q: Holder = {f: id({a: 5})};
-          if (p.a !== 5) { throw { code: "WRONG_P", message: "p.a" }; }
-          if (q.f.a !== 5) { throw { code: "WRONG_F", message: "q.f.a" }; }
+          if (p.a !== 5) { throw { name: "WRONG_P", message: "p.a" }; }
+          if (q.f.a !== 5) { throw { name: "WRONG_F", message: "q.f.a" }; }
           return null;
         }
         """;
@@ -823,7 +823,7 @@ public class ProjectLoweringTest {
 
         export function main(): null {
           let p: codec.Ir = codec.id({a: 93});
-          if (p.a !== 93) { throw { code: "WRONG_CODEC", message: "p.a" }; }
+          if (p.a !== 93) { throw { name: "WRONG_CODEC", message: "p.a" }; }
           return null;
         }
         """;
@@ -887,7 +887,7 @@ public class ProjectLoweringTest {
           let had: boolean = Object.hasOwn(z, "nick");
           delete z.nick;
           if (v !== 7 || n !== 7 || w !== 11 || q !== 7 || had) {
-            throw { code: "WRONG", message: "call receiver" };
+            throw { name: "WRONG", message: "call receiver" };
           }
           return null;
         }
@@ -928,15 +928,15 @@ public class ProjectLoweringTest {
             + "\n"
             + "export function main(): null {\n"
             + "  let n: number = ir.useIr({a: 7});\n"
-            + "  if (n !== 7) { throw { code: \"WRONG_PARAM\", message: \"n\" }; }\n"
+            + "  if (n !== 7) { throw { name: \"WRONG_PARAM\", message: \"n\" }; }\n"
             + "  let m: number = g({a: 7});\n"
-            + "  if (m !== 7) { throw { code: \"WRONG_LOCAL_PARAM\", message: \"m\" }; }\n"
+            + "  if (m !== 7) { throw { name: \"WRONG_LOCAL_PARAM\", message: \"m\" }; }\n"
             + "  let r: ir.Ir = make();\n"
-            + "  if (r.a !== 7) { throw { code: \"WRONG_RETURN\", message: \"r\" }; }\n"
+            + "  if (r.a !== 7) { throw { name: \"WRONG_RETURN\", message: \"r\" }; }\n"
             + (localFieldsOnly
                 ? "  return null;\n"
                 : "  let local: Ir = {a: 5};\n"
-                    + "  if (local.a !== 5) { throw { code: \"WRONG_LOCAL\","
+                    + "  if (local.a !== 5) { throw { name: \"WRONG_LOCAL\","
                     + " message: \"local\" }; }\n"
                     + "  return null;\n")
             + "}\n";
@@ -1314,10 +1314,10 @@ public class ProjectLoweringTest {
                     "the seeds' builtin Error registration is exactly the "
                         + "compiler-owned ClassLayout.BUILTIN_ERROR constant (the "
                         + "layout is identical in every unit's context)");
-                checkEq(List.of("code", "message"),
+                checkEq(List.of("name", "message"),
                     errorLayout.fields().stream().map(ClassLayout.FieldLayout::name)
                         .toList(),
-                    "the builtin Error layout carries code/message in declaration "
+                    "the builtin Error layout carries name/message in declaration "
                         + "order");
                 check(errorLayout.fields().stream()
                         .allMatch(field -> field.required()
@@ -2838,8 +2838,8 @@ public class ProjectLoweringTest {
         export function main(): null {
           let p: Ir = f(ir.g({a: 7}));
           let n: number = ir.g({a: 7}).a;
-          if (n !== 7) { throw { code: "WRONG_N", message: "n" }; }
-          if (p.b !== "local") { throw { code: "WRONG_B", message: "b" }; }
+          if (n !== 7) { throw { name: "WRONG_N", message: "n" }; }
+          if (p.b !== "local") { throw { name: "WRONG_B", message: "b" }; }
           return null;
         }
         """;
@@ -2938,9 +2938,9 @@ public class ProjectLoweringTest {
         export function main(): null {
           let x: ir.Ir = { inner: {b: 93}, a: 7 };
           let b: number = x.inner.b;
-          if (b !== 93) { throw { code: "WRONG_B", message: "b" }; }
+          if (b !== 93) { throw { name: "WRONG_B", message: "b" }; }
           let a: number = x.a;
-          if (a !== 7) { throw { code: "WRONG_A", message: "a" }; }
+          if (a !== 7) { throw { name: "WRONG_A", message: "a" }; }
           return null;
         }
         """;
@@ -3054,7 +3054,7 @@ public class ProjectLoweringTest {
         export function main(): null {
           let x: ir.Outer = { inner: {b: 93} };
           let b: number = x.inner.b;
-          if (b !== 93) { throw { code: "WRONG_B", message: "b" }; }
+          if (b !== 93) { throw { name: "WRONG_B", message: "b" }; }
           return null;
         }
         """;
@@ -3901,7 +3901,7 @@ public class ProjectLoweringTest {
             + "export function main(): null {\n"
             + "  let f: (x: ir.Ir) => number = ir.useIr;\n"
             + "  let n: number = f({a: 7});\n"
-            + "  if (n !== 7) { throw { code: \"WRONG_N\", message: \"n\" }; }\n"
+            + "  if (n !== 7) { throw { name: \"WRONG_N\", message: \"n\" }; }\n"
             + "  return null;\n"
             + "}\n";
         RealProject project = compileProject(app,
@@ -4447,14 +4447,14 @@ public class ProjectLoweringTest {
                 "the builtin Error construction carries the null factory ref");
             checkEq(ClassLayout.BUILTIN_ERROR, payload.layout(),
                 "the payload's layout is the compiler-owned builtin Error layout");
-            checkEq(List.of("code", "message"),
+            checkEq(List.of("name", "message"),
                 payload.providedFields().stream()
                     .map(KindPayload.ProvidedField::name).toList(),
-                "the provided fields keep literal order (code, message)");
-            checkEq(List.of("code", "message"),
+                "the provided fields keep literal order (name, message)");
+            checkEq(List.of("name", "message"),
                 payload.fieldBoundaries().stream()
                     .map(KindPayload.FieldBoundary::field).toList(),
-                "the field boundaries are the declared order (code, message)");
+                "the field boundaries are the declared order (name, message)");
             check(payload.fieldBoundaries().stream().allMatch(entry ->
                     entry.kind() == BoundaryKind.CLASS_LITERAL_FIELD),
                 "every field boundary is a CLASS_LITERAL_FIELD (no "

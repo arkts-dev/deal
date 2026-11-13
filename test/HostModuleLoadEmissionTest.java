@@ -104,11 +104,11 @@ public class HostModuleLoadEmissionTest {
 
         export function main(): null {
           let c: cfg.Config = {%s};
-          if (!Object.hasOwn(c, "fallback") || !Object.hasOwn(c, "peers")) { throw {code: "presence", message: "missing"}; }
+          if (!Object.hasOwn(c, "fallback") || !Object.hasOwn(c, "peers")) { throw {name: "presence", message: "missing"}; }
           let fallback: number | undefined = c.fallback;
           if (fallback !== undefined) {
-            if (fallback !== 3) { throw {code: "value", message: "fallback"}; }
-          } else { throw {code: "value", message: "null fallback"}; }
+            if (fallback !== 3) { throw {name: "value", message: "fallback"}; }
+          } else { throw {name: "value", message: "null fallback"}; }
           return null;
         }
         """;
@@ -339,13 +339,13 @@ public class HostModuleLoadEmissionTest {
         import * as err from "host/error_probe";
 
         export function drive(): string {
-          let seed: Error = { code: "E_H", message: "hm" };
+          let seed: Error = { name: "E_H", message: "hm" };
           let echoed: Error = err.echo(seed);
           let made: Error = err.make();
           let holder: err.Holder = err.wrap(seed);
           let nested: Error = err.observe(holder);
-          return echoed.code + ":" + echoed.message + ":" + made.code + ":"
-            + made.message + ":" + nested.code + ":" + nested.message;
+          return echoed.name + ":" + echoed.message + ":" + made.name + ":"
+            + made.message + ":" + nested.name + ":" + nested.message;
         }
 
         export function aliasRejected(): Error {
@@ -364,7 +364,7 @@ public class HostModuleLoadEmissionTest {
     /**
      * The deployed LuaJIT host implementation of host/error_probe: every
      * crossing position admits the loaded matcher's runtime Error instance
-     * shape only (the declared code/message fields), transforms the value
+     * shape only (the declared name/message fields), transforms the value
      * so the DEAL side observes the host's own input, and returns the
      * runtime representation — the two superseded v1.2 identity aliases
      * included, so the wrapper's canonical matcher must refuse them.
@@ -383,19 +383,19 @@ public class HostModuleLoadEmissionTest {
               error("host echo: the parameter is not the runtime Error instance", 0)
             end
             return { [__dealCarrierKeys.kind] = "class", [__dealCarrierKeys.classname] = "Error",
-                     code = "R:" .. e.code, message = e.message }
+                     name = "R:" .. e.name, message = e.message }
           end,
           make = function()
             return { [__dealCarrierKeys.kind] = "class", [__dealCarrierKeys.classname] = "Error",
-                     code = "E_M", message = "mm" }
+                     name = "E_M", message = "mm" }
           end,
           aliased = function()
             return { [__dealCarrierKeys.kind] = "class", [__dealCarrierKeys.classname] = "@/Error",
-                     code = "E_A", message = "am" }
+                     name = "E_A", message = "am" }
           end,
           builtinAliased = function()
             return { [__dealCarrierKeys.kind] = "class", [__dealCarrierKeys.classname] = "@$builtin/Error",
-                     code = "E_B", message = "bm" }
+                     name = "E_B", message = "bm" }
           end,
           Holder = { [__dealCarrierKeys.kind] = "class",
                      [__dealCarrierKeys.classname] = "@$external/host/error_probe/Holder" },
@@ -407,7 +407,7 @@ public class HostModuleLoadEmissionTest {
             return { [__dealCarrierKeys.kind] = "class",
                      [__dealCarrierKeys.classname] = "@$external/host/error_probe/Holder",
                      e = { [__dealCarrierKeys.kind] = "class", [__dealCarrierKeys.classname] = "Error",
-                           code = "W:" .. e.code, message = e.message } }
+                           name = "W:" .. e.name, message = e.message } }
           end,
           observe = function(v)
             if type(v) ~= "table" or v[__dealCarrierKeys.kind] ~= "class"
@@ -421,7 +421,7 @@ public class HostModuleLoadEmissionTest {
                 .. "instance", 0)
             end
             return { [__dealCarrierKeys.kind] = "class", [__dealCarrierKeys.classname] = "Error",
-                     code = "O:" .. inner.code, message = inner.message }
+                     name = "O:" .. inner.name, message = inner.message }
           end,
         }
         """;
@@ -1302,11 +1302,11 @@ public class HostModuleLoadEmissionTest {
     say("out.pair.left", pairOut.left)
     say("out.pair.right", pairOut.right)
 
-    local errorCarrier = {[K.d] = true, code = "E_X", m = "boom"}
+    local errorCarrier = {[K.d] = true, name = "E_X", code = "E_X", m = "boom"}
     local errorOut = __factories.__hostCarrierOut(nil, errorCarrier, {})
     say("out.error.kind", errorOut[K.kind])
     say("out.error.identity", errorOut[K.classname])
-    say("out.error.code", errorOut.code)
+    say("out.error.code", errorOut.name)
     say("out.error.message", errorOut.message)
     say("out.error.no-carrier", errorOut[K.d] == nil)
 
@@ -1532,10 +1532,10 @@ public class HostModuleLoadEmissionTest {
     say("in.unknown.field", unknownIn.v)
 
     local hostError = {[K.kind] = "class", [K.classname] = "Error",
-      code = "E_Y", message = "bad"}
+      name = "E_Y", message = "bad"}
     local errorIn = __factories.__hostCarrierIn(nil, hostError, {})
     say("in.error.carrier", errorIn[K.d])
-    say("in.error.code", errorIn.code)
+    say("in.error.code", errorIn.name)
     say("in.error.m", errorIn.m)
 
     local dense = {10, 20, 30}
@@ -2375,7 +2375,7 @@ public class HostModuleLoadEmissionTest {
           try {
             outcome = "OK:" + (JSON.stringify(t) as string);
           } catch (e) {
-            outcome = (e as Error).code + "|" + (e as Error).message;
+            outcome = (e as Error).name + "|" + (e as Error).message;
           }
           return outcome;
         }
@@ -2402,17 +2402,17 @@ public class HostModuleLoadEmissionTest {
             let encoded: string = JSON.stringify(host.makeCycle()) as string;
             cycleOk = encoded === "";
           } catch (e) {
-            cycleOk = (e as Error).code === "E8001"
+            cycleOk = (e as Error).name === "E8001"
               && (e as Error).message === "cyclic value cannot be encoded as JSON";
           }
           if (!cycleOk) {
-            throw { code: "TEST_FAIL", message: "host table cycle arm" };
+            throw { name: "TEST_FAIL", message: "host table cycle arm" };
           }
 
           let fifth = "array=BAD";
-          try { host.makeArray(); } catch(e) { if(e instanceof Error){fifth="array="+e.code;} }
+          try { host.makeArray(); } catch(e) { if(e instanceof Error){fifth="array="+e.name;} }
           let sixth = "mixed=BAD";
-          try { host.makeMixed(); } catch(e) { if(e instanceof Error){sixth="mixed="+e.code;} }
+          try { host.makeMixed(); } catch(e) { if(e instanceof Error){sixth="mixed="+e.name;} }
 
           return first + "\\n" + second + "\\n" + third + "\\n" + fourth
             + "\\n" + fifth + "\\n" + sixth;
@@ -2543,20 +2543,20 @@ public class HostModuleLoadEmissionTest {
 
         function asyncTotal(xs: number[]): number {
           if (xs.length !== 3) {
-            throw { code: "TEST_FAIL", message: "async completion length" };
+            throw { name: "TEST_FAIL", message: "async completion length" };
           }
           if (xs[0] !== 10 || xs[1] !== 20 || xs[2] !== 30) {
-            throw { code: "TEST_FAIL", message: "async completion elements" };
+            throw { name: "TEST_FAIL", message: "async completion elements" };
           }
           return sum(xs);
         }
 
         function callbackTotal(xs: number[]): number {
           if (xs.length !== 3) {
-            throw { code: "TEST_FAIL", message: "callback argument length" };
+            throw { name: "TEST_FAIL", message: "callback argument length" };
           }
           if (xs[0] !== 1 || xs[1] !== 2 || xs[2] !== 3) {
-            throw { code: "TEST_FAIL", message: "callback argument elements" };
+            throw { name: "TEST_FAIL", message: "callback argument elements" };
           }
           return sum(xs);
         }
@@ -2573,13 +2573,13 @@ public class HostModuleLoadEmissionTest {
         export async function runNested(): Promise<number> {
           let xs: number[][] = await host.produceNested();
           if (xs.length !== 2) {
-            throw { code: "TEST_FAIL", message: "nested completion length" };
+            throw { name: "TEST_FAIL", message: "nested completion length" };
           }
           if (xs[0] !== xs[1]) {
-            throw { code: "TEST_FAIL", message: "nested completion alias" };
+            throw { name: "TEST_FAIL", message: "nested completion alias" };
           }
           if (xs[0].length !== 2 || xs[0][0] !== 7 || xs[0][1] !== 8) {
-            throw { code: "TEST_FAIL", message: "nested completion elements" };
+            throw { name: "TEST_FAIL", message: "nested completion elements" };
           }
           return xs[0][0] + xs[1][1];
         }
@@ -2952,88 +2952,88 @@ public class HostModuleLoadEmissionTest {
           let tags: string[] | undefined = a.tags;
           if (tags !== undefined) {
             if (tags.length !== 2) {
-              throw { code: "TEST_FAIL", message: "default tags length" };
+              throw { name: "TEST_FAIL", message: "default tags length" };
             }
             if (tags[0] !== "a") {
-              throw { code: "TEST_FAIL", message: "default tags first" };
+              throw { name: "TEST_FAIL", message: "default tags first" };
             }
             if (tags[1] !== "b") {
-              throw { code: "TEST_FAIL", message: "default tags second" };
+              throw { name: "TEST_FAIL", message: "default tags second" };
             }
           } else {
-            throw { code: "TEST_FAIL", message: "default tags absent" };
+            throw { name: "TEST_FAIL", message: "default tags absent" };
           }
           let carrier: string = cfg.tagsCarrier(a);
           if (carrier !== "true:2:nil:0:a:b") {
-            throw { code: "TEST_FAIL", message: "default tags carrier: " + carrier };
+            throw { name: "TEST_FAIL", message: "default tags carrier: " + carrier };
           }
           if (tags !== undefined) {
             tags[0] = "mutated";
           }
           if (!Object.hasOwn(a, "note")) {
-            throw { code: "TEST_FAIL", message: "present null default lost" };
+            throw { name: "TEST_FAIL", message: "present null default lost" };
           }
           if (a.note !== null) {
-            throw { code: "TEST_FAIL", message: "present null default value" };
+            throw { name: "TEST_FAIL", message: "present null default value" };
           }
           if (Object.hasOwn(a, "memo")) {
-            throw { code: "TEST_FAIL", message: "absent default fabricated" };
+            throw { name: "TEST_FAIL", message: "absent default fabricated" };
           }
           if (a.memo !== undefined) {
-            throw { code: "TEST_FAIL", message: "absent default read" };
+            throw { name: "TEST_FAIL", message: "absent default read" };
           }
           let fallback: cfg.Endpoint | undefined = a.fallback;
           if (fallback !== undefined) {
             if (pathOf(fallback) !== "/fb") {
-              throw { code: "TEST_FAIL", message: "nested class default value" };
+              throw { name: "TEST_FAIL", message: "nested class default value" };
             }
           } else {
-            throw { code: "TEST_FAIL", message: "nested class default lost" };
+            throw { name: "TEST_FAIL", message: "nested class default lost" };
           }
           let b: cfg.ServerConfig = { port: 2, endpoint: { path: "/y" }, tags: ["z"] };
           let bTags: string[] | undefined = b.tags;
           if (bTags !== undefined) {
             if (bTags.length !== 1) {
-              throw { code: "TEST_FAIL", message: "provided tags length" };
+              throw { name: "TEST_FAIL", message: "provided tags length" };
             }
             if (bTags[0] !== "z") {
-              throw { code: "TEST_FAIL", message: "provided tags element" };
+              throw { name: "TEST_FAIL", message: "provided tags element" };
             }
           } else {
-            throw { code: "TEST_FAIL", message: "provided tags lost" };
+            throw { name: "TEST_FAIL", message: "provided tags lost" };
           }
           let omitted: cfg.ServerConfig = { port: 0, endpoint: { path: "/o" } };
           if (Object.hasOwn(omitted, "tags") || Object.hasOwn(omitted, "note") || Object.hasOwn(omitted, "fallback")) {
-            throw { code: "TEST_FAIL", message: "omitted optional fabricated" };
+            throw { name: "TEST_FAIL", message: "omitted optional fabricated" };
           }
           let c: cfg.ServerConfig = { port: 3, endpoint: { path: "/z" }, tags: ["a", "b"] };
           let cTags: string[] | undefined = c.tags;
           if (cTags !== undefined) {
             if (cTags.length !== 2) {
-              throw { code: "TEST_FAIL", message: "second default tags length" };
+              throw { name: "TEST_FAIL", message: "second default tags length" };
             }
             if (cTags[0] !== "a") {
-              throw { code: "TEST_FAIL", message: "second default tags first" };
+              throw { name: "TEST_FAIL", message: "second default tags first" };
             }
             if (cTags[1] !== "b") {
-              throw { code: "TEST_FAIL", message: "second default tags second" };
+              throw { name: "TEST_FAIL", message: "second default tags second" };
             }
           } else {
-            throw { code: "TEST_FAIL", message: "second default tags lost" };
+            throw { name: "TEST_FAIL", message: "second default tags lost" };
           }
           let bundle: cfg.Bundle = { label: "b", action: function(x: number): number { return x + 1; } };
           let action: ((x: number) => number) | undefined = bundle.action;
           if (action !== undefined) {
             let r: number = action(41);
             if (r !== 42) {
-              throw { code: "TEST_FAIL", message: "function default result" };
+              throw { name: "TEST_FAIL", message: "function default result" };
             }
           } else {
-            throw { code: "TEST_FAIL", message: "function default lost" };
+            throw { name: "TEST_FAIL", message: "function default lost" };
           }
           let state: string = cfg.inspect();
           if (state !== "a:b:nil:nil:class:/default:true:true:7080:function:42") {
-            throw { code: "TEST_FAIL", message: "host defaults mutated: " + state };
+            throw { name: "TEST_FAIL", message: "host defaults mutated: " + state };
           }
           return "DEFAULTS-OK";
         }
@@ -3041,7 +3041,7 @@ public class HostModuleLoadEmissionTest {
         export function badDefaults(): string {
           let e: cfg.OptionalOnly = {};
           if (Object.hasOwn(e, "flag")) {
-            throw { code: "TEST_FAIL", message: "omitted flag fabricated" };
+            throw { name: "TEST_FAIL", message: "omitted flag fabricated" };
           }
           return "constructed";
         }
@@ -3259,7 +3259,7 @@ public class HostModuleLoadEmissionTest {
 
         function check(condition: boolean, message: string): string {
           if (!condition) {
-            throw { code: "TEST_FAIL", message: message };
+            throw { name: "TEST_FAIL", message: message };
           }
           return "ok";
         }
@@ -3687,7 +3687,7 @@ public class HostModuleLoadEmissionTest {
 
         function check(condition: boolean, message: string): string {
           if (!condition) {
-            throw { code: "TEST_FAIL", message: message };
+            throw { name: "TEST_FAIL", message: message };
           }
           return "ok";
         }
@@ -4168,7 +4168,7 @@ public class HostModuleLoadEmissionTest {
           bag.cfg = s;
           bag.scores = s.scores;
           if (s.endpoint !== s.backup) {
-            throw { code: "TEST_FAIL", message: "completion field alias" };
+            throw { name: "TEST_FAIL", message: "completion field alias" };
           }
           let tags: string[] | undefined = s.tags;
           let tagText: string = "absent";
@@ -4177,7 +4177,7 @@ public class HostModuleLoadEmissionTest {
           }
           let label: string | undefined = s.label;
           if (label !== undefined) {
-            throw { code: "TEST_FAIL", message: "absent optional" };
+            throw { name: "TEST_FAIL", message: "absent optional" };
           }
           let note: string | null | undefined = s.note;
           let noteText: string = "absent";
@@ -4192,10 +4192,10 @@ public class HostModuleLoadEmissionTest {
         export async function runAll(): Promise<string> {
           let xs: host.Endpoint[] = await host.makeAll();
           if (xs.length !== 2) {
-            throw { code: "TEST_FAIL", message: "class array length" };
+            throw { name: "TEST_FAIL", message: "class array length" };
           }
           if (xs[0] !== xs[1]) {
-            throw { code: "TEST_FAIL", message: "class array alias" };
+            throw { name: "TEST_FAIL", message: "class array alias" };
           }
           return JSON.stringify({ length: xs.length, path: xs[0].path }) as string;
         }
@@ -4205,7 +4205,7 @@ public class HostModuleLoadEmissionTest {
           let endpoint: host.Endpoint = t.endpoint as host.Endpoint;
           let alias: host.Endpoint = t.alias as host.Endpoint;
           if (endpoint !== alias) {
-            throw { code: "TEST_FAIL", message: "table copy alias" };
+            throw { name: "TEST_FAIL", message: "table copy alias" };
           }
           let bump: (x: number) => number = t.bump as (x: number) => number;
           let value: number = bump(41);
@@ -4243,7 +4243,7 @@ public class HostModuleLoadEmissionTest {
         export async function runNull(): Promise<string> {
           let v: string | null = await host.makeNull();
           if (v !== null) {
-            throw { code: "TEST_FAIL", message: "null completion" };
+            throw { name: "TEST_FAIL", message: "null completion" };
           }
           return "null";
         }
@@ -4605,27 +4605,27 @@ public class HostModuleLoadEmissionTest {
 
         function tag(s: host.ServerConfig): host.ServerConfig {
           if (s.port !== 8080) {
-            throw { code: "TEST_FAIL", message: "callback port" };
+            throw { name: "TEST_FAIL", message: "callback port" };
           }
           if (s.endpoint.path !== "/e") {
-            throw { code: "TEST_FAIL", message: "callback endpoint" };
+            throw { name: "TEST_FAIL", message: "callback endpoint" };
           }
           let tags: string[] | undefined = s.tags;
           if (tags === undefined) {
-            throw { code: "TEST_FAIL", message: "callback tags absent" };
+            throw { name: "TEST_FAIL", message: "callback tags absent" };
           } else {
             if (tags.length !== 2) {
-              throw { code: "TEST_FAIL", message: "callback tags length" };
+              throw { name: "TEST_FAIL", message: "callback tags length" };
             }
             if (tags[0] !== "a" || tags[1] !== "b") {
-              throw { code: "TEST_FAIL", message: "callback tag values" };
+              throw { name: "TEST_FAIL", message: "callback tag values" };
             }
           }
           if (s.note === null) {
             return { port: 9090, endpoint: { path: "/back" }, tags: ["r1", "r2"],
               note: null };
           } else {
-            throw { code: "TEST_FAIL", message: "callback note" };
+            throw { name: "TEST_FAIL", message: "callback note" };
           }
         }
 
@@ -4641,11 +4641,11 @@ public class HostModuleLoadEmissionTest {
 
         function relabel(b: host.Bundle): host.Bundle {
           if (b.label !== "given") {
-            throw { code: "TEST_FAIL", message: "callback bundle label" };
+            throw { name: "TEST_FAIL", message: "callback bundle label" };
           }
           let value: number = b.action(21);
           if (value !== 43) {
-            throw { code: "TEST_FAIL", message: "callback host function value" };
+            throw { name: "TEST_FAIL", message: "callback host function value" };
           }
           return { label: "back", action: scale };
         }
@@ -4707,16 +4707,16 @@ public class HostModuleLoadEmissionTest {
             let ignored: number = wrong(1);
             return "mismatch=admitted";
           } catch (e) {
-            return "mismatch=" + (e as Error).code + "|" + (e as Error).message;
+            return "mismatch=" + (e as Error).name + "|" + (e as Error).message;
           }
         }
 
         function same(a: host.ServerConfig, b: host.ServerConfig): boolean {
           if (a.port !== 8080) {
-            throw { code: "TEST_FAIL", message: "pair port" };
+            throw { name: "TEST_FAIL", message: "pair port" };
           }
           if (b.endpoint.path !== "/e") {
-            throw { code: "TEST_FAIL", message: "pair endpoint" };
+            throw { name: "TEST_FAIL", message: "pair endpoint" };
           }
           return a === b;
         }
@@ -5091,7 +5091,7 @@ public class HostModuleLoadEmissionTest {
           let hfn: (n: number) => number = made.fn as (n: number) => number;
           let r: number = hfn(41);
           let p: Point = { x: 3, y: 4 };
-          let e: Error = { code: "E_X", message: "boom" };
+          let e: Error = { name: "E_X", message: "boom" };
           let t: Record<string, unknown> = { cfg: cfg, hfn: hfn, fn: util.bump, pt: p,
             other: p, xs: [p], err: e, errs: [e] };
           let ok: string = "no";
@@ -5103,7 +5103,7 @@ public class HostModuleLoadEmissionTest {
 
         export function runEcho(): string {
           let p: Point = { x: 3, y: 4 };
-          let e: Error = { code: "E_X", message: "boom" };
+          let e: Error = { name: "E_X", message: "boom" };
           let t: Record<string, unknown> = { pt: p, other: p, xs: [p], fn: util.bump,
             err: e, errs: [e] };
           let echoed: Record<string, unknown> = host.echoTable(t);
@@ -5126,8 +5126,8 @@ public class HostModuleLoadEmissionTest {
           }
           let errok: string = "no";
           if (err === errInArray
-              && err.code === "E_X" && err.message === "boom"
-              && errInArray.code === "E_X"
+              && err.name === "E_X" && err.message === "boom"
+              && errInArray.name === "E_X"
               && errInArray.message === "boom") {
             errok = "yes";
           }
@@ -5167,7 +5167,7 @@ public class HostModuleLoadEmissionTest {
             let v: string = action("x");
             return "wrongField=admitted";
           } catch (e) {
-            return "wrongField=" + (e as Error).code + "|" + (e as Error).message;
+            return "wrongField=" + (e as Error).name + "|" + (e as Error).message;
           }
         }
 
@@ -5175,14 +5175,14 @@ public class HostModuleLoadEmissionTest {
           let t: Record<string, unknown> = host.makeTable();
           let original: (n: number) => number = t.fn as (n: number) => number;
           if (!host.corruptSignature({value: original})) {
-            throw {code: "TEST_FAIL", message: "signature mutation failed"};
+            throw {name: "TEST_FAIL", message: "signature mutation failed"};
           }
           try {
             let fn: (n: number) => number = original;
             let r: number = fn(1);
             return "wrongMember=admitted";
           } catch (e) {
-            return "wrongMember=" + (e as Error).code + "|" + (e as Error).message;
+            return "wrongMember=" + (e as Error).name + "|" + (e as Error).message;
           }
         }
 
@@ -5237,7 +5237,7 @@ public class HostModuleLoadEmissionTest {
             let r: number = fn(41);
             return "rawFunction=admitted";
           } catch (e) {
-            return "rawFunction=" + (e as Error).code + "|" + (e as Error).message;
+            return "rawFunction=" + (e as Error).name + "|" + (e as Error).message;
           }
         }
 
@@ -5247,7 +5247,7 @@ public class HostModuleLoadEmissionTest {
             let c: host.Cfg = t.fn as host.Cfg;
             return "wrongClass=admitted";
           } catch (e) {
-            return "wrongClass=" + (e as Error).code + "|" + (e as Error).message;
+            return "wrongClass=" + (e as Error).name + "|" + (e as Error).message;
           }
         }
 
@@ -5264,9 +5264,9 @@ public class HostModuleLoadEmissionTest {
               let xs: Point[] = [value];
               return "wrongElement=admitted";
             }
-            throw {code: "TEST_FAIL", message: "element branch skipped"};
+            throw {name: "TEST_FAIL", message: "element branch skipped"};
           } catch (e) {
-            return "wrongElement=" + (e as Error).code + "|" + (e as Error).message;
+            return "wrongElement=" + (e as Error).name + "|" + (e as Error).message;
           }
         }
 
@@ -5321,7 +5321,7 @@ public class HostModuleLoadEmissionTest {
         local function errShape(v)
           if type(v) ~= "table" then return "none" end
           return "kind=" .. tostring(v[K.kind]) .. " typed="
-            .. tostring(rt.typed_kind(v)) .. " code=" .. tostring(v.code)
+            .. tostring(rt.typed_kind(v)) .. " code=" .. tostring(v.name)
             .. " message=" .. tostring(v.message) .. " dmark="
             .. tostring(rawget(v, K.d))
         end
@@ -5737,7 +5737,7 @@ public class HostModuleLoadEmissionTest {
      * canonical Error descriptor's host boundary): one DEAL Error value
      * crosses the declared host parameter and return cells in both
      * directions — the loaded matcher's runtime Error instance carrying
-     * the declared code/message fields on the host side and the chunk's
+     * the declared name/message fields on the host side and the chunk's
      * own Error carrier on the DEAL side, recursively through a declared
      * host class's Error field — while the superseded v1.2 identity
      * aliases fail with the pinned E8010 and no fallback identity.

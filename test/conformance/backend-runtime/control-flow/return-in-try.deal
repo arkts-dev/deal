@@ -19,7 +19,7 @@ export function test_return_in_try_loop(): number {
   };
   let got: number = findFive();
   if (got !== 5 || catchRan !== false) {
-    throw { code: "TEST_FAIL", message: "return inside try in loop: wrong result or catch executed" };
+    throw { name: "TEST_FAIL", message: "return inside try in loop: wrong result or catch executed" };
   }
   return 5;
 }

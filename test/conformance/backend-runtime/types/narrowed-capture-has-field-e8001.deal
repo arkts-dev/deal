@@ -16,7 +16,7 @@ export function main(): null {
   if (box !== null) {
     clear();
     let present: boolean = Object.hasOwn(box, "nick");
-    throw { code: "TEST_FAIL", message: "the presence read must not return" };
+    throw { name: "TEST_FAIL", message: "the presence read must not return" };
   }
   return null;
 }

@@ -25,24 +25,24 @@ export function test_plan_phase_order(): null {
     caught = e as Error;
   }
   if (caught !== null) {
-    if (caught.code !== "E8002") {
-      throw { code: "TEST_FAIL", message: "provided-value bounds error did not fire first" };
+    if (caught.name !== "E8002") {
+      throw { name: "TEST_FAIL", message: "provided-value bounds error did not fire first" };
     }
   } else {
-    throw { code: "TEST_FAIL", message: "provided-value bounds error did not raise" };
+    throw { name: "TEST_FAIL", message: "provided-value bounds error did not raise" };
   }
   if (probe.valueCount() !== 0) {
-    throw { code: "TEST_FAIL", message: "later provided expression ran after failure" };
+    throw { name: "TEST_FAIL", message: "later provided expression ran after failure" };
   }
   if (target !== original || target.a !== 1 || target.b !== 2) {
-    throw {code: "TEST_FAIL", message: "failed construction replaced the target"};
+    throw {name: "TEST_FAIL", message: "failed construction replaced the target"};
   }
   let c2: C = { b: 3, a: probe.nextValue() };
   if (probe.valueCount() !== 1) {
-    throw { code: "TEST_FAIL", message: "clean attempt did not run its producer once" };
+    throw { name: "TEST_FAIL", message: "clean attempt did not run its producer once" };
   }
   if (c2.a !== 10) {
-    throw { code: "TEST_FAIL", message: "clean attempt provided result mismatch" };
+    throw { name: "TEST_FAIL", message: "clean attempt provided result mismatch" };
   }
   return null;
 }

@@ -8,7 +8,7 @@ async function add(a: number, b: number): Promise<number> { return a + b; }
 export async function compute(): Promise<number> {
   let result: number = await add(1, 2);
   if (result !== 3) {
-    throw { code: "TEST_FAIL", message: "parameterized async add awaited result mismatch" };
+    throw { name: "TEST_FAIL", message: "parameterized async add awaited result mismatch" };
   }
   return result;
 }

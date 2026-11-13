@@ -16,13 +16,13 @@ export function test_toJson(): null {
   let u2: User | null = JSON.parse(s);
   if (u2 !== null) {
     if (u2.name !== "Bob") {
-      throw { code: "TEST_FAIL", message: "toJson roundtrip name mismatch" };
+      throw { name: "TEST_FAIL", message: "toJson roundtrip name mismatch" };
     }
     if (u2.age !== 25) {
-      throw { code: "TEST_FAIL", message: "toJson roundtrip age mismatch" };
+      throw { name: "TEST_FAIL", message: "toJson roundtrip age mismatch" };
     }
   } else {
-    throw { code: "TEST_FAIL", message: "toJson produced invalid JSON" };
+    throw { name: "TEST_FAIL", message: "toJson produced invalid JSON" };
   }
   return null;
 }

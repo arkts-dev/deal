@@ -685,9 +685,9 @@ test("json.stringify traverses a root class while Record parameters retain nomin
     '{"u":{"name":"x"}}', "same class nested in Record");
 });
 
-test("json.stringify exposes only code and message for builtin Error", function() {
+test("json.stringify exposes only name and message for builtin Error", function() {
   const value = rt.errorValue("E_X", "boom");
-  assertEqual(encode(value, "f.js", 3, 5), '{"code":"E_X","message":"boom"}', "Error public fields");
+  assertEqual(encode(value, "f.js", 3, 5), '{"name":"E_X","message":"boom"}', "Error public fields");
   const err = assertErrorMessage(function() { table.keys.$f(value, "f.js", 3, 5); }, "E8001", "expected table");
   assertEqual(err.expected, "table", "Record parameter expected kind");
   assertEqual(err.actual, "Error", "Error remains nominal");

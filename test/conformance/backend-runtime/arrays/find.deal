@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: arrays, functions
 class Item {x:number;}
-function check(ok:boolean):void {if(!ok){throw {code:"FIND",message:"find mismatch"};}}
+function check(ok:boolean):void {if(!ok){throw {name:"FIND",message:"find mismatch"};}}
 export function main():null {
   let xs:number[]=[1,2,3];let calls=0;
   let found=xs.find((value:number,index:number,array:number[]):boolean=>{
@@ -40,22 +40,22 @@ export function main():null {
   let shrink:number[]=[1,2,3];let destination:number|undefined=123;let seen=0;let caught=false;
   try {destination=shrink.find((value:number,index:number,array:number[]):boolean=>{
     seen=seen+1;if(index===0){array.pop();array.pop();}return false;
-  });}catch(e){check((e as Error).code==="E8002" && (e as Error).message==="array index out of bounds");caught=true;}
+  });}catch(e){check((e as Error).name==="E8002" && (e as Error).message==="array index out of bounds");caught=true;}
   check(caught && seen===1 && (destination as number)===123 && shrink.length===1);
   shrink=[1,2,3];seen=0;caught=false;let indexDestination=123;
   try {indexDestination=shrink.findIndex((value:number,index:number,array:number[]):boolean=>{
     seen=seen+1;if(index===0){array.pop();array.pop();}return false;
-  });}catch(e){check((e as Error).code==="E8002");caught=true;}
+  });}catch(e){check((e as Error).name==="E8002");caught=true;}
   check(caught && seen===1 && indexDestination===123);
   let early:number[]=[1,2,3];check((early.find((value:number):boolean=>{early.pop();early.pop();return true;}) as number)===1);
   early=[1,2,3];check(early.findIndex((value:number):boolean=>{early.pop();early.pop();return true;})===0);
   effects="";caught=false;
-  let abrupt=():(value:number)=>boolean=>{effects=effects+"p";throw {code:"PREDICATE",message:"stop"};};
-  try {destination=receiver().find(abrupt());}catch(e){check((e as Error).code==="PREDICATE");caught=true;}
+  let abrupt=():(value:number)=>boolean=>{effects=effects+"p";throw {name:"PREDICATE",message:"stop"};};
+  try {destination=receiver().find(abrupt());}catch(e){check((e as Error).name==="PREDICATE");caught=true;}
   check(caught && effects==="rp" && (destination as number)===123);
   seen=0;caught=false;
-  try {indexDestination=xs.findIndex((value:number,index:number):boolean=>{seen=seen+1;if(index===1){throw {code:"CALLBACK",message:"stop"};}return false;});}
-  catch(e){check((e as Error).code==="CALLBACK");caught=true;}
+  try {indexDestination=xs.findIndex((value:number,index:number):boolean=>{seen=seen+1;if(index===1){throw {name:"CALLBACK",message:"stop"};}return false;});}
+  catch(e){check((e as Error).name==="CALLBACK");caught=true;}
   check(caught && seen===2 && indexDestination===123);
   check(xs.findIndex((value:number):boolean=>[value].findIndex((inner:number):boolean=>inner===3)===0)===2);
   return null;

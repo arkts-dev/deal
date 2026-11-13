@@ -7,7 +7,7 @@ export function test_intrinsic_arity_extension(): number {
   let f: (x: number, y: number) => number = int;
   let result: number = f(9.0, 1.0);
   if (result !== 9) {
-    throw { code: "TEST_FAIL", message: "intrinsic arity-extension call failed" };
+    throw { name: "TEST_FAIL", message: "intrinsic arity-extension call failed" };
   }
   return result;
 }

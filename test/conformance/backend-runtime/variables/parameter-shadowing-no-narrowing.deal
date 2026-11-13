@@ -7,8 +7,8 @@ export function test_parameter_shadow(): number {
   let x: string | null = "a";
   let f: (x: number) => number = function(x: number): number { return x; };
   let result: number = f(4);
-  if (result !== 4 || x === null) { throw {code: "TEST_FAIL", message: "parameter binding shadow"}; }
-  if (x !== null) { if (x !== "a") { throw {code: "TEST_FAIL", message: "outer binding changed"}; } }
+  if (result !== 4 || x === null) { throw {name: "TEST_FAIL", message: "parameter binding shadow"}; }
+  if (x !== null) { if (x !== "a") { throw {name: "TEST_FAIL", message: "outer binding changed"}; } }
   return result;
 }
 

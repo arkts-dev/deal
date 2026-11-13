@@ -247,9 +247,9 @@ test('nested arrays and class arrays retain exact typed metadata',function()
   assert(a.children[K.elementDescriptor]==CHILD and a.children[1][K.classname]==CHILD)
   assert(encode(a)=='{"grid":[[1],[]],"children":[{"value":7}]}')
 end)
-test('Error schema exposes only code/message and preserves text',function()
-  local a=json.decode('{"message":"m\\u0000x","code":"C"}','Error')
-  assert(encode(a)=='{"code":"C","message":"m\\u0000x"}')
+test('Error schema exposes only name/message and preserves text',function()
+  local a=json.decode('{"message":"m\\u0000x","name":"C"}','Error')
+  assert(encode(a)=='{"name":"C","message":"m\\u0000x"}')
 end)
 
 -- Current-storage validation selects failures in declaration/index order.

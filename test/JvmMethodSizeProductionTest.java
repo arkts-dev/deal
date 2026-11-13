@@ -33,22 +33,22 @@ public final class JvmMethodSizeProductionTest {
             source.append("  let a").append(i).append(": number = ").append(i + 1).append(" + depth;\n");
         }
         source.append("  let captured: () => number = function(): number { return a0; };\n")
-            .append("  if (captured() !== 1 + depth) { throw {code: \"TEST_FAIL\", message: \"segmented capture\"}; }\n")
+            .append("  if (captured() !== 1 + depth) { throw {name: \"TEST_FAIL\", message: \"segmented capture\"}; }\n")
             .append("  try { if (depth === 0) { return ");
         for (int i = 0; i < width; i++) {
             if (i > 0) source.append(" + ");
             source.append("a").append(i);
         }
-        source.append("; } throw {code: \"PROBE\", message: \"handled\"}; }\n")
-            .append("  catch (e) { if ((e as Error).code !== \"PROBE\") { throw e as Error; } }\n")
+        source.append("; } throw {name: \"PROBE\", message: \"handled\"}; }\n")
+            .append("  catch (e) { if ((e as Error).name !== \"PROBE\") { throw e as Error; } }\n")
             .append("  let seen: number = 0;\n")
             .append("  for (let i of [0, 1, 2, 3]) { if (i === 0) { continue; } if (i === 3) { break; } seen = seen + 1; }\n")
-            .append("  if (seen !== 2) { throw {code: \"TEST_FAIL\", message: \"segmented loop\"}; }\n");
+            .append("  if (seen !== 2) { throw {name: \"TEST_FAIL\", message: \"segmented loop\"}; }\n");
         source.append("  if (depth > 0) {\n    let nested: number = ")
             .append(async ? "await " : "").append("wide(depth - 1);\n")
             .append("    if (nested !== ").append(width * (width + 1) / 2)
             .append(" + ").append(width).append(" * (depth - 1)")
-            .append(") { throw { code: \"TEST_FAIL\", message: \"recursive state\" }; }\n  }\n")
+            .append(") { throw { name: \"TEST_FAIL\", message: \"recursive state\" }; }\n  }\n")
             .append("  return ");
         for (int i = 0; i < width; i++) {
             if (i > 0) source.append(" + ");
@@ -62,7 +62,7 @@ public final class JvmMethodSizeProductionTest {
             source.append("  total = total + ").append(async ? "await " : "").append("wide(2);\n");
         }
         source.append("  if (total !== ").append(calls * (width * (width + 1) / 2 + 2 * width))
-            .append(") { throw { code: \"TEST_FAIL\", message: \"caller state\" }; }\n")
+            .append(") { throw { name: \"TEST_FAIL\", message: \"caller state\" }; }\n")
             .append(async ? "  return total;\n}\nexport function main(): null { return null; }\n"
                 : "  return null;\n}\n");
         source.append("export function resultlessSmall(): void { let v: number = 1; }\n")

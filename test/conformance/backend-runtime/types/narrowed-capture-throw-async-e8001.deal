@@ -4,7 +4,7 @@
 // @features: type-system, nullable, narrowing, runtime-errors, error-handling, async-await
 
 export async function test_async_throw_admission(): Promise<null> {
-  let e: Error | null = { code: "ASYNC", message: "async" };
+  let e: Error | null = { name: "ASYNC", message: "async" };
   let clear: () => null = function(): null {
     e = null;
     return null;
@@ -13,7 +13,7 @@ export async function test_async_throw_admission(): Promise<null> {
     clear();
     throw e;
   }
-  throw { code: "CONTROL_FAIL", message: "async throw: no error was raised" };
+  throw { name: "CONTROL_FAIL", message: "async throw: no error was raised" };
 }
 
 export function main(): null {

@@ -15,7 +15,7 @@ export function test_class_array_values(): number {
   let xs: Box[] = [box(2), box(5)];
   xs[0].value = 7;
   let result: number = xs[0].value + xs[1].value;
-  if (result !== 12) { throw { code: "TEST_FAIL", message: "class array mutation failed" }; }
+  if (result !== 12) { throw { name: "TEST_FAIL", message: "class array mutation failed" }; }
   return result;
 }
 

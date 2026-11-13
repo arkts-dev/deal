@@ -13,7 +13,7 @@ function second(n: number): number {
 
 export function test_forward_call(): number {
   let result: number = first(4);
-  if (result !== 7) { throw { code: "TEST_FAIL", message: "forward call failed" }; }
+  if (result !== 7) { throw { name: "TEST_FAIL", message: "forward call failed" }; }
   return result;
 }
 

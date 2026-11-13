@@ -12,10 +12,10 @@ export function test_null_is_not_a_container(): null {
     let t: Record<string, unknown> = holder.n as Record<string, unknown>;
     tableCode = "admitted";
   } catch (e) {
-    tableCode = (e as Error).code;
+    tableCode = (e as Error).name;
   }
   if (tableCode !== "E8001") {
-    throw { code: "TEST_FAIL", message: "the null value was admitted as a table: " + tableCode };
+    throw { name: "TEST_FAIL", message: "the null value was admitted as a table: " + tableCode };
   }
   let arrayCode: string = "";
   try {
@@ -24,21 +24,21 @@ export function test_null_is_not_a_container(): null {
       arrayCode = "admitted";
     }
   } catch (e) {
-    arrayCode = (e as Error).code;
+    arrayCode = (e as Error).name;
   }
   if (arrayCode !== "E8001") {
-    throw { code: "TEST_FAIL", message: "the null value was admitted as an array" };
+    throw { name: "TEST_FAIL", message: "the null value was admitted as an array" };
   }
   // The empty container controls: a real empty table and a real empty
   // array are values, never confused with the null sentinel.
   let emptyTable: Record<string, unknown> = {};
   let encoded: string = JSON.stringify(emptyTable) as string;
   if (encoded !== "{}") {
-    throw { code: "TEST_FAIL", message: "the empty table did not encode: " + encoded };
+    throw { name: "TEST_FAIL", message: "the empty table did not encode: " + encoded };
   }
   let emptyArray: number[] = [];
   if (emptyArray.length !== 0) {
-    throw { code: "TEST_FAIL", message: "the empty array did not keep its length" };
+    throw { name: "TEST_FAIL", message: "the empty array did not keep its length" };
   }
   return null;
 }

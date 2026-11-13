@@ -16,10 +16,10 @@ export function test_table_keys_decimal_string_names(): null {
   delete t["3"];
   let ks: string[] = tables.keys(t);
   if (ks.length !== 1) {
-    throw { code: "TEST_FAIL", message: "the decimal-digit keys were not ordinary deletable string keys" };
+    throw { name: "TEST_FAIL", message: "the decimal-digit keys were not ordinary deletable string keys" };
   }
   if (ks[0] !== "keep") {
-    throw { code: "TEST_FAIL", message: "the string key is missing" };
+    throw { name: "TEST_FAIL", message: "the string key is missing" };
   }
   return null;
 }

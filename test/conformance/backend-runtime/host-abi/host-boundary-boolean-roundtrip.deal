@@ -4,4 +4,4 @@
 // @features: host-abi, boolean, outbound-boundary, inbound-boundary
 
 import * as host from "host/boundary";
-export function main(): null { let value: boolean = host.echoBoolean(false); if (value) { throw { code: "TEST_FAIL", message: "host boolean false mapping" }; } return null; }
+export function main(): null { let value: boolean = host.echoBoolean(false); if (value) { throw { name: "TEST_FAIL", message: "host boolean false mapping" }; } return null; }

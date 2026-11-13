@@ -14,7 +14,7 @@ export function test_forof_template(): string {
     result = result + `[${n}]`;
   }
   if (result !== "[Alice][Bob]") {
-    throw { code: "TEST_FAIL", message: "for-of template concatenation result mismatch" };
+    throw { name: "TEST_FAIL", message: "for-of template concatenation result mismatch" };
   }
   return result;
 }
@@ -22,7 +22,7 @@ export function test_forof_template(): string {
 export function test_call_template(): string {
   let result: string = greet(`World`);
   if (result !== "Hi, World") {
-    throw { code: "TEST_FAIL", message: "template inside call argument result mismatch" };
+    throw { name: "TEST_FAIL", message: "template inside call argument result mismatch" };
   }
   return result;
 }

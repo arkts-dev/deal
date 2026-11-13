@@ -11,7 +11,7 @@ export function main(): null {
   empty();
   fallthrough();
   if (explicitNull() !== null) {
-    throw { code: "TEST_FAIL", message: "explicit null return changed" };
+    throw { name: "TEST_FAIL", message: "explicit null return changed" };
   }
   return null;
 }

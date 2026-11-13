@@ -10,7 +10,7 @@ function asInt(x: number): number {
 
 export function test_array_dynamic_function_mismatch(): number {
   let source: (b: number[]) => number[] = function(b: number[]): number[] { return b; };
-  if (!host.replaceSignature({value: source}, "(number)->number")) { throw {code: "TEST_FAIL", message: "signature mutation failed"}; }
+  if (!host.replaceSignature({value: source}, "(number)->number")) { throw {name: "TEST_FAIL", message: "signature mutation failed"}; }
   let f: (b: number[]) => number[] = source;
   return f([0]).length;
 }

@@ -1,0 +1,65 @@
+// @spec: Error handling — Error type
+// @description: Required declared Error fields, nominal JSON reconstruction, mutable aliases and diagnostic-independent rethrow.
+// @expected: runtime-ok
+
+function check(ok:boolean, message:string):void {
+  if(!ok){throw {name:"TEST_FAIL",message:message};}
+}
+
+export function run():null {
+  let e:Error={name:"Custom",message:"m"};let alias=e;
+  check(Object.keys(e).join(",")==="name,message","declaration order");
+  check(Object.hasOwn(e,"name") && Object.hasOwn(e,"message"),"presence");
+  check(e instanceof Error,"nominal literal");
+  let decoded:Error=JSON.parse('{"message":"p","name":"Parsed"}');
+  check(decoded instanceof Error && decoded!==e,"fresh nominal JSON");
+  check(decoded.name==="Parsed" && decoded.message==="p","decoded fields");
+  check((JSON.stringify(decoded) as string)==='{"name":"Parsed","message":"p"}',"JSON order");
+  let units:Error=JSON.parse('{"name":"A\\u0000B\\ud800","message":"C\\u0000D\\udfff"}');
+  check(units.name==="A\u0000B\uD800" && units.message==="C\u0000D\uDFFF","lossless decode");
+  let encoded=JSON.stringify(units) as string;
+  let copy:Error=JSON.parse(encoded);
+  check(copy!==units && copy.name===units.name && copy.message===units.message,"lossless roundtrip");
+  e.name="Before";
+  let catches=0;
+  try{throw e;}catch(caught){
+    catches=catches+1;
+    check((caught as Error)===e,"first identity");
+    (caught as Error).name="Renamed";
+    (caught as Error).message="changed";
+  }
+  check(alias.name==="Renamed" && alias.message==="changed","alias writes");
+  try{throw alias;}catch(caught){
+    catches=catches+1;
+    check((caught as Error)===e && (caught as Error).name==="Renamed","rethrow identity/name");
+  }
+  let xs:number[]=[];
+  try{let n=xs[0];}catch(caught){
+    catches=catches+1;
+    check((caught as Error).name==="E8002","generated name");
+    (caught as Error).name="Bounds";
+    check((caught as Error).name==="Bounds","generated mutable name");
+  }
+  for(let text of ['{}','{"name":"X"}','{"message":"m"}','{"name":1,"message":"m"}',
+      '{"name":"X","message":false}','{"name":"X","message":"m","extra":1}']){
+    let old=decoded;let rejected=false;
+    try{decoded=JSON.parse(text);}catch(caught){
+      rejected=true;catches=catches+1;
+      check((caught as Error).name===(text.includes("extra")?"E8007":"E8001"),"decode rejection");
+    }
+    check(rejected && decoded===old,"decode publication rollback");
+  }
+  check(catches===9,"all catches reached");
+  return null;
+}
+
+function diagnostic():number {
+  let e:Error={name:"Initial",message:"first"};e.name="Bound";
+  try{throw e;}catch(caught){
+    check((caught as Error)===e,"diagnostic alias");
+    e.name="Visible";e.message="latest";throw e;
+  }
+  return 0;
+}
+
+export function main():null {run();return null;}

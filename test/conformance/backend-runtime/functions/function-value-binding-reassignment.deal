@@ -27,7 +27,7 @@ function isOdd(n: number): boolean {
 
 function check(condition: boolean, message: string): null {
   if (!condition) {
-    throw { code: "TEST_FAIL", message: message };
+    throw { name: "TEST_FAIL", message: message };
   }
   return null;
 }

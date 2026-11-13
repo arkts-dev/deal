@@ -5489,7 +5489,7 @@ final class LlvmFunctionEmitter {
         if (receiver instanceof RuntimeDescriptor.Class classType
                 && classType.classId().equals(deal.semantic.ir.ClassId.ERROR)
                 && payload.dynamicKey() == null) {
-            // The builtin Error shape is `{ code: string; message: string }`:
+            // The builtin Error shape is `{ name: string; message: string }`:
             // both fields are required-present on every Error record.
             storeResult(op, LlvmTypeMapper.BOOLEAN_SSA, "true");
             return;
@@ -5674,12 +5674,12 @@ final class LlvmFunctionEmitter {
      */
     private void emitBuiltinErrorNew(SemanticOp op,
                                      KindPayload.ClassNewPayload payload) {
-        ValueId code = providedField(payload, "code");
+        ValueId code = providedField(payload, "name");
         ValueId message = providedField(payload, "message");
         if (code == null || message == null) {
             throw new deal.codegen.SharedEmissionFailure(
                 "LlvmSemanticEmitter rejects the builtin Error construction "
-                    + op.opId() + " without its code and message class fields",
+                    + op.opId() + " without its name and message class fields",
                 op.origin().span().range());
         }
         session.referenceRuntimeEntry("deal_error_create_strings");
@@ -5904,7 +5904,7 @@ final class LlvmFunctionEmitter {
             String instance = loadValue(payload.classValue(),
                 LlvmTypeMapper.ERROR_POINTER, op);
             String accessor = switch (payload.field()) {
-                case "code" -> "deal_error_code_value";
+                case "name" -> "deal_error_name_value";
                 case "message" -> "deal_error_message_value";
                 default -> throw new deal.codegen.SharedEmissionFailure(
                     "LlvmSemanticEmitter rejects the read of the builtin Error"
@@ -6002,7 +6002,7 @@ final class LlvmFunctionEmitter {
         }
         if (payload.classId().equals(deal.semantic.ir.ClassId.ERROR)) {
             String accessor = switch (payload.field()) {
-                case "code" -> "deal_error_set_code_value";
+                case "name" -> "deal_error_set_name_value";
                 case "message" -> "deal_error_set_message_value";
                 default -> throw new deal.codegen.SharedEmissionFailure(
                     "LlvmSemanticEmitter rejects the write of the builtin Error"

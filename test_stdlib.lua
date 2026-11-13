@@ -684,8 +684,8 @@ test("contextual typed arrays retain canonical descriptors, nullish flags and Er
   assert(__rt.check_type('[?number]',a)==a)
   local empty=jsonAlgorithms.decode('[]','[number]')
   assert(empty[__K.n]==0 and empty[__K.elementDescriptor]=='number')
-  local err=jsonAlgorithms.decode('{"message":"m","code":"C"}','Error')
-  assert(encode(err)=='{"code":"C","message":"m"}')
+  local err=jsonAlgorithms.decode('{"message":"m","name":"C"}','Error')
+  assert(encode(err)=='{"name":"C","message":"m"}')
   assert_error_code(function() jsonAlgorithms.decode('[null]','[!number]') end,'E8001')
   assert_error_code(function() jsonAlgorithms.decode('{}','?number') end,'E8001')
 end)
@@ -1590,10 +1590,10 @@ test("Record parameters reject nominal carriers independently of generic stringi
   end
 end)
 
-test("json.stringify exposes only code/message of an Error instance", function()
+test("json.stringify exposes only name/message of an Error instance", function()
   local __rt = require("deal.runtime")
   local ev = __rt.error_value("E1", "boom", "secret.deal", 9, 3)
-  assert(encode({ e = ev }) == '{"e":{"code":"E1","message":"boom"}}', "Error public fields only")
+  assert(encode({ e = ev }) == '{"e":{"name":"E1","message":"boom"}}', "Error public fields only")
 end)
 
 test("json.stringify omits tagged function members and yields undefined for their root", function()
@@ -1642,8 +1642,8 @@ test("json.stringify projects emitted class/Error carriers and omits callable me
       value = { [__K.c] = true, [__K.id] = "@m/C", [__K.f] = {}, [__K.p] = {}, [__K.classOrder] = {}, [__K.classPlan] = {} },
       expected = '{"payload":{}}' },
     { name = "emitted Error value", actual = "table",
-      value = { [__K.d] = true, code = "E1", m = "boom", o = nil, e = nil, a = nil },
-      expected = '{"payload":{"code":"E1","message":"boom"}}' },
+      value = { [__K.d] = true, name = "E1", code = "E1", m = "boom", o = nil, e = nil, a = nil },
+      expected = '{"payload":{"name":"E1","message":"boom"}}' },
     { name = "emitted function carrier", actual = "function",
       value = { [__K.fn] = function() end, [__K.csig] = "()->null", [__K.fid] = nil }, expected = '{}' },
     { name = "emitted function instance", actual = "function",

@@ -7,10 +7,10 @@ export function main(): null {
   let e: number | null = 1;
   if (e !== null) {
     try {
-      throw { code: "C_OUTER", message: "outer" };
+      throw { name: "C_OUTER", message: "outer" };
     } catch (e) {
       try {
-        throw { code: "C_INNER", message: "inner" };
+        throw { name: "C_INNER", message: "inner" };
       } catch (e) {
         let inner: Error = e as Error;
         let innerMessage: string = inner.message;
@@ -25,7 +25,7 @@ export function main(): null {
   let renamed: number | null = 2;
   if (renamed !== null) {
     try {
-      throw { code: "C_RENAMED", message: "renamed" };
+      throw { name: "C_RENAMED", message: "renamed" };
     } catch (err) {
       let captured: Error = err as Error;
       let message: string = captured.message;

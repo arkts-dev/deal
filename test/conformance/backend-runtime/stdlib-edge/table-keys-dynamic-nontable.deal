@@ -12,7 +12,7 @@ export function test_table_keys_dynamic_nontable(): string[] {
     clear();
     return tables.keys(data);
   }
-  throw { code: "TEST_FAIL", message: "Record parameter branch skipped" };
+  throw { name: "TEST_FAIL", message: "Record parameter branch skipped" };
 }
 
 export function main(): null {

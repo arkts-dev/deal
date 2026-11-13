@@ -4,10 +4,10 @@
 
 function main(): null {
     try {
-        throw { code: "E999", message: "test error" };
+        throw { name: "E999", message: "test error" };
     } catch (e) {
         let error: Error = e as Error;
-        let code: string = error.code;
+        let code: string = error.name;
     }
     return null;
 }

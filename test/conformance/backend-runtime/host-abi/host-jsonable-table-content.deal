@@ -12,13 +12,13 @@ function equivalent(text: string, expected: string): boolean {
 
 function check(condition: boolean, message: string): null {
   if (!condition) {
-    throw { code: "TEST_FAIL", message: message };
+    throw { name: "TEST_FAIL", message: message };
   }
   return null;
 }
 
 // The closed outcome of one helper call: the exact text, or the failure's
-// code and message. Each call is independent (JsonEncodeV13), so a probe
+// name and message. Each call is independent (JsonEncodeV13), so a probe
 // never observes another call's state.
 function closedOutcome(w: TableField): string {
   let outcome: string = "no-failure";
@@ -26,7 +26,7 @@ function closedOutcome(w: TableField): string {
     outcome = "OK:" + (JSON.stringify(w) as string);
   } catch (e) {
     let error: Error = e as Error;
-    outcome = error.code + "|" + error.message;
+    outcome = error.name + "|" + error.message;
   }
   return outcome;
 }
@@ -127,7 +127,7 @@ export function test_host_table_cycle(): null {
     check(text === "", "a cyclic host table must not serialize");
   } catch (e) {
     let error: Error = e as Error;
-    closed = error.code === "E8001"
+    closed = error.name === "E8001"
       && error.message === "cyclic value cannot be encoded as JSON";
   }
   check(closed, "the host table cycle takes the closed cycle arm");

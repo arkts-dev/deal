@@ -9,7 +9,7 @@ export function test_arity(): number {
   let takesTwo: (x: number, y: number) => number = one;
   let result: number = takesTwo(10, 20);
   if (result !== 10) {
-    throw { code: "TEST_FAIL", message: "arity-extension: extended call result mismatch" };
+    throw { name: "TEST_FAIL", message: "arity-extension: extended call result mismatch" };
   }
   return result;
 }

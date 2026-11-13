@@ -22,5 +22,5 @@ module @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:1-5:1
                 ident e : unknown @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:156-4:156
             return @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:168-4:187
               [boundary: async-completion]
-              member .code : string @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:175-4:184
+              member .name : string @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:175-4:184
                 ident error : Error @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:175-4:179

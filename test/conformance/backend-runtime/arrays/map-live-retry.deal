@@ -4,26 +4,26 @@
 // @features: arrays, host-abi
 import * as host from "host/probe";
 class Item {x:number;stable:number;}
-function check(ok:boolean):void {if(!ok){throw {code:"MAP",message:"live mismatch"};}}
+function check(ok:boolean):void {if(!ok){throw {name:"MAP",message:"live mismatch"};}}
 export function main():null {
   let xs:number[]=[4,5,9];let alias=xs;let destination:number[]=[123];let old=destination;let calls=0;let caught=false;
   host.keep(xs);host.corrupt();
   try {destination=xs.map((value:number):number=>{calls=calls+1;return value;});}
-  catch(e){check((e as Error).code==="E8003" && (e as Error).message==="array element 3 type mismatch");caught=true;}
+  catch(e){check((e as Error).name==="E8003" && (e as Error).message==="array element 3 type mismatch");caught=true;}
   check(caught && calls===0 && destination===old && host.size()===3 && alias[1]===5);
   host.repair();destination=xs.map((value:number):number=>value+1);check(destination[2]===10 && xs===alias);
   calls=0;caught=false;old=destination;
   try {destination=xs.map((value:number,index:number):number=>{calls=calls+1;if(index===0){host.corrupt();}return value;});}
-  catch(e){check((e as Error).code==="E8003" && (e as Error).message==="array element 3 type mismatch");caught=true;}
+  catch(e){check((e as Error).name==="E8003" && (e as Error).message==="array element 3 type mismatch");caught=true;}
   check(caught && calls===1 && destination===old && host.size()===3);host.repair();
   calls=0;caught=false;
   try {destination=xs.map((value:number,index:number):number=>{calls=calls+1;if(index===1){host.corrupt();}return value;});}
-  catch(e){check((e as Error).code==="E8003" && (e as Error).message==="array element 3 type mismatch");caught=true;}
+  catch(e){check((e as Error).name==="E8003" && (e as Error).message==="array element 3 type mismatch");caught=true;}
   check(caught && calls===2 && destination===old && alias[0]===4);host.repair();
   let live=host.make();let mapper=():(value:number)=>number=>{host.grow();return (value:number):number=>value;};
   let grown=live.map(mapper());check(grown.length===3 && grown[2]===11);
   let item:Item={x:9,stable:4};let items:Item[]=[item];host.damage(item,false);caught=false;let itemDestination:Item[]=[];let prior=itemDestination;
-  try {itemDestination=items.map((value:Item):Item=>value);}catch(e){check((e as Error).code==="E8003" && (e as Error).message==="array element 1 type mismatch");caught=true;}
+  try {itemDestination=items.map((value:Item):Item=>value);}catch(e){check((e as Error).name==="E8003" && (e as Error).message==="array element 1 type mismatch");caught=true;}
   check(caught && itemDestination===prior && items.length===1);host.damage(null,true);
   itemDestination=items.map((value:Item):Item=>value);check(itemDestination[0]===item && item.stable===4);
   let callback=():number=>7;let functions:(()=>number)[]=[callback];host.keep(functions);
@@ -31,12 +31,12 @@ export function main():null {
     if(signature){host.poisonSignature(callback);}else{host.poison(callback);}
     caught=false;let functionDestination:(()=>number)[]=[];let previous=functionDestination;
     try {functionDestination=functions.map((value:()=>number):()=>number=>value);}
-    catch(e){check((e as Error).code==="E8003" && (e as Error).message==="array element 1 type mismatch");caught=true;}
+    catch(e){check((e as Error).name==="E8003" && (e as Error).message==="array element 1 type mismatch");caught=true;}
     check(caught && functionDestination===previous && functions.length===1);host.restoreFunction();
     functionDestination=functions.map((value:()=>number):()=>number=>value);check(functionDestination[0]===callback && callback()===7);
   }
   let decoded:number[]=JSON.parse("[4,5,9]");host.keep(decoded);host.corrupt();caught=false;
-  try {destination=decoded.map((value:number):number=>value);}catch(e){check((e as Error).code==="E8003");caught=true;}
+  try {destination=decoded.map((value:number):number=>value);}catch(e){check((e as Error).name==="E8003");caught=true;}
   check(caught && destination===old && decoded.length===3);host.repair();check(decoded.map((value:number):number=>value)[2]===9);
   return null;
 }

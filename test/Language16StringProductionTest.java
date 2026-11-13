@@ -93,7 +93,7 @@ public final class Language16StringProductionTest {
             import * as host from "host/probe";
             import * as output from "std/console";
             function check(ok:boolean):void {
-              if(!ok){throw {code:"TEST",message:"private nondata read"};}
+              if(!ok){throw {name:"TEST",message:"private nondata read"};}
             }
             export function main():null {
               for(let opaque of [false,true]) {
@@ -102,7 +102,7 @@ public final class Language16StringProductionTest {
                 let old:unknown=17;let destination=old;let rejected=false;
                 try { destination=graph[0]; }
                 catch(e) {
-                  check((e as Error).code==="E8001");
+                  check((e as Error).name==="E8001");
                   check((e as Error).message==="expected unknown");
                   rejected=true;
                 }
@@ -124,7 +124,7 @@ public final class Language16StringProductionTest {
             import * as host from "host/probe";
             import * as output from "std/console";
             function check(ok:boolean):void {
-              if(!ok){throw {code:"TEST",message:"retained opaque graph"};}
+              if(!ok){throw {name:"TEST",message:"retained opaque graph"};}
             }
             export function main():null {
               let r:Record<string,unknown>={good:7};r.self=r;
@@ -133,7 +133,7 @@ public final class Language16StringProductionTest {
               let rejected=false;
               try { destination=r; }
               catch(e) {
-                check((e as Error).code==="E8001");
+                check((e as Error).name==="E8001");
                 check((e as Error).message==="expected unknown");
                 rejected=true;
               }
@@ -159,7 +159,7 @@ public final class Language16StringProductionTest {
             import * as host from "host/probe";
             import * as output from "std/console";
             function check(ok:boolean):void {
-              if(!ok){throw {code:"TEST",message:"native text transport"};}
+              if(!ok){throw {name:"TEST",message:"native text transport"};}
             }
             export function main():null {
               check(host.surrogateString()===`\\ud800`);
@@ -167,7 +167,7 @@ public final class Language16StringProductionTest {
               let scalarRejected=false;
               try { host.badString(); }
               catch(e) {
-                check((e as Error).code==="E8010");
+                check((e as Error).name==="E8010");
                 check((e as Error).message==="return value 1 type mismatch: expected string, got invalid UTF-8 encoding");
                 scalarRejected=true;
               }
@@ -177,7 +177,7 @@ public final class Language16StringProductionTest {
               let destination=original;
               try { destination=host.nativeBadStringArray(); }
               catch(e) {
-                check((e as Error).code==="E8010");
+                check((e as Error).name==="E8010");
                 check((e as Error).message==="return value 1 type mismatch: array element 2 type mismatch");
                 rejected=true;
               }
@@ -196,7 +196,7 @@ public final class Language16StringProductionTest {
         import * as s from "std/string";
 
         function require(ok:boolean, label:string):void {
-          if (!ok) { throw {code:"TEST",message:label}; }
+          if (!ok) { throw {name:"TEST",message:label}; }
         }
         function fresh(seed:number):()=>number {
           let recur=function():number { seed=seed+1;return seed; };

@@ -1,11 +1,11 @@
 // @spec: Runtime execution model — Runtime type descriptor format
-// @description: Error values reified by error_value carry the canonical Error class atom (the one class atom without the leading '@'); a thrown and caught Error crosses an Error-typed boundary byte-for-byte with code and message intact, and the canonical matcher re-matches the atom exactly.
+// @description: Error values reified by error_value carry the canonical Error class atom (the one class atom without the leading '@'); a thrown and caught Error crosses an Error-typed boundary byte-for-byte with name and message intact, and the canonical matcher re-matches the atom exactly.
 // @expected: runtime-ok
 // @features: descriptors, error-handling, classes
 
 function passThrough(): Error {
   try {
-    throw { code: "E_CANON", message: "roundtrip" };
+    throw { name: "E_CANON", message: "roundtrip" };
   } catch (e) {
     return e as Error;
   }
@@ -13,8 +13,8 @@ function passThrough(): Error {
 
 export function test_canonical_error_atom_roundtrip(): string {
   let e: Error = passThrough();
-  if (e.code !== "E_CANON" || e.message !== "roundtrip") {
-    throw { code: "TEST_FAIL", message: "error atom roundtrip lost fields" };
+  if (e.name !== "E_CANON" || e.message !== "roundtrip") {
+    throw { name: "TEST_FAIL", message: "error atom roundtrip lost fields" };
   }
   return "canonical error atom ok";
 }

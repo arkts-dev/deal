@@ -1434,7 +1434,7 @@ public class BodyInvocationIdentityTest {
           let mutual: boolean = isEven(10);
           if (captured !== 2 || visits !== 1 || afterBranch !== 1
               || stableValue !== 2 || recursive !== 55 || !mutual) {
-            throw { code: "TEST_FAIL", message: "current binding" };
+            throw { name: "TEST_FAIL", message: "current binding" };
           }
           return null;
         }
@@ -1644,7 +1644,7 @@ public class BodyInvocationIdentityTest {
         RealProject project = null;
         Path workspace = Files.createTempDirectory("for-let-counter-diff-");
         try {
-            project = compileProject("function one(): number { return 1; }\nfunction two(): number { return 2; }\nexport function main(): null {\n  let visits: number = 0;\n  { let v14Loop0: () => number = one; while (v14Loop0() === 1) { let f: () => number = v14Loop0; {\n    visits = visits + 1;\n    if (visits > 3) { break; }\n  } v14Loop0 = f; v14Loop0 = two; } }\n  let stable: number = 0;\n  { let v14Loop1: () => number = two; while (v14Loop1() === 2) { let g: () => number = v14Loop1; {\n    stable = stable + 1;\n    if (stable === 2) { break; }\n  } v14Loop1 = g;  } }\n  let adapted: number = 0;\n  { let v14Loop2: (x: number) => number = one; while (v14Loop2(7) === 1) { let h: (x: number) => number = v14Loop2; {\n    adapted = adapted + 1;\n    if (adapted > 3) { break; }\n  } v14Loop2 = h; v14Loop2 = two; } }\n  if (visits !== 1 || stable !== 2 || adapted !== 1) {\n    throw { code: \"TEST_FAIL\", message: \"function counters\" };\n  }\n  return null;\n}\n");
+            project = compileProject("function one(): number { return 1; }\nfunction two(): number { return 2; }\nexport function main(): null {\n  let visits: number = 0;\n  { let v14Loop0: () => number = one; while (v14Loop0() === 1) { let f: () => number = v14Loop0; {\n    visits = visits + 1;\n    if (visits > 3) { break; }\n  } v14Loop0 = f; v14Loop0 = two; } }\n  let stable: number = 0;\n  { let v14Loop1: () => number = two; while (v14Loop1() === 2) { let g: () => number = v14Loop1; {\n    stable = stable + 1;\n    if (stable === 2) { break; }\n  } v14Loop1 = g;  } }\n  let adapted: number = 0;\n  { let v14Loop2: (x: number) => number = one; while (v14Loop2(7) === 1) { let h: (x: number) => number = v14Loop2; {\n    adapted = adapted + 1;\n    if (adapted > 3) { break; }\n  } v14Loop2 = h; v14Loop2 = two; } }\n  if (visits !== 1 || stable !== 2 || adapted !== 1) {\n    throw { name: \"TEST_FAIL\", message: \"function counters\" };\n  }\n  return null;\n}\n");
             SemanticLowerer.ProjectLoweringResult result = lower(project);
             if (result.project() == null || !result.diagnostics().isEmpty()) {
                 fail("the function-valued for-let counter lowers for the differential "
@@ -1707,7 +1707,7 @@ public class BodyInvocationIdentityTest {
                   let a: number = alt();
                   let b: number = f();
                   if (a !== 2 || b !== 1) {
-                    throw { code: "TEST_FAIL", message: "static control" };
+                    throw { name: "TEST_FAIL", message: "static control" };
                   }
                   return null;
                 }
@@ -1762,7 +1762,7 @@ public class BodyInvocationIdentityTest {
                   let r: number = g(1, 2);
                   let direct: number = f(1);
                   if (r !== 1 || direct !== 1) {
-                    throw { code: "TEST_FAIL", message: "arity extension" };
+                    throw { name: "TEST_FAIL", message: "arity extension" };
                   }
                   return null;
                 }

@@ -9,7 +9,7 @@ function makeBoxes(): Box[] { return [box(5), box(11)]; }
 
 export function test_function_result_index_member(): number {
   let result: number = makeBoxes()[1].value;
-  if (result !== 11) { throw { code: "TEST_FAIL", message: "function result index/member failed" }; }
+  if (result !== 11) { throw { name: "TEST_FAIL", message: "function result index/member failed" }; }
   return result;
 }
 

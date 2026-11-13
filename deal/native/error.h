@@ -21,8 +21,8 @@
  * carries structure only, so the one message authority stays the emitted
  * table.
  *
- * The `deal_error` record (R5, R9) carries the required-present `code` and
- * `message` fields, the origin (`deal_origin`, stored unchanged), the optional
+ * The `deal_error` record (R5, R9) carries the required-present language
+ * `name` and `message` fields, a separate diagnostic code, the origin (`deal_origin`, stored unchanged), the optional
  * `expected` and `actual` fields, the innermost-first frame snapshot and the
  * optional cause. The instance itself is one managed object of the runtime's
  * Error layout (`llvm-native-memory-management` M1), so a root slot, a record
@@ -245,7 +245,7 @@ uint32_t deal_call_frame_depth(void);
  * cause and addresses never change (M1). The `memory` group's collector
  * reclaims an unreachable Error once nothing roots or references it; this group
  * allocates and shapes the record and never scans the heap. Beside the managed
- * payload the record owns platform storage — the copied code, message and origin
+ * payload the record owns platform storage — the copied name, code, message and origin
  * text, the optional expected and actual text, and the frames array with one
  * duplicated label per active frame — so this group registers the layout's one
  * reclamation hook (`deal_layout_release_register`, memory.h) at first use and
@@ -260,21 +260,24 @@ deal_error *deal_error_create(const char *code, const char *message,
 
 /*
  * The builtin Error instance of one DEAL class-literal construction (C3/R2):
- * `code` and `message` are the supplied class fields of the builtin Error
+ * `name` and `message` are the supplied class fields of the builtin Error
  * layout, each a UTF-16 DEAL string copied losslessly into the record's own
- * platform-owned text, and the origin is stored unchanged. The
- * innermost-first frame snapshot is taken at this call. A null argument is an
+ * platform-owned text. With a null origin, first THROW binds the diagnostic
+ * code from the current name and captures origin/frames once. A null argument is an
  * invariant fault (a construction without its required fields never reaches
  * the runtime). The caller roots both strings across the allocation (M4).
  */
-deal_error *deal_error_create_strings(deal_string *code, deal_string *message,
+deal_error *deal_error_create_strings(deal_string *name, deal_string *message,
                                       const deal_origin *origin);
 
 /* First THROW binds origin/frames on this instance; rethrows preserve them. */
 void deal_error_raise(deal_error *error, const deal_origin *origin);
 
-/* The `code` and `message` class fields as DEAL strings, or NULL when the
- * record carries no such text: a read of the builtin instance's own field. */
+/* The mutable declared name, separate from the first-throw diagnostic code. */
+deal_string *deal_error_name_value(deal_error *error);
+const char *deal_error_name_bytes(deal_error *error, size_t *length);
+void deal_error_set_name_value(deal_error *error, deal_string *name);
+/* Diagnostic code is not a declared language field. */
 deal_string *deal_error_code_value(deal_error *error);
 deal_string *deal_error_message_value(deal_error *error);
 
@@ -286,8 +289,8 @@ const char *deal_error_message_bytes(deal_error *error, size_t *length);
 const char *deal_error_cause_code_bytes(deal_error *error, size_t *length);
 
 /*
- * The `code` and `message` class fields of a field write on the builtin
- * instance (C3/R2): the given string replaces the record's text, so every
+ * Diagnostic code and language message setters: the given string replaces
+ * the corresponding record text, so every
  * alias observes the write and the instance, its origin, its frames and its
  * cause stay the same object. A null argument is an invariant fault.
  */

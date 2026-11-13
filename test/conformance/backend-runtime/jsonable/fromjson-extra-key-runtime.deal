@@ -8,10 +8,10 @@ export class User { name: string; }
 export function test_jsonable_extra_key_rejected(): null {
   let rejected = false;
   try { let u: User = JSON.parse("{\"name\":7,\"extra\":1}"); }
-  catch (e) { let error = e as Error; rejected = error.code === "E8007" && error.message.includes("extra field 'extra'"); }
-  if (!rejected) { throw {code: "TEST_FAIL", message: "extra field did not reject before declared field"}; }
+  catch (e) { let error = e as Error; rejected = error.name === "E8007" && error.message.includes("extra field 'extra'"); }
+  if (!rejected) { throw {name: "TEST_FAIL", message: "extra field did not reject before declared field"}; }
   let valid: User = JSON.parse("{\"name\":\"Ada\"}");
-  if (valid.name !== "Ada") { throw {code: "TEST_FAIL", message: "valid class decode changed"}; }
+  if (valid.name !== "Ada") { throw {name: "TEST_FAIL", message: "valid class decode changed"}; }
   return null;
 }
 

@@ -10,7 +10,7 @@ function sumDown(n: number): number {
 
 export function test_abi_direct_recursion_predeclare(): number {
   let result: number = sumDown(4);
-  if (result !== 10) { throw { code: "TEST_FAIL", message: "direct recursion ABI failed" }; }
+  if (result !== 10) { throw { name: "TEST_FAIL", message: "direct recursion ABI failed" }; }
   return result;
 }
 

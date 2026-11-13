@@ -19,13 +19,13 @@ export function test_construct(): string {
     home: { city: "London", zip: 12345 },
   };
   if (u.name !== "Ada") {
-    throw { code: "TEST_FAIL", message: "constructed User.name mismatch" };
+    throw { name: "TEST_FAIL", message: "constructed User.name mismatch" };
   }
   if (u.home.city !== "London") {
-    throw { code: "TEST_FAIL", message: "constructed User.home.city mismatch" };
+    throw { name: "TEST_FAIL", message: "constructed User.home.city mismatch" };
   }
   if (u.home.zip !== 12345) {
-    throw { code: "TEST_FAIL", message: "constructed User.home.zip mismatch" };
+    throw { name: "TEST_FAIL", message: "constructed User.home.zip mismatch" };
   }
   return u.name;
 }

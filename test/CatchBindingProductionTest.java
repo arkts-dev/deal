@@ -657,7 +657,7 @@ public final class CatchBindingProductionTest {
             + "block --");
         String source = """
             export function main(): null {
-              try { throw {code:"CONTROL",message:"control"}; } catch (e) { }
+              try { throw {name:"CONTROL",message:"control"}; } catch (e) { }
               if (e.message !== "") { return null; }
               return null;
             }
@@ -699,8 +699,8 @@ public final class CatchBindingProductionTest {
      */
     private static final String STORE_ONLY_SOURCE = """
         export function main(): null {
-          try { throw { code: "E_STORE", message: "caught" }; }
-          catch (e) { e = { code: "E_STORE2", message: "stored" }; }
+          try { throw { name: "E_STORE", message: "caught" }; }
+          catch (e) { e = { name: "E_STORE2", message: "stored" }; }
           return null;
         }
         """;

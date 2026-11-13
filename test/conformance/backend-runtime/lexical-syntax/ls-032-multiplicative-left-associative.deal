@@ -6,7 +6,7 @@
 export function test_multiplicative_left_associative(): null {
   let value: number = 20 / 5 * 2;
   if (value !== 8) {
-    throw { code: "TEST_FAIL", message: "multiplicative operators did not associate to the left" };
+    throw { name: "TEST_FAIL", message: "multiplicative operators did not associate to the left" };
   }
   return null;
 }

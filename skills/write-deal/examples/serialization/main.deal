@@ -3,21 +3,21 @@ import * as settings from "./settings";
 export function main(): null {
   let value: settings.Settings = JSON.parse("{\"enabled\":true,\"title\":\"Tools\",\"note\":null}");
   if (!value.enabled || value.title !== "Tools" || !Object.hasOwn(value, "note")) {
-    throw { code: "EXAMPLE_FAILED", message: "JSON required fields and presence" };
+    throw { name: "EXAMPLE_FAILED", message: "JSON required fields and presence" };
   }
   let encoded: string = JSON.stringify(value) as string;
   let restored: settings.Settings = JSON.parse(encoded);
   if (restored.title !== value.title || !Object.hasOwn(restored, "note")) {
-    throw { code: "EXAMPLE_FAILED", message: "record reparsing" };
+    throw { name: "EXAMPLE_FAILED", message: "record reparsing" };
   }
   let rejected: boolean = false;
   try {
     let invalid: settings.Settings = JSON.parse("{\"extra\":true}");
   } catch (e) {
-    rejected = (e as Error).code === "E8007";
+    rejected = (e as Error).name === "E8007";
   }
   if (!rejected) {
-    throw { code: "EXAMPLE_FAILED", message: "extra JSON key accepted" };
+    throw { name: "EXAMPLE_FAILED", message: "extra JSON key accepted" };
   }
   return null;
 }

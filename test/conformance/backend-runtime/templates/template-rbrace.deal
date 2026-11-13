@@ -6,7 +6,7 @@
 export function test_rbrace(): string {
   let result: string = `${ "}" }`;
   if (result !== "}") {
-    throw { code: "TEST_FAIL", message: "template literal brace scanning produced wrong byte string" };
+    throw { name: "TEST_FAIL", message: "template literal brace scanning produced wrong byte string" };
   }
   return result;
 }

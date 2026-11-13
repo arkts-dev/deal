@@ -8,7 +8,7 @@ import * as host from "host/prewrapped_ok";
 export function test_host_prewrapped_ok(): null {
   let greeting: string = host.greet("world");
   if (greeting !== "hello world") {
-    throw { code: "TEST_FAIL", message: "pre-wrapped export call mismatch" };
+    throw { name: "TEST_FAIL", message: "pre-wrapped export call mismatch" };
   }
   host.ping();
   return null;

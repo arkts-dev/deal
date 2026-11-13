@@ -13,7 +13,7 @@ class Holder {
 }
 
 function fail(what: string): null {
-  throw { code: "CONTROL_FAIL", message: what };
+  throw { name: "CONTROL_FAIL", message: what };
 }
 
 export function main(): null {

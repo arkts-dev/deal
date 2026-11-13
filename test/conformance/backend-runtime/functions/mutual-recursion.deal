@@ -14,8 +14,8 @@ function odd(n: number): boolean {
 }
 
 export function test_mutual_recursion(): boolean {
-  if (!even(10)) { throw { code: "TEST_FAIL", message: "even failed" }; }
-  if (!odd(9)) { throw { code: "TEST_FAIL", message: "odd failed" }; }
+  if (!even(10)) { throw { name: "TEST_FAIL", message: "even failed" }; }
+  if (!odd(9)) { throw { name: "TEST_FAIL", message: "odd failed" }; }
   return true;
 }
 

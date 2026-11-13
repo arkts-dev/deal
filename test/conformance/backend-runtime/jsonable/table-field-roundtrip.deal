@@ -9,7 +9,7 @@ function roundtrip(text: string, expected: number): void {
   let first: Wrapper = JSON.parse(text);
   let again: Wrapper = JSON.parse(JSON.stringify(first) as string);
   if ((again.data.v as number) !== expected || again === first || again.data === first.data) {
-    throw {code: "TEST_FAIL", message: "Record binary64 roundtrip value or freshness changed"};
+    throw {name: "TEST_FAIL", message: "Record binary64 roundtrip value or freshness changed"};
   }
 }
 
@@ -17,7 +17,7 @@ export function test_jsonable_table_field(): null {
   let w: Wrapper = {data: {count: 3, name: "deal"}};
   let w2: Wrapper = JSON.parse(JSON.stringify(w) as string);
   if ((w2.data.count as number) !== 3 || (w2.data.name as string) !== "deal") {
-    throw {code: "TEST_FAIL", message: "table field roundtrip mismatch"};
+    throw {name: "TEST_FAIL", message: "table field roundtrip mismatch"};
   }
   roundtrip("{\"data\":{\"v\":-2147483649}}", -2147483649);
   roundtrip("{\"data\":{\"v\":-2147483648}}", -2147483648);

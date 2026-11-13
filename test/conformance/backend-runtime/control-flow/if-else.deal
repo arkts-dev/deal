@@ -12,7 +12,7 @@ export function test_ifelse(): number {
   }
   // should be 1
   if (x !== 1) {
-    throw { code: "TEST_FAIL", message: "if/else took the wrong branch" };
+    throw { name: "TEST_FAIL", message: "if/else took the wrong branch" };
   }
   return x;
 }

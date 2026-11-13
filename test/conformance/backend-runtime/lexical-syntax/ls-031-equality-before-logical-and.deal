@@ -6,7 +6,7 @@
 export function test_equality_before_logical_and(): null {
   let value: boolean = 1 === 2 && true;
   if (value !== false) {
-    throw { code: "TEST_FAIL", message: "equality did not bind before logical AND" };
+    throw { name: "TEST_FAIL", message: "equality did not bind before logical AND" };
   }
   return null;
 }

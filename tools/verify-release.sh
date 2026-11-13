@@ -303,7 +303,7 @@ printf '%s\n' '{"languageVersion": "1.6", "moduleRoots": ["src"], "backend": "lu
   >"$FAILURE_PROJECT/deal.json"
 printf '%s\n' \
   'export function main(): null {' \
-  '  throw { code: "VERIFY_FAIL", message: "expected distribution failure" };' \
+  '  throw { name: "VERIFY_FAIL", message: "expected distribution failure" };' \
   '  return null;' \
   '}' >"$FAILURE_PROJECT/src/main.deal"
 

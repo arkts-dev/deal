@@ -1,7 +1,7 @@
 // @spec: Arrays
 // @description: Shallow array slice uses relative bounds after argument effects
 // @expected: runtime-ok
-function check(ok:boolean):void{if(!ok){throw {code:"CHECK",message:"array slice"};}}
+function check(ok:boolean):void{if(!ok){throw {name:"CHECK",message:"array slice"};}}
 class Item{x:number;}
 export function main():null{
   let xs:number[]=[1,2,3,4];let copy=xs.slice(0,4);

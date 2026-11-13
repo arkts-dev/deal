@@ -103,7 +103,7 @@ public final class LlvmProjectEmissionTest {
           let box: Box = { total: 42 };
           let value: number | null | undefined = box.total;
           if (value === null || value === undefined) {
-            throw {code: "T", message: "n"};
+            throw {name: "T", message: "n"};
           }
           return null;
         }

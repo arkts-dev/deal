@@ -7,7 +7,7 @@ import * as bytes from "./intrinsic-shadowing-bytes-lib";
 
 export function main(): null {
   if (bytes.convert(2) !== 3) {
-    throw { code: "TEST_FAIL", message: "import alias named bytes did not call the imported function" };
+    throw { name: "TEST_FAIL", message: "import alias named bytes did not call the imported function" };
   }
   return null;
 }

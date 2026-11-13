@@ -10,8 +10,8 @@ export class C {
 function rejects(text: string): void {
   let rejected = false;
   try { let value: C = JSON.parse(text); }
-  catch (e) { let error = e as Error; rejected = error.code === "E8001"; }
-  if (!rejected) { throw {code: "TEST_FAIL", message: "class target accepted " + text}; }
+  catch (e) { let error = e as Error; rejected = error.name === "E8001"; }
+  if (!rejected) { throw {name: "TEST_FAIL", message: "class target accepted " + text}; }
 }
 
 export function test_fromJson_top_level_scalars(): null {
@@ -26,7 +26,7 @@ export function test_fromJson_top_level_scalars(): null {
 export function test_fromJson_empty_documents(): null {
   rejects("{}");
   let from_obj: C = JSON.parse("{\"x\":0}");
-  if (from_obj.x !== 0) { throw {code: "TEST_FAIL", message: "provided zero field was lost"}; }
+  if (from_obj.x !== 0) { throw {name: "TEST_FAIL", message: "provided zero field was lost"}; }
   rejects("[]");
   rejects(" [ ] ");
   return null;

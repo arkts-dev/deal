@@ -22,13 +22,13 @@ export function test_array_write_single_evaluation(): null {
   let l: Log = { seq: [], buf: [0, 0, 0, 0] };
   pick(l, 1)[record(l, 2)] = record(l, 3);
   if (l.seq.length !== 3) {
-    throw { code: "TEST_FAIL", message: "number[] write must evaluate receiver, index, and RHS once each" };
+    throw { name: "TEST_FAIL", message: "number[] write must evaluate receiver, index, and RHS once each" };
   }
   if (l.seq[0] !== 1 || l.seq[1] !== 2 || l.seq[2] !== 3) {
-    throw { code: "TEST_FAIL", message: "number[] write operand order mismatch" };
+    throw { name: "TEST_FAIL", message: "number[] write operand order mismatch" };
   }
   if (l.buf[2] !== 3) {
-    throw { code: "TEST_FAIL", message: "number[] write value mismatch" };
+    throw { name: "TEST_FAIL", message: "number[] write value mismatch" };
   }
   return null;
 }

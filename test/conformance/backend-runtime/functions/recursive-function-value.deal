@@ -11,7 +11,7 @@ function factorial(n: number): number {
 export function test_recursive_function_value(): number {
   let f: (x: number) => number = factorial;
   let result: number = f(5);
-  if (result !== 120) { throw { code: "TEST_FAIL", message: "factorial failed" }; }
+  if (result !== 120) { throw { name: "TEST_FAIL", message: "factorial failed" }; }
   return result;
 }
 

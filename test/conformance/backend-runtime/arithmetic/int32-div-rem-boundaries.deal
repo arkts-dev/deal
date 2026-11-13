@@ -5,7 +5,7 @@
 
 export function main(): null {
   if (5 / 2 !== 2.5 || -5 / 2 !== -2.5) {
-    throw { code: "TEST_FAIL", message: "signed division or remainder mismatch" };
+    throw { name: "TEST_FAIL", message: "signed division or remainder mismatch" };
   }
 
   let trace: string = "";
@@ -15,7 +15,7 @@ export function main(): null {
   let result: number = lhs() / rhs();
   trace = trace + "X";
   if (result !== 2147483648 || trace !== "LRX") {
-    throw { code: "TEST_FAIL", message: "binary64 division value or operand order" };
+    throw { name: "TEST_FAIL", message: "binary64 division value or operand order" };
   }
   return null;
 }

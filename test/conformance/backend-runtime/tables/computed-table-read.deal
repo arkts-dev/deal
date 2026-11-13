@@ -6,11 +6,11 @@
 export function test_computed_table_read(): null {
   let t: Record<string, unknown> = { x: 7 };
   let n: number = t["x"] as number;
-  if (n !== 7) { throw { code: "TEST_FAIL", message: "computed table read" }; }
+  if (n !== 7) { throw { name: "TEST_FAIL", message: "computed table read" }; }
   let u: Record<string, unknown> = {};
   u["😀"] = 7;
   let m: number = u["😀"] as number;
-  if (m !== 7) { throw { code: "TEST_FAIL", message: "Unicode table key" }; }
+  if (m !== 7) { throw { name: "TEST_FAIL", message: "Unicode table key" }; }
   return null;
 }
 

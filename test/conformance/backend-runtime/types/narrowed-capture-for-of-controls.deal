@@ -5,21 +5,21 @@
 
 function expectEqual(what: string, actual: number, expected: number): null {
   if (actual !== expected) {
-    throw { code: "CONTROL_FAIL", message: what + " changed the value" };
+    throw { name: "CONTROL_FAIL", message: what + " changed the value" };
   }
   return null;
 }
 
 function expectTrue(what: string, condition: boolean): null {
   if (!condition) {
-    throw { code: "CONTROL_FAIL", message: what + " changed the value" };
+    throw { name: "CONTROL_FAIL", message: what + " changed the value" };
   }
   return null;
 }
 
 function expectCaught(what: string, e: Error, code: string): null {
-  if (e.code !== code) {
-    throw { code: "CONTROL_FAIL", message: what + ": expected " + code + ", got " + e.code };
+  if (e.name !== code) {
+    throw { name: "CONTROL_FAIL", message: what + ": expected " + code + ", got " + e.name };
   }
   return null;
 }

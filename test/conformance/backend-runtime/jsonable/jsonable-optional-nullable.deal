@@ -13,16 +13,16 @@ export function test_optional_nullable(): null {
   let p1: Profile = {bio: null, score: 100};
   let r1: Profile = JSON.parse(JSON.stringify(p1) as string);
   if (r1.score !== 100 || r1.bio !== null || Object.hasOwn(r1, "nick")) {
-    throw {code: "TEST_FAIL", message: "missing optional or nullable state changed"};
+    throw {name: "TEST_FAIL", message: "missing optional or nullable state changed"};
   }
   let p2: Profile = JSON.parse("{\"nick\":\"Nick\",\"bio\":null,\"score\":50}");
   let r2: Profile = JSON.parse(JSON.stringify(p2) as string);
   if (r2.score !== 50 || r2.bio !== null || !Object.hasOwn(r2, "nick") || (r2.nick as string) !== "Nick") {
-    throw {code: "TEST_FAIL", message: "present optional with null nullable changed"};
+    throw {name: "TEST_FAIL", message: "present optional with null nullable changed"};
   }
   let p3: Profile = JSON.parse("{\"nick\":\"Joe\",\"bio\":\"hi\",\"score\":75}");
   if (p3.score !== 75 || (p3.nick as string) !== "Joe" || (p3.bio as string) !== "hi") {
-    throw {code: "TEST_FAIL", message: "all-fields values changed"};
+    throw {name: "TEST_FAIL", message: "all-fields values changed"};
   }
   return null;
 }
@@ -30,8 +30,8 @@ export function test_optional_nullable(): null {
 export function test_fromJson_explicit_null_on_non_nullable_optional(): null {
   let rejected = false;
   try { let invalid: Profile = JSON.parse("{\"nick\":null,\"bio\":\"hello\",\"score\":50}"); }
-  catch (e) { let error = e as Error; rejected = error.code === "E8001" && error.message === "expected string"; }
-  if (!rejected) { throw {code: "TEST_FAIL", message: "null accepted for nonnullable optional"}; }
+  catch (e) { let error = e as Error; rejected = error.name === "E8001" && error.message === "expected string"; }
+  if (!rejected) { throw {name: "TEST_FAIL", message: "null accepted for nonnullable optional"}; }
   return null;
 }
 

@@ -2,7 +2,7 @@
 // @expected: runtime-ok
 // @tags: string,builtin,utf16
 function check(ok:boolean):void {
-  if(!ok){throw {code:"TEST",message:"string search positions"};}
+  if(!ok){throw {name:"TEST",message:"string search positions"};}
 }
 export function main():null {
   let text="ababa";
@@ -51,8 +51,8 @@ export function main():null {
   let position=():number=>{order=order+"p";return 2;};
   check(receiver().indexOf(search(),position())===3);check(order==="rsp");
   order="";check(receiver().lastIndexOf(search())===3);check(order==="rs");
-  let failText=():string=>{order=order+"x";throw {code:"STOP",message:"text"};};
-  let failPosition=():number=>{order=order+"x";throw {code:"STOP",message:"position"};};
+  let failText=():string=>{order=order+"x";throw {name:"STOP",message:"text"};};
+  let failPosition=():number=>{order=order+"x";throw {name:"STOP",message:"position"};};
   let destination=17;
   order="";try{destination=failText().indexOf(search(),position());}catch(e){}
   check(destination===17&&order==="x");

@@ -10,39 +10,39 @@ export function test_array_identity_equality(): number {
   let b: number[] = a;
   let c: number[] = [0, 0];
   if (!(a === b)) {
-    throw { code: "TEST_FAIL", message: "shared identity failed" };
+    throw { name: "TEST_FAIL", message: "shared identity failed" };
   }
   if (a !== b) {
-    throw { code: "TEST_FAIL", message: "shared identity neg failed" };
+    throw { name: "TEST_FAIL", message: "shared identity neg failed" };
   }
   if (a === c) {
-    throw { code: "TEST_FAIL", message: "distinct identity failed" };
+    throw { name: "TEST_FAIL", message: "distinct identity failed" };
   }
   if (!(a !== c)) {
-    throw { code: "TEST_FAIL", message: "distinct identity neg failed" };
+    throw { name: "TEST_FAIL", message: "distinct identity neg failed" };
   }
   let via: number[] = alias(a);
   if (!(via === a)) {
-    throw { code: "TEST_FAIL", message: "returned identity failed" };
+    throw { name: "TEST_FAIL", message: "returned identity failed" };
   }
   let n1: number[] | null = null;
   let n2: number[] | null = null;
   if (!(n1 === null)) {
-    throw { code: "TEST_FAIL", message: "nullable null eq failed" };
+    throw { name: "TEST_FAIL", message: "nullable null eq failed" };
   }
   if (n1 === n2 && !(n1 === null)) {
-    throw { code: "TEST_FAIL", message: "nullable pair failed" };
+    throw { name: "TEST_FAIL", message: "nullable pair failed" };
   }
   let v: number[] | null = [0];
   let w: number[] | null = v;
   if (!(v === w)) {
-    throw { code: "TEST_FAIL", message: "nullable value identity failed" };
+    throw { name: "TEST_FAIL", message: "nullable value identity failed" };
   }
   if (v === null) {
-    throw { code: "TEST_FAIL", message: "nullable value vs null failed" };
+    throw { name: "TEST_FAIL", message: "nullable value vs null failed" };
   }
   if (v !== w || v === null || !(n1 === n2)) {
-    throw { code: "TEST_FAIL", message: "nullable matrix failed" };
+    throw { name: "TEST_FAIL", message: "nullable matrix failed" };
   }
   return 0;
 }

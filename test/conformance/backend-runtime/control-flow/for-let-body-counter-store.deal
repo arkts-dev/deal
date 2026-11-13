@@ -10,7 +10,7 @@ function testBodyStoreFeedsUpdateAndTest(): void {
     i = i + 1;
   } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }
   if (visits !== 2) {
-    throw { code: "TEST_FAIL", message: "the body store did not reach the update and test" };
+    throw { name: "TEST_FAIL", message: "the body store did not reach the update and test" };
   }
   return;
 }
@@ -23,7 +23,7 @@ function testOmittedUpdateStillCarries(): void {
     if (visits === 3) { break; }
   } v14Loop1 = i;  } }
   if (visits !== 2) {
-    throw { code: "TEST_FAIL", message: "the update-less row lost the body store" };
+    throw { name: "TEST_FAIL", message: "the update-less row lost the body store" };
   }
   return;
 }
@@ -40,7 +40,7 @@ function testContinueInTryAfterStore(): void {
     }
   } v14Loop2 = i; v14Loop2 = v14Loop2 + 1; } }
   if (visits !== 2) {
-    throw { code: "TEST_FAIL", message: "a continue path lost the body store" };
+    throw { name: "TEST_FAIL", message: "a continue path lost the body store" };
   }
   return;
 }
@@ -59,7 +59,7 @@ function testContinueInNestedBlocks(): void {
     second = second + 1;
   } v14Loop3 = i; v14Loop3 = v14Loop3 + 1; } }
   if (hits !== 2 || second !== 1) {
-    throw { code: "TEST_FAIL", message: "a nested-block continue path lost the body store" };
+    throw { name: "TEST_FAIL", message: "a nested-block continue path lost the body store" };
   }
   return;
 }
@@ -72,7 +72,7 @@ function testClosureMutationFeedsUpdate(): void {
     mutate();
   } v14Loop4 = i; v14Loop4 = v14Loop4 + 1; } }
   if (visits !== 2) {
-    throw { code: "TEST_FAIL", message: "a closure's counter store was dropped" };
+    throw { name: "TEST_FAIL", message: "a closure's counter store was dropped" };
   }
   return;
 }
@@ -86,7 +86,7 @@ function testUpdateReadsOtherState(): void {
     step = 2;
   } v14Loop5 = i; v14Loop5 = v14Loop5 + step; } }
   if (total !== 3) {
-    throw { code: "TEST_FAIL", message: "the update read a stale counter value" };
+    throw { name: "TEST_FAIL", message: "the update read a stale counter value" };
   }
   return;
 }
@@ -104,7 +104,7 @@ function testBreakBeforeUpdate(): void {
     if (visits === 2) { break; }
   } v14Loop6 = i; v14Loop6 = bump(v14Loop6); } }
   if (visits !== 2 || updates !== 1) {
-    throw { code: "TEST_FAIL", message: "the break path iterated wrongly or ran the update" };
+    throw { name: "TEST_FAIL", message: "the break path iterated wrongly or ran the update" };
   }
   return;
 }
@@ -121,7 +121,7 @@ function testNestedLoopsTransferTheirOwnBinding(): void {
     } v14Loop8 = j; v14Loop8 = v14Loop8 + 1; } }
   } v14Loop7 = i; v14Loop7 = v14Loop7 + 1; } }
   if (outer !== 1 || inner !== 1) {
-    throw { code: "TEST_FAIL", message: "a nested loop transferred the wrong binding" };
+    throw { name: "TEST_FAIL", message: "a nested loop transferred the wrong binding" };
   }
   return;
 }
@@ -138,10 +138,10 @@ function testCapturesStayPerIteration(): void {
     i = i + 1;
   } v14Loop9 = i; v14Loop9 = v14Loop9 + 1; } }
   if (k !== 2) {
-    throw { code: "TEST_FAIL", message: "the body store did not shorten the loop" };
+    throw { name: "TEST_FAIL", message: "the body store did not shorten the loop" };
   }
   if (fs[0]() !== 1 || fs[1]() !== 3) {
-    throw { code: "TEST_FAIL", message: "the per-iteration captures are not fresh" };
+    throw { name: "TEST_FAIL", message: "the per-iteration captures are not fresh" };
   }
   return;
 }
@@ -153,7 +153,7 @@ function testStringCounterStore(): void {
     s = s + "a";
   } v14Loop10 = s; v14Loop10 = v14Loop10 + "a"; } }
   if (visits !== 1) {
-    throw { code: "TEST_FAIL", message: "the string counter store was dropped" };
+    throw { name: "TEST_FAIL", message: "the string counter store was dropped" };
   }
   return;
 }
@@ -165,7 +165,7 @@ function testNumberCounterStore(): void {
     n = n + 0.5;
   } v14Loop11 = n; v14Loop11 = v14Loop11 + 0.5; } }
   if (visits !== 2) {
-    throw { code: "TEST_FAIL", message: "the number counter store was dropped" };
+    throw { name: "TEST_FAIL", message: "the number counter store was dropped" };
   }
   return;
 }
@@ -185,18 +185,18 @@ function testReturnAndThrowSkipUpdate(): void {
   };
   let got: number = firstBodyValue();
   if (got !== 1) {
-    throw { code: "TEST_FAIL", message: "the returning body lost its store" };
+    throw { name: "TEST_FAIL", message: "the returning body lost its store" };
   }
   let caught: boolean = false;
   try {
     { let v14Loop13: number = 0; while (v14Loop13 < 3) { let i: number = v14Loop13; {
-      if (i === 0) { throw { code: "STOP", message: "stop" }; }
+      if (i === 0) { throw { name: "STOP", message: "stop" }; }
     } v14Loop13 = i; v14Loop13 = next(v14Loop13); } }
   } catch (e) {
     caught = true;
   }
   if (!caught || calls !== 0) {
-    throw { code: "TEST_FAIL", message: "a return or throw ran the update" };
+    throw { name: "TEST_FAIL", message: "a return or throw ran the update" };
   }
   return;
 }

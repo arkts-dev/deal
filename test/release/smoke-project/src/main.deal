@@ -15,24 +15,24 @@ export function main(): null {
     destination = JSON.parse("{}");
   } catch (e) {
     let error = e as Error;
-    if (error.code !== "E8001") { throw error; }
+    if (error.name !== "E8001") { throw error; }
     rejected = true;
   }
   if (!rejected || destination !== original || destination.text !== "kept") {
-    throw { code: "SMOKE_REQUIRED", message: "required-key rejection changed destination" };
+    throw { name: "SMOKE_REQUIRED", message: "required-key rejection changed destination" };
   }
   let message: Message = JSON.parse('{"text":"deal","note":null}');
   if (Object.hasOwn(message, "tag")) {
-    throw { code: "SMOKE_OPTIONAL", message: "omitted optional became present" };
+    throw { name: "SMOKE_OPTIONAL", message: "omitted optional became present" };
   }
   let text = message.text;
   if ((JSON.stringify(message) as string) !== '{"text":"deal","note":null}') {
-    throw { code: "SMOKE_JSON", message: "contextual reconstruction did not round-trip" };
+    throw { name: "SMOKE_JSON", message: "contextual reconstruction did not round-trip" };
   }
   let supplied: Message = {text: text, note: null};
   let wide: number = 2147483648 + 0.5;
   if (wide !== 2147483648.5) {
-    throw { code: "SMOKE_NUMBER", message: "binary64 arithmetic changed" };
+    throw { name: "SMOKE_NUMBER", message: "binary64 arithmetic changed" };
   }
   c.log(str.trim(` smoke ${supplied.text} `));
   return null;

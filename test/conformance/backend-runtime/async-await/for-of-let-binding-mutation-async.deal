@@ -19,26 +19,26 @@ export async function testAsyncArrayMutation(): Promise<number> {
     n = n + 10;
     let echoed: number = await identityInt(n);
     if (echoed !== n) {
-      throw { code: "TEST_FAIL", message: "the awaited resumption lost the mutated binding" };
+      throw { name: "TEST_FAIL", message: "the awaited resumption lost the mutated binding" };
     }
     readers[visits] = function(): number { return n; };
     total = total + n;
     visits = visits + 1;
   }
   if (visits !== 3) {
-    throw { code: "TEST_FAIL", message: "async for-of body skipped or repeated" };
+    throw { name: "TEST_FAIL", message: "async for-of body skipped or repeated" };
   }
   if (total !== 36) {
-    throw { code: "TEST_FAIL", message: "async for-of direct mutation lost" };
+    throw { name: "TEST_FAIL", message: "async for-of direct mutation lost" };
   }
   if (readers[0]() !== 11) {
-    throw { code: "TEST_FAIL", message: "async for-of first closure reader mismatch" };
+    throw { name: "TEST_FAIL", message: "async for-of first closure reader mismatch" };
   }
   if (readers[1]() !== 12) {
-    throw { code: "TEST_FAIL", message: "async for-of second closure reader mismatch" };
+    throw { name: "TEST_FAIL", message: "async for-of second closure reader mismatch" };
   }
   if (readers[2]() !== 13) {
-    throw { code: "TEST_FAIL", message: "async for-of third closure reader mismatch" };
+    throw { name: "TEST_FAIL", message: "async for-of third closure reader mismatch" };
   }
   return total;
 }
@@ -50,16 +50,16 @@ export async function testAsyncStringMutation(): Promise<string> {
     c = c + "+";
     let echoed: string = await identityText(c);
     if (echoed !== c) {
-      throw { code: "TEST_FAIL", message: "the awaited resumption lost the mutated string binding" };
+      throw { name: "TEST_FAIL", message: "the awaited resumption lost the mutated string binding" };
     }
     seen = seen + c;
     visits = visits + 1;
   }
   if (visits !== 2) {
-    throw { code: "TEST_FAIL", message: "async string for-of body skipped or repeated" };
+    throw { name: "TEST_FAIL", message: "async string for-of body skipped or repeated" };
   }
   if (seen !== "a+b+") {
-    throw { code: "TEST_FAIL", message: "async string for-of direct mutation lost" };
+    throw { name: "TEST_FAIL", message: "async string for-of direct mutation lost" };
   }
   return seen;
 }
@@ -76,19 +76,19 @@ export async function testAsyncClosureMutation(): Promise<number> {
     visits = visits + 1;
   }
   if (visits !== 2) {
-    throw { code: "TEST_FAIL", message: "async for-of closure body skipped or repeated" };
+    throw { name: "TEST_FAIL", message: "async for-of closure body skipped or repeated" };
   }
   if (total !== 23) {
-    throw { code: "TEST_FAIL", message: "async for-of closure write body mismatch" };
+    throw { name: "TEST_FAIL", message: "async for-of closure write body mismatch" };
   }
   if (bump[0]() !== 111) {
-    throw { code: "TEST_FAIL", message: "async for-of closure write did not reach the binding" };
+    throw { name: "TEST_FAIL", message: "async for-of closure write did not reach the binding" };
   }
   if (bump[1]() !== 112) {
-    throw { code: "TEST_FAIL", message: "async for-of iterations share one binding cell" };
+    throw { name: "TEST_FAIL", message: "async for-of iterations share one binding cell" };
   }
   if (bump[0]() !== 211) {
-    throw { code: "TEST_FAIL", message: "the first async iteration binding is not a live cell" };
+    throw { name: "TEST_FAIL", message: "the first async iteration binding is not a live cell" };
   }
   return total;
 }

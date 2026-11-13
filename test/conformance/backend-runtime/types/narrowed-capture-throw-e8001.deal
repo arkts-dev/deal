@@ -4,7 +4,7 @@
 // @features: type-system, nullable, narrowing, runtime-errors, error-handling
 
 export function main(): null {
-  let e: Error | null = { code: "CONSTRUCTED", message: "constructed" };
+  let e: Error | null = { name: "CONSTRUCTED", message: "constructed" };
   let clear: () => null = function(): null {
     e = null;
     return null;

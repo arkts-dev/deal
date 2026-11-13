@@ -49,7 +49,7 @@ import javax.tools.ToolProvider;
  * present-null array slots both encode JSON {@code null}; shared
  * references encode at every position and cyclic completions are
  * value-representation failures. Nonfinite numbers encode null; nominal
- * class fields and builtin Error code/message encode without private
+ * class fields and builtin Error name/message encode without private
  * metadata. Function array elements encode null, while function roots
  * have no JSON representation and fail before envelope serialization. A
  * delayed host async completion awaited by the export; a typed completion
@@ -527,12 +527,12 @@ public class AsyncExportInvokerProductionTest {
         """;
 
     /**
-     * An Error member retains code/message through completion projection;
+     * An Error member retains name/message through completion projection;
      * JSON exposes neither transport metadata nor a replacement message.
      */
     private static final String ERROR_FIELD_COMPLETION_SOURCE = """
         function passThrough(): Error {
-          try { throw { code: "E_CANON", message: "roundtrip" }; }
+          try { throw { name: "E_CANON", message: "roundtrip" }; }
           catch (e) { return e as Error; }
         }
 
@@ -691,7 +691,7 @@ public class AsyncExportInvokerProductionTest {
      */
     private static final String USER_ERROR_SOURCE = """
         export async function run(): Promise<number> {
-          throw { code: "E_USER", message: "unchanged\\nmessage" };
+          throw { name: "E_USER", message: "unchanged\\nmessage" };
         }
 
         export function main(): null {
@@ -798,7 +798,7 @@ public class AsyncExportInvokerProductionTest {
           let f: (x: number, y: number) => Promise<number> = small;
           let r: number = await f(await value("A", 7), await value("B", 8));
           if (r !== 7 || trace !== "ABF") {
-            throw { code: "ARITY_FAIL", message: "async extended arguments: " + trace };
+            throw { name: "ARITY_FAIL", message: "async extended arguments: " + trace };
           }
           c.log("async-extended-argument-order");
           return null;
@@ -874,16 +874,16 @@ public class AsyncExportInvokerProductionTest {
               let original=value;
               let rejected=0;
               try { value=JSON.parse(`{"value":"bad","extra":true}`); }
-              catch(e) { if((e as Error).code==="E8007"){rejected=rejected+1;} }
+              catch(e) { if((e as Error).name==="E8007"){rejected=rejected+1;} }
               try { let xs:number[]=JSON.parse(`[1,"bad"]`); }
-              catch(e) { if((e as Error).code==="E8001"){rejected=rejected+1;} }
+              catch(e) { if((e as Error).name==="E8001"){rejected=rejected+1;} }
               try { let asserted=JSON.parse(text) as Node; }
-              catch(e) { if((e as Error).code==="E8001"){rejected=rejected+1;} }
+              catch(e) { if((e as Error).name==="E8001"){rejected=rejected+1;} }
               if(rejected!==3 || value!==original || !Object.hasOwn(value,"next")) {
-                throw {code:"TEST",message:"async parse rollback or context"};
+                throw {name:"TEST",message:"async parse rollback or context"};
               }
               let fresh:Node=JSON.parse(JSON.stringify(value) as string);
-              if(fresh===value || fresh.value!==7){throw {code:"TEST",message:"async fresh reconstruction"};}
+              if(fresh===value || fresh.value!==7){throw {name:"TEST",message:"async fresh reconstruction"};}
               return fresh.value+(fresh.next as Node).value;
             }
             """;
@@ -904,19 +904,19 @@ public class AsyncExportInvokerProductionTest {
             export async function run():Promise<number> {
               let first=make(10);let other=make(30);
               if((await first(2))!==13 || (await other(1))!==32 || (await first(0))!==12){
-                throw {code:"TEST",message:"fresh async recursive cells"};
+                throw {name:"TEST",message:"fresh async recursive cells"};
               }
               let remaining=2;let trace="";
               let adapted:(ignored:number)=>Promise<number> = async function():Promise<number> {
                 trace=trace+"A";
-                if(remaining===0){throw {code:"STOP",message:"recursive abrupt"};}
+                if(remaining===0){throw {name:"STOP",message:"recursive abrupt"};}
                 remaining=remaining-1;
                 let result=await adapted(99);trace=trace+"B";return result;
               };
               let caught=false;
-              try{await adapted(7);}catch(e){if(e instanceof Error){caught=e.code==="STOP";}}
+              try{await adapted(7);}catch(e){if(e instanceof Error){caught=e.name==="STOP";}}
               if(!caught || trace!=="AAA" || remaining!==0){
-                throw {code:"TEST",message:"adapted async abrupt completion"};
+                throw {name:"TEST",message:"adapted async abrupt completion"};
               }
               remaining=0;
               adapted=async function(ignored:number):Promise<number>{return 7;};
@@ -1252,7 +1252,7 @@ public class AsyncExportInvokerProductionTest {
                   let child: Child = { value: 7 };
                   let result: Model = {
                     child: child, rows: [child, null], data: { ok: true },
-                    fn: (): number => { throw {code: "TEST", message: "JSON invoked function"}; }
+                    fn: (): number => { throw {name: "TEST", message: "JSON invoked function"}; }
                   };
                   return result;
                 }
@@ -1269,7 +1269,7 @@ public class AsyncExportInvokerProductionTest {
                 "completion has no JSON representation");
             assertEncodedCompletion(backend, "error-field-completion",
                 ERROR_FIELD_COMPLETION_SOURCE, "record",
-                "{\"e\":{\"code\":\"E_CANON\",\"message\":\"roundtrip\"}}");
+                "{\"e\":{\"name\":\"E_CANON\",\"message\":\"roundtrip\"}}");
         }
     }
 
@@ -1612,7 +1612,7 @@ public class AsyncExportInvokerProductionTest {
                     export function main(): null {return null;}
                     export async function run(): Promise<number> {
                       try {let t: Record<string, unknown> = {value: "bad"}; let x: number = t.value as number; return x;}
-                      catch(e) {throw {code: "OUTER", message: "outer"};}
+                      catch(e) {throw {name: "OUTER", message: "outer"};}
                     }
                     """, null, null);
             try {
@@ -2329,7 +2329,7 @@ public class AsyncExportInvokerProductionTest {
           let index: () => number = function(): number {trace = trace + "I"; return 2;};
           let receiver: () => number[] = function(): number[] {trace = trace + "R"; return xs;};
           try {receiver()[index()] = await value(); trace = trace + "X";}
-          catch (e) {if ((e as Error).code !== "E8002") {return 0;} trace = trace + "C";}
+          catch (e) {if ((e as Error).name !== "E8002") {return 0;} trace = trace + "C";}
           if (trace !== "RIVC" || alias.length !== 1 || alias[0] !== 7) {return 0;}
           alias[alias.length] = 8;
           if (xs.length !== 2 || xs[1] !== 8) {return 0;}

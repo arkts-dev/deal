@@ -10,7 +10,7 @@ export async function check(): Promise<number> {
     return null;
   };
   await set(255);
-  if (b[0] !== 255) { throw {code: "TEST_FAIL", message: "captured async byte write"}; }
+  if (b[0] !== 255) { throw {name: "TEST_FAIL", message: "captured async byte write"}; }
   return b[0];
 }
 

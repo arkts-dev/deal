@@ -6,7 +6,7 @@ import * as c from "std/console";
 function check(ok:boolean):void{
   if(!ok){
     throw {
-      code:"TEST",message:"dynamic activation"
+      name:"TEST",message:"dynamic activation"
     };
   }
 }
@@ -102,7 +102,7 @@ export function main():null{
     f=function(n:number):number{
       if(n===0){
         throw {
-          code:"X",message:"x"
+          name:"X",message:"x"
         };
       }
       try{

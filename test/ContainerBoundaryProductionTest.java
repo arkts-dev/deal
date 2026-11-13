@@ -518,25 +518,25 @@ public class ContainerBoundaryProductionTest {
           let first: unknown[] = xs[0] as unknown[];
           let alias: unknown[] = xs[0] as unknown[];
           if (first !== alias) {
-            throw { code: "TEST_FAIL", message: "decoded identity" };
+            throw { name: "TEST_FAIL", message: "decoded identity" };
           }
           let reread: unknown[] = t.values as unknown[];
           if (reread !== xs) {
-            throw { code: "TEST_FAIL", message: "decoded member identity" };
+            throw { name: "TEST_FAIL", message: "decoded member identity" };
           }
           if (first.length !== 2) {
-            throw { code: "TEST_FAIL", message: "decoded length" };
+            throw { name: "TEST_FAIL", message: "decoded length" };
           }
           if (((xs[1] as unknown[])[0] as number) !== 3) {
-            throw { code: "TEST_FAIL", message: "decoded indexing" };
+            throw { name: "TEST_FAIL", message: "decoded indexing" };
           }
           first[1] = 9;
           if ((alias[1] as number) !== 9) {
-            throw { code: "TEST_FAIL", message: "decoded alias mutation" };
+            throw { name: "TEST_FAIL", message: "decoded alias mutation" };
           }
           let encoded: string = JSON.stringify(t) as string;
           if (JSON.stringify(JSON.parse(encoded)) !== JSON.stringify(JSON.parse("{\\"values\\":[[1,9],[3,4]]}"))) {
-            throw { code: "TEST_FAIL", message: "decoded stringify: " + encoded };
+            throw { name: "TEST_FAIL", message: "decoded stringify: " + encoded };
           }
           return null;
         }

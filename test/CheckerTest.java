@@ -1394,7 +1394,7 @@ public class CheckerTest {
         // Legal control: a throw-only try does not trigger the rule, so a
         // fallthrough catch with a valid later return compiles.
         CheckerOutput throwOnly = checkProgram(
-            "export function f(): null {try {throw {code:\"TEST\",message:\"x\"};}"
+            "export function f(): null {try {throw {name:\"TEST\",message:\"x\"};}"
                 + " catch(e) {} return null;}\n");
         assertNoErrors(throwOnly, "a throw-only try with a fallthrough catch"
             + " stays legal");
@@ -2575,10 +2575,10 @@ public class CheckerTest {
                     + "  let tb: Record<string, unknown> = { item: b.make() };\n"
                     + "  let other: b.Item = tb.item as b.Item;\n"
                     + "  if (a.read(own) !== 1 || a.read(again) !== 1) {\n"
-                    + "    throw { code: \"WRONG_A\", message: \"a\" };\n"
+                    + "    throw { name: \"WRONG_A\", message: \"a\" };\n"
                     + "  }\n"
                     + "  if (b.read(other) !== 2) {\n"
-                    + "    throw { code: \"WRONG_B\", message: \"b\" };\n"
+                    + "    throw { name: \"WRONG_B\", message: \"b\" };\n"
                     + "  }\n"
                     + "  console.log(\"SIBLING_IDENTITY_OK\");\n"
                     + "  return null;\n"
@@ -2985,7 +2985,7 @@ public class CheckerTest {
                     + "  c = (b = {n: 7});\n"
                     + "  if (c !== null) {\n"
                     + "    if (c.n !== 7) {\n"
-                    + "      throw { code: \"PROVENANCE_FAIL\", message: "
+                    + "      throw { name: \"PROVENANCE_FAIL\", message: "
                     + "\"same-declaration value\" };\n"
                     + "    }\n"
                     + "  }\n"
@@ -3070,7 +3070,7 @@ public class CheckerTest {
                     + "    class A { n: string; }\n"
                     + "    a = { n: 8 };\n"
                     + "  }\n"
-                    + "  if (a.n !== 8) { throw { code: \"OUTER_LAYOUT\", "
+                    + "  if (a.n !== 8) { throw { name: \"OUTER_LAYOUT\", "
                     + "message: \"outer\" }; }\n"
                     + "  console.log(\"SHADOW_CONSTRUCTION_OK\");\n"
                     + "  return null;\n"
@@ -3084,7 +3084,7 @@ public class CheckerTest {
                     + "    a = { n: 8 };\n"
                     + "  }\n"
                     + "  if (a !== null) {\n"
-                    + "    if (a.n !== 8) { throw { code: \"NULLABLE_LAYOUT\", "
+                    + "    if (a.n !== 8) { throw { name: \"NULLABLE_LAYOUT\", "
                     + "message: \"nullable\" }; }\n"
                     + "  }\n"
                     + "  console.log(\"SHADOW_NULLABLE_OK\");\n"
@@ -3127,11 +3127,11 @@ public class CheckerTest {
                     + "  let a: A = {n: 7};\n"
                     + "  {\n"
                     + "    let b: B = {n: \"ok\"};\n"
-                    + "    if (b.n !== \"ok\") { throw { code: \"INNER_LAYOUT\", "
+                    + "    if (b.n !== \"ok\") { throw { name: \"INNER_LAYOUT\", "
                     + "message: \"inner\" }; }\n"
                     + "  }\n"
                     + "  let c: A = {n: 7};\n"
-                    + "  if (c.n !== 7) { throw { code: \"PROVIDED_LAYOUT\", "
+                    + "  if (c.n !== 7) { throw { name: \"PROVIDED_LAYOUT\", "
                     + "message: \"provided\" }; }\n"
                     + "  console.log(\"SHADOW_CONTROL_OK\");\n"
                     + "  return null;\n"
@@ -3199,7 +3199,7 @@ public class CheckerTest {
                     + "  c = (b = b);\n"
                     + "  if (c !== null) {\n"
                     + "    if (c.n !== 7) {\n"
-                    + "      throw { code: \"PROVENANCE_FAIL\", message: "
+                    + "      throw { name: \"PROVENANCE_FAIL\", message: "
                     + "\"same-declaration value\" };\n"
                     + "    }\n"
                     + "  }\n"
@@ -3284,14 +3284,14 @@ public class CheckerTest {
     static void testErrorClassConstruction() {
         System.out.println("-- Error Class Construction --");
         CheckerOutput out = checkProgram(
-            "let e: Error = { code: \"X\", message: \"Y\" };"
+            "let e: Error = { name: \"X\", message: \"Y\" };"
         );
         assertNoErrors(out, "Error class construction");
 
         // Also test Error field access
         out = checkProgram(
-            "let e: Error = { code: \"X\", message: \"Y\" };\n" +
-            "let c: string = e.code;\n" +
+            "let e: Error = { name: \"X\", message: \"Y\" };\n" +
+            "let c: string = e.name;\n" +
             "let m: string = e.message;"
         );
         assertNoErrors(out, "Error field access");
@@ -3314,26 +3314,26 @@ public class CheckerTest {
     }
 
     static void testThrowMessageOnly() {
-        System.out.println("-- Throw: missing Error.code → E4001 --");
+        System.out.println("-- Throw: missing Error.name → E4001 --");
         CheckerOutput out = checkProgram(
             "function f(): null { throw { message: \"x\" }; }"
         );
-        assertError(out, "E4001", "throw requires Error.code independently of message");
+        assertError(out, "E4001", "throw requires Error.name independently of message");
     }
 
     static void testThrowFullError() {
-        System.out.println("-- Throw: { code: \"E001\", message: \"x\" } → OK --");
+        System.out.println("-- Throw: { name: \"E001\", message: \"x\" } → OK --");
         CheckerOutput out = checkProgram(
-            "function f(): null { throw { code: \"E001\", message: \"x\" }; }"
+            "function f(): null { throw { name: \"E001\", message: \"x\" }; }"
         );
-        assertNoErrors(out, "throw { code, message } must compile");
+        assertNoErrors(out, "throw { name, message } must compile");
     }
 
     static void testThrowErrorVariable() {
         System.out.println("-- Throw: Error variable → OK --");
         CheckerOutput out = checkProgram(
             "function f(): null {\n" +
-            "  let e: Error = { code: \"TEST\", message: \"x\" };\n" +
+            "  let e: Error = { name: \"TEST\", message: \"x\" };\n" +
             "  throw e;\n" +
             "}"
         );
@@ -3479,7 +3479,7 @@ public class CheckerTest {
         System.out.println("-- Definite Return: throw counts --");
         CheckerOutput out = checkProgram(
             "function f(): number {\n" +
-            "  throw { code: \"TEST\", message: \"error\" };\n" +
+            "  throw { name: \"TEST\", message: \"error\" };\n" +
             "}"
         );
         assertNoErrors(out, "throw counts as return");
@@ -4199,11 +4199,11 @@ public class CheckerTest {
         CheckerOutput normal = checkProgram(
             "export function main(): null {\n"
             + "  try {\n"
-            + "    try { throw {code: \"TEST\", message: \"test\"}; } catch (inner) {\n"
+            + "    try { throw {name: \"TEST\", message: \"test\"}; } catch (inner) {\n"
             + "      let msg: string = (inner as Error).message;\n"
             + "    }\n"
             + "  } catch (outer) {\n"
-            + "    let code: string = (outer as Error).code;\n"
+            + "    let name: string = (outer as Error).name;\n"
             + "  }\n"
             + "  return null;\n"
             + "}\n");
@@ -5394,7 +5394,7 @@ public class CheckerTest {
             "export function main(): null {" +
             "  let e: number | null = 1;" +
             "  if (e !== null) {" +
-            "    try { throw { code: \"C_INT\", message: \"c\" }; }" +
+            "    try { throw { name: \"C_INT\", message: \"c\" }; }" +
             "    catch (e) { let captured: unknown = e; let error: Error = e as Error; }" +
             "    let afterCatch: number = e;" +
             "  }" +
@@ -5424,7 +5424,7 @@ public class CheckerTest {
             "export function main(): null {" +
             "  let e: number | null = null;" +
             "  if (e === null) {" +
-            "    try { throw { code: \"C_NULL\", message: \"n\" }; }" +
+            "    try { throw { name: \"C_NULL\", message: \"n\" }; }" +
             "    catch (e) { let captured: unknown = e; let error: Error = e as Error; }" +
             "  }" +
             "  return null;" +
@@ -5441,7 +5441,7 @@ public class CheckerTest {
             "export function main(): null {" +
             "  let e: string | null = \"outer\";" +
             "  if (e !== null) {" +
-            "    try { throw { code: \"C_STR\", message: \"s\" }; }" +
+            "    try { throw { name: \"C_STR\", message: \"s\" }; }" +
             "    catch (e) { let unsound: string = e; }" +
             "  }" +
             "  return null;" +
@@ -5456,7 +5456,7 @@ public class CheckerTest {
             "export function main(): null {" +
             "  let e: number | null = 1;" +
             "  if (e !== null) {" +
-            "    try { throw { code: \"C_INT\", message: \"i\" }; }" +
+            "    try { throw { name: \"C_INT\", message: \"i\" }; }" +
             "    catch (e) { let unsound: number = e; }" +
             "  }" +
             "  return null;" +
@@ -5494,8 +5494,8 @@ public class CheckerTest {
             "  let e: number | null = 1;" +
             "  if (e !== null) {" +
             "    try {" +
-            "      try { throw { code: \"C_IN\", message: \"in\" }; }" +
-            "      catch (e) { e = { code: \"C_RE\", message: \"re\" }; }" +
+            "      try { throw { name: \"C_IN\", message: \"in\" }; }" +
+            "      catch (e) { e = { name: \"C_RE\", message: \"re\" }; }" +
             "      let afterInner: number = e;" +
             "    } catch (outer) { }" +
             "    let afterOuter: number = e;" +
@@ -5527,8 +5527,8 @@ public class CheckerTest {
             "  let text: string | null = \"outer\";" +
             "  if (text !== null) {" +
             "    try {" +
-            "      try { throw { code: \"C_IN\", message: \"in\" }; }" +
-            "      catch (text) { text = { code: \"C_RE\", message: \"re\" }; }" +
+            "      try { throw { name: \"C_IN\", message: \"in\" }; }" +
+            "      catch (text) { text = { name: \"C_RE\", message: \"re\" }; }" +
             "      let afterInner: string = text;" +
             "    } catch (outer) { }" +
             "    let afterOuter: string = text;" +
@@ -5559,7 +5559,7 @@ public class CheckerTest {
             "async function g(): Promise<number> { return 5; }" +
             "async function f(e: number | null): Promise<number> {" +
             "  if (e !== null) {" +
-            "    try { throw { code: \"C_AWAIT\", message: \"a\" }; }" +
+            "    try { throw { name: \"C_AWAIT\", message: \"a\" }; }" +
             "    catch (e) { let captured: Error = e as Error; let resumed: number = await g(); }" +
             "    let unsound: number = e;" +
             "  }" +
@@ -5571,7 +5571,7 @@ public class CheckerTest {
             "export function main(): null {" +
             "  let value: number | null = 1;" +
             "  if (value !== null) {" +
-            "    try { throw { code: \"C_SET\", message: \"s\" }; }" +
+            "    try { throw { name: \"C_SET\", message: \"s\" }; }" +
             "    catch (err) { value = null; }" +
             "    let unsound: number = value;" +
             "  }" +
@@ -5586,7 +5586,7 @@ public class CheckerTest {
             "export function main(): null {" +
             "  let e: number | null = 1;" +
             "  if (e !== null) {" +
-            "    try { throw { code: \"C\", message: \"c\" }; }" +
+            "    try { throw { name: \"C\", message: \"c\" }; }" +
             "    catch (e) { let captured: unknown = e; }" +
             "  }" +
             "  return null;" +

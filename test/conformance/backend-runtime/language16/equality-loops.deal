@@ -5,11 +5,11 @@
 
 class Item { value: number; }
 function equal(a: unknown, b: unknown): boolean {
-  if ((a === b) === (a !== b)) { throw {code: "FAIL", message: "equality complement"}; }
+  if ((a === b) === (a !== b)) { throw {name: "FAIL", message: "equality complement"}; }
   return a === b;
 }
 function require(value: boolean): void {
-  if (!value) { throw {code: "FAIL", message: "unknown equality or loop refinement"}; }
+  if (!value) { throw {name: "FAIL", message: "unknown equality or loop refinement"}; }
 }
 export function main(): null {
   require(equal(undefined, undefined));
@@ -68,7 +68,7 @@ export function main(): null {
   while (typeof stale === "number") {
     mutate();
     try { let n: number = stale + 1; require(n === 2); }
-    catch (e) { if (e instanceof Error) { rejected = e.code === "E8001"; } }
+    catch (e) { if (e instanceof Error) { rejected = e.name === "E8001"; } }
     break;
   }
   require(rejected);

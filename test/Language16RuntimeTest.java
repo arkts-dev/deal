@@ -356,29 +356,29 @@ public final class Language16RuntimeTest {
                   let item:Item={first:null,name:"kept",grid:[[1]],required:undefined,home:{city:"kept"}};
                   probe.keep(item);
                   probe.change(1);
-                  try { JSON.stringify(item); throw {code:"TEST",message:"missed cycle"}; }
+                  try { JSON.stringify(item); throw {name:"TEST",message:"missed cycle"}; }
                   catch(e) { let error=e as Error; if(error.message !== "cyclic value cannot be encoded as JSON") {throw error;} }
                   probe.change(2);
-                  try { JSON.stringify(item); throw {code:"TEST",message:"missed kind"}; }
+                  try { JSON.stringify(item); throw {name:"TEST",message:"missed kind"}; }
                   catch(e) { let error=e as Error; if(error.message !== "expected string") {throw error;} }
                   probe.change(3);
-                  try { JSON.stringify(item); throw {code:"TEST",message:"missed element"}; }
-                  catch(e) { let error=e as Error; if(error.code !== "E8003") {throw error;} }
+                  try { JSON.stringify(item); throw {name:"TEST",message:"missed element"}; }
+                  catch(e) { let error=e as Error; if(error.name !== "E8003") {throw error;} }
                   probe.change(4);
-                  if ((JSON.stringify(item) as string) !== '{"first":null,"name":"kept","grid":[[1]],"home":{"city":"kept"}}') {throw {code:"TEST",message:"repair"};}
+                  if ((JSON.stringify(item) as string) !== '{"first":null,"name":"kept","grid":[[1]],"home":{"city":"kept"}}') {throw {name:"TEST",message:"repair"};}
                   probe.change(5);
-                  try { JSON.stringify(item); throw {code:"TEST",message:"missed nominal"}; }
-                  catch(e) { let error=e as Error; if(error.code !== "E8001") {throw error;} }
+                  try { JSON.stringify(item); throw {name:"TEST",message:"missed nominal"}; }
+                  catch(e) { let error=e as Error; if(error.name !== "E8001") {throw error;} }
                   probe.change(6);
-                  if ((JSON.stringify(item) as string) !== '{"first":null,"name":"kept","grid":[[1]],"home":{"city":"kept"}}') {throw {code:"TEST",message:"nominal repair"};}
+                  if ((JSON.stringify(item) as string) !== '{"first":null,"name":"kept","grid":[[1]],"home":{"city":"kept"}}') {throw {name:"TEST",message:"nominal repair"};}
                   probe.change(7);
-                  try { JSON.stringify(item); throw {code:"TEST",message:"missed malformed transport"}; }
+                  try { JSON.stringify(item); throw {name:"TEST",message:"missed malformed transport"}; }
                   catch(e) { let error=e as Error; if(error.message !== "expected string, got invalid Unicode scalar encoding") {throw error;} }
                   probe.change(8);
-                  try { JSON.stringify(item); throw {code:"TEST",message:"missed later cycle"}; }
+                  try { JSON.stringify(item); throw {name:"TEST",message:"missed later cycle"}; }
                   catch(e) { let error=e as Error; if(error.message !== "cyclic value cannot be encoded as JSON") {throw error;} }
                   probe.change(9);
-                  if ((JSON.stringify(item) as string) !== '{"first":{"bad":"kept"},"name":"kept","grid":[[1]],"home":{"city":"kept"}}') {throw {code:"TEST",message:"transport repair"};}
+                  if ((JSON.stringify(item) as string) !== '{"first":{"bad":"kept"},"name":"kept","grid":[[1]],"home":{"city":"kept"}}') {throw {name:"TEST",message:"transport repair"};}
                   return null;
                 }
                 export function main():null {return null;}
@@ -645,7 +645,7 @@ public final class Language16RuntimeTest {
                   try { let n:number|null=JSON.parse(`[]`); } catch(e) {}
                   try { let item:Item=JSON.parse(`[]`); } catch(e) {}
                   let n:number=JSON.parse(`2`);
-                  if(n!==2) { throw {code:"TEST",message:"parse value"}; }
+                  if(n!==2) { throw {name:"TEST",message:"parse value"}; }
                   return null;
                 }
                 """);
@@ -768,7 +768,7 @@ public final class Language16RuntimeTest {
                 String literal = numeric ? "7" : "\"foreign\"";
                 Files.writeString(source, "class Item{value:" + type + ";}export function main():null{"
                     + "let item:Item=JSON.parse(`{\"value\":" + literal + "}`);"
-                    + "if(item.value!==" + literal + "){throw {code:\"TEST\",message:\"foreign schema\"};}"
+                    + "if(item.value!==" + literal + "){throw {name:\"TEST\",message:\"foreign schema\"};}"
                     + "return null;}");
                 Path out = project.resolve("out");
                 var compiler = new deal.module.CompilationOrchestrator(source, out,
@@ -813,7 +813,7 @@ public final class Language16RuntimeTest {
             Files.writeString(source, "import * as unrelated from \"./other\";import * as model from \"./model\";class Local{box:model.Box;}"
                 + "export function run():number{let marker:unrelated.Marker={};let box:model.Box=JSON.parse(`{\"item\":{\"value\":7}}`);"
                 + "let local:Local=JSON.parse(`{\"box\":{\"item\":{\"value\":8}}}`);"
-                + "if(model.read(local.box)!==8){throw {code:\"TEST\",message:\"local-to-private schema\"};}return model.read(box);}"
+                + "if(model.read(local.box)!==8){throw {name:\"TEST\",message:\"local-to-private schema\"};}return model.read(box);}"
                 + "export function main():null{return null;}");
             Files.writeString(src.resolve("other.deal"), "export class Marker{}");
             Files.writeString(src.resolve("model.deal"), "class Item{value:number;next?:Item;}export class Box{item:Item;}"
@@ -1358,7 +1358,7 @@ public final class Language16RuntimeTest {
                   const a=Object.keys(r);const b=Object.keys(item);
                   if(a.length!==3 || a[0]!=="f" || a[1]!=="child" || a[2]!=="self"
                      || b.length!==2 || b[0]!=="x" || b[1]!=="stable"){
-                    throw {code:"KEYS",message:"hostile values consumed"};}
+                    throw {name:"KEYS",message:"hostile values consumed"};}
                   return null;
                 }
                 """ : ConformanceHarnessMetadata.stripClassificationHeaders(Files.readString(
@@ -1672,7 +1672,7 @@ public final class Language16RuntimeTest {
                 String value = boundary.equals("Record<string,unknown>") ? "{unread:e}" : "e";
                 Files.writeString(source, "import * as host from \"host/probe\";"
                     + "export function main():null{return null;}"
-                    + "export function run():number{let e:Error={code:\"X\",message:\"original\"};"
+                    + "export function run():number{let e:Error={name:\"X\",message:\"original\"};"
                     + "host.edit(e);try{let v:" + boundary + "=" + value
                     + ";return 0;}catch(x){return 1;}}");
                 var invocation = deal.semantic.CompilerProfileProvider.resolve(
@@ -1686,7 +1686,7 @@ public final class Language16RuntimeTest {
                 var tables = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.StructuredBodyTable>();
                 var registries = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.ClassFactoryRegistry>();
                 project.modules().forEach((id, unit) -> { tables.put(id, unit.bodyTable()); registries.put(id, unit.classFactories()); });
-                for (String field : List.of("code", "message")) for (boolean invalid : List.of(false, true)) {
+                for (String field : List.of("name", "message")) for (boolean invalid : List.of(false, true)) {
                     int[] calls = {0};
                     var responder = new deal.semantic.SemanticOracle.HostResponder() {
                         @Override public SyncOutcome call(deal.semantic.ir.ModuleId module, String export,
@@ -1936,7 +1936,7 @@ public final class Language16RuntimeTest {
                   {name:'next',descriptor:'unknown',optional:true},
                   {name:'tail',descriptor:'?string',optional:false}],{tail:null,first:true,next:deep});
                 if((json.stringify.$f(deep).match(/"first":true/g)||[]).length!==601) throw Error('deep class frames');
-                if(json.stringify.$f(rt.errorValue('C','m'))!=='{"code":"C","message":"m"}') throw Error('Error fields');
+                if(json.stringify.$f(rt.errorValue('C','m'))!=='{"name":"C","message":"m"}') throw Error('Error fields');
                 const callable=rt.checkType('unknown',s.split);
                 if(callable!==s.split) throw Error('function identity');
                 for (const a of [s.split.$f('a,b',','),s.split.$f('',','),
@@ -1985,7 +1985,7 @@ public final class Language16RuntimeTest {
                   {name='tail',descriptor='?string',optional=false}},{tail=rt.__NULL,first=true,next=deep}) end
                 local _,count=string.gsub(json.encode(deep),'"first":true','')
                 assert(count==601)
-                assert(json.encode(rt.error_value('C','m'))=='{"code":"C","message":"m"}')
+                assert(json.encode(rt.error_value('C','m'))=='{"name":"C","message":"m"}')
                 assert(rt.check_type('unknown',s.split)==s.split)
                 for _,a in ipairs({s.split.f('a,b',','),s.split.f('',','),
                     s.split.f('ab',''),t.keys.f({a=true}),t.keys.f({})}) do

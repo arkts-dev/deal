@@ -398,7 +398,7 @@ public final class LuaSemanticEmitter {
                 for (String name : carrier.fields().keySet()) out.append(luaString(name)).append(",");
                 out.append("},\n");
             }
-            out.append("  [\"Error\"] = {\"code\", \"message\"}\n}\n");
+            out.append("  [\"Error\"] = {\"name\", \"message\"}\n}\n");
             out.append("for identity, fields in pairs(__factories.__jsonClassOrder) do "
                 + "__dealCarrierKeys.classOrders[identity] = fields end\n");
         }
@@ -2126,7 +2126,7 @@ public final class LuaSemanticEmitter {
                 .append("  if value[__dealCarrierKeys.c] or value[__dealCarrierKeys.d] or value[__dealCarrierKeys.kind] == 'class' then\n")
                 .append("    local identity = value[__dealCarrierKeys.id] or value[__dealCarrierKeys.classname]\n")
                 .append("    local order = value[__dealCarrierKeys.classOrder] or __factories.__jsonClassOrder[identity] or __dealCarrierKeys.classOrders[identity]\n")
-                .append("    if value[__dealCarrierKeys.d] then order = {'code','message'} end\n")
+                .append("    if value[__dealCarrierKeys.d] then order = {'name','message'} end\n")
                 .append("    if order == nil then error('OBJECT_KEYS class without field order',0) end\n")
                 .append("    for i=1,#order do local key=order[i]\n")
                 .append("      local presence=value[__dealCarrierKeys.p]\n")
@@ -2404,7 +2404,7 @@ public final class LuaSemanticEmitter {
             }
             out.append("do local value=").append(slot(payload.receiver()))
                 .append("; local key=").append(payload.dynamicKey() == null ? luaString(payload.key()) : slot(payload.dynamicKey()))
-                .append("\n  if value[__dealCarrierKeys.d] then ").append(target).append(" = key=='code' or key=='message'\n")
+                .append("\n  if value[__dealCarrierKeys.d] then ").append(target).append(" = key=='name' or key=='message'\n")
                 .append("  elseif value[__dealCarrierKeys.c] then ").append(target).append(" = value[__dealCarrierKeys.p][key] == true\n")
                 .append("  else local keys=value[__dealCarrierKeys.keys]; ").append(target)
                 .append(" = (keys ~= nil and keys[key] == true) or rawget(value,key) ~= nil end\nend\n");
@@ -2560,11 +2560,11 @@ public final class LuaSemanticEmitter {
          */
         private static String errorCarrierField(SemanticOp op, String field) {
             return switch (field) {
-                case "code" -> "code";
+                case "name" -> "name";
                 case "message" -> "m";
                 default -> throw rejectedOp(op, op.kind() + " " + op.opId()
                     + " names the builtin Error field '" + field + "': the builtin"
-                    + " class declares exactly code and message — a fail-closed"
+                    + " class declares exactly name and message — a fail-closed"
                     + " producer defect, never emitted");
             };
         }
@@ -4769,12 +4769,12 @@ private void emitStdlib(SemanticOp op) {
                 values.put(entry.field(), checked);
             }
             String target = slot((ValueId) op.result());
-            String code = values.get("code");
+            String code = values.get("name");
             String message = values.get("message");
             if (code == null || message == null) {
-                throw rejectedOp(op, "builtin Error construction omits code or message (producer defect)");
+                throw rejectedOp(op, "builtin Error construction omits name or message (producer defect)");
             }
-            out.append("__instT = {[__dealCarrierKeys.d] = true, code = ")
+            out.append("__instT = {[__dealCarrierKeys.d] = true, name = ")
                 .append(code).append(", m = ").append(message).append("}\n");
             out.append(target).append(" = __instT\n");
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
@@ -5135,7 +5135,7 @@ private void emitStdlib(SemanticOp op) {
             // the only writer of the field and always link this snapshot
             // form).
             out.append("    local ").append(caughtIdentity)
-                .append(" = {[__dealCarrierKeys.d] = true, code = __resT.code, m = __resT.m, ")
+                .append(" = {[__dealCarrierKeys.d] = true, name = __resT.name, code = __resT.code, m = __resT.m, ")
                 .append("o = __resT.o, e = __resT.e, a = __resT.a, ")
                 .append("f = __resT.f, cause = __resT.cause}\n");
             out.append("    ").append(cellName).append(" = ")
@@ -5176,7 +5176,7 @@ private void emitStdlib(SemanticOp op) {
                 "__errtext(__terrT)");
             out.append("        error(__terrT, 0)\n");
             out.append("      else\n");
-            out.append("        __wrappedT = {[__dealCarrierKeys.d] = true, code = __terrT.code, "
+            out.append("        __wrappedT = {[__dealCarrierKeys.d] = true, name = __terrT.name, code = __terrT.code, "
                 + "m = __terrT.m, o = __terrT.o, e = __terrT.e, a = __terrT.a, "
                 + "f = __terrT.f, g = __terrT.g, gm = __terrT.gm, cause = "
                 + caughtIdentity + "}\n");
@@ -5298,6 +5298,7 @@ private void emitStdlib(SemanticOp op) {
                 "__errtext(" + value + ")");
             out.append("  error(").append(value).append(", 0)\n");
             out.append("else\n");
+            out.append("  ").append(value).append(".code = ").append(value).append(".name\n");
             out.append("  ").append(value).append(".o = ")
                 .append(luaString(originOf(op))).append("\n");
             out.append("  ").append(value).append(".e = nil\n");
@@ -6409,7 +6410,7 @@ private void emitStdlib(SemanticOp op) {
                     + "..__esc(__tA.label..\"!\"..__oA.code)..\"\\n\")\n");
                 out.append("      io.stderr:flush()\n");
             }
-            out.append("      __tA.err = {[__dealCarrierKeys.d] = true, code = __oA.code, m = __oA.m, o = ")
+            out.append("      __tA.err = {[__dealCarrierKeys.d] = true, name = __oA.name, code = __oA.code, m = __oA.m, o = ")
                 .append(luaString(originOf(op)))
                 .append(", e = nil, a = nil, f = __framesText(), cause = nil}\n");
             out.append("    end\n");
@@ -7174,7 +7175,7 @@ local function __hostClassProject(desc, v, seen)
   if type(v) ~= "table" then return v end
   if v[__dealCarrierKeys.d] then
     return {[__dealCarrierKeys.kind] = "class", [__dealCarrierKeys.classname] = "Error",
-            code = v.code, message = v.m}
+            name = v.name, code = v.code, message = v.m}
   end
   if v[__dealCarrierKeys.kind] == "class" then
     if seen == nil then seen = {} end
@@ -7701,7 +7702,7 @@ __factories.__hostTextGraph = function(v, outbound, seen)
     if admitted then
       seen[node] = true
       if rawget(node, __dealCarrierKeys.d) then
-        node.code = convert(node.code); node.m = convert(node.m)
+        node.name = convert(node.name); node.code = convert(node.code); node.m = convert(node.m)
       else
         local fields = rawget(node, __dealCarrierKeys.f)
         if type(fields) == "table" and fields ~= node then pending[#pending + 1] = fields end
@@ -7909,7 +7910,7 @@ __factories.__hostCarrierOut = function(desc, v, memo)
   end
   if v[__dealCarrierKeys.d] then
     local out = {[__dealCarrierKeys.kind] = "class",
-      [__dealCarrierKeys.classname] = "Error", code = v.code, message = v.m}
+      [__dealCarrierKeys.classname] = "Error", name = v.name, code = v.code, message = v.m}
     memo[v] = out
     return out
   end
@@ -8800,7 +8801,7 @@ local function __numHex(v)
 end
 local function __atom(kind, v)
   if type(v) == "table" and v[__dealCarrierKeys.d] then
-    return "err:"..tostring(v.code)..":"..__esc(v.m or "")
+    return "err:"..tostring(v.code or v.name)..":"..__esc(v.m or "")
   end
   if v == __UNDEFINED then return "undefined" end
   if type(v) == "number" then return "num:"..__numHex(v) end
@@ -8829,7 +8830,7 @@ local function __atom(kind, v)
     return "str:"..__esc(v)
   end
   if kind == "err" then
-    return "err:"..tostring(v.code)..":"..__esc(v.m or "")
+    return "err:"..tostring(v.code or v.name)..":"..__esc(v.m or "")
   end
   if kind == "ref" or kind == "table" or kind == "array" or kind == "function"
       or kind == "class" then
@@ -8919,14 +8920,14 @@ local function __rawAtom(kind, v)
   end
   if type(v) == "string" then return "str:"..__esc(v) end
   if type(v) == "table" then
-    if v[__dealCarrierKeys.d] then return "err:"..tostring(v.code)..":"..__esc(v.m or "") end
+    if v[__dealCarrierKeys.d] then return "err:"..tostring(v.code or v.name)..":"..__esc(v.m or "") end
     return "ref:"..__allocId(v)
   end
   if type(v) == "function" then return "ref:"..__allocId(v) end
   return __atom(kind, v)
 end
 local function __failExpr(code, msg, o, e, a, g)
-  return {[__dealCarrierKeys.d] = true, code = code, m = msg, o = o, e = e, a = a, g = g,
+  return {[__dealCarrierKeys.d] = true, name = code, code = code, m = msg, o = o, e = e, a = a, g = g,
           gm = g, f = __framesText(), cause = nil}
 end
 -- The carrier provenance marks of one failure table (the lane's honest
@@ -10043,7 +10044,7 @@ local function __bcheckLeaf(desc, staticKind, v, csig, completion, classSeen)
     -- passes unchanged. The canonical builtin atom is exactly Error
     -- (the one class text without the leading '@').
     if type(v) == "table" and v[__dealCarrierKeys.d] then
-      __bcheck("string", "ref", v.code, nil, completion, classSeen)
+      __bcheck("string", "ref", v.name, nil, completion, classSeen)
       __bcheck("string", "ref", v.m, nil, completion, classSeen)
       return v
     end
@@ -10681,7 +10682,7 @@ local function __asyncExportCompletion(__rtAsync, v, __declaredNumber, __seen)
   end
   if v[__dealCarrierKeys.d] then
     local out = {[__dealCarrierKeys.kind] = "class", [__dealCarrierKeys.d] = true,
-                 [__dealCarrierKeys.classname] = "Error", code = v.code, m = v.m or v.message}
+                 [__dealCarrierKeys.classname] = "Error", name = v.name, code = v.code, m = v.m or v.message}
     seen[v] = out
     return out
   end
@@ -10999,7 +11000,7 @@ local function __rawArgAtom(kind, v)
     if v[__dealCarrierKeys.jn] then
       return __atom("number", v.d)
     end
-    if v[__dealCarrierKeys.d] then return "err:"..tostring(v.code)..":"..__esc(v.m or "") end
+    if v[__dealCarrierKeys.d] then return "err:"..tostring(v.code or v.name)..":"..__esc(v.m or "") end
     return "ref:"..__allocId(v)
   end
   if t == "function" then return "ref:"..__allocId(v) end
@@ -11352,7 +11353,7 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
                 canonical=descriptor, required=not optional}
             end
           end
-          if identity == "Error" then plan = {{name="code",descriptor="string",required=true},
+          if identity == "Error" then plan = {{name="name",descriptor="string",required=true},
             {name="message",descriptor="string",required=true}} end
           if not plan or #plan ~= #order then error("JSON class value has no exact field plan", 0) end
           frames[#frames + 1] = {kind = "class", value = v, order = order, plan = plan,
@@ -11563,7 +11564,7 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
             local member
             if frame.value[__dealCarrierKeys.d] then
               if key == "message" then member = frame.value.m or frame.value.message
-              else member = frame.value.code end
+              else member = frame.value.name end
             elseif type(fields) == "table" then
               if type(presence) ~= "table" or presence[key] then
                 member = fields[key]
@@ -11737,7 +11738,7 @@ local function __jsonDecodeTarget(raw, descriptor, origin, plans, runtimeDescrip
   end
   local function planOf(name)
     if name == "Error" then return {classId="Error", fields={
-      {name="code",desc="string",optional=false}, {name="message",desc="string",optional=false}}} end
+      {name="name",desc="string",optional=false}, {name="message",desc="string",optional=false}}} end
     local plan = plans[name]
     if plan == nil then error("JSON decoding target has no exact class plan: "..name, 0) end
     return plan
@@ -11807,7 +11808,7 @@ local function __jsonDecodeTarget(raw, descriptor, origin, plans, runtimeDescrip
     else
       completed=frame.value
       if frame.plan and frame.plan.classId=="Error" then
-        completed={[__dealCarrierKeys.d]=true,code=completed[__dealCarrierKeys.f].code,m=completed[__dealCarrierKeys.f].message}
+        completed={[__dealCarrierKeys.d]=true,name=completed[__dealCarrierKeys.f].name,m=completed[__dealCarrierKeys.f].message}
       end
       stack[#stack]=nil
       if #stack>0 then

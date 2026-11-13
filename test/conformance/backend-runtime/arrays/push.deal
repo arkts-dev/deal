@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: arrays, closures, evaluation-order
 class Item {x:number;}
-function check(ok:boolean):void {if(!ok){throw {code:"PUSH",message:"mismatch"};}}
+function check(ok:boolean):void {if(!ok){throw {name:"PUSH",message:"mismatch"};}}
 export function main():null {
   let xs:number[]=[]; let alias=xs;
   check(xs.push(4)===1 && xs.push(9)===2 && alias===xs && alias[1]===9);
@@ -15,12 +15,12 @@ export function main():null {
   let replace=():number=>{xs=[100];return 11;};
   check(receiver().push(replace())===5 && old[4]===11 && xs.length===1 && xs[0]===100);
   let destination=17; let caught=false; order="";
-  let fail=():number=>{order=order+"v";throw {code:"VALUE",message:"stop"};};
-  try {destination=receiver().push(fail());} catch(e){check((e as Error).code==="VALUE");caught=true;}
+  let fail=():number=>{order=order+"v";throw {name:"VALUE",message:"stop"};};
+  try {destination=receiver().push(fail());} catch(e){check((e as Error).name==="VALUE");caught=true;}
   check(caught && destination===17 && order==="rv" && xs.length===1);
-  let failReceiver=():number[]=>{order=order+"r";throw {code:"RECEIVER",message:"stop"};};
+  let failReceiver=():number[]=>{order=order+"r";throw {name:"RECEIVER",message:"stop"};};
   order="";caught=false;
-  try {destination=failReceiver().push(argument());} catch(e){check((e as Error).code==="RECEIVER");caught=true;}
+  try {destination=failReceiver().push(argument());} catch(e){check((e as Error).name==="RECEIVER");caught=true;}
   check(caught && order==="r" && destination===17 && xs.length===1);
   let nullable:(number|null|undefined)[]=[];
   check(nullable.push(null)===1 && nullable.push(undefined)===2 && nullable[0]===null && nullable[1]===undefined);

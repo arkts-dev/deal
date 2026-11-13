@@ -6,10 +6,10 @@
 export async function check(): Promise<number> {
   let n: number = 0;
   try {
-    throw { code: "X", message: "same async catch" };
+    throw { name: "X", message: "same async catch" };
     n = 99;
   } catch (e) {
-    if ((e as Error).code !== "X") { throw e as Error; }
+    if ((e as Error).name !== "X") { throw e as Error; }
     n = 7;
   }
   return n;

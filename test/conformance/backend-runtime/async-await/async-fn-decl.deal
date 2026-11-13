@@ -10,7 +10,7 @@ async function helper(): Promise<number> {
 export async function test_async_decl(): Promise<number> {
   let x: number = await helper();
   if (x !== 42) {
-    throw { code: "TEST_FAIL", message: "async function declaration awaited value mismatch" };
+    throw { name: "TEST_FAIL", message: "async function declaration awaited value mismatch" };
   }
   return x;
 }

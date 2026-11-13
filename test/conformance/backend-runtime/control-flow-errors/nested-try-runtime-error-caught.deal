@@ -15,7 +15,7 @@ export function test_nested_try_runtime_error_caught(): number {
       JSON.parse("bad");
     } catch (e) {
       innerCatchRan = true;
-      innerCode = (e as Error).code;
+      innerCode = (e as Error).name;
       result = 7;
     }
   } catch (outer) {
@@ -24,7 +24,7 @@ export function test_nested_try_runtime_error_caught(): number {
   }
 
   if (!innerCatchRan || innerCode !== "E8001" || result !== 7 || outerCatchRan) {
-    throw { code: "TEST_FAIL", message: "nested runtime error not handled by nearest inner catch with E8001 and result 7" };
+    throw { name: "TEST_FAIL", message: "nested runtime error not handled by nearest inner catch with E8001 and result 7" };
   }
 
   return result;

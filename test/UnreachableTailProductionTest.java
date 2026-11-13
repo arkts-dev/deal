@@ -795,7 +795,7 @@ public class UnreachableTailProductionTest {
         export function main(): null {
           let value: number = f();
           if (value !== 1) {
-            throw { code: "TEST_FAIL", message: "f returned the wrong value" };
+            throw { name: "TEST_FAIL", message: "f returned the wrong value" };
           }
           return null;
         }
@@ -818,7 +818,7 @@ public class UnreachableTailProductionTest {
         export function main(): null {
           let value: number = g();
           if (value !== 1) {
-            throw { code: "TEST_FAIL", message: "g returned the wrong value" };
+            throw { name: "TEST_FAIL", message: "g returned the wrong value" };
           }
           return null;
         }
@@ -991,7 +991,7 @@ public class UnreachableTailProductionTest {
         return """
             export function main(): null {
               try {
-                throw { code: "EXPECTED", message: "expected" };
+                throw { name: "EXPECTED", message: "expected" };
                 while (true) { %s; }
               } catch (e) { }
               return null;
@@ -1166,7 +1166,7 @@ public class UnreachableTailProductionTest {
             n = n + 1;
           }
           if (n !== 0) {
-            throw { code: "TEST_FAIL", message: "for-of break tail" };
+            throw { name: "TEST_FAIL", message: "for-of break tail" };
           }
           return null;
         }
@@ -1185,7 +1185,7 @@ public class UnreachableTailProductionTest {
             sum = sum + x;
           }
           if (sum !== 0) {
-            throw { code: "TEST_FAIL", message: "for-of continue tail" };
+            throw { name: "TEST_FAIL", message: "for-of continue tail" };
           }
           return null;
         }

@@ -4,7 +4,7 @@ import * as strings from "std/string";
 
 function fraction(done: number, total: number): number {
   if (total === 0) {
-    throw { code: "ZERO_TOTAL", message: "total must be nonzero" };
+    throw { name: "ZERO_TOTAL", message: "total must be nonzero" };
   }
   return done / total;
 }
@@ -13,14 +13,14 @@ function denominatorRejected(): boolean {
   try {
     fraction(1, 0);
   } catch (e) {
-    return (e as Error).code === "ZERO_TOTAL";
+    return (e as Error).name === "ZERO_TOTAL";
   }
   return false;
 }
 
 function decimal(value: number): string {
   if (value < 0 || value > 9007199254740991 || math.floor(value) !== value) {
-    throw { code: "NEGATIVE_VALUE", message: "expected nonnegative integer" };
+    throw { name: "NEGATIVE_VALUE", message: "expected nonnegative integer" };
   }
   if (value === 0) {
     return "0";

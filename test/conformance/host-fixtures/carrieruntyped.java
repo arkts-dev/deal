@@ -2,7 +2,7 @@
 // round-trip conformance test. The host reports the member kinds it
 // observed (the DEAL class instance identity and top-level fields, the
 // function wrapper and its invocation result, and the builtin Error
-// instance identity with its code/message), and echoes the container back.
+// instance identity with its name/message), and echoes the container back.
 // The echoed container is a fresh table carrier holding the same member
 // values, so the values the host observed are the values DEAL receives
 // back. The array export reports each element's class member the same way
@@ -42,7 +42,7 @@ final class HostCarrieruntyped {
     Object err = t.read("err");
     if (err instanceof deal.codegen.jvm.JvmRuntime.ClassInstance error
         && "Error".equals(error.classIdText())) {
-      errText = "true:" + String.valueOf(error.read("code")) + ":"
+      errText = "true:" + String.valueOf(error.read("name")) + ":"
           + String.valueOf(error.read("message"));
     }
     return kind + "|" + fields + "|" + alias + "|" + stepText + "|" + errText;

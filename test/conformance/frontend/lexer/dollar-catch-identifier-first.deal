@@ -4,6 +4,6 @@
 // @features: error-handling, catch, dollar-prohibition, diagnostics
 
 export function main(): null {
-  try { throw {code:"CONTROL",message:"control"}; } catch ($bad) {}
+  try { throw {name:"CONTROL",message:"control"}; } catch ($bad) {}
   return null;
 }

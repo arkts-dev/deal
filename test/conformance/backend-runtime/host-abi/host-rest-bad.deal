@@ -15,7 +15,7 @@ export function test_host_rest_bad(): string {
     clear();
     return host.join("-", items);
   }
-  throw { code: "TEST_FAIL", message: "refined array branch skipped" };
+  throw { name: "TEST_FAIL", message: "refined array branch skipped" };
 }
 
 export function main(): null {

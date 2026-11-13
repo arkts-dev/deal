@@ -7,28 +7,28 @@ class References { callbacks: ((()=>number)|null)[]; errors: (Error|null)[]; }
 export function main(): null {
   const packet: Packet = { ignored: undefined, nil: null, label: "\uD800", z: 1e21 };
   if ((JSON.stringify(packet) as string) !== "{\"z\":1e+21,\"label\":\"\\ud800\",\"nil\":null}") {
-    throw { code: "CLASS", message: "JSON class order, presence and lone units" };
+    throw { name: "CLASS", message: "JSON class order, presence and lone units" };
   }
   const record: Record<string, unknown> = { v: 1e-7, omit: undefined };
   const values: unknown[] = [record, undefined, (): number => 1, 0/0, -0];
   if ((JSON.stringify(values) as string) !== "[{\"v\":1e-7},null,null,null,0]") {
-    throw { code: "VALUES", message: "JSON substitution and numeric text" };
+    throw { name: "VALUES", message: "JSON substitution and numeric text" };
   }
   if (JSON.stringify(undefined) !== undefined || JSON.stringify((): number => 1) !== undefined) {
-    throw { code: "ROOT", message: "Unrepresentable JSON roots" };
+    throw { name: "ROOT", message: "Unrepresentable JSON roots" };
   }
   let calls = 0;
   const callback = (): number => { calls = calls + 1; return 7; };
-  const failure: Error = { code: "KEPT", message: "message" };
+  const failure: Error = { name: "KEPT", message: "message" };
   const callbacks: (()=>number)[] = [callback];
   const errors: Error[] = [failure];
   const refs: References = { callbacks: [callback, null], errors: [failure, null] };
   if ((JSON.stringify(callbacks) as string) !== "[null]"
-      || (JSON.stringify(errors) as string) !== "[{\"code\":\"KEPT\",\"message\":\"message\"}]"
-      || (JSON.stringify(refs) as string) !== "{\"callbacks\":[null,null],\"errors\":[{\"code\":\"KEPT\",\"message\":\"message\"},null]}"
+      || (JSON.stringify(errors) as string) !== "[{\"name\":\"KEPT\",\"message\":\"message\"}]"
+      || (JSON.stringify(refs) as string) !== "{\"callbacks\":[null,null],\"errors\":[{\"name\":\"KEPT\",\"message\":\"message\"},null]}"
       || calls !== 0 || callbacks[0] !== callback || errors[0] !== failure
       || (refs.callbacks[0] as ()=>number) !== callback || (refs.errors[0] as Error) !== failure) {
-    throw { code: "REFERENCES", message: "JSON reference-array identity and noninvocation" };
+    throw { name: "REFERENCES", message: "JSON reference-array identity and noninvocation" };
   }
   return null;
 }

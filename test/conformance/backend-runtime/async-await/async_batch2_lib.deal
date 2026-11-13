@@ -7,5 +7,5 @@ export async function makeInt(): Promise<number> { return 5; }
 export async function makeArray(): Promise<number[]> { return [4, 9]; }
 export class Box { value: number; }
 export async function makeBox(): Promise<Box> { return { value: 12 }; }
-export async function fail(): Promise<number> { throw { code: "ASYNC_MODULE_FAIL", message: "fail" }; }
+export async function fail(): Promise<number> { throw { name: "ASYNC_MODULE_FAIL", message: "fail" }; }
 export async function plus(x: number): Promise<number> { return x + 1; }

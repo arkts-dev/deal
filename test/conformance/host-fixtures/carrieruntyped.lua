@@ -2,7 +2,7 @@
 -- round-trip conformance test. The host reports the member kinds it
 -- observed (the DEAL class instance identity and top-level fields, the
 -- function wrapper and its invocation result, and the builtin Error
--- instance identity with its code/message), and echoes the container
+-- instance identity with its name/message), and echoes the container
 -- back. The echoed container is a fresh plain table carrying the same
 -- member values (the declared table mapping), so the values the host
 -- observed are the values DEAL receives back. The array export reports
@@ -41,7 +41,7 @@ local function report(t)
   local err = t.err
   if type(err) == "table" and err[K.kind] == "class"
       and err[K.classname] == "Error" then
-    errText = "true:" .. tostring(err.code) .. ":" .. tostring(err.message)
+    errText = "true:" .. tostring(err.name) .. ":" .. tostring(err.message)
   end
   return kind .. "|" .. fields .. "|" .. alias .. "|" .. stepText
     .. "|" .. errText

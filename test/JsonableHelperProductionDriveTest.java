@@ -2062,18 +2062,18 @@ public class JsonableHelperProductionDriveTest {
               let json: string = f(b);
               let expected: string = "{\\"x\\":2}";
               if (json !== expected) {
-                throw { code: "MISMATCH", message: json };
+                throw { name: "MISMATCH", message: json };
               }
               let g: (s: string) => Box = decode;
               let parsed: Box | null = g(expected);
               let reparsed: string = "";
               if (parsed === null) {
-                throw { code: "MISMATCH", message: "decoder binding returned null" };
+                throw { name: "MISMATCH", message: "decoder binding returned null" };
               } else {
                 reparsed = f(parsed);
               }
               if (reparsed !== expected) {
-                throw { code: "MISMATCH", message: reparsed };
+                throw { name: "MISMATCH", message: reparsed };
               }
               return null;
             }
@@ -2371,7 +2371,7 @@ public class JsonableHelperProductionDriveTest {
             + "  let json: string = JSON.stringify(w) as string;\n"
             + "  let expected: string = " + dealStringLiteral(expected) + ";\n"
             + "  if (json !== expected) {\n"
-            + "    throw { code: \"MISMATCH\", message: json };\n"
+            + "    throw { name: \"MISMATCH\", message: json };\n"
             + "  }\n"
             + "  return null;\n}\n";
         return function;
@@ -2403,7 +2403,7 @@ public class JsonableHelperProductionDriveTest {
             + "  let json: string = JSON.stringify(w) as string;\n"
             + "  let expected: string = " + dealStringLiteral(expected) + ";\n"
             + "  if (json !== expected) {\n"
-            + "    throw { code: \"MISMATCH\", message: json };\n"
+            + "    throw { name: \"MISMATCH\", message: json };\n"
             + "  }\n"
             + "  return null;\n}\n";
         driveExactHelperProgram("nested-table-order-and-numbers",
@@ -2429,7 +2429,7 @@ public class JsonableHelperProductionDriveTest {
             body.append("  let expected: string = ")
                 .append(dealStringLiteral(expectedText)).append(";\n");
             body.append("  if (json !== expected) {\n");
-            body.append("    throw { code: \"MISMATCH\", message: json };\n  }\n");
+            body.append("    throw { name: \"MISMATCH\", message: json };\n  }\n");
             body.append("  return null;\n");
         } else {
             body.append("  return JSON.stringify(w) as string;\n");
@@ -2484,24 +2484,24 @@ public class JsonableHelperProductionDriveTest {
                 let decoded:Box=JSON.parse(text);
                 let current:Record<string,unknown>=decoded.data;
                 if(!Object.hasOwn(current,"deep")) {
-                    throw {code:"TEST_FAIL",message:"deep member lost"};
+                    throw {name:"TEST_FAIL",message:"deep member lost"};
                 }
-                if(!Object.hasOwn(current,"leaf")) { throw {code:"TEST_FAIL",message:"null member absent"}; }
-                if(current.leaf!==null) { throw {code:"TEST_FAIL",message:"null changed"}; }
-                if((current.n as number)!==3) { throw {code:"TEST_FAIL",message:"number changed"}; }
-                if((current.s as string)!=="🌍") { throw {code:"TEST_FAIL",message:"string changed"}; }
-                if((current.b as boolean)!==true) { throw {code:"TEST_FAIL",message:"boolean changed"}; }
+                if(!Object.hasOwn(current,"leaf")) { throw {name:"TEST_FAIL",message:"null member absent"}; }
+                if(current.leaf!==null) { throw {name:"TEST_FAIL",message:"null changed"}; }
+                if((current.n as number)!==3) { throw {name:"TEST_FAIL",message:"number changed"}; }
+                if((current.s as string)!=="🌍") { throw {name:"TEST_FAIL",message:"string changed"}; }
+                if((current.b as boolean)!==true) { throw {name:"TEST_FAIL",message:"boolean changed"}; }
                 let prior:Required={data:decoded.data,required:7};
                 let destination:Required=prior;
                 let rejected=false;
                 try { destination=JSON.parse(text); }
                 catch(e) {
                     let failure:Error=e as Error;
-                    if(failure.code!=="E8001") { throw failure; }
+                    if(failure.name!=="E8001") { throw failure; }
                     rejected=true;
                 }
                 if(!rejected || destination!==prior || destination.data!==current || destination.required!==7) {
-                    throw {code:"TEST_FAIL",message:"missing required field changed destination"};
+                    throw {name:"TEST_FAIL",message:"missing required field changed destination"};
                 }
                 return null;
             }
@@ -2649,7 +2649,7 @@ public class JsonableHelperProductionDriveTest {
             + "  let expected: string = " + dealStringLiteral("{\"xs\":[9,3]}")
             + ";\n"
             + "  if (json !== expected) {\n"
-            + "    throw { code: \"MISMATCH\", message: json };\n"
+            + "    throw { name: \"MISMATCH\", message: json };\n"
             + "  }\n"
             + "  return null;\n"
             + "}\n\n"
@@ -2666,7 +2666,7 @@ public class JsonableHelperProductionDriveTest {
             + "  let expected: string = "
             + dealStringLiteral("{\"data\":{\"xs\":[2,3]}}") + ";\n"
             + "  if (json !== expected) {\n"
-            + "    throw { code: \"MISMATCH\", message: json };\n"
+            + "    throw { name: \"MISMATCH\", message: json };\n"
             + "  }\n"
             + "  return null;\n"
             + "}\n\n"
@@ -2981,7 +2981,7 @@ public class JsonableHelperProductionDriveTest {
             + "  let expected: string = "
             + dealStringLiteral("{\"child\":{\"x\":3},\"y\":1}") + ";\n"
             + "  if (json !== expected) {\n"
-            + "    throw { code: \"MISMATCH\", message: json };\n"
+            + "    throw { name: \"MISMATCH\", message: json };\n"
             + "  }\n"
             + "  return null;\n"
             + "}\n\n"
@@ -2991,7 +2991,7 @@ public class JsonableHelperProductionDriveTest {
             + "  let json: string = JSON.stringify(b) as string;\n"
             + "  let expected: string = " + expected + ";\n"
             + "  if (json !== expected) {\n"
-            + "    throw { code: \"MISMATCH\", message: json };\n"
+            + "    throw { name: \"MISMATCH\", message: json };\n"
             + "  }\n"
             + "  return null;\n"
             + "}\n\n"
@@ -3003,11 +3003,11 @@ public class JsonableHelperProductionDriveTest {
             + "  let expected: string = " + expected + ";\n"
             + "  let jsonP: string = JSON.stringify(p) as string;\n"
             + "  if (jsonP !== expected) {\n"
-            + "    throw { code: \"MISMATCH\", message: jsonP };\n"
+            + "    throw { name: \"MISMATCH\", message: jsonP };\n"
             + "  }\n"
             + "  let jsonQ: string = JSON.stringify(q) as string;\n"
             + "  if (jsonQ !== expected) {\n"
-            + "    throw { code: \"MISMATCH\", message: jsonQ };\n"
+            + "    throw { name: \"MISMATCH\", message: jsonQ };\n"
             + "  }\n"
             + "  return null;\n"
             + "}\n\n"
@@ -3041,7 +3041,7 @@ public class JsonableHelperProductionDriveTest {
             + "  let expected: string = "
             + dealStringLiteral("{\"children\":[{\"x\":3}],\"y\":1}") + ";\n"
             + "  if (json !== expected) {\n"
-            + "    throw { code: \"MISMATCH\", message: json };\n"
+            + "    throw { name: \"MISMATCH\", message: json };\n"
             + "  }\n"
             + "  return null;\n"
             + "}\n\n"
@@ -3053,7 +3053,7 @@ public class JsonableHelperProductionDriveTest {
             + "  let expected: string = "
             + dealStringLiteral("{\"children\":[{\"x\":2}],\"y\":0}") + ";\n"
             + "  if (json !== expected) {\n"
-            + "    throw { code: \"MISMATCH\", message: json };\n"
+            + "    throw { name: \"MISMATCH\", message: json };\n"
             + "  }\n"
             + "  return null;\n"
             + "}\n\n"
@@ -3083,11 +3083,11 @@ public class JsonableHelperProductionDriveTest {
             + "    let expected: string = "
             + dealStringLiteral("{\"xs\":[1,null]}") + ";\n"
             + "    if (json !== expected) {\n"
-            + "      throw { code: \"MISMATCH\", message: json };\n"
+            + "      throw { name: \"MISMATCH\", message: json };\n"
             + "    }\n"
             + "    return null;\n"
             + "  }\n"
-            + "  throw { code: \"MISMATCH\", message: \"the valid nullable "
+            + "  throw { name: \"MISMATCH\", message: \"the valid nullable "
             + "array document was rejected\" };\n"
             + "}\n\n"
             + "export function test_strict_array_rejected(): null {\n"
@@ -3096,9 +3096,9 @@ public class JsonableHelperProductionDriveTest {
             + "  let saved: number[] = prior.xs;\n"
             + "  let rejected=false;\n"
             + "  try { destination=JSON.parse(\"{\\\"xs\\\":[1.0,null]}\"); }\n"
-            + "  catch(e) { let failure:Error=e as Error; if(failure.code!==\"E8001\") {throw failure;} rejected=true; }\n"
+            + "  catch(e) { let failure:Error=e as Error; if(failure.name!==\"E8001\") {throw failure;} rejected=true; }\n"
             + "  if (!rejected || destination!==prior || destination.xs!==saved || saved[0]!==7) {\n"
-            + "    throw { code: \"MISMATCH\", message: \"nullable element rejection changed destination\" };\n"
+            + "    throw { name: \"MISMATCH\", message: \"nullable element rejection changed destination\" };\n"
             + "  }\n"
             + "  return null;\n"
             + "}\n\n"
@@ -3128,7 +3128,7 @@ public class JsonableHelperProductionDriveTest {
             + dealStringLiteral("{\"child\":{\"n\":1,\"xs\":[1,2.5]}}")
             + ";\n"
             + "  if (json !== expected) {\n"
-            + "    throw { code: \"MISMATCH\", message: json };\n"
+            + "    throw { name: \"MISMATCH\", message: json };\n"
             + "  }\n"
             + "  return null;\n"
             + "}\n\n"
@@ -3158,7 +3158,7 @@ public class JsonableHelperProductionDriveTest {
             + "  let expected: string = "
             + dealStringLiteral("{\"xs\":[1,2],\"ns\":[],\"grid\":[]}") + ";\n"
             + "  if (json !== expected) {\n"
-            + "    throw { code: \"MISMATCH\", message: json };\n"
+            + "    throw { name: \"MISMATCH\", message: json };\n"
             + "  }\n"
             + "  return null;\n"
             + "}\n\n"
@@ -3172,7 +3172,7 @@ public class JsonableHelperProductionDriveTest {
             + "  let expected: string = "
             + dealStringLiteral("{\"xs\":[],\"ns\":[1,null],\"grid\":[]}") + ";\n"
             + "  if (json !== expected) {\n"
-            + "    throw { code: \"MISMATCH\", message: json };\n"
+            + "    throw { name: \"MISMATCH\", message: json };\n"
             + "  }\n"
             + "  return null;\n"
             + "}\n\n"
@@ -3186,7 +3186,7 @@ public class JsonableHelperProductionDriveTest {
             + dealStringLiteral("{\"xs\":[],\"ns\":[],\"grid\":[[1],[2.5]]}")
             + ";\n"
             + "  if (json !== expected) {\n"
-            + "    throw { code: \"MISMATCH\", message: json };\n"
+            + "    throw { name: \"MISMATCH\", message: json };\n"
             + "  }\n"
             + "  return null;\n"
             + "}\n\n"
@@ -3206,7 +3206,7 @@ public class JsonableHelperProductionDriveTest {
             + "  let expected: string = "
             + dealStringLiteral("{\"xs\":[1,1.5]}") + ";\n"
             + "  if (json !== expected) {\n"
-            + "    throw { code: \"MISMATCH\", message: json };\n"
+            + "    throw { name: \"MISMATCH\", message: json };\n"
             + "  }\n"
             + "  return null;\n"
             + "}\n\n"
@@ -3219,7 +3219,7 @@ public class JsonableHelperProductionDriveTest {
             + "  let expected: string = "
             + dealStringLiteral("{\"xs\":[2.5,2]}") + ";\n"
             + "  if (json !== expected) {\n"
-            + "    throw { code: \"MISMATCH\", message: json };\n"
+            + "    throw { name: \"MISMATCH\", message: json };\n"
             + "  }\n"
             + "  return null;\n"
             + "}\n\n"
@@ -3257,11 +3257,11 @@ public class JsonableHelperProductionDriveTest {
             + "    let json: string = JSON.stringify(box) as string;\n"
             + "    let expected: string = " + dealStringLiteral(expected) + ";\n"
             + "    if (json !== expected) {\n"
-            + "      throw { code: \"MISMATCH\", message: json };\n"
+            + "      throw { name: \"MISMATCH\", message: json };\n"
             + "    }\n"
             + "    return null;\n"
             + "  }\n"
-            + "  throw { code: \"MISMATCH\", message: \"the provided numeric carrier was rejected\" };\n}\n\n"
+            + "  throw { name: \"MISMATCH\", message: \"the provided numeric carrier was rejected\" };\n}\n\n"
             + "export function test_missing_nested_field(): null {\n"
             + "  let prior:Box={child:{n:7,o:null,xs:[8]}};\n"
             + "  let destination:Box=prior;\n"
@@ -3269,8 +3269,8 @@ public class JsonableHelperProductionDriveTest {
             + "  let values:number[]=child.xs;\n"
             + "  let rejected=false;\n"
             + "  try { destination=JSON.parse(\"{\\\"child\\\":{}}\"); }\n"
-            + "  catch(e) { let failure:Error=e as Error; if(failure.code!==\"E8001\") {throw failure;} rejected=true; }\n"
-            + "  if(!rejected || destination!==prior || destination.child!==child || child.xs!==values || child.n!==7 || child.o!==null || values[0]!==8) {throw {code:\"MISMATCH\",message:\"missing nested fields changed destination\"};}\n"
+            + "  catch(e) { let failure:Error=e as Error; if(failure.name!==\"E8001\") {throw failure;} rejected=true; }\n"
+            + "  if(!rejected || destination!==prior || destination.child!==child || child.xs!==values || child.n!==7 || child.o!==null || values[0]!==8) {throw {name:\"MISMATCH\",message:\"missing nested fields changed destination\"};}\n"
             + "  return null;\n}\n\n"
             + "export function test_explicit_value_control(): null {\n"
             + "  let box: Box | null = JSON.parse("
@@ -3279,11 +3279,11 @@ public class JsonableHelperProductionDriveTest {
             + "    let json: string = JSON.stringify(box) as string;\n"
             + "    let expected: string = " + dealStringLiteral(expected) + ";\n"
             + "    if (json !== expected) {\n"
-            + "      throw { code: \"MISMATCH\", message: json };\n"
+            + "      throw { name: \"MISMATCH\", message: json };\n"
             + "    }\n"
             + "    return null;\n"
             + "  }\n"
-            + "  throw { code: \"MISMATCH\", message: \"the explicit valid "
+            + "  throw { name: \"MISMATCH\", message: \"the explicit valid "
             + "document was rejected\" };\n}\n\n"
             + "export function main(): null {\n  return null;\n}\n";
         driveExactHelperProgram("nested-default-numeric-carrier-and-nullable-arrays",
@@ -3303,7 +3303,7 @@ public class JsonableHelperProductionDriveTest {
         System.out.println("-- the oracle's main coverage: a main-only fixture's "
             + "deliberate failure is captured by the main leg exactly once --");
         String source = "export function main(): null {\n"
-            + "  throw { code: \"MAIN_REACHED\", message: \"ran\" };\n"
+            + "  throw { name: \"MAIN_REACHED\", message: \"ran\" };\n"
             + "}\n";
         List<Export> exports = exportsOf(source);
         checkEq(List.of("main"),
@@ -3517,11 +3517,11 @@ public class JsonableHelperProductionDriveTest {
               try { destination=JSON.parse(text); }
               catch(e) {
                 let failure:Error=e as Error;
-                if(failure.code!=="E8001") {throw failure;}
+                if(failure.name!=="E8001") {throw failure;}
                 rejected=true;
               }
               if(!rejected || destination!==prior || destination.home!==home || home.city!=="seed" || home.zip!==10115 || destination.name!=="anon" || destination.age!==42) {
-                throw {code:"MISMATCH",message:"failed reconstruction changed destination or descendant"};
+                throw {name:"MISMATCH",message:"failed reconstruction changed destination or descendant"};
               }
               return null;
             }
@@ -3529,10 +3529,10 @@ public class JsonableHelperProductionDriveTest {
               let supplied: Person = {name: nameDefault(), age: 42, home: homeDefault()};
               let p: Person = JSON.parse(JSON.stringify(supplied) as string);
               if(p===supplied || p.home===supplied.home || !(p.home instanceof Owner.Address)) {
-                throw {code:"MISMATCH",message:"fresh exact provider reconstruction"};
+                throw {name:"MISMATCH",message:"fresh exact provider reconstruction"};
               }
               if ((JSON.stringify(p) as string) !== "{\\"name\\":\\"anon\\",\\"age\\":42,\\"home\\":{\\"city\\":\\"seed\\",\\"zip\\":10115}}") {
-                throw {code: "MISMATCH", message: "declaration order"};
+                throw {name: "MISMATCH", message: "declaration order"};
               }
               reject("{\\"name\\":\\"anon\\",\\"age\\":0,\\"home\\":{}}",supplied);
               reject("{\\"age\\":42}",supplied);

@@ -144,7 +144,7 @@ public final class LlvmHostAbiTest {
 
         function check(condition: boolean, message: string): null {
           if (!condition) {
-            throw { code: "TEST_FAIL", message: message };
+            throw { name: "TEST_FAIL", message: message };
           }
           return null;
         }
@@ -231,7 +231,7 @@ public final class LlvmHostAbiTest {
 
         function check(condition: boolean, message: string): null {
           if (!condition) {
-            throw { code: "TEST_FAIL", message: message };
+            throw { name: "TEST_FAIL", message: message };
           }
           return null;
         }
@@ -259,7 +259,7 @@ public final class LlvmHostAbiTest {
                   "a wrong-element class array was admitted as DEAL data");
           } catch (value) {
             let element: Error = value as Error;
-            check(element.code === "E8010",
+            check(element.name === "E8010",
                   "the host return owns the wrong-element rejection");
             check(element.message === "return value 1 type mismatch: array element 1 type mismatch",
                   "the host cell wraps the element arm's message");
@@ -286,7 +286,7 @@ public final class LlvmHostAbiTest {
                   "an empty wrong-descriptor class array was admitted");
           } catch (value) {
             let element: Error = value as Error;
-            check(element.code === "E8010",
+            check(element.name === "E8010",
                   "the empty array descriptor mismatch renders E8010");
             check(element.message
                   === "return value 1 type mismatch: expected array",
@@ -307,7 +307,7 @@ public final class LlvmHostAbiTest {
           check(handled === 1,
                 "the retained class identity and the handle statuses");
           let hosted: Error = probe.makeError();
-          check(hosted.code === "E_HOST_BUILT",
+          check(hosted.name === "E_HOST_BUILT",
                 "the host-built Error code");
           check(hosted.message === "the host built this error",
                 "the host-built Error message");
@@ -317,18 +317,18 @@ public final class LlvmHostAbiTest {
             check(ignored !== ignored, "the host failure returned a value");
           } catch (value) {
             let e: Error = value as Error;
-            check(e.code === "E_HOST_TEXT", "the host failure code");
+            check(e.name === "E_HOST_TEXT", "the host failure code");
             check(e.message === "the host refused the call",
                   "the host failure message");
             caught = true;
           }
           check(caught, "the host-authored failure propagated");
-          let applied: Error = { code: "E_APPLY", message: "the applied function threw" };
+          let applied: Error = { name: "E_APPLY", message: "the applied function threw" };
           let boom: () => number = function(): number {
-            if (applied.code === "E_APPLY_NEVER") {
+            if (applied.name === "E_APPLY_NEVER") {
               return 0;
             }
-            applied.code = "E_APPLY_MUTATED";
+            applied.name = "E_APPLY_MUTATED";
             throw applied;
           };
           let relayedApply: boolean = false;
@@ -339,7 +339,7 @@ public final class LlvmHostAbiTest {
             let e: Error = value as Error;
             check(e === applied,
                   "the relayed apply Error is the identical object");
-            check(e.code === "E_APPLY_MUTATED", "the relayed apply code");
+            check(e.name === "E_APPLY_MUTATED", "the relayed apply code");
             check(e.message === "the applied function threw",
                   "the relayed apply message");
             relayedApply = true;
@@ -404,7 +404,7 @@ public final class LlvmHostAbiTest {
             check(text === text, "the admitted malformed text");
           } catch (value) {
             let e: Error = value as Error;
-            check(e.code === "E8010", "the malformed text renders E8010");
+            check(e.name === "E8010", "the malformed text renders E8010");
             check(e.message === "return value 1 type mismatch: expected string, got invalid UTF-8 encoding",
                   "the host string arm's own reason is the inner text");
             textRejected = true;
@@ -417,7 +417,7 @@ public final class LlvmHostAbiTest {
             check(holes.length < 0, "a sparse host array was admitted");
           } catch (value) {
             let e: Error = value as Error;
-            check(e.code === "E8010", "the host return owns the hole rejection");
+            check(e.name === "E8010", "the host return owns the hole rejection");
             check(e.message === "return value 1 type mismatch: array element 1 type mismatch",
                   "the host cell retains the one-based hole index");
             holeRejected = true;
@@ -451,7 +451,7 @@ public final class LlvmHostAbiTest {
                   "a host class field carrying the absence marker was admitted");
           } catch (value) {
             let e: Error = value as Error;
-            check(e.code === "E8010",
+            check(e.name === "E8010",
                   "the absent class field renders E8010");
             check(e.message
                   === "return value 1 type mismatch: expected number",
@@ -473,7 +473,7 @@ public final class LlvmHostAbiTest {
             check(false, "a number at a declared function position was admitted");
           } catch (value) {
             let e: Error = value as Error;
-            check(e.code === "E8010",
+            check(e.name === "E8010",
                   "the function-position kind mismatch renders E8010");
             check(e.message
                   === "return value 1 type mismatch: expected function",
@@ -488,7 +488,7 @@ public final class LlvmHostAbiTest {
             check(false, "a differently typed function value was admitted");
           } catch (value) {
             let e: Error = value as Error;
-            check(e.code === "E8010",
+            check(e.name === "E8010",
                   "the function signature mismatch renders E8010");
             check(e.message
                   === "return value 1 type mismatch: function signature mismatch: expected ()->number, got (number)->number",
@@ -505,7 +505,7 @@ public final class LlvmHostAbiTest {
             check(false, "the host applied a wrong-kind argument unchecked");
           } catch (value) {
             let e: Error = value as Error;
-            check(e.code === "E8010",
+            check(e.name === "E8010",
                   "the host-applied parameter boundary renders E8010");
             check(e.message === "parameter 1 type mismatch: expected number",
                   "the parameter arm names the declared position");
@@ -519,7 +519,7 @@ public final class LlvmHostAbiTest {
             check(false, "the host applied an untyped-array result");
           } catch (value) {
             let e: Error = value as Error;
-            check(e.code === "E8010",
+            check(e.name === "E8010",
                   "the untyped-array result renders E8010");
             check(e.message
                   === "return value 1 type mismatch: expected unknown",
@@ -541,7 +541,7 @@ public final class LlvmHostAbiTest {
             check(false, "a host-built Error without its message was admitted");
           } catch (value) {
             let e: Error = value as Error;
-            check(e.code === "E8010",
+            check(e.name === "E8010",
                   "the missing required Error field renders E8010");
             check(e.message
                   === "return value 1 type mismatch: expected string",
@@ -584,8 +584,8 @@ public final class LlvmHostAbiTest {
         import * as probe from "host/probe";
 
         export function thrower(): number {
-          let held: Error = { code: "E_CALLBACK_DRIVER", message: "the driver callback threw" };
-          if (held.code === "E_CALLBACK_NEVER") {
+          let held: Error = { name: "E_CALLBACK_DRIVER", message: "the driver callback threw" };
+          if (held.name === "E_CALLBACK_NEVER") {
             return 0;
           }
           throw held;
@@ -614,22 +614,22 @@ public final class LlvmHostAbiTest {
         import * as probe from "host/probe";
 
         export function handler(carried: Error): number {
-          if (carried.code === "E_CALLBACK_NEVER") {
+          if (carried.name === "E_CALLBACK_NEVER") {
             return 0;
           }
-          carried.code = "E_CALLBACK_MUTATED";
+          carried.name = "E_CALLBACK_MUTATED";
           throw carried;
         }
 
         function check(condition: boolean, message: string): null {
           if (!condition) {
-            throw { code: "TEST_FAIL", message: message };
+            throw { name: "TEST_FAIL", message: message };
           }
           return null;
         }
 
         export function main(): null {
-          let shared: Error = { code: "E_CALLBACK", message: "the callback body threw" };
+          let shared: Error = { name: "E_CALLBACK", message: "the callback body threw" };
           let relayed: boolean = false;
           try {
             let ignored: number = probe.reenterRelay(shared);
@@ -638,7 +638,7 @@ public final class LlvmHostAbiTest {
             let e: Error = value as Error;
             check(e === shared,
                   "the relayed callback Error is the identical object");
-            check(e.code === "E_CALLBACK_MUTATED",
+            check(e.name === "E_CALLBACK_MUTATED",
                   "the relayed callback keeps the mutated code");
             check(e.message === "the callback body threw",
                   "the relayed callback keeps its message");
@@ -658,7 +658,7 @@ public final class LlvmHostAbiTest {
             let e: Error = value as Error;
             check(e === shared,
                   "the later relayed Error is the identical object");
-            check(e.code === "E_CALLBACK_MUTATED", "the later relayed code");
+            check(e.name === "E_CALLBACK_MUTATED", "the later relayed code");
             late = true;
           }
           check(late, "the retained Error relayed in a later crossing");
@@ -746,7 +746,7 @@ public final class LlvmHostAbiTest {
               deal_value code;
               const void *bytes = NULL;
               size_t length = 0;
-              if (deal_field_get(record->value, "code", &code) != DEAL_OK
+              if (deal_field_get(record->value, "name", &code) != DEAL_OK
                   || deal_as_string(code, &bytes, &length) != DEAL_OK
                   || length != strlen("E_CALLBACK_MUTATED")
                   || memcmp(bytes, "E_CALLBACK_MUTATED", length) != 0) {
@@ -1976,7 +1976,7 @@ public final class LlvmHostAbiTest {
               deal_value code;
               const void *bytes = NULL;
               size_t length = 0;
-              if (deal_field_get(record->value, "code", &code) != DEAL_OK
+              if (deal_field_get(record->value, "name", &code) != DEAL_OK
                   || deal_as_string(code, &bytes, &length) != DEAL_OK
                   || length != strlen("E_CALLBACK_DRIVER")
                   || memcmp(bytes, "E_CALLBACK_DRIVER", length) != 0) {
@@ -2336,7 +2336,7 @@ public final class LlvmHostAbiTest {
               let first: number = pr.observe();
               let second: number = pr2.observe();
               if (first !== second) {
-                throw { code: "TEST_FAIL", message: "the host observations" };
+                throw { name: "TEST_FAIL", message: "the host observations" };
               }
               return null;
             }
@@ -2600,7 +2600,7 @@ public final class LlvmHostAbiTest {
         Files.writeString(root.resolve("src/main.deal"), """
             import * as p from "host/probe";
             function check(ok: boolean): null {
-              if (!ok) { throw {code: "TEST_FAIL", message: "carrier identity"}; }
+              if (!ok) { throw {name: "TEST_FAIL", message: "carrier identity"}; }
               return null;
             }
             class OptionalPair { first?: string; second?: string; }
@@ -2618,7 +2618,7 @@ public final class LlvmHostAbiTest {
                 delete child.later;
                 child.added = 1;
                 nested[1] = 12;
-                e.code = "after";
+                e.name = "after";
                 return 1;
               };
               let u: unknown = p.aliases(a, r, mutate);
@@ -2626,7 +2626,7 @@ public final class LlvmHostAbiTest {
               let nested: unknown[] = a[2] as unknown[];
               check(nested.length === 3);
               check(nested[2] === u);
-              check((nested[0] as Error).code === "after");
+              check((nested[0] as Error).name === "after");
               check((nested[0] as Error).message === "before");
               check(a[0] === a[1]);
               check(u === a[0]);
@@ -2639,9 +2639,9 @@ public final class LlvmHostAbiTest {
               check(!Object.hasOwn(child, "later"));
               check(!Object.hasOwn(child, "added"));
               check(!Object.hasOwn(child, "deleted"));
-              let e: Error = {code: "A", message: "old"};
+              let e: Error = {name: "A", message: "old"};
               check(p.errorFields(e) === e);
-              check(e.code === "B");
+              check(e.name === "B");
               check(e.message === "B");
               check(p.scalarSame("x", 0.0 / 0.0, 0.0));
               return null;

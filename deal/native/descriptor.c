@@ -1449,7 +1449,7 @@ static deal_outcome deal_check_live_value_core(deal_descriptor *expected, deal_c
             for (size_t index = 0u; index < 2u; index++) {
                 size_t length = 0u;
                 const char *bytes = index == 0u
-                    ? deal_error_code_bytes(datum.reference, &length)
+                    ? deal_error_name_bytes(datum.reference, &length)
                     : deal_error_message_bytes(datum.reference, &length);
                 int present = bytes != NULL;
                 if (present && deal_text_is_code_units(bytes, length)) continue;

@@ -6,7 +6,7 @@
 export function test_relational_before_equality(): null {
   let value: boolean = 3 < 2 === false;
   if (value !== true) {
-    throw { code: "TEST_FAIL", message: "relational comparison did not bind before equality" };
+    throw { name: "TEST_FAIL", message: "relational comparison did not bind before equality" };
   }
   return null;
 }

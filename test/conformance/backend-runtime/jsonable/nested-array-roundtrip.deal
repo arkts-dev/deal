@@ -14,10 +14,10 @@ export function test_jsonable_nested_arrays(): null {
   let m2: Matrix | null = JSON.parse(json);
   if (m2 !== null) {
     if (m2.values[0][0] !== 1 || m2.values[1][1] !== 4) {
-      throw { code: "TEST_FAIL", message: "nested array roundtrip mismatch" };
+      throw { name: "TEST_FAIL", message: "nested array roundtrip mismatch" };
     }
   } else {
-    throw { code: "TEST_FAIL", message: "fromJson returned null" };
+    throw { name: "TEST_FAIL", message: "fromJson returned null" };
   }
   return null;
 }

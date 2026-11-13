@@ -2779,11 +2779,11 @@ test("check_canonical_type function row keeps the exact async marker", function(
 end)
 
 test("check_canonical_type class row matches atoms byte-for-byte", function()
-  local probe = { [__K.kind] = "class", [__K.classname] = "Error", code = "C", message = "live" }
+  local probe = { [__K.kind] = "class", [__K.classname] = "Error", name = "C", message = "live" }
   assert(__rt.check_canonical_type("Error", probe) == probe)
-  probe.code = nil
+  probe.name = nil
   assert_error(function() __rt.check_canonical_type("Error", probe) end, "E8001")
-  probe.code = "C"
+  probe.name = "C"
   probe.message = string.char(0xff)
   assert_error(function() __rt.check_canonical_type("Error", probe) end, "E8001")
   probe.message = "repaired"

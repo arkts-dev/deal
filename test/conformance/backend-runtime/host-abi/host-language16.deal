@@ -4,7 +4,7 @@
 // @features: host-abi, unknown, undefined, void, async, arrays
 import * as host from "host/language16";
 class Item { n: number; }
-function check(ok: boolean): void { if (!ok) { throw {code: "FAIL", message: "host v1.6 contract"}; } }
+function check(ok: boolean): void { if (!ok) { throw {name: "FAIL", message: "host v1.6 contract"}; } }
 function callback(): void {}
 export function test_sync(): void {
   let values: number[] = [1, 2];
@@ -36,7 +36,7 @@ export function test_sync(): void {
   let freshUnknown: unknown = fresh;
   check((freshUnknown as number[])[0] === 4);
   let wrongDescriptor: boolean = false;
-  try { let rejected = freshUnknown as unknown[]; } catch (e) { if (e instanceof Error) { wrongDescriptor = e.code === "E8001"; } }
+  try { let rejected = freshUnknown as unknown[]; } catch (e) { if (e instanceof Error) { wrongDescriptor = e.name === "E8001"; } }
   check(wrongDescriptor);
   original = callback;
   check(host.echo(original) === original);
@@ -56,7 +56,7 @@ export function test_sync(): void {
   let child = nested.child as Record<string, unknown>;
   check((child.bad as string) === `\uD800`);
   let rejected: boolean = false;
-  try { host.opaque(); } catch (e) { if (e instanceof Error) { rejected = e.code === "E8010"; } }
+  try { host.opaque(); } catch (e) { if (e instanceof Error) { rejected = e.name === "E8010"; } }
   check(rejected);
   let graph = host.graph() as Record<string, unknown>;
   check(graph.self === (graph as unknown));

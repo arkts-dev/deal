@@ -7,7 +7,7 @@ import * as math from "std/math";
 
 export function test_abs_int_min_overflow(): number {
   let result: number = math.absNumber(-2147483648);
-  if (result !== 2147483648) { throw { code: "TEST_FAIL", message: "absolute value was refined to signed32" }; }
+  if (result !== 2147483648) { throw { name: "TEST_FAIL", message: "absolute value was refined to signed32" }; }
   return result;
 }
 

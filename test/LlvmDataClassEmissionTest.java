@@ -95,7 +95,7 @@ public final class LlvmDataClassEmissionTest {
             }
 
             function report(code: string, text: string): void {
-              throw { code: code, message: `${text}` };
+              throw { name: code, message: `${text}` };
             }
 
             export function main(): null {
@@ -142,7 +142,7 @@ public final class LlvmDataClassEmissionTest {
                 if (value !== 0) { report("A7", "bounds read"); }
               } catch (e) {
                 if (e instanceof Error) {
-                  if (e.code !== "E8002") { report("A8", e.code); }
+                  if (e.name !== "E8002") { report("A8", e.name); }
                   bounds = true;
                 }
               }
@@ -156,7 +156,7 @@ public final class LlvmDataClassEmissionTest {
                 if (picked !== 0) { report("A11", "fractional accepted"); }
               } catch (e) {
                 if (e instanceof Error) {
-                  if (e.code !== "E8002") { report("A12", e.code); }
+                  if (e.name !== "E8002") { report("A12", e.name); }
                   fractional = true;
                 }
               }
@@ -171,7 +171,7 @@ public final class LlvmDataClassEmissionTest {
                 if (picked !== 0) { report("A14", "NaN accepted"); }
               } catch (e) {
                 if (e instanceof Error) {
-                  if (e.code !== "E8002") { report("A15", e.code); }
+                  if (e.name !== "E8002") { report("A15", e.name); }
                   unordered = true;
                 }
               }
@@ -246,7 +246,7 @@ public final class LlvmDataClassEmissionTest {
               if (!("𝄞" >= "é")) { report("F13", "string >= astral"); }
               if ("é" >= "𝄞") { report("F14", "string <= bmp"); }
 
-              throw { code: "DONE", message: `${rebuilt}` };
+              throw { name: "DONE", message: `${rebuilt}` };
             }
             """;
     }
@@ -288,7 +288,7 @@ public final class LlvmDataClassEmissionTest {
             }
 
             function report(code: string, text: string): void {
-              throw { code: code, message: `${text}` };
+              throw { name: code, message: `${text}` };
             }
 
             export function main(): null {
@@ -353,7 +353,7 @@ public final class LlvmDataClassEmissionTest {
                 if (incompatible.length !== 0) { report("A1", "length"); }
               } catch (e) {
                 if (e instanceof Error) {
-                  if (e.code !== "E8001") { report("A2", e.code); }
+                  if (e.name !== "E8001") { report("A2", e.name); }
                   rejected = true;
                 }
               }
@@ -373,7 +373,7 @@ public final class LlvmDataClassEmissionTest {
               if (sided.second !== "two") { report("S6", sided.second); }
               if (sided.third !== "three") { report("S7", sided.third); }
 
-              throw { code: "DONE", message: `${user.name}|${user.address.city}|${nickText}` };
+              throw { name: "DONE", message: `${user.name}|${user.address.city}|${nickText}` };
             }
             """;
     }
@@ -434,7 +434,7 @@ public final class LlvmDataClassEmissionTest {
               try { destination = JSON.parse(text); }
               catch (e) {
                 if (e instanceof Error) {
-                  return e.code === code && destination === original
+                  return e.name === code && destination === original
                     && destination.inner === original.inner && destination.items[0] === 7;
                 }
                 throw e as Error;
@@ -447,14 +447,14 @@ public final class LlvmDataClassEmissionTest {
               let destination: Undefined = original;
               try { destination = JSON.parse(text); }
               catch (e) {
-                if (e instanceof Error) { return e.code === "E8001" && destination === original; }
+                if (e instanceof Error) { return e.name === "E8001" && destination === original; }
                 throw e as Error;
               }
               return false;
             }
 
             function report(code: string, text: string): void {
-              throw { code: code, message: `${text}` };
+              throw { name: code, message: `${text}` };
             }
 
             export function main(): null {
@@ -511,7 +511,7 @@ public final class LlvmDataClassEmissionTest {
                 if (cyclicText !== "cycles encode") { report("J14", cyclicText); }
               } catch (e) {
                 if (e instanceof Error) {
-                  if (e.code !== "E8001") { report("J15", e.code); }
+                  if (e.name !== "E8001") { report("J15", e.name); }
                   if (e.message !== "cyclic value cannot be encoded as JSON") {
                     report("J16", e.message);
                   }
@@ -557,7 +557,7 @@ public final class LlvmDataClassEmissionTest {
                 report("J33", pairText);
               }
 
-              throw { code: "DONE", message: `${encoded}|${presentText}` };
+              throw { name: "DONE", message: `${encoded}|${presentText}` };
             }
             """.replace("DEEP_ENCODED", deepEncoded)
                 .replace("DEEP_DOCUMENT", deepDocument);
@@ -594,7 +594,7 @@ public final class LlvmDataClassEmissionTest {
             }
 
             function report(code: string, text: string): void {
-              throw { code: code, message: `${text}` };
+              throw { name: code, message: `${text}` };
             }
 
             function churn(): string {
@@ -636,7 +636,7 @@ public final class LlvmDataClassEmissionTest {
               if (made.name !== "inner") { report("G9", made.name); }
               if (again !== pressure) { report("G10", "churn"); }
 
-              throw { code: "DONE", message: `${stored}|${made.name}` };
+              throw { name: "DONE", message: `${stored}|${made.name}` };
             }
             """;
     }
@@ -684,7 +684,7 @@ public final class LlvmDataClassEmissionTest {
               try { destination = JSON.parse(text); }
               catch (e) {
                 if (e instanceof Error) {
-                  return e.code === "E8001" && destination === original
+                  return e.name === "E8001" && destination === original
                     && destination.values === original.values && destination.values.length === 1;
                 }
                 throw e as Error;
@@ -697,7 +697,7 @@ public final class LlvmDataClassEmissionTest {
               let destination: UndefinedDoc = original;
               try { destination = JSON.parse(text); }
               catch (e) {
-                if (e instanceof Error) { return e.code === "E8001" && destination === original; }
+                if (e instanceof Error) { return e.name === "E8001" && destination === original; }
                 throw e as Error;
               }
               return false;
@@ -713,7 +713,7 @@ public final class LlvmDataClassEmissionTest {
             }
 
             function report(code: string, text: string): void {
-              throw { code: code, message: `${text}` };
+              throw { name: code, message: `${text}` };
             }
 
             export function main(): null {
@@ -817,7 +817,7 @@ public final class LlvmDataClassEmissionTest {
               let nullUndefined = rejectsUndefinedDoc("{\\"name\\":\\"u\\",\\"omitted\\":null}");
               if (!nullUndefined) { report("D45", "null for undefined"); }
 
-              throw { code: "DONE", message: `${docText}|${builtText}|${undefinedText}` };
+              throw { name: "DONE", message: `${docText}|${builtText}|${undefinedText}` };
             }
             """;
     }
@@ -843,7 +843,7 @@ public final class LlvmDataClassEmissionTest {
             }
 
             function report(code: string, text: string): void {
-              throw { code: code, message: `${text}` };
+              throw { name: code, message: `${text}` };
             }
 
             export function main(): null {
@@ -871,7 +871,7 @@ public final class LlvmDataClassEmissionTest {
               if (!Object.hasOwn(carrier, "data")) { report("U10", "undefined own"); }
               if (!(carrier.data === undefined)) { report("U11", "undefined read"); }
 
-              throw { code: "DONE", message: `${text}|${carrier.text}` };
+              throw { name: "DONE", message: `${text}|${carrier.text}` };
             }
             """;
     }
@@ -897,7 +897,7 @@ public final class LlvmDataClassEmissionTest {
             }
 
             function report(code: string): void {
-              throw { code: code, message: "narrowing" };
+              throw { name: code, message: "narrowing" };
             }
 
             function pick(value: number | undefined): number {
@@ -912,7 +912,7 @@ public final class LlvmDataClassEmissionTest {
             function classify(candidate: unknown): string {
               let result: string = "other";
               if (candidate instanceof Error) {
-                result = candidate.code;
+                result = candidate.name;
               } else {
                 if (candidate instanceof NotFound) {
                   result = candidate.reason;
@@ -979,7 +979,7 @@ public final class LlvmDataClassEmissionTest {
 
               let saved: unknown = null;
               try {
-                throw { code: "K11", message: "narrowed" };
+                throw { name: "K11", message: "narrowed" };
               } catch (caught) {
                 if (caught instanceof Error) { saved = caught; }
               }
@@ -987,7 +987,7 @@ public final class LlvmDataClassEmissionTest {
               let missing: unknown = null;
               if (classify(missing) !== "other") { report("K13"); }
 
-              throw { code: "DONE", message: "narrowing" };
+              throw { name: "DONE", message: "narrowing" };
             }
             """;
     }
@@ -1006,7 +1006,7 @@ public final class LlvmDataClassEmissionTest {
             }
 
             function report(code: string, text: string): void {
-              throw { code: code, message: `${text}` };
+              throw { name: code, message: `${text}` };
             }
 
             function leaf(depth: number): number {
@@ -1021,7 +1021,7 @@ public final class LlvmDataClassEmissionTest {
             }
 
             export function main(): null {
-              let constructed: Error = { code: "E5", message: "constructed" };
+              let constructed: Error = { name: "E5", message: "constructed" };
               let marks: number[] = [];
               marks[0] = 1;
               let assigned: number = marks[0] = 7;
@@ -1036,7 +1036,7 @@ public final class LlvmDataClassEmissionTest {
                   restored = restored + value;
                 } catch (e) {
                   if (e instanceof Error) {
-                    if (e.code !== "E8002") { report("E3", e.code); }
+                    if (e.name !== "E8002") { report("E3", e.name); }
                     if (e.message !== "array index out of bounds") {
                       report("E4", e.message);
                     }
@@ -1049,22 +1049,22 @@ public final class LlvmDataClassEmissionTest {
 
               try {
                 try {
-                  throw { code: "E1", message: "m" };
+                  throw { name: "E1", message: "m" };
                 } catch (e) {
                   if (e instanceof Error) {
-                    e.code = "E2";
+                    e.name = "E2";
                     throw e;
                   }
                 }
               } catch (f) {
                 if (f instanceof Error) {
-                  if (f.code !== "E2") { report("E7", f.code); }
+                  if (f.name !== "E2") { report("E7", f.name); }
                   if (f.message !== "m") { report("E8", f.message); }
                 }
               }
 
               try {
-                throw { code: "D1", message: "discarded" };
+                throw { name: "D1", message: "discarded" };
               } catch (e) {
                 let discarded = e;
               }
@@ -1078,24 +1078,24 @@ public final class LlvmDataClassEmissionTest {
               if (typeof boxed !== "object") { report("E9", "typeof"); }
               if (!(boxed instanceof Error)) { report("E10", "instanceof"); }
               let back: Error = boxed as Error;
-              if (back.code !== "E5") { report("E11", back.code); }
+              if (back.name !== "E5") { report("E11", back.name); }
               if (back.message !== "constructed") { report("E12", back.message); }
               if (typeof constructed !== "object") { report("E13", "typeof"); }
 
-              let carrier: ErrorBag = { data: constructed, failure: { code: "E6", message: "field" } };
+              let carrier: ErrorBag = { data: constructed, failure: { name: "E6", message: "field" } };
               let fromField: Error = carrier.data as Error;
-              if (fromField.code !== "E5") { report("E14", fromField.code); }
-              if (carrier.failure.code !== "E6") { report("E15", carrier.failure.code); }
+              if (fromField.name !== "E5") { report("E14", fromField.name); }
+              if (carrier.failure.name !== "E6") { report("E15", carrier.failure.name); }
               carrier.data = constructed;
               if (!(carrier.data instanceof Error)) { report("E16", "field"); }
 
               let elements: unknown[] = [constructed];
               let fromElement: Error = elements[0] as Error;
-              if (fromElement.code !== "E5") { report("E17", fromElement.code); }
+              if (fromElement.name !== "E5") { report("E17", fromElement.name); }
 
               let saved: unknown = null;
               try {
-                throw { code: "E7", message: "saved" };
+                throw { name: "E7", message: "saved" };
               } catch (caught) {
                 if (caught instanceof Error) {
                   saved = caught;
@@ -1103,9 +1103,9 @@ public final class LlvmDataClassEmissionTest {
               }
               if (!(saved instanceof Error)) { report("E18", "saved"); }
               let relayed: Error = saved as Error;
-              if (relayed.code !== "E7") { report("E19", relayed.code); }
+              if (relayed.name !== "E7") { report("E19", relayed.name); }
 
-              throw { code: "DONE", message: "routing" };
+              throw { name: "DONE", message: "routing" };
             }
             """;
     }
@@ -1122,7 +1122,7 @@ public final class LlvmDataClassEmissionTest {
     private static String ieeeFixture() {
         return """
             function report(code: string, text: string): void {
-              throw { code: code, message: `${text}` };
+              throw { name: code, message: `${text}` };
             }
 
             export function main(): null {
@@ -1217,7 +1217,7 @@ public final class LlvmDataClassEmissionTest {
                 report("I29", "infinity times zero");
               }
 
-              throw { code: "DONE", message: "ieee" };
+              throw { name: "DONE", message: "ieee" };
             }
             """;
     }
@@ -1492,7 +1492,7 @@ public final class LlvmDataClassEmissionTest {
             }
 
             export function main(): null {
-              let constructed: Error = { code: "C1", message: "m" };
+              let constructed: Error = { name: "C1", message: "m" };
               let boxed: unknown = constructed;
               let bag: Bag = { data: boxed, failure: constructed };
               let elements: unknown[] = [constructed];
@@ -1752,7 +1752,7 @@ public final class LlvmDataClassEmissionTest {
               return value;
             }
             function check(ok: boolean): void {
-              if (!ok) { throw {code: "TEST_FAIL", message: "callable storage"}; }
+              if (!ok) { throw {name: "TEST_FAIL", message: "callable storage"}; }
             }
             export function main(): null {
               let functions: (() => number)[] = [];
@@ -1775,7 +1775,7 @@ public final class LlvmDataClassEmissionTest {
               let restored: (() => number)[] = alias as (() => number)[];
               check(restored === functions);
               check(restored[1]() === 9);
-              throw {code: "DONE", message: "callable-storage"};
+              throw {name: "DONE", message: "callable-storage"};
             }
             """);
         Path jsonPublished = compileProject(scratch, "json-structure",

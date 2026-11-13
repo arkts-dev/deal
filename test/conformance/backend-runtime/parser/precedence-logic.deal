@@ -10,10 +10,10 @@ export function test_logic_prec(): number {
   // (true || false) && false = true && false = false
   let b: boolean = (true || false) && false;
   if (a !== true) {
-    throw { code: "TEST_FAIL", message: "logical precedence: true || false && false should be true" };
+    throw { name: "TEST_FAIL", message: "logical precedence: true || false && false should be true" };
   }
   if (b !== false) {
-    throw { code: "TEST_FAIL", message: "logical precedence: (true || false) && false should be false" };
+    throw { name: "TEST_FAIL", message: "logical precedence: (true || false) && false should be false" };
   }
   return 1;
 }

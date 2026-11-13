@@ -4,8 +4,8 @@
  * `llvm-native-runtime-value-model` R5, R9).
  *
  * An Error record owns three kinds of storage. The managed
- * `DEAL_LAYOUT_ERROR` object belongs to the collector; the copied code,
- * message and origin text, the optional expected and actual text, and the
+ * `DEAL_LAYOUT_ERROR` object belongs to the collector; the independently copied
+ * language name and diagnostic code, message and origin text, the optional expected and actual text, and the
  * frames array with one duplicated label per active call frame are platform
  * storage that only the record can reach. The sweep therefore runs the
  * layout's registered reclamation hook (`deal_layout_release_register`,
@@ -77,15 +77,15 @@ enum {
 };
 
 /*
- * The platform allocations one full-shape record owns: the code, the message,
+ * The platform allocations one full-shape record owns: the name, the code, the message,
  * the origin's source file, the expected and actual text, the frames array and
  * one duplicated label per active frame.
  */
 #define FULL_ERROR_PLATFORM_ALLOCATIONS \
-    (5u + 1u + (size_t)FRAME_LABELS)
+    (6u + 1u + (size_t)FRAME_LABELS)
 
-/* The platform allocations one bare record owns: its code and its message. */
-#define BARE_ERROR_PLATFORM_ALLOCATIONS 2u
+/* A bare record owns independent name, diagnostic code and message copies. */
+#define BARE_ERROR_PLATFORM_ALLOCATIONS 3u
 
 static const char *const frame_labels[FRAME_LABELS] = {
     "error_reclaim#outer@F1",
@@ -139,6 +139,10 @@ static deal_error *create_full_error(void) {
 /* Reads one record's whole text surface back: only a live record answers with
  * its own text, because a released record's fields are already freed. */
 static void check_full_error_text(deal_error *error, const char *what) {
+    size_t name_length = 0u;
+    const char *name = deal_error_name_bytes(error, &name_length);
+    check_text(name_length == 5u && memcmp(name, "E8010", 5u) == 0,
+               what, "name");
     const char *text = NULL;
 
     check_text(deal_error_code(error, &text) == 1
@@ -229,7 +233,7 @@ int main(void) {
                   + FULL_ERROR_PLATFORM_ALLOCATIONS
                   + BARE_ERROR_PLATFORM_ALLOCATIONS,
           "every live Error owns exactly its own platform storage: the copied "
-          "code, message and origin text, the optional expected and actual "
+          "name, diagnostic code, message and origin text, the optional expected and actual "
           "text, the frames array and one duplicated label per frame");
 
     /* -- 2. a full collection of a fully live graph releases nothing ----- */
@@ -270,7 +274,7 @@ int main(void) {
                   + (size_t)LIVE_ERRORS * FULL_ERROR_PLATFORM_ALLOCATIONS,
           "reclaiming the unreachable Errors releases exactly their platform "
           "storage: the full-shape record's copied text, frames array and "
-          "labels and the bare record's two text copies");
+          "labels and the bare record's three independent text copies");
     check_full_error_text(errors[0],
                           "a live Error keeps its text while a sibling is "
                           "reclaimed");

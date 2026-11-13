@@ -9,7 +9,7 @@ async function add_one(x: number): Promise<number> { return x + 1; }
 export async function test_nested_await_argument(): Promise<null> {
   let v: number = await add_one(await one());
   if (v !== 2) {
-    throw { code: "TEST_FAIL", message: "nested await argument result mismatch" };
+    throw { name: "TEST_FAIL", message: "nested await argument result mismatch" };
   }
   return null;
 }

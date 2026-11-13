@@ -9,7 +9,7 @@ function add(a: number, b: number): number { return a + b; }
 
 export async function test_nested_await_arguments(): Promise<number> {
   let result: number = add(await one(), await two());
-  if (result !== 3) { throw { code: "TEST_FAIL", message: "nested await arguments failed" }; }
+  if (result !== 3) { throw { name: "TEST_FAIL", message: "nested await arguments failed" }; }
   return result;
 }
 

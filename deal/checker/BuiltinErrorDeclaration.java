@@ -1,8 +1,6 @@
 package deal.checker;
 
 import deal.ast.ClassField;
-import deal.ast.LiteralExpr;
-import deal.ast.LiteralValue;
 import deal.ast.NamedType;
 import deal.ast.Span;
 import deal.identity.CanonicalClassIdentity;
@@ -10,7 +8,6 @@ import deal.types.Type;
 
 import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
 
 public record BuiltinErrorDeclaration(
         CanonicalClassIdentity identity,
@@ -24,9 +21,8 @@ public record BuiltinErrorDeclaration(
 
     /**
      * One declared field of the builtin {@code Error} class: the
-     * declaration AST record (name, optional, nullable, default-expression
-     * presence — the constant empty-string default) plus the resolved
-     * declared {@link Type}.
+     * declaration AST record (name, optional and nullable) plus the resolved
+     * declared {@link Type}. Both fields require supplied values.
      *
      */
     public record Field(ClassField declaration, Type type) {
@@ -53,21 +49,18 @@ public record BuiltinErrorDeclaration(
 
     /**
      * The synthesized builtin {@code Error} class declaration with its
-     * AST field records at the given span: {@code code} and
-     * {@code message}, both non-optional {@code string} fields whose
-     * default expression is the constant empty string. The declared
+     * AST field records at the given span: {@code name} and
+     * {@code message}, both required-present {@code string} fields. The declared
      * {@code string} spelling and the resolved {@link Type.String} fact
      * are authored here, together, exactly once.
      *
      */
     public static BuiltinErrorDeclaration synthesized(Span span) {
         Objects.requireNonNull(span, "span must not be null");
-        LiteralExpr emptyString = new LiteralExpr(span,
-            new LiteralValue.StringLiteral(""));
         return new BuiltinErrorDeclaration(
             NameResolver.intrinsicErrorIdentity(),
             List.of(
-                new Field(new ClassField(span, "code", false, false,
+                new Field(new ClassField(span, "name", false, false,
                     new NamedType(span, "string")),
                     Type.String.INSTANCE),
                 new Field(new ClassField(span, "message", false, false,

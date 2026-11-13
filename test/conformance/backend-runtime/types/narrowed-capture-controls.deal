@@ -25,27 +25,27 @@ function returnsNarrowed(): number {
 }
 
 function expectNoError(what: string): null {
-  throw { code: "CONTROL_FAIL", message: what + ": no error was raised" };
+  throw { name: "CONTROL_FAIL", message: what + ": no error was raised" };
 }
 
 function expectCaught(value: unknown, what: string, code: string): null {
   let e: Error = value as Error;
-  if (e.code !== code) {
-    throw { code: "CONTROL_FAIL", message: what + ": expected " + code + ", got " + e.code };
+  if (e.name !== code) {
+    throw { name: "CONTROL_FAIL", message: what + ": expected " + code + ", got " + e.name };
   }
   return null;
 }
 
 function expectEqual(what: string, actual: number, expected: number): null {
   if (actual !== expected) {
-    throw { code: "CONTROL_FAIL", message: what + " changed the value" };
+    throw { name: "CONTROL_FAIL", message: what + " changed the value" };
   }
   return null;
 }
 
 function expectTrue(what: string, condition: boolean): null {
   if (!condition) {
-    throw { code: "CONTROL_FAIL", message: what + " changed the value" };
+    throw { name: "CONTROL_FAIL", message: what + " changed the value" };
   }
   return null;
 }

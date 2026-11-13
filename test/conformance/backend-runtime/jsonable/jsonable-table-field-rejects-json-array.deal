@@ -10,13 +10,13 @@ export class Wrapper {
 export function test_table_field_rejects_json_array(): null {
   let rejected = false;
   try { let invalid: Wrapper = JSON.parse("{\"data\":[]}"); }
-  catch (e) { let error = e as Error; rejected = error.code === "E8001" && error.message === "expected table"; }
-  if (!rejected) { throw {code: "TEST_FAIL", message: "empty array accepted as Record field"}; }
+  catch (e) { let error = e as Error; rejected = error.name === "E8001" && error.message === "expected table"; }
+  if (!rejected) { throw {name: "TEST_FAIL", message: "empty array accepted as Record field"}; }
   let empty: Wrapper = JSON.parse("{\"data\":{}}");
   let emptyText: string = JSON.stringify(empty) as string;
-  if (emptyText !== "{\"data\":{}}") { throw {code: "TEST_FAIL", message: "empty Record encoding changed"}; }
+  if (emptyText !== "{\"data\":{}}") { throw {name: "TEST_FAIL", message: "empty Record encoding changed"}; }
   let keyed: Wrapper = JSON.parse("{\"data\":{\"count\":3}}");
-  if ((keyed.data.count as number) !== 3) { throw {code: "TEST_FAIL", message: "keyed Record value changed"}; }
+  if ((keyed.data.count as number) !== 3) { throw {name: "TEST_FAIL", message: "keyed Record value changed"}; }
   return null;
 }
 

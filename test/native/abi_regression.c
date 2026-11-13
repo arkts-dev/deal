@@ -49,7 +49,7 @@ static deal_host_result aliases(const deal_value *args, size_t argc) {
     REQUIRE(deal_class_atom("Error", &atom));
     REQUIRE(deal_class_new(atom, &error));
     REQUIRE(deal_string_new("before", 6, &text));
-    REQUIRE(deal_field_set(error, "code", text));
+    REQUIRE(deal_field_set(error, "name", text));
     REQUIRE(deal_field_set(error, "message", text));
     REQUIRE(deal_array_set(nested, 0, error));
     REQUIRE(deal_array_set(args[0], 2, nested));
@@ -70,7 +70,7 @@ static deal_host_result aliases(const deal_value *args, size_t argc) {
     REQUIRE(deal_as_number(read, &changed));
     EXPECT(changed == 12);
     REQUIRE(deal_array_set(nested, 2, child));
-    REQUIRE(deal_field_get(error, "code", &read));
+    REQUIRE(deal_field_get(error, "name", &read));
     const void *bytes = NULL;
     size_t size = 0;
     REQUIRE(deal_as_string(read, &bytes, &size));
@@ -90,10 +90,10 @@ static deal_host_result error_fields(const deal_value *args, size_t argc) {
     const unsigned char malformed[] = {0xe2, 0x82};
     const unsigned char lone[] = {0xed, 0xa0, 0x80};
     REQUIRE(deal_string_new("B", 1, &text));
-    REQUIRE(deal_field_set(args[0], "code", text));
+    REQUIRE(deal_field_set(args[0], "name", text));
     REQUIRE(deal_field_set(args[0], "message", text));
     REQUIRE(deal_field_get(args[0], "message", &borrowed));
-    REQUIRE(deal_field_set(args[0], "code", borrowed));
+    REQUIRE(deal_field_set(args[0], "name", borrowed));
     REQUIRE(deal_number(3, &wrong));
     REQUIRE(deal_absent(&absent));
     REQUIRE(deal_string_new(lone, sizeof lone, &text));
@@ -107,7 +107,7 @@ static deal_host_result error_fields(const deal_value *args, size_t argc) {
     REQUIRE(deal_string_new("B", 1, &text));
     REQUIRE(deal_field_set(args[0], "message", text));
     REQUIRE(deal_string_new(malformed, sizeof malformed, &invalid));
-    EXPECT(deal_field_set(args[0], "code", wrong) == DEAL_STATUS_KIND);
+    EXPECT(deal_field_set(args[0], "name", wrong) == DEAL_STATUS_KIND);
     EXPECT(deal_field_set(args[0], "message", absent) == DEAL_STATUS_KIND);
     EXPECT(deal_field_set(args[0], "message", invalid) == DEAL_STATUS_KIND);
     EXPECT(deal_field_set(args[0], "other", text) == DEAL_STATUS_UNKNOWN_FIELD);

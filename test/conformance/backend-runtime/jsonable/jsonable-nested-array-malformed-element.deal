@@ -10,8 +10,8 @@ export function test_jsonable_nested_array_malformed_element(): null {
   let p = original;
   let rejected = false;
   try { p = JSON.parse("{\"children\":[1]}"); }
-  catch (e) { rejected = (e as Error).code === "E8001"; }
-  if (!rejected || p !== original || p.children[1].value !== 4) { throw { code: "TEST_FAIL", message: "malformed nested element rejection or rollback failed" }; }
+  catch (e) { rejected = (e as Error).name === "E8001"; }
+  if (!rejected || p !== original || p.children[1].value !== 4) { throw { name: "TEST_FAIL", message: "malformed nested element rejection or rollback failed" }; }
   return null;
 }
 

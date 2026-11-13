@@ -7,7 +7,7 @@ import * as host from "host/bad_string";
 
 export function test_host_bad_utf8(): string {
   let s: string = host.embeddedSurrogateString();
-  if(s!==`a\uD800b`){throw {code:"TEST",message:"host embedded lone unit lost"};}
+  if(s!==`a\uD800b`){throw {name:"TEST",message:"host embedded lone unit lost"};}
   return s;
 }
 

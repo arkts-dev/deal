@@ -9,14 +9,14 @@ export function test_jsonable_complex_roundtrip(): null {
   let raw: string = "{\"name\":\"Ada\",\"addresses\":[{\"city\":\"London\"}],\"nickname\":null,\"meta\":{\"score\":7}}";
   let u: Lib.User | null = JSON.parse(raw);
   if (u !== null) {
-    if (u.nickname !== null) { throw { code: "TEST_FAIL", message: "nickname null mismatch" }; }
-    if (u.addresses[0].city !== "London") { throw { code: "TEST_FAIL", message: "address mismatch" }; }
+    if (u.nickname !== null) { throw { name: "TEST_FAIL", message: "nickname null mismatch" }; }
+    if (u.addresses[0].city !== "London") { throw { name: "TEST_FAIL", message: "address mismatch" }; }
     let encoded: string = JSON.stringify(u) as string;
     let u2: Lib.User | null = JSON.parse(encoded);
-    if (u2 === null) { throw { code: "TEST_FAIL", message: "roundtrip failed" }; }
+    if (u2 === null) { throw { name: "TEST_FAIL", message: "roundtrip failed" }; }
     return null;
   }
-  throw { code: "TEST_FAIL", message: "fromJson failed" };
+  throw { name: "TEST_FAIL", message: "fromJson failed" };
 }
 
 export function main(): null {

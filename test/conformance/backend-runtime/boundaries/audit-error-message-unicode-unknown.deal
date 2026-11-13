@@ -6,7 +6,7 @@ import * as printer from "std/console";
 import * as host from "host/probe";
 
 export function main():null {
-  let e:Error={code:"X",message:"original"};
+  let e:Error={name:"X",message:"original"};
   let alias=e;
   let original:unknown=null;
   let destination=original;
@@ -14,12 +14,12 @@ export function main():null {
   destination=e;
   let admitted=destination as Error;
   if(admitted!==alias || admitted.message!==`\uD800`) {
-    throw {code:"TEST",message:"unknown admission lost lone message or identity"};
+    throw {name:"TEST",message:"unknown admission lost lone message or identity"};
   }
   printer.log("ACCEPT");
   host.repair();
   if(e!==alias || admitted.message!=="repaired") {
-    throw {code:"TEST",message:"unknown alias did not observe repair"};
+    throw {name:"TEST",message:"unknown alias did not observe repair"};
   }
   printer.log("IDENTITY");
   destination=e;

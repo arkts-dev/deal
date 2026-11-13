@@ -1727,11 +1727,11 @@ static int deal_json_emit(deal_json_encoder *encoder,
                                         position.descriptor) ? 2 : 0;
     case DEAL_DATA_ERROR: {
         deal_root_scope_push();
-        deal_string *code = deal_error_code_value(position.input.datum.reference);
+        deal_string *code = deal_error_name_value(position.input.datum.reference);
         (void)deal_root_scope_hold(code);
         deal_string *message = deal_error_message_value(position.input.datum.reference);
         (void)deal_root_scope_hold(message);
-        deal_json_buffer_append(&encoder->text, "{\"code\":", 8u);
+        deal_json_buffer_append(&encoder->text, "{\"name\":", 8u);
         deal_json_escape(&encoder->text, code);
         deal_json_buffer_append(&encoder->text, ",\"message\":", 11u);
         deal_json_escape(&encoder->text, message);
@@ -2254,7 +2254,7 @@ static const deal_json_class_plan *deal_json_error_plan(void) {
     static deal_class_layout layout;
     static deal_json_class_plan plan;
     if (plan.layout == NULL) {
-        fields[0].name = "code";
+        fields[0].name = "name";
         fields[0].descriptor = deal_descriptor_intern("string");
         fields[1].name = "message";
         fields[1].descriptor = fields[0].descriptor;
@@ -2599,7 +2599,7 @@ deal_array *deal_object_keys(const deal_data *value) {
         for (size_t i = 0u; i < count; ++i) deal_container_array_append(result, &keys[i]);
         deal_platform_release(keys);
     } else if (value->tag == DEAL_DATA_ERROR) {
-        deal_string *key = deal_text_new((const uint8_t *)"code", 4u);
+        deal_string *key = deal_text_new((const uint8_t *)"name", 4u);
         (void)deal_root_scope_hold(key);
         deal_container_array_append(result, &key);
         key = deal_text_new((const uint8_t *)"message", 7u);

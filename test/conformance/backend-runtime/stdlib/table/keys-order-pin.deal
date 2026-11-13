@@ -10,10 +10,10 @@ export function test_table_keys_order_pin(): null {
   delete t.filler;
   let ks: string[] = tables.keys(t);
   if (ks.length !== 3) {
-    throw { code: "TEST_FAIL", message: "keys length mismatch" };
+    throw { name: "TEST_FAIL", message: "keys length mismatch" };
   }
   if (ks[0] !== "zero" || ks[1] !== "one" || ks[2] !== "two") {
-    throw { code: "TEST_FAIL", message: "keys order mismatch" };
+    throw { name: "TEST_FAIL", message: "keys order mismatch" };
   }
   return null;
 }

@@ -28,7 +28,7 @@ export function test_tojson_deep_and_alias(): null {
   let a: number = aliasA.v as number;
   let b: number = aliasB.v as number;
   if (aliasA === aliasB || a !== 1 || b !== 1) {
-    throw { code: "TEST_FAIL", message: "the shared acyclic child must serialize twice with its value" };
+    throw { name: "TEST_FAIL", message: "the shared acyclic child must serialize twice with its value" };
   }
   let cursor: Record<string, unknown> = data;
   let depth: number = 0;

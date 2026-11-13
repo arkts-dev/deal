@@ -12,7 +12,7 @@ export function test_jsonable_minimal_table_nested_array_access(): null {
     let values: number[][] = w.data.values;
     return null;
   }
-  throw { code: "TEST_FAIL", message: "fromJson failed" };
+  throw { name: "TEST_FAIL", message: "fromJson failed" };
 }
 
 export function main(): null { return null; }

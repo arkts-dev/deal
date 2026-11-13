@@ -1056,7 +1056,7 @@ public class FailureArmAuthorityTest {
         export async function test_null(): Promise<null> {
           let v: null = await host.fetchNull();
           if (v !== null) {
-            throw { code: "TEST_FAIL", message: "null completion value mismatch" };
+            throw { name: "TEST_FAIL", message: "null completion value mismatch" };
           }
           return null;
         }
@@ -1064,7 +1064,7 @@ public class FailureArmAuthorityTest {
         export async function test_nullable(): Promise<number | null> {
           let v: number | null = await host.fetchNullable();
           if (v !== null) {
-            throw { code: "TEST_FAIL", message: "nullable completion value mismatch" };
+            throw { name: "TEST_FAIL", message: "nullable completion value mismatch" };
           }
           return null;
         }
@@ -1082,7 +1082,7 @@ public class FailureArmAuthorityTest {
         export async function test_nullable_string(): Promise<null> {
           let v: string | null = await host.fetchNullableString();
           if (v !== null) {
-            throw { code: "TEST_FAIL", message: "nullable string completion value mismatch" };
+            throw { name: "TEST_FAIL", message: "nullable string completion value mismatch" };
           }
           return null;
         }
@@ -2163,7 +2163,7 @@ public class FailureArmAuthorityTest {
             "op", "digest", "parent", "origin", new Object[] {table});
         String encoded = String.valueOf(value);
         String expectedJson = "number".equals(actual) ? "{\"v\":null}"
-            : "table".equals(actual) ? "{\"v\":{\"code\":\"E8001\",\"message\":\"x\"}}" : "{}";
+            : "table".equals(actual) ? "{\"v\":{\"name\":\"E8001\",\"message\":\"x\"}}" : "{}";
         checkEq(expectedJson, encoded, "generic JVM stringify: " + actual);
         return new Tuple("OK", encoded, span, null, null);
     }
@@ -3457,7 +3457,7 @@ public class FailureArmAuthorityTest {
             new ClassOpsExecutor.Value.Class(deal.semantic.ir.ClassId.ERROR,
                 List.of(new ClassOpsExecutor.FieldState.Present(walkString("E8001")),
                     new ClassOpsExecutor.FieldState.Present(walkString("x")))),
-            "{[__dealCarrierKeys.d] = true, code = \"E8001\", m = \"x\"}",
+            "{[__dealCarrierKeys.d] = true, name = \"E8001\", code = \"E8001\", m = \"x\"}",
             new deal.codegen.jvm.JvmRuntime.ErrorValue("E8001", "x")));
         // A path-local table re-entry: the cycle arm, no expected/actual.
         cases.add(walkCase("cyclic-table-field", true, null, null,
@@ -3638,7 +3638,7 @@ public class FailureArmAuthorityTest {
                     "{\"name\":\"n\",\"age\":1,\"ratio\":0.5,\"data\":{\"k\":\"\\ud800\"},\"tags\":[1]}";
                 case "lone-low-in-table-content" ->
                     "{\"name\":\"n\",\"age\":1,\"ratio\":0.5,\"data\":{\"k\":\"\\udc00\"},\"tags\":[1]}";
-                case "error-carrier-at-root" -> "{\"code\":\"E8001\",\"message\":\"x\"}";
+                case "error-carrier-at-root" -> "{\"name\":\"E8001\",\"message\":\"x\"}";
                 default -> null;
             };
             if (encoded != null) {

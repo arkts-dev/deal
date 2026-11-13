@@ -16,11 +16,11 @@ async function branchValue(n: number): Promise<number> {
 export async function f(): Promise<number> {
   let positive: number = await branchValue(5);
   if (positive !== 10) {
-    throw { code: "TEST_FAIL", message: "positive branch await result mismatch" };
+    throw { name: "TEST_FAIL", message: "positive branch await result mismatch" };
   }
   let zero: number = await branchValue(0);
   if (zero !== 0) {
-    throw { code: "TEST_FAIL", message: "else branch await result mismatch" };
+    throw { name: "TEST_FAIL", message: "else branch await result mismatch" };
   }
   return positive;
 }

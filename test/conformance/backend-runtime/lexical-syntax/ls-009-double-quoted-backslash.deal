@@ -6,7 +6,7 @@
 export function test_double_quoted_backslash(): null {
   let value: string = "a\\b";
   if (value !== 'a\\b') {
-    throw { code: "TEST_FAIL", message: "double-backslash escape decoded incorrectly" };
+    throw { name: "TEST_FAIL", message: "double-backslash escape decoded incorrectly" };
   }
   return null;
 }

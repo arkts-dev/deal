@@ -11,7 +11,7 @@ class ChainStage { step: number; }
 async function level3_sync(stage: ChainStage): Promise<number> {
   // The innermost completion must be the first chain event: stage 0.
   if (stage.step !== 0) {
-    throw { code: "TEST_FAIL", message: "level3_sync completion stage mismatch" };
+    throw { name: "TEST_FAIL", message: "level3_sync completion stage mismatch" };
   }
   stage.step = stage.step + 1;
   return 3;
@@ -22,11 +22,11 @@ async function level2(stage: ChainStage): Promise<number> {
   let v: number = await level3_sync(stage);
   // level2 resumes once after the innermost completion: stage must be 1.
   if (stage.step !== 1) {
-    throw { code: "TEST_FAIL", message: "level2 resume stage mismatch" };
+    throw { name: "TEST_FAIL", message: "level2 resume stage mismatch" };
   }
   stage.step = stage.step + 1;
   if (v !== 3) {
-    throw { code: "TEST_FAIL", message: "level2 resumed value mismatch" };
+    throw { name: "TEST_FAIL", message: "level2 resumed value mismatch" };
   }
   return v;
 }
@@ -36,11 +36,11 @@ async function level1(stage: ChainStage): Promise<number> {
   let v: number = await level2(stage);
   // level1 resumes once after level2's resume: stage must be 2.
   if (stage.step !== 2) {
-    throw { code: "TEST_FAIL", message: "level1 resume stage mismatch" };
+    throw { name: "TEST_FAIL", message: "level1 resume stage mismatch" };
   }
   stage.step = stage.step + 1;
   if (v !== 3) {
-    throw { code: "TEST_FAIL", message: "level1 resumed value mismatch" };
+    throw { name: "TEST_FAIL", message: "level1 resumed value mismatch" };
   }
   return v;
 }
@@ -50,10 +50,10 @@ export async function test(): Promise<number> {
   let v: number = await level1(stage);
   // Every chain level completed and resumed exactly once: final stage 3.
   if (stage.step !== 3) {
-    throw { code: "TEST_FAIL", message: "final chain stage mismatch" };
+    throw { name: "TEST_FAIL", message: "final chain stage mismatch" };
   }
   if (v !== 3) {
-    throw { code: "TEST_FAIL", message: "final chain value mismatch" };
+    throw { name: "TEST_FAIL", message: "final chain value mismatch" };
   }
   return v;
 }

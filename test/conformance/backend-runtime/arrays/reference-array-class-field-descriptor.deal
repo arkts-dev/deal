@@ -15,15 +15,15 @@ function describe(p: Payload): number {
 export function test_array_class_field_descriptor(): string {
   let p: Payload = { data: [0, 0, 0], tag: "a" };
   if (describe(p) !== 3) {
-    throw { code: "TEST_FAIL", message: "number[] class field boundary mismatch" };
+    throw { name: "TEST_FAIL", message: "number[] class field boundary mismatch" };
   }
   p.data[1] = 200;
   let q: Payload = { data: [0], tag: "b" };
   if (q.data.length !== 1) {
-    throw { code: "TEST_FAIL", message: "second instance length mismatch" };
+    throw { name: "TEST_FAIL", message: "second instance length mismatch" };
   }
   if (p.data[1] !== 200) {
-    throw { code: "TEST_FAIL", message: "instances must not share number[] storage" };
+    throw { name: "TEST_FAIL", message: "instances must not share number[] storage" };
   }
   return "canonical number[] class field descriptor ok";
 }

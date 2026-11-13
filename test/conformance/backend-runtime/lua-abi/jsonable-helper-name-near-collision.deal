@@ -10,7 +10,7 @@ export function test_jsonable_helper_name_near_collision(): null {
   let User_fromJson_local: string = "local";
   let u: User = User_fromJson("{\"name\":\"Ada\"}");
   if (User_fromJson_local !== "local" || u.name !== "Ada") {
-    throw {code: "TEST_FAIL", message: "ordinary wrapper name collision"};
+    throw {name: "TEST_FAIL", message: "ordinary wrapper name collision"};
   }
   return null;
 }

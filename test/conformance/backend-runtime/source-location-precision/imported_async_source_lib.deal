@@ -4,5 +4,5 @@
 // (ISSUE-0107) removes unclassified skips: every .deal file carries an
 // explicit classification, and companions must keep compiling standalone.
 export async function fail(): Promise<number> {
-  throw { code: "ASYNC_IMPORTED_SOURCE", message: "imported async source" };
+  throw { name: "ASYNC_IMPORTED_SOURCE", message: "imported async source" };
 }

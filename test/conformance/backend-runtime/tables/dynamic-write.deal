@@ -10,10 +10,10 @@ export function test_table_write(): string {
   let key: string = t.key as string;
   let num: number = t.num as number;
   if (key !== "val") {
-    throw { code: "TEST_FAIL", message: "table key post-state mismatch" };
+    throw { name: "TEST_FAIL", message: "table key post-state mismatch" };
   }
   if (num !== 42) {
-    throw { code: "TEST_FAIL", message: "table num post-state mismatch" };
+    throw { name: "TEST_FAIL", message: "table num post-state mismatch" };
   }
   return key;
 }

@@ -274,7 +274,7 @@ public final class JvmRuntime {
     }
 
     public static final class ErrorValue implements ClassInstance {
-        public String code;
+        public String name;
         public String message;
         /**
          * The failure this Error value reifies, or {@code null} for a
@@ -289,12 +289,12 @@ public final class JvmRuntime {
          */
         public JvmRuntime.DealError transport;
 
-        public ErrorValue(String code, String message) {
-            this(code, message, null);
+        public ErrorValue(String name, String message) {
+            this(name, message, null);
         }
 
-        public ErrorValue(String code, String message, JvmRuntime.DealError transport) {
-            this.code = code;
+        public ErrorValue(String name, String message, JvmRuntime.DealError transport) {
+            this.name = name;
             this.message = message;
             this.transport = transport;
         }
@@ -305,23 +305,25 @@ public final class JvmRuntime {
         }
 
         @Override
-        public List<String> fieldNames() { return List.of("code", "message"); }
+        public List<String> fieldNames() { return List.of("name", "message"); }
+
+        public String diagnosticCode() { return transport == null ? name : transport.code; }
 
         @Override
         public List<ClassField> boundaryFields() {
-            return List.of(new ClassField("code", "string", true),
+            return List.of(new ClassField("name", "string", true),
                 new ClassField("message", "string", true));
         }
 
         @Override
         public boolean isPresent(String field) {
-            return "code".equals(field) || "message".equals(field);
+            return "name".equals(field) || "message".equals(field);
         }
 
         @Override
         public Object read(String field) {
             return switch (field) {
-                case "code" -> code;
+                case "name" -> name;
                 case "message" -> message;
                 default -> MISSING;
             };
@@ -330,7 +332,7 @@ public final class JvmRuntime {
         @Override
         public void write(String field, Object value) {
             switch (field) {
-                case "code" -> code = (String) value;
+                case "name" -> name = (String) value;
                 case "message" -> message = (String) value;
                 default -> throw new IllegalStateException(
                     "the builtin Error carrier has no field '" + field
@@ -561,12 +563,11 @@ public final class JvmRuntime {
      */
     public static DealError rethrow(ErrorValue value) {
         DealError transport = value.transport;
-        if (sameText(value.code, transport.code)
-                && sameText(value.message, transport.msg)) {
+        if (sameText(value.message, transport.msg)) {
             transport.transported = true;
             return transport;
         }
-        DealError published = new DealError(value.code, value.message, transport.origin,
+        DealError published = new DealError(transport.code, value.message, transport.origin,
             transport.expected, transport.actual, transport.frames, transport.cause);
         published.transported = true;
         published.reified = value;
@@ -587,7 +588,7 @@ public final class JvmRuntime {
      * frames/cause a rethrow must preserve.
      */
     public static DealError raise(ErrorValue value, String origin) {
-        DealError published = new DealError(value.code, value.message, origin,
+        DealError published = new DealError(value.name, value.message, origin,
             null, null, framesText(), null);
         published.reified = value;
         value.transport = published;
@@ -681,7 +682,7 @@ public final class JvmRuntime {
     /** The closed atom encoding (first-observation allocation ids). */
     public static String atom(Object v, String kind) {
         if (v instanceof ErrorValue error) {
-            return "err:" + error.code + ":" + esc(error.message);
+            return "err:" + error.diagnosticCode() + ":" + esc(error.message);
         }
         if (v == UNDEFINED) return "undefined";
         if (v == MISSING) {
@@ -734,7 +735,7 @@ public final class JvmRuntime {
             }
             case "err" -> {
                 ErrorValue error = (ErrorValue) v;
-                return "err:" + error.code + ":" + esc(error.message);
+                return "err:" + error.diagnosticCode() + ":" + esc(error.message);
             }
             default -> {
                 if (kind.startsWith("nullable:")) {
@@ -786,7 +787,7 @@ public final class JvmRuntime {
             return "str:" + esc((String) v);
         }
         if (v instanceof ErrorValue error) {
-            return "err:" + error.code + ":" + esc(error.message);
+            return "err:" + error.diagnosticCode() + ":" + esc(error.message);
         }
         if (v instanceof Table || v instanceof Array
                 || v instanceof FunctionValue
@@ -1551,7 +1552,7 @@ public final class JvmRuntime {
             // "Error" (the one class text without the leading '@'); the
             // superseded v1.2 spellings never reach this arm.
             if (v instanceof ErrorValue error) {
-                bcheck("string", "ref", error.code, completion, null, hostCompletionCrossing);
+                bcheck("string", "ref", error.name, completion, null, hostCompletionCrossing);
                 bcheck("string", "ref", error.message, completion, null, hostCompletionCrossing);
                 return v;
             }

@@ -10,8 +10,8 @@ export function test_block_shadow(): number {
     let x: number = 4;
     n = x;
   }
-  if (n !== 4 || x === null) { throw {code: "TEST_FAIL", message: "block binding shadow"}; }
-  if (x !== null) { if (x !== "a") { throw {code: "TEST_FAIL", message: "outer binding changed"}; } }
+  if (n !== 4 || x === null) { throw {name: "TEST_FAIL", message: "block binding shadow"}; }
+  if (x !== null) { if (x !== "a") { throw {name: "TEST_FAIL", message: "outer binding changed"}; } }
   return n;
 }
 

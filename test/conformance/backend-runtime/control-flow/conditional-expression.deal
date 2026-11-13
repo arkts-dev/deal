@@ -2,7 +2,7 @@
 // @expected: runtime-ok
 // @features: control-flow, classes, closures, arrays
 class Item {x:number;}
-function check(ok:boolean,label:string):void{if(!ok){throw {code:label,message:label};}}
+function check(ok:boolean,label:string):void{if(!ok){throw {name:label,message:label};}}
 function consume(item:Item):number{return item.x;}
 function make(flag:boolean):Item{return flag?{x:7}:{x:9};}
 async function asyncNumber(value:number):Promise<number>{return value;}
@@ -28,28 +28,28 @@ export function main():null {
   check(consume(true?{x:3}:{x:4})===3,"context argument");
   const items:Item[]=[flag?{x:5}:{x:6}];check(items[0].x===6,"context element");
   check(make(true).x===7 && make(false).x===9,"context return");
-  const maybe=flag?null:3;if(maybe!==null){check(maybe===3,"nullish join");}else{throw {code:"NULL",message:"join"};}
-  const absent=flag?undefined:4;if(absent!==undefined){check(absent===4,"undefined join");}else{throw {code:"UNDEFINED",message:"join"};}
+  const maybe=flag?null:3;if(maybe!==null){check(maybe===3,"nullish join");}else{throw {name:"NULL",message:"join"};}
+  const absent=flag?undefined:4;if(absent!==undefined){check(absent===4,"undefined join");}else{throw {name:"UNDEFINED",message:"join"};}
   const both=flag?null:undefined;check(both===undefined,"two nullish");
   const nan=true?0/0:7;check(nan!==nan,"NaN");
   const zero=false?1:-0;check(1/zero===-1/0,"negative zero");
   const text=true?"\ud800":"other";check(text.length===1,"UTF16");
-  const fail=():number=>{throw {code:"STOP",message:"stop"};};
+  const fail=():number=>{throw {name:"STOP",message:"stop"};};
   result=true?12:fail();check(result===12,"skip failure");
-  let caught=false;try{result=false?13:fail();}catch(e){caught=(e as Error).code==="STOP";}
+  let caught=false;try{result=false?13:fail();}catch(e){caught=(e as Error).name==="STOP";}
   check(caught && result===12,"selected failure");
   let stale:boolean|null=true;const clear=():void=>{stale=null;};caught=false;
-  if(stale!==null){clear();try{result=stale?mark("e",1):mark("f",2);}catch(e){caught=(e as Error).code==="E8001";}}
+  if(stale!==null){clear();try{result=stale?mark("e",1):mark("f",2);}catch(e){caught=(e as Error).name==="E8001";}}
   check(caught && effects==="ad","stale condition");
   let value:number|null=9;const invalidate=():void=>{value=null;};caught=false;
-  if(value!==null){invalidate();try{result=true?value:0;}catch(e){caught=(e as Error).code==="E8001";}}
+  if(value!==null){invalidate();try{result=true?value:0;}catch(e){caught=(e as Error).name==="E8001";}}
   check(caught,"stale branch");
   const original:Item={x:21};const alias=flag?original:original;alias.x=22;check(original.x===22,"identity");
   const only=flag?{x:1}:{x:2};check((only.x as number)===2,"record branches");
   let once=0;const condition=():boolean=>{once=once+1;return true;};
   result=condition()?1:2;check(once===1 && result===1,"condition once");
-  const badCondition=():boolean=>{throw {code:"CONDITION",message:"stop"};};caught=false;
-  try{result=badCondition()?mark("i",1):mark("j",2);}catch(e){caught=(e as Error).code==="CONDITION";}
+  const badCondition=():boolean=>{throw {name:"CONDITION",message:"stop"};};caught=false;
+  try{result=badCondition()?mark("i",1):mark("j",2);}catch(e){caught=(e as Error).name==="CONDITION";}
   check(caught && effects==="ad","abrupt condition");
   const f1=(n:number):number=>n+1;const f2=(n:number):number=>n+2;
   const chosen=flag?f1:f2;check(chosen(5)===7,"function branch");

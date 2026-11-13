@@ -6,9 +6,9 @@
 export function test_empty_nullable_array(): number {
   let a: number[] | null = [];
   if (a === null) {
-    throw {code: "TEST_FAIL", message: "empty nullable array became null"};
+    throw {name: "TEST_FAIL", message: "empty nullable array became null"};
   } else {
-    if (a.length !== 0) { throw {code: "TEST_FAIL", message: "empty nullable array length"}; }
+    if (a.length !== 0) { throw {name: "TEST_FAIL", message: "empty nullable array length"}; }
     return a.length;
   }
 }
@@ -24,7 +24,7 @@ export function test_parenthesized_nullable_array(): number {
       count = count + v;
     }
   } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }
-  if (count !== 5) { throw {code: "TEST_FAIL", message: "nullable element sum"}; }
+  if (count !== 5) { throw {name: "TEST_FAIL", message: "nullable element sum"}; }
   return count;
 }
 

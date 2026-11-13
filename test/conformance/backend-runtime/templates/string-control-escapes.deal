@@ -4,7 +4,7 @@
 // @features: string, escape, line-continuation
 
 function check(ok:boolean):void {
-  if (!ok) { throw {code:"TEST",message:"string escape decoding"}; }
+  if (!ok) { throw {name:"TEST",message:"string escape decoding"}; }
 }
 
 export function main():null {

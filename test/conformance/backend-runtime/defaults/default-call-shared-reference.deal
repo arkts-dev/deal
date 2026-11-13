@@ -17,7 +17,7 @@ class Box {
 
 function failProvide(): number[] {
   state.bump();
-  throw { code: "DEFAULT_FAIL", message: "default provider failure" };
+  throw { name: "DEFAULT_FAIL", message: "default provider failure" };
 }
 
 class FailingBox {
@@ -26,33 +26,33 @@ class FailingBox {
 
 export function main(): null {
   if (state.calls() !== 0 || state.order() !== "") {
-    throw { code: "REGISTRATION_DEFAULT", message: "a producer executed at class registration" };
+    throw { name: "REGISTRATION_DEFAULT", message: "a producer executed at class registration" };
   }
   let original: number[] = state.retained();
   let provider: () => number[] = shared(original);
   let a: Box = {first: state.provideFirst(), second: state.provideSecond()};
   let b: Box = {first: state.provideFirst(), second: state.provideSecond()};
   if (state.calls() !== 4 || state.order() !== "ABAB") {
-    throw { code: "CALL_ORDER", message: "provided-expression source order: " + state.order() };
+    throw { name: "CALL_ORDER", message: "provided-expression source order: " + state.order() };
   }
   if (a.first !== original || a.second !== original || b.first !== original || b.second !== original) {
-    throw { code: "REFERENCE_COPY", message: "the returned array was copied" };
+    throw { name: "REFERENCE_COPY", message: "the returned array was copied" };
   }
   if (provider() !== original) {
-    throw { code: "CLOSURE_REFERENCE", message: "the captured closure lost the array" };
+    throw { name: "CLOSURE_REFERENCE", message: "the captured closure lost the array" };
   }
   let supplied: number[] = [5];
   let explicit: Box = { first: supplied, second: supplied };
   if (state.calls() !== 4 || explicit.first !== supplied || explicit.second !== supplied) {
-    throw { code: "PROVIDED_SKIP", message: "plain references unexpectedly invoked a producer" };
+    throw { name: "PROVIDED_SKIP", message: "plain references unexpectedly invoked a producer" };
   }
   a.first[0] = 9;
   if (b.first[0] !== 9 || original[0] !== 9 || provider()[0] !== 9) {
-    throw { code: "ALIAS_MUTATION", message: "mutations through one alias are not visible" };
+    throw { name: "ALIAS_MUTATION", message: "mutations through one alias are not visible" };
   }
   explicit.first[0] = 8;
   if (supplied[0] !== 8 || explicit.second[0] !== 8) {
-    throw { code: "EXPLICIT_ALIAS", message: "the provided alias mutation is not visible" };
+    throw { name: "EXPLICIT_ALIAS", message: "the provided alias mutation is not visible" };
   }
   let failed: boolean = false;
   let target: FailingBox = {xs: supplied};
@@ -60,10 +60,10 @@ export function main(): null {
   try {
     target = {xs: failProvide()};
   } catch (e) {
-    failed = (e as Error).code === "DEFAULT_FAIL";
+    failed = (e as Error).name === "DEFAULT_FAIL";
   }
   if (!failed || state.calls() !== 5 || target !== originalTarget || target.xs !== supplied) {
-    throw { code: "DEFAULT_FAILURE", message: "the failing producer retried, lost effects or published a partial target" };
+    throw { name: "DEFAULT_FAILURE", message: "the failing producer retried, lost effects or published a partial target" };
   }
   c.log("default-call-shared-reference");
   return null;

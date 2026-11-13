@@ -40,40 +40,40 @@ export function test_array_nested_fn_shapes(): number {
   let f: () => (b: number[]) => number[] = picker;
   let g: (b: number[]) => number[] = f();
   if (g([0, 0]).length !== 2) {
-    throw { code: "TEST_FAIL", message: "nested fn return failed" };
+    throw { name: "TEST_FAIL", message: "nested fn return failed" };
   }
   let h: (b: number[]) => number[] = combine(id);
   if (h([0, 0, 0]).length !== 3) {
-    throw { code: "TEST_FAIL", message: "fn-of-fn failed" };
+    throw { name: "TEST_FAIL", message: "fn-of-fn failed" };
   }
   let box: Holder = {cb: id, maybe: null, cbMaybe: idMaybe};
   if (box.cb([0]).length !== 1) {
-    throw { code: "TEST_FAIL", message: "class field fn failed" };
+    throw { name: "TEST_FAIL", message: "class field fn failed" };
   }
   let stored: ((b: number[]) => number[]) | null = box.maybe;
   if (stored !== null) {
-    throw { code: "TEST_FAIL", message: "nullable fn field provided null failed" };
+    throw { name: "TEST_FAIL", message: "nullable fn field provided null failed" };
   }
   box.cb = picker();
   if (box.cb([0, 0, 0, 0]).length !== 4) {
-    throw { code: "TEST_FAIL", message: "class field fn write failed" };
+    throw { name: "TEST_FAIL", message: "class field fn write failed" };
   }
   box.maybe = id;
   let via: ((b: number[]) => number[]) | null = box.maybe;
   if (via !== null) {
     let out: number[] = via([0, 0, 0, 0, 0]);
     if (out.length !== 5) {
-      throw { code: "TEST_FAIL", message: "nullable fn field write failed" };
+      throw { name: "TEST_FAIL", message: "nullable fn field write failed" };
     }
   }
   let ordered: number[] = box.cbMaybe(retarget(box).x as number[]);
   if (ordered[0] !== 1) {
-    throw { code: "TEST_FAIL", message: "callee-first field read failed" };
+    throw { name: "TEST_FAIL", message: "callee-first field read failed" };
   }
   let list: (() => (b: number[]) => number[])[] = [picker];
   let again: (b: number[]) => number[] = list[0]();
   if (again([0, 0, 0, 0]).length !== 4) {
-    throw { code: "TEST_FAIL", message: "nested fn array failed" };
+    throw { name: "TEST_FAIL", message: "nested fn array failed" };
   }
   return 0;
 }

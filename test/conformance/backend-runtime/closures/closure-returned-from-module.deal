@@ -9,7 +9,7 @@ export function test_closure_returned_from_module(): number {
   let c: () => number = Lib.makeCounter(10);
   let a: number = c();
   let b: number = c();
-  if (a !== 11 || b !== 12) { throw { code: "TEST_FAIL", message: "module closure state failed" }; }
+  if (a !== 11 || b !== 12) { throw { name: "TEST_FAIL", message: "module closure state failed" }; }
   return b;
 }
 

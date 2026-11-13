@@ -701,7 +701,7 @@ public class ProductionDispatchTest {
 
     private static final String ERROR_SOURCE = """
         export function main(): null {
-          let e: Error = { code: "E1", message: "m" };
+          let e: Error = { name: "E1", message: "m" };
           return null;
         }
         """;
@@ -712,14 +712,14 @@ public class ProductionDispatchTest {
 
         export function main(): null {
           let direct: number = time.nowMillis();
-          if (direct < 2147483648.0) { throw { code: "TEST_FAIL", message: "direct time.nowMillis not above the signed-32 range" }; }
+          if (direct < 2147483648.0) { throw { name: "TEST_FAIL", message: "direct time.nowMillis not above the signed-32 range" }; }
           let stored: () => number = time.nowMillis;
           let adapted: number = stored();
-          if (adapted <= 0.0) { throw { code: "TEST_FAIL", message: "stored time.nowMillis not positive" }; }
+          if (adapted <= 0.0) { throw { name: "TEST_FAIL", message: "stored time.nowMillis not positive" }; }
           let imported: () => number = lib.getNow();
           let cross: number = imported();
-          if (cross <= 0.0) { throw { code: "TEST_FAIL", message: "imported time.nowMillis not positive" }; }
-          if (cross < 2147483648.0) { throw { code: "TEST_FAIL", message: "imported time.nowMillis not above the signed-32 range" }; }
+          if (cross <= 0.0) { throw { name: "TEST_FAIL", message: "imported time.nowMillis not positive" }; }
+          if (cross < 2147483648.0) { throw { name: "TEST_FAIL", message: "imported time.nowMillis not above the signed-32 range" }; }
           return null;
         }
         """;
@@ -1540,11 +1540,11 @@ public class ProductionDispatchTest {
           let w: Wrap = {p: {a: 7}};
           let decoded: Wrap = JSON.parse(JSON.stringify(w) as string);
           if (!(decoded.p instanceof other.Point) || decoded === w || decoded.p === w.p) {
-            throw { code: "WRONG", message: "imported reconstruction identity" };
+            throw { name: "WRONG", message: "imported reconstruction identity" };
           }
           let s: string = JSON.stringify(decoded) as string;
           if (s !== "{\\\"p\\\":{\\\"a\\\":7}}") {
-            throw { code: "WRONG", message: s };
+            throw { name: "WRONG", message: s };
           }
           outputx.log("ok");
           return null;
@@ -1576,11 +1576,11 @@ public class ProductionDispatchTest {
           let w: Wrap = {p: {nick: "l"}};
           let decoded: Wrap = JSON.parse(JSON.stringify(w) as string);
           if (!(decoded.p instanceof Point) || decoded === w || decoded.p === w.p) {
-            throw { code: "WRONG", message: "local reconstruction identity" };
+            throw { name: "WRONG", message: "local reconstruction identity" };
           }
           let s: string = JSON.stringify(decoded) as string;
           if (s !== "{\\\"p\\\":{\\\"nick\\\":\\\"l\\\"}}") {
-            throw { code: "WRONG", message: s };
+            throw { name: "WRONG", message: s };
           }
           outputx.log("ok");
           return null;
@@ -1637,13 +1637,13 @@ public class ProductionDispatchTest {
           let imported: other.Point = {a: 7};
           let provided: Point = { nick: "given" };
           if (local.nick !== "local") {
-            throw { code: "WRONG", message: "local" };
+            throw { name: "WRONG", message: "local" };
           }
           if (imported.a !== 7) {
-            throw { code: "WRONG", message: "imported" };
+            throw { name: "WRONG", message: "imported" };
           }
           if (provided.nick !== "given") {
-            throw { code: "WRONG", message: "provided" };
+            throw { name: "WRONG", message: "provided" };
           }
           outputx.log("ok");
           return null;
@@ -1731,27 +1731,27 @@ public class ProductionDispatchTest {
           let original: Holder = h;
           let child: M.Model = h.m as M.Model;
           if (!(child instanceof M.Model) || M.read(child) !== 7) {
-            throw {code:"WRONG",message:"declared nominal reconstruction"};
+            throw {name:"WRONG",message:"declared nominal reconstruction"};
           }
           let caught:boolean = false;
           try { h = JSON.parse("{\\\"m\\\":{}}"); }
-          catch(e) { caught = (e as Error).code === "E8001"; }
+          catch(e) { caught = (e as Error).name === "E8001"; }
           if (!caught || h !== original || (h.m as M.Model) !== child || M.read(child) !== 7) {
-            throw {code:"WRONG",message:"declared child rollback"};
+            throw {name:"WRONG",message:"declared child rollback"};
           }
           if ((JSON.stringify(h) as string) !== "{\\\"m\\\":{\\\"n\\\":7,\\\"children\\\":[{\\\"n\\\":9},null]}}") {
-            throw {code:"WRONG",message:"declared field encoding"};
+            throw {name:"WRONG",message:"declared field encoding"};
           }
           let children: (M.Model | null)[] = child.children as (M.Model | null)[];
           let nested: M.Model = children[0] as M.Model;
           if (M.read(nested) !== 9 || children[1] !== null || Object.hasOwn(child, "note")) {
-            throw {code:"WRONG",message:"declared nested presence and host crossing"};
+            throw {name:"WRONG",message:"declared nested presence and host crossing"};
           }
           let made: M.Model = {n: 11, children: [nested, null]};
           if (M.read(made) !== 11 || M.read(child) !== 7
               || (JSON.stringify(made) as string) !== "{\\\"n\\\":11,\\\"children\\\":[{\\\"n\\\":9},null]}"
               || children !== (child.children as (M.Model | null)[])) {
-            throw {code:"WRONG",message:"constructed host plan and retained aliases"};
+            throw {name:"WRONG",message:"constructed host plan and retained aliases"};
           }
           outputx.log("ok");
           return null;
@@ -3045,7 +3045,7 @@ public class ProductionDispatchTest {
                     + luaCompile.stderr());
             if (luaCompile.exitCode() == 0) {
                 String lua = Files.readString(project.resolve("out/main.lua"));
-                check(lua.contains("__instT = {[__dealCarrierKeys.d] = true, code = ")
+                check(lua.contains("__instT = {[__dealCarrierKeys.d] = true, name = ")
                         && lua.contains(", m = ")
                         && lua.contains("\"E1\"")
                         && lua.contains("\"m\""),
@@ -4413,13 +4413,13 @@ public class ProductionDispatchTest {
           let l: Log = { seq: [] };
           let v: number = pick(l, 1)[record(l, 2)];
           if (l.seq.length !== 2) {
-            throw { code: "TEST_FAIL", message: "read must evaluate receiver and index once each" };
+            throw { name: "TEST_FAIL", message: "read must evaluate receiver and index once each" };
           }
           if (l.seq[0] !== 1 || l.seq[1] !== 2) {
-            throw { code: "TEST_FAIL", message: "read order must be receiver then index" };
+            throw { name: "TEST_FAIL", message: "read order must be receiver then index" };
           }
           if (v !== 30) {
-            throw { code: "TEST_FAIL", message: "in-range read value mismatch" };
+            throw { name: "TEST_FAIL", message: "in-range read value mismatch" };
           }
 
           // Bounds failure retains the prior operand effects.
@@ -4429,13 +4429,13 @@ public class ProductionDispatchTest {
             let bad: number = pick(l2, 1)[record(l2, 2) + 4];
             boundsCode = "NOFAIL";
           } catch (e) {
-            boundsCode = (e as Error).code;
+            boundsCode = (e as Error).name;
           }
           if (boundsCode !== "E8002") {
-            throw { code: "TEST_FAIL", message: "out-of-range read must raise E8002" };
+            throw { name: "TEST_FAIL", message: "out-of-range read must raise E8002" };
           }
           if (l2.seq.length !== 2 || l2.seq[0] !== 1 || l2.seq[1] !== 2) {
-            throw { code: "TEST_FAIL", message: "bounds failure must retain prior effects" };
+            throw { name: "TEST_FAIL", message: "bounds failure must retain prior effects" };
           }
 
           // Every element descriptor: nullable and empty arrays.
@@ -4445,10 +4445,10 @@ public class ProductionDispatchTest {
             let bad: number | null = nullable[3];
             nullableCode = "NOFAIL";
           } catch (e) {
-            nullableCode = (e as Error).code;
+            nullableCode = (e as Error).name;
           }
           if (nullableCode !== "E8002") {
-            throw { code: "TEST_FAIL", message: "nullable out-of-range read must raise E8002" };
+            throw { name: "TEST_FAIL", message: "nullable out-of-range read must raise E8002" };
           }
           let empty: number[] = [];
           let emptyCode: string = "";
@@ -4456,29 +4456,29 @@ public class ProductionDispatchTest {
             let bad: number = empty[0];
             emptyCode = "NOFAIL";
           } catch (e) {
-            emptyCode = (e as Error).code;
+            emptyCode = (e as Error).name;
           }
           if (emptyCode !== "E8002") {
-            throw { code: "TEST_FAIL", message: "empty-array read must raise E8002" };
+            throw { name: "TEST_FAIL", message: "empty-array read must raise E8002" };
           }
 
           // In-range null and deleted slots keep their typed results.
           if (nullable[1] !== null) {
-            throw { code: "TEST_FAIL", message: "in-range null element must stay null" };
+            throw { name: "TEST_FAIL", message: "in-range null element must stay null" };
           }
           let inRange: number | null = nullable[2];
           if (inRange !== null) {
             if (inRange !== 3) {
-              throw { code: "TEST_FAIL", message: "in-range nullable value mismatch" };
+              throw { name: "TEST_FAIL", message: "in-range nullable value mismatch" };
             }
           } else {
-            throw { code: "TEST_FAIL", message: "in-range nullable value lost" };
+            throw { name: "TEST_FAIL", message: "in-range nullable value lost" };
           }
           let deletedNullable: (number | null | undefined)[] = [1.0, 2, 3];
           deletedNullable[1] = undefined;
           let deletedRead: unknown = deletedNullable[1];
           if (deletedRead !== undefined) {
-            throw { code: "TEST_FAIL", message: "in-range deleted nullable slot must read undefined" };
+            throw { name: "TEST_FAIL", message: "in-range deleted nullable slot must read undefined" };
           }
           let plain: (number | undefined)[] = [7];
           plain[0] = undefined;
@@ -4487,10 +4487,10 @@ public class ProductionDispatchTest {
             let bad: number = plain[0] as number;
             deletedCode = "NOFAIL";
           } catch (e) {
-            deletedCode = (e as Error).code;
+            deletedCode = (e as Error).name;
           }
           if (deletedCode !== "E8001") {
-            throw { code: "TEST_FAIL", message: "in-range deleted non-nullable slot must keep E8001" };
+            throw { name: "TEST_FAIL", message: "in-range deleted non-nullable slot must keep E8001" };
           }
 
           // Writes: append at length, one commit, nothing on failure.
@@ -4498,7 +4498,7 @@ public class ProductionDispatchTest {
           let alias: number[] = writes;
           writes[writes.length] = 8;
           if (writes.length !== 2 || alias[1] !== 8) {
-            throw { code: "TEST_FAIL", message: "append-at-length write lost" };
+            throw { name: "TEST_FAIL", message: "append-at-length write lost" };
           }
           let badValue: number | null = 1;
           let clear: () => void = function(): void { badValue = null; };
@@ -4507,13 +4507,13 @@ public class ProductionDispatchTest {
             if (badValue !== null) { clear(); writes[0] = badValue; }
             writeCode = "NOFAIL";
           } catch (e) {
-            writeCode = (e as Error).code;
+            writeCode = (e as Error).name;
           }
           if (writeCode !== "E8001") {
-            throw { code: "TEST_FAIL", message: "failed element write must raise E8001" };
+            throw { name: "TEST_FAIL", message: "failed element write must raise E8001" };
           }
           if (writes[0] !== 7 || writes.length !== 2) {
-            throw { code: "TEST_FAIL", message: "failed write must commit nothing" };
+            throw { name: "TEST_FAIL", message: "failed write must commit nothing" };
           }
 
           c.log("ok");
@@ -4592,7 +4592,7 @@ public class ProductionDispatchTest {
 
         export function errorCarrier(): string {
           let holder: Record<string, unknown> = {};
-          let failure: Error = {code: "", message: ""};
+          let failure: Error = {name: "", message: ""};
           holder.failure = failure;
           return JSON.stringify(holder.failure) as string;
         }
@@ -4655,7 +4655,7 @@ public class ProductionDispatchTest {
                 "arrayCarrier|admitted|[1,2]",
                 "nullCarrier|admitted|null",
                 "classCarrier|admitted|{\"label\":\"b\"}",
-                "errorCarrier|admitted|{\"code\":\"\",\"message\":\"\"}", "");
+                "errorCarrier|admitted|{\"name\":\"\",\"message\":\"\"}", "");
             for (String backend : List.of("js", "luajit", "jvm")) {
                 write(project, "deal.json", switch (backend) {
                     case "js" -> DEAL_JSON_JS;
@@ -6477,7 +6477,7 @@ public class ProductionDispatchTest {
         import * as left from "./left";
         import * as right from "./right";
         export function main(): null {
-          if(left.read() !== 7 || right.read() !== 7) {throw {code:"",message:"diamond value"};}
+          if(left.read() !== 7 || right.read() !== 7) {throw {name:"",message:"diamond value"};}
           c.log("entry-main"); return null;
         }
         """;
@@ -6569,7 +6569,7 @@ public class ProductionDispatchTest {
     /** The legal throwing-try/fallthrough-catch control (subject 11's). */
     private static final String LEGAL_THROWING_TRY_CONTROL = """
         import * as c from "std/console";
-        export function f(): null {try {throw {code:"",message:"x"};} catch(e) {} return null;}
+        export function f(): null {try {throw {name:"",message:"x"};} catch(e) {} return null;}
         export function main(): null {f(); c.log("legal-throwing-try"); return null;}
         """;
 
@@ -6635,7 +6635,7 @@ public class ProductionDispatchTest {
          let v: string = t.s as string;
          let s: string = `v${v}`;
          if (computed !== 1 || xs[0] !== 4 || b.n !== 4 || bs[0].n !== 4 || s !== "va") {
-          throw {code: "TEST_FAIL", message: "direct read admission"};
+          throw {name: "TEST_FAIL", message: "direct read admission"};
          }
          c.log("nested-literal-direct-reads");
          return null;
@@ -6925,7 +6925,7 @@ public class ProductionDispatchTest {
             export function main(): null {
               let a: A = make();
               if (a.x !== 1100) {
-                throw { code: "OPERAND_OVERWRITE", message: "a nested attempt overwrote the enclosing operands" };
+                throw { name: "OPERAND_OVERWRITE", message: "a nested attempt overwrote the enclosing operands" };
               }
               outputx.log("ok");
               return null;
@@ -6944,7 +6944,7 @@ public class ProductionDispatchTest {
 
             function build(): number {
               if (state.calls() >= 1) {
-                throw { code: "INNER_FAIL", message: "inner attempt fails" };
+                throw { name: "INNER_FAIL", message: "inner attempt fails" };
               }
               state.provideFirst();
               try {
@@ -6957,7 +6957,7 @@ public class ProductionDispatchTest {
             export function main(): null {
               let a: A = make();
               if (a.x !== 5) {
-                throw { code: "OPERAND_OVERWRITE", message: "a failed nested attempt overwrote the enclosing operands" };
+                throw { name: "OPERAND_OVERWRITE", message: "a failed nested attempt overwrote the enclosing operands" };
               }
               outputx.log("ok");
               return null;
@@ -6982,10 +6982,10 @@ public class ProductionDispatchTest {
             export function main(): null {
               let a: A = make();
               if (a.x !== 0) {
-                throw { code: "ATTEMPT_VALUE_OVERWRITE", message: "a nested attempt overwrote the enclosing attempt's first default value" };
+                throw { name: "ATTEMPT_VALUE_OVERWRITE", message: "a nested attempt overwrote the enclosing attempt's first default value" };
               }
               if (a.y !== 7) {
-                throw { code: "ATTEMPT_VALUE_LOST", message: "the enclosing attempt's second default value is wrong" };
+                throw { name: "ATTEMPT_VALUE_LOST", message: "the enclosing attempt's second default value is wrong" };
               }
               outputx.log("ok");
               return null;
@@ -7000,7 +7000,7 @@ public class ProductionDispatchTest {
 
             function build(): number {
               if (state.calls() >= 1) {
-                throw { code: "INNER_FAIL", message: "the nested attempt fails" };
+                throw { name: "INNER_FAIL", message: "the nested attempt fails" };
               }
               state.provideFirst();
               try {
@@ -7013,10 +7013,10 @@ public class ProductionDispatchTest {
             export function main(): null {
               let a: A = make();
               if (a.x !== 0) {
-                throw { code: "ATTEMPT_VALUE_OVERWRITE", message: "a failed nested attempt overwrote the enclosing attempt's first default value" };
+                throw { name: "ATTEMPT_VALUE_OVERWRITE", message: "a failed nested attempt overwrote the enclosing attempt's first default value" };
               }
               if (a.y !== 7) {
-                throw { code: "ATTEMPT_VALUE_LOST", message: "the enclosing attempt's second default value is wrong" };
+                throw { name: "ATTEMPT_VALUE_LOST", message: "the enclosing attempt's second default value is wrong" };
               }
               outputx.log("ok");
               return null;
@@ -7029,10 +7029,10 @@ public class ProductionDispatchTest {
             export function main(): null {
               let a: lib.A = lib.make();
               if (a.x !== 0) {
-                throw { code: "ATTEMPT_VALUE_OVERWRITE", message: "a nested attempt overwrote the transferred provided value" };
+                throw { name: "ATTEMPT_VALUE_OVERWRITE", message: "a nested attempt overwrote the transferred provided value" };
               }
               if (a.y !== 7) {
-                throw { code: "ATTEMPT_VALUE_LOST", message: "the transferred second default value is wrong" };
+                throw { name: "ATTEMPT_VALUE_LOST", message: "the transferred second default value is wrong" };
               }
               outputx.log("ok");
               return null;
@@ -7059,10 +7059,10 @@ public class ProductionDispatchTest {
             export function main(): null {
               let a: lib.A = lib.make();
               if (a.x !== 0) {
-                throw { code: "ATTEMPT_VALUE_OVERWRITE", message: "a failed nested attempt overwrote the transferred provided value" };
+                throw { name: "ATTEMPT_VALUE_OVERWRITE", message: "a failed nested attempt overwrote the transferred provided value" };
               }
               if (a.y !== 7) {
-                throw { code: "ATTEMPT_VALUE_LOST", message: "the transferred second default value is wrong" };
+                throw { name: "ATTEMPT_VALUE_LOST", message: "the transferred second default value is wrong" };
               }
               outputx.log("ok");
               return null;
@@ -7075,7 +7075,7 @@ public class ProductionDispatchTest {
 
             function build(): number {
               if (state.calls() >= 1) {
-                throw { code: "INNER_FAIL", message: "the nested attempt fails" };
+                throw { name: "INNER_FAIL", message: "the nested attempt fails" };
               }
               state.provideFirst();
               try {
@@ -7232,7 +7232,7 @@ public class ProductionDispatchTest {
      * {@code ok} line: every row throws its own {@code TEST_FAIL} error
      * when the counter's value or call target is wrong.
      */
-    private static final String FOR_LET_FUNCTION_COUNTER_SOURCE = "import * as outputx from \"std/console\";\n\nfunction one(): number { return 1; }\nfunction two(): number { return 2; }\n\nfunction fib(n: number): number {\n  if (n < 2) { return n; }\n  return fib(n - 1) + fib(n - 2);\n}\n\nexport function main(): null {\n  let visits: number = 0;\n  { let v14Loop2: () => number = one; while (v14Loop2() === 1) { let f: () => number = v14Loop2; {\n    visits = visits + 1;\n    if (visits > 4) { break; }\n  } v14Loop2 = f; v14Loop2 = two; } }\n  if (visits !== 1) {\n    throw { code: \"TEST_FAIL\", message: \"the update did not select two\" };\n  }\n\n  let bodyVisits: number = 0;\n  { let v14Loop3: () => number = one; while (v14Loop3() === 1) { let f: () => number = v14Loop3; {\n    bodyVisits = bodyVisits + 1;\n    f = two;\n    if (bodyVisits > 4) { break; }\n  } v14Loop3 = f;  } }\n  if (bodyVisits !== 1) {\n    throw { code: \"TEST_FAIL\", message: \"the body assignment did not reach the test\" };\n  }\n\n  let adapted: number = 0;\n  { let v14Loop4: (x: number) => number = one; while (v14Loop4(0) === 1) { let f: (x: number) => number = v14Loop4; {\n    adapted = adapted + 1;\n    if (adapted > 4) { break; }\n  } v14Loop4 = f; v14Loop4 = two; } }\n  if (adapted !== 1) {\n    throw { code: \"TEST_FAIL\", message: \"the adapted counter visited wrongly\" };\n  }\n\n  let captured: number = 0;\n  { let v14Loop5: () => number = one; while (captured < 2) { let f: () => number = v14Loop5; {\n    if (f() !== (captured + 1)) {\n      throw { code: \"TEST_FAIL\", message: \"the per-iteration value is stale\" };\n    }\n    captured = captured + 1;\n  } v14Loop5 = f; v14Loop5 = two; } }\n  if (captured !== 2) {\n    throw { code: \"TEST_FAIL\", message: \"the per-iteration rows did not finish\" };\n  }\n\n  let recursive: number = 0;\n  { let v14Loop6: (n: number) => number = fib; while (v14Loop6(5) === 5) { let f: (n: number) => number = v14Loop6; {\n    recursive = recursive + 1;\n    if (recursive > 4) { break; }\n  } v14Loop6 = f; v14Loop6 = one; } }\n  if (recursive !== 1) {\n    throw { code: \"TEST_FAIL\", message: \"the recursive counter visited wrongly\" };\n  }\n\n  outputx.log(\"ok\");\n  return null;\n}\n";
+    private static final String FOR_LET_FUNCTION_COUNTER_SOURCE = "import * as outputx from \"std/console\";\n\nfunction one(): number { return 1; }\nfunction two(): number { return 2; }\n\nfunction fib(n: number): number {\n  if (n < 2) { return n; }\n  return fib(n - 1) + fib(n - 2);\n}\n\nexport function main(): null {\n  let visits: number = 0;\n  { let v14Loop2: () => number = one; while (v14Loop2() === 1) { let f: () => number = v14Loop2; {\n    visits = visits + 1;\n    if (visits > 4) { break; }\n  } v14Loop2 = f; v14Loop2 = two; } }\n  if (visits !== 1) {\n    throw { name: \"TEST_FAIL\", message: \"the update did not select two\" };\n  }\n\n  let bodyVisits: number = 0;\n  { let v14Loop3: () => number = one; while (v14Loop3() === 1) { let f: () => number = v14Loop3; {\n    bodyVisits = bodyVisits + 1;\n    f = two;\n    if (bodyVisits > 4) { break; }\n  } v14Loop3 = f;  } }\n  if (bodyVisits !== 1) {\n    throw { name: \"TEST_FAIL\", message: \"the body assignment did not reach the test\" };\n  }\n\n  let adapted: number = 0;\n  { let v14Loop4: (x: number) => number = one; while (v14Loop4(0) === 1) { let f: (x: number) => number = v14Loop4; {\n    adapted = adapted + 1;\n    if (adapted > 4) { break; }\n  } v14Loop4 = f; v14Loop4 = two; } }\n  if (adapted !== 1) {\n    throw { name: \"TEST_FAIL\", message: \"the adapted counter visited wrongly\" };\n  }\n\n  let captured: number = 0;\n  { let v14Loop5: () => number = one; while (captured < 2) { let f: () => number = v14Loop5; {\n    if (f() !== (captured + 1)) {\n      throw { name: \"TEST_FAIL\", message: \"the per-iteration value is stale\" };\n    }\n    captured = captured + 1;\n  } v14Loop5 = f; v14Loop5 = two; } }\n  if (captured !== 2) {\n    throw { name: \"TEST_FAIL\", message: \"the per-iteration rows did not finish\" };\n  }\n\n  let recursive: number = 0;\n  { let v14Loop6: (n: number) => number = fib; while (v14Loop6(5) === 5) { let f: (n: number) => number = v14Loop6; {\n    recursive = recursive + 1;\n    if (recursive > 4) { break; }\n  } v14Loop6 = f; v14Loop6 = one; } }\n  if (recursive !== 1) {\n    throw { name: \"TEST_FAIL\", message: \"the recursive counter visited wrongly\" };\n  }\n\n  outputx.log(\"ok\");\n  return null;\n}\n";
 
     /**
      * The function-valued for-let counter on every production lane: the

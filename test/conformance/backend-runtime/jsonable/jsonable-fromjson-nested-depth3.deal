@@ -10,12 +10,12 @@ export class X { y: Y; }
 export function test_fromjson_nested_depth3(): null {
   let x: X = JSON.parse("{\"y\":{\"z\":{\"n\":7}}}");
   if (x.y.z.n !== 7 || !(x instanceof X) || !(x.y instanceof Y) || !(x.y.z instanceof Z)) {
-    throw {code: "TEST_FAIL", message: "depth3 nested value or nominal identity mismatch"};
+    throw {name: "TEST_FAIL", message: "depth3 nested value or nominal identity mismatch"};
   }
   let again: string = JSON.stringify(x) as string;
   let x2: X = JSON.parse(again);
   if (x2.y.z.n !== 7 || x2 === x || x2.y === x.y || x2.y.z === x.y.z) {
-    throw {code: "TEST_FAIL", message: "depth3 fresh roundtrip mismatch"};
+    throw {name: "TEST_FAIL", message: "depth3 fresh roundtrip mismatch"};
   }
   return null;
 }

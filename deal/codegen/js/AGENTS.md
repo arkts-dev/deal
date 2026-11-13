@@ -19,10 +19,10 @@ Import-free builtin algorithm selectors materialize their deployed algorithm dep
 
 Array operations use carrier-neutral runtime accessors, including decoded arrays. Persistent descriptors cannot be retagged by empty/current contents. Stored undefined retains identity independently of nullability. Refined receiver/key/length/iterable/presence operations consume admitted boundary results; slot-threaded conditions preserve their preallocated identity. Assignment stores may adapt without changing the original RHS result.
 
-Throw/catch preserves Error identity/causes; captured catch bindings get fresh execution cells. Function names retain source identity. Async start/await uses native Promises, recorded completion cells and public async-export ABI.
+Error owns required name/message fields; diagnostic code is hidden from declared presence, keys and JSON. First throw binds the current name once; name writes never rewrite an already bound code. Throw/catch preserves Error identity/causes; captured catch bindings get fresh execution cells. Function names retain source identity. Async start/await uses native Promises, recorded completion cells and public async-export ABI.
 
 ## JSON and maps
 
-Generated Records share generic JSON omission/substitution, own-key ordering and nested-class rules; declared fields retain declaration order. Read private class presence/order metadata without hooks; detect cycles by original identity. Error exposes code/message only. Decoding tags typed arrays recursively, including empty arrays; nested decoder failure cannot become a successful nullable field.
+Generated Records share generic JSON omission/substitution, own-key ordering and nested-class rules; declared fields retain declaration order. Read private class presence/order metadata without hooks; detect cycles by original identity. Error exposes name/message only. Decoding tags typed arrays recursively, including empty arrays; nested decoder failure cannot become a successful nullable field.
 
 Record source mappings through the shared recorder during emission. Map local groups at recorded origins, foreign boundaries through initiating callers; never borrow coordinates or move effects. Modules own version-1 sidecars. Map-off rendering changes only mapping comments, never runtime locations or executable bytes.

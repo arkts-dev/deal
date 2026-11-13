@@ -6,7 +6,7 @@
 export async function test_no_await(): Promise<number> {
   let result: number = 42;
   if (result !== 42) {
-    throw { code: "TEST_FAIL", message: "no-await completion value mismatch" };
+    throw { name: "TEST_FAIL", message: "no-await completion value mismatch" };
   }
   return result;
 }

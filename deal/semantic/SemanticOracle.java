@@ -671,7 +671,7 @@ record NumValue(double value) implements Value {
 
         final class ErrorValue implements Value {
 
-            private String code;
+            private String name;
             private String message;
             /**
              * The failure this Error value reifies, or {@code null} for a
@@ -687,25 +687,29 @@ record NumValue(double value) implements Value {
              */
             private DealFailure transport;
 
-            ErrorValue(String code, String message) {
-                this(code, message, null);
+            ErrorValue(String name, String message) {
+                this(name, message, null);
             }
 
             ErrorValue(DealFailure transport) {
                 this(transport.code, transport.message, transport);
             }
 
-            ErrorValue(String code, String message, DealFailure transport) {
-                Objects.requireNonNull(code, "code must not be null");
+            ErrorValue(String name, String message, DealFailure transport) {
+                Objects.requireNonNull(name, "name must not be null");
                 Objects.requireNonNull(message, "message must not be null");
-                this.code = code;
+                this.name = name;
                 this.message = message;
                 this.transport = transport;
             }
 
-            /** The error code field. */
-            String code() {
-                return code;
+            /** The mutable language name, independent of diagnostic code. */
+            String name() {
+                return name;
+            }
+
+            String diagnosticCode() {
+                return transport == null ? name : transport.code;
             }
 
             /** The error message field. */
@@ -734,7 +738,7 @@ record NumValue(double value) implements Value {
             void writeField(String field, String value) {
                 Objects.requireNonNull(value, "value must not be null");
                 switch (field) {
-                    case "code" -> this.code = value;
+                    case "name" -> this.name = value;
                     case "message" -> this.message = value;
                     default -> throw new IllegalStateException("the builtin Error"
                         + " carrier has no field '" + field + "' (producer defect)");
@@ -1414,7 +1418,7 @@ record NumValue(double value) implements Value {
 
                 case Value.NumValue num -> SemanticRuntimeModel.numberAtom(num.value());
                 case Value.StrValue str -> "str:" + SemanticRuntimeModel.escapeString(str.value());
-                case Value.ErrorValue error -> "err:" + error.code() + ":"
+                case Value.ErrorValue error -> "err:" + error.diagnosticCode() + ":"
                     + SemanticRuntimeModel.escapeString(error.message());
                 case Value.SlotValue slot -> switch (slot.slot()) {
                     case NormalizedSlot.ArraySlot array -> "slot:" + Double.toHexString(array.index()) + "/"
@@ -2424,7 +2428,7 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                 for (int i = 0; i < layout.fields().size(); i++)
                     if (instance.fields().get(i) instanceof Value.ClassFieldState.Present)
                         keys.add(layout.fields().get(i).name());
-            } else if (receiver instanceof Value.ErrorValue) keys.addAll(List.of("code", "message"));
+            } else if (receiver instanceof Value.ErrorValue) keys.addAll(List.of("name", "message"));
             else throw new IllegalStateException("OBJECT_KEYS unsupported receiver");
             List<Value> values = new ArrayList<>();
             for (String key : keys) values.add(new Value.StrValue(key));
@@ -2442,7 +2446,7 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                     new Value.BoolValue(table.entries().containsKey(key)));
             }
             if (receiver instanceof Value.ErrorValue) {
-                return publish(op, new Value.BoolValue(key.equals("code") || key.equals("message")));
+                return publish(op, new Value.BoolValue(key.equals("name") || key.equals("message")));
             }
             if (receiver instanceof Value.ClassValue classValue) {
 
@@ -2853,7 +2857,7 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                     // closed view as any declared class.
                     new ClassOpsExecutor.Value.Class(ClassId.ERROR, List.of(
                         new ClassOpsExecutor.FieldState.Present(
-                            ClassOpsExecutor.Value.string(error.code())),
+                            ClassOpsExecutor.Value.string(error.name())),
                         new ClassOpsExecutor.FieldState.Present(
                             ClassOpsExecutor.Value.string(error.message()))));
 
@@ -2922,7 +2926,7 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                         instanceof ClassOpsExecutor.Value.String message)) {
                 throw new IllegalStateException("the builtin Error class view "
                     + "carries " + classValue.fields() + ": the closed view is"
-                    + " exactly two present string fields (code, message) — a"
+                    + " exactly two present string fields (name, message) — a"
                     + " producer defect");
             }
             if (!(code.scalar() instanceof UnicodeScalars.Valid codeScalar)
@@ -3106,7 +3110,7 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                     + " (producer defect)");
             }
             Value.ErrorValue state = errorValueOf(updatedClass);
-            receiver.writeField("code", state.code());
+            receiver.writeField("name", state.name());
             receiver.writeField("message", state.message());
             executorViews.put(receiver, updated);
             oracleOriginals.put(updated, receiver);
@@ -3517,10 +3521,10 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                 }
                 view = view.withDataChildren(children.size(), i -> viewOfValue(children.get(i), memo));
             } else if (value instanceof Value.ErrorValue error) {
-                List<Value> children = List.of(new Value.StrValue(error.code()), new Value.StrValue(error.message()));
+                List<Value> children = List.of(new Value.StrValue(error.name()), new Value.StrValue(error.message()));
                 view = view.withDataChildren(children.size(), i -> viewOfValue(children.get(i), memo))
                     .withClassFields(List.of(
-                        new BoundaryValueView.ClassField("code", RuntimeDescriptor.String.INSTANCE, true, true,
+                        new BoundaryValueView.ClassField("name", RuntimeDescriptor.String.INSTANCE, true, true,
                             () -> viewOfValue(children.get(0), memo)),
                         new BoundaryValueView.ClassField("message", RuntimeDescriptor.String.INSTANCE, true, true,
                             () -> viewOfValue(children.get(1), memo))));
@@ -5871,7 +5875,7 @@ private static IllegalStateException dynamicFunctionValueDefect(
                     new SharedStdlibSemantics.Value.Other(ActualKind.FUNCTION, null, shallowViewOfValue(callable));
                 case Value.ErrorValue error -> {
                     SemanticTable<SharedStdlibSemantics.Value> fields = new SemanticTable<>();
-                    fields.put("code", SharedStdlibSemantics.Value.string(error.code()));
+                    fields.put("name", SharedStdlibSemantics.Value.string(error.name()));
                     fields.put("message", SharedStdlibSemantics.Value.string(error.message()));
                     yield new SharedStdlibSemantics.Value.Table(fields, ClassLayout.BUILTIN_ERROR);
                 }
@@ -6326,7 +6330,7 @@ private static IllegalStateException dynamicFunctionValueDefect(
                 // propagates it unchanged, and it adopts the value's own
                 // reified identity, so catching the rethrown error again
                 // yields the identical Error value.
-                DealFailure published = new DealFailure(error.code(),
+                DealFailure published = new DealFailure(transport.code,
                     error.message(), transport.origin, transport.expected,
                     transport.actual, transport.cause, transport.frames, true);
                 published.reified = error;
@@ -6339,7 +6343,7 @@ private static IllegalStateException dynamicFunctionValueDefect(
             // the instance the program threw (caught === original, every
             // alias mutation visible through all of them) and a rethrow
             // keeps the synthesized origin/expected/actual/frames/cause.
-            DealFailure published = new DealFailure(error.code(), error.message(),
+            DealFailure published = new DealFailure(error.name(), error.message(),
                 op.origin(), null, null, null, List.copyOf(frames));
             published.reified = error;
             error.bindTransport(published);

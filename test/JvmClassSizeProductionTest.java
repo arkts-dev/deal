@@ -16,14 +16,14 @@ public final class JvmClassSizeProductionTest {
             source.append("function f").append(f).append("(depth:number):number{\n")
                 .append("let decoded:Item").append(f).append("=JSON.parse(`{\"value\":")
                 .append(f).append("}`);if(decoded.value!==").append(f)
-                .append(" || Object.hasOwn(decoded,\"next\")){throw {code:\"PLAN\",message:\"partitioned schema\"};}\n");
+                .append(" || Object.hasOwn(decoded,\"next\")){throw {name:\"PLAN\",message:\"partitioned schema\"};}\n");
             for (int i = 0; i < width; i++) {
                 source.append("let x").append(i).append(":number=").append(i).append("+depth;\n");
             }
             source.append("let captured:()=>number=function():number{return x0;};")
                 .append("if(depth>0){let child=f").append(f).append("(depth-1);")
                 .append("if(child!==").append(width * (width - 1) / 2).append("+")
-                .append(width).append("*(depth-1)){throw {code:\"RECURSE\",message:\"state\"};}}")
+                .append(width).append("*(depth-1)){throw {name:\"RECURSE\",message:\"state\"};}}")
                 .append("return captured()");
             for (int i = 1; i < width; i++) source.append("+x").append(i);
             source.append(";}\n");
@@ -33,13 +33,13 @@ public final class JvmClassSizeProductionTest {
         source.append("""
             async function recurse(depth:number):Promise<number>{
               let read:()=>number=function():number{return -100;};
-              let original:Error={code:"C",message:"before"};
+              let original:Error={name:"C",message:"before"};
               try{throw original;}catch(e){
                 read=function():number{if((e as Error)===original){return depth;}return -100;};
               }
               if(depth>0){
                 let child:number=await recurse(depth-1);
-                if(child!==depth-1){throw {code:"ASYNC",message:"recursive state"};}
+                if(child!==depth-1){throw {name:"ASYNC",message:"recursive state"};}
               }
               return read();
             }
@@ -48,7 +48,7 @@ public final class JvmClassSizeProductionTest {
             """);
         for (int f = 0; f < functions; f++) source.append("sum=sum+f").append(f).append("(1);\n");
         source.append("if(sum!==").append(functions * (width * (width - 1) / 2 + width))
-            .append("){throw {code:\"SUM\",message:\"result\"};}c.log(\"SIZE_OK\");return null;}");
+            .append("){throw {name:\"SUM\",message:\"result\"};}c.log(\"SIZE_OK\");return null;}");
         return source.toString();
     }
 

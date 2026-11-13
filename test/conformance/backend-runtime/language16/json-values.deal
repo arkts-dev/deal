@@ -6,12 +6,12 @@
 
 export class Box { data: Record<string, unknown>; numbers: number[]; }
 class Child { payload: number; }
-function check(ok: boolean): void { if (!ok) { throw {code: "FAIL", message: "JSON value contract"}; } }
+function check(ok: boolean): void { if (!ok) { throw {name: "FAIL", message: "JSON value contract"}; } }
 function callback(): void {}
 function rejectsNumbers(value: unknown): boolean {
   let rejected: boolean = false;
   try { let numbers = value as number[]; }
-  catch (e) { if (e instanceof Error) { rejected = e.code === "E8001"; } }
+  catch (e) { if (e instanceof Error) { rejected = e.name === "E8001"; } }
   return rejected;
 }
 function parsedArray(text: string): void {
@@ -71,7 +71,7 @@ export function main(): null {
   JSON.stringify(shared);
   data.cycle = data;
   let cycle: boolean = false;
-  try { JSON.stringify(value); } catch (e) { if (e instanceof Error) { cycle = e.code === "E8001"; } }
+  try { JSON.stringify(value); } catch (e) { if (e instanceof Error) { cycle = e.name === "E8001"; } }
   check(cycle);
   return null;
 }

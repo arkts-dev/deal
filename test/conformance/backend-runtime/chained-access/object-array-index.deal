@@ -10,7 +10,7 @@ class Holder {
 export function test_object_array_index(): number {
   let h: Holder = { values: [3, 8, 5] };
   let result: number = h.values[1];
-  if (result !== 8) { throw { code: "TEST_FAIL", message: "obj.arr[0] lowering failed" }; }
+  if (result !== 8) { throw { name: "TEST_FAIL", message: "obj.arr[0] lowering failed" }; }
   return result;
 }
 

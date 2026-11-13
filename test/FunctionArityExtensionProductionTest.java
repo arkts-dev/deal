@@ -264,7 +264,7 @@ public final class FunctionArityExtensionProductionTest {
 
         export function main(): null {
           let source: (x: number, y: number) => number = function(x: number, y: number): number { return x + y; };
-          if (!mutation.replaceSignature({value: source}, "(number)->number")) { throw {code: "TEST_FAIL", message: "signature mutation failed"}; }
+          if (!mutation.replaceSignature({value: source}, "(number)->number")) { throw {name: "TEST_FAIL", message: "signature mutation failed"}; }
           let r: number = host.usePair(source);
           return null;
         }
@@ -318,7 +318,7 @@ public final class FunctionArityExtensionProductionTest {
         export function main(): null {
           let r: number = host.useIntTable(oneInt);
           if (r !== 5) {
-            throw { code: "TEST_FAIL", message: "the adapted host parameter ran" };
+            throw { name: "TEST_FAIL", message: "the adapted host parameter ran" };
           }
           return null;
         }
@@ -335,7 +335,7 @@ public final class FunctionArityExtensionProductionTest {
 
         function check(condition: boolean, message: string): null {
           if (!condition) {
-            throw { code: "TEST_FAIL", message: message };
+            throw { name: "TEST_FAIL", message: message };
           }
           return null;
         }
@@ -378,7 +378,7 @@ public final class FunctionArityExtensionProductionTest {
         export function main(): null {
           let length: number = host.useLength(strings.length);
           if (length !== 2) {
-            throw { code: "TEST_FAIL", message: "host stdlib adapter failed" };
+            throw { name: "TEST_FAIL", message: "host stdlib adapter failed" };
           }
           output.log("OK");
           return null;
@@ -2002,7 +2002,7 @@ public final class FunctionArityExtensionProductionTest {
           let returned: number = returnedWide()(5, 6, 7);
           if (argument !== 5 || widenedArgument !== 5 || escapingArgument !== 7
               || returned !== 5) {
-            throw { code: "TEST_FAIL", message: "assignment-source value" };
+            throw { name: "TEST_FAIL", message: "assignment-source value" };
           }
           return null;
         }

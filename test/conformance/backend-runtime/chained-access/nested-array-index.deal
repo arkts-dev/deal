@@ -6,7 +6,7 @@
 export function test_nested_array_index_chain(): number {
   let rows: number[][] = [[1, 2], [3, 4]];
   let result: number = rows[1][0];
-  if (result !== 3) { throw { code: "TEST_FAIL", message: "arr[0][1] lowering failed" }; }
+  if (result !== 3) { throw { name: "TEST_FAIL", message: "arr[0][1] lowering failed" }; }
   return result;
 }
 

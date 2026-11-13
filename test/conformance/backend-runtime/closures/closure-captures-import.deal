@@ -11,7 +11,7 @@ export function test_closure_import_capture(): number {
     return Lib.add(base, x);
   };
   let result: number = f(7);
-  if (result !== 12) { throw { code: "TEST_FAIL", message: "closure import capture failed" }; }
+  if (result !== 12) { throw { name: "TEST_FAIL", message: "closure import capture failed" }; }
   return result;
 }
 

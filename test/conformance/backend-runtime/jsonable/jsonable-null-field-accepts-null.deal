@@ -8,7 +8,7 @@ export class Marker { value: null; }
 export function main(): null {
   let m: Marker = JSON.parse("{\"value\":null}");
   if (m.value !== null || !Object.hasOwn(m, "value") || !(m instanceof Marker)) {
-    throw {code: "TEST_FAIL", message: "null field or nominal identity lost"};
+    throw {name: "TEST_FAIL", message: "null field or nominal identity lost"};
   }
   return null;
 }

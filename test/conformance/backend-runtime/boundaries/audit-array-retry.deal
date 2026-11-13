@@ -5,4 +5,4 @@
 import * as printer from "std/console";
 import * as host from "host/probe";
 
-export function main():null{try{host.numbers();printer.log("BAD");}catch(e){if(e instanceof Error){printer.log(e.code);}}let xs=host.strings();let alias=host.strings();let x=xs[0];if(x!==undefined){if(x==="x" && xs===alias){printer.log("RETRY_OK");}}return null;}
+export function main():null{try{host.numbers();printer.log("BAD");}catch(e){if(e instanceof Error){printer.log(e.name);}}let xs=host.strings();let alias=host.strings();let x=xs[0];if(x!==undefined){if(x==="x" && xs===alias){printer.log("RETRY_OK");}}return null;}

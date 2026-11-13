@@ -14,14 +14,14 @@ export function test_nullable_function_array_values(): number {
     let result: number = f0(3);
     let f1: ((x: number) => number) | null = fs[1];
     if (f1 !== null) {
-      throw { code: "TEST_FAIL", message: "second element was not null" };
+      throw { name: "TEST_FAIL", message: "second element was not null" };
     }
     if (result !== 4) {
-      throw { code: "TEST_FAIL", message: "nullable function array call failed" };
+      throw { name: "TEST_FAIL", message: "nullable function array call failed" };
     }
     return result;
   }
-  throw { code: "TEST_FAIL", message: "first element was not the function" };
+  throw { name: "TEST_FAIL", message: "first element was not the function" };
 }
 
 export function main(): null {

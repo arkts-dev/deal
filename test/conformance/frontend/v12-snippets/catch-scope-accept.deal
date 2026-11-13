@@ -3,4 +3,4 @@
 // @expected: compile-ok
 // @features: v1.2, frontend, accept-control
 
-export function f(): string {try {} catch(e) {let checked = e as Error; return checked.code;} return "";}
+export function f(): string {try {} catch(e) {let checked = e as Error; return checked.name;} return "";}

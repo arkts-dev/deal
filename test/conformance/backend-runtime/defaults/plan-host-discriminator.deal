@@ -11,14 +11,14 @@ export function test_plan_host_discriminator(): string {
     endpoint: { path: "/api" },
   };
   if (s.port !== 9090) {
-    throw { code: "TEST_FAIL", message: "host class port field mismatch" };
+    throw { name: "TEST_FAIL", message: "host class port field mismatch" };
   }
   if (s.endpoint.path !== "/api") {
-    throw { code: "TEST_FAIL", message: "host class endpoint field mismatch" };
+    throw { name: "TEST_FAIL", message: "host class endpoint field mismatch" };
   }
   let described: string = cfg.describe(s);
   if (described !== "/api:9090") {
-    throw { code: "TEST_FAIL", message: "host class instance failed the boundary roundtrip" };
+    throw { name: "TEST_FAIL", message: "host class instance failed the boundary roundtrip" };
   }
   return "host discriminator ok";
 }

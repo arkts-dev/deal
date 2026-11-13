@@ -27,18 +27,18 @@ export function test_array_write_validation_after_rhs(): null {
   let l: Log = { seq: [], buf: [0, 0, 0, 0] };
   try {
     pick(l, 1)[record(l, 5)] = badValue(l);
-    throw { code: "TEST_FAIL", message: "expected E8002 before completing" };
+    throw { name: "TEST_FAIL", message: "expected E8002 before completing" };
   } catch (value) {
     let e: Error = value as Error;
-    if (e.code !== "E8002") {
-      throw { code: "TEST_FAIL", message: "expected E8002, got " + e.code };
+    if (e.name !== "E8002") {
+      throw { name: "TEST_FAIL", message: "expected E8002, got " + e.name };
     }
     if (l.seq.length !== 3 || l.seq[0] !== 1 || l.seq[1] !== 5 || l.seq[2] !== 3) {
-      throw { code: "TEST_FAIL", message: "write validation must run after all operand side effects" };
+      throw { name: "TEST_FAIL", message: "write validation must run after all operand side effects" };
     }
   }
   if (l.buf[1] !== 0) {
-    throw { code: "TEST_FAIL", message: "failed write must not change storage" };
+    throw { name: "TEST_FAIL", message: "failed write must not change storage" };
   }
   return null;
 }

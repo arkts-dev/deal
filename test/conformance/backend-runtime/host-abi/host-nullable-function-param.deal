@@ -12,11 +12,11 @@ function add1(x: number): number {
 export function test_host_nullable_function_param(): number {
   let withFn: number = host.register(add1);
   if (withFn !== 42) {
-    throw { code: "TEST_FAIL", message: "nullable-function param adaptation failed" };
+    throw { name: "TEST_FAIL", message: "nullable-function param adaptation failed" };
   }
   let withNull: number = host.register(null);
   if (withNull !== 0) {
-    throw { code: "TEST_FAIL", message: "nullable-function null param mismatch" };
+    throw { name: "TEST_FAIL", message: "nullable-function null param mismatch" };
   }
   return withFn;
 }

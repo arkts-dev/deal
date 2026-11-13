@@ -8,11 +8,11 @@ export function test_narrowing(): number {
   if (n !== null) {
     let i: number = n; // OK: narrowed to int
     if (i !== 1) {
-      throw { code: "TEST_FAIL", message: "nullable narrowing: narrowed value mismatch" };
+      throw { name: "TEST_FAIL", message: "nullable narrowing: narrowed value mismatch" };
     }
     return i;
   }
-  throw { code: "TEST_FAIL", message: "nullable narrowing: null is a failing path" };
+  throw { name: "TEST_FAIL", message: "nullable narrowing: null is a failing path" };
 }
 
 export function main(): null {

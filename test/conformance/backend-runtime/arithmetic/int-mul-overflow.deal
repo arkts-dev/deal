@@ -6,7 +6,7 @@
 export function test_int_mul_overflow(): number {
   let result: number = 65536 * 65536;
   if (result !== (4294967296)) {
-    throw { code: "TEST_FAIL", message: "binary64 arithmetic value mismatch" };
+    throw { name: "TEST_FAIL", message: "binary64 arithmetic value mismatch" };
   }
   return result;
 }

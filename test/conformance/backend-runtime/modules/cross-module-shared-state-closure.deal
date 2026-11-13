@@ -15,13 +15,13 @@ export function main(): null {
   let calls: number = audit.calls as number;
 
   if (first !== 41 || second !== 42) {
-    throw { code: "TEST_FAIL", message: "imported closure call order mismatch" };
+    throw { name: "TEST_FAIL", message: "imported closure call order mismatch" };
   }
   if (counter !== alias || alias.value !== 42) {
-    throw { code: "TEST_FAIL", message: "cross-module class identity mismatch" };
+    throw { name: "TEST_FAIL", message: "cross-module class identity mismatch" };
   }
   if (calls !== 2) {
-    throw { code: "TEST_FAIL", message: "cross-module table mutation mismatch" };
+    throw { name: "TEST_FAIL", message: "cross-module table mutation mismatch" };
   }
   return null;
 }

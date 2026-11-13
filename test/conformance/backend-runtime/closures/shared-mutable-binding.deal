@@ -10,7 +10,7 @@ export function test_shared_closure_binding(): number {
   inc();
   inc();
   let result: number = read();
-  if (result !== 2) { throw { code: "TEST_FAIL", message: "shared closure binding failed" }; }
+  if (result !== 2) { throw { name: "TEST_FAIL", message: "shared closure binding failed" }; }
   return result;
 }
 

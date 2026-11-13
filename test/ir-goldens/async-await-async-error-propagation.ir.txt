@@ -32,5 +32,5 @@ module @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:4:1-6:
                 ident e : unknown @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:5:139-5:139
             return @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:5:151-5:170
               [boundary: async-completion]
-              member .code : string @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:5:158-5:167
+              member .name : string @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:5:158-5:167
                 ident error : Error @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:5:158-5:162

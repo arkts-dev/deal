@@ -14,10 +14,10 @@ export function test_jsonable_local_nested_class_array(): null {
   let json: string = JSON.stringify(p) as string;
   let p2: Parent | null = JSON.parse(json);
   if (p2 !== null) {
-    if (p2.children[1].value !== 4) { throw { code: "TEST_FAIL", message: "local nested class array mismatch" }; }
+    if (p2.children[1].value !== 4) { throw { name: "TEST_FAIL", message: "local nested class array mismatch" }; }
     return null;
   }
-  throw { code: "TEST_FAIL", message: "local nested class array fromJson failed" };
+  throw { name: "TEST_FAIL", message: "local nested class array fromJson failed" };
 }
 
 export function main(): null {

@@ -29,10 +29,10 @@ export function test_canonical_array_boundary(): string {
   let total: number = applyAll(fs, f);
   let grid: number[][] = nested();
   if (total !== 16) {
-    throw { code: "TEST_FAIL", message: "array boundary value mismatch" };
+    throw { name: "TEST_FAIL", message: "array boundary value mismatch" };
   }
   if (grid[1][0] !== 3) {
-    throw { code: "TEST_FAIL", message: "nested array boundary value mismatch" };
+    throw { name: "TEST_FAIL", message: "nested array boundary value mismatch" };
   }
   return "canonical array boundary ok";
 }

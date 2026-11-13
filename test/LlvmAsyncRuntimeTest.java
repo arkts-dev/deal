@@ -150,7 +150,7 @@ public final class LlvmAsyncRuntimeTest {
             if (wrong.length === 0) { c.log("descriptor:bad"); }
           } catch (value) {
             let e: Error = value as Error;
-            if (e.code === "E8001") { c.log("descriptor:ok"); }
+            if (e.name === "E8001") { c.log("descriptor:ok"); }
             rejected = true;
           }
           if (rejected) { c.log("descriptor:rejected"); }
@@ -164,7 +164,7 @@ public final class LlvmAsyncRuntimeTest {
             if (ignored === "") { c.log("completion-error:bad"); }
           } catch (value) {
             let e: Error = value as Error;
-            if (e.code === "E_HOST_ASYNC_TEXT"
+            if (e.name === "E_HOST_ASYNC_TEXT"
                 && e.message === "the host async operation failed") {
               c.log("completion-error:ok");
             } else {
@@ -194,7 +194,7 @@ public final class LlvmAsyncRuntimeTest {
 
         export async function run(): Promise<null> {
           let original: Error = {
-            code: "E_DEAL_ASYNC",
+            name: "E_DEAL_ASYNC",
             message: "the DEAL async body failed"
           };
           let caught: boolean = false;
@@ -205,9 +205,9 @@ public final class LlvmAsyncRuntimeTest {
           } catch (value) {
             let e: Error = value as Error;
             if (e === original) { c.log("identity:ok"); } else { c.log("identity:bad"); }
-            if (e.code === "E_DEAL_ASYNC") { c.log("code:ok"); } else { c.log("code:bad"); }
-            original.code = "E_DEAL_ASYNC_MUTATED";
-            if (e.code === "E_DEAL_ASYNC_MUTATED") { c.log("mutation:ok"); }
+            if (e.name === "E_DEAL_ASYNC") { c.log("code:ok"); } else { c.log("code:bad"); }
+            original.name = "E_DEAL_ASYNC_MUTATED";
+            if (e.name === "E_DEAL_ASYNC_MUTATED") { c.log("mutation:ok"); }
             else { c.log("mutation:bad"); }
             caught = true;
           }
@@ -367,7 +367,7 @@ public final class LlvmAsyncRuntimeTest {
               return bad;
             } catch (value) {
               let e: Error = value as Error;
-              e.code = "E_RELAY_MUTATED";
+              e.name = "E_RELAY_MUTATED";
               e.message = "mutated before the relay";
               relayed = e;
               throw e;
@@ -390,7 +390,7 @@ public final class LlvmAsyncRuntimeTest {
               else { c.log("relay:identity:bad"); }
             }
             caughtValue = e;
-            if (e.code === "E_RELAY_MUTATED") { c.log("relay:code:ok"); }
+            if (e.name === "E_RELAY_MUTATED") { c.log("relay:code:ok"); }
             else { c.log("relay:code:bad"); }
             if (e.message === "mutated before the relay") {
               c.log("relay:message:ok");
@@ -407,7 +407,7 @@ public final class LlvmAsyncRuntimeTest {
             if (value === 0) { c.log("relay:text:completed"); }
           } catch (value) {
             let e: Error = value as Error;
-            if (e.code === "E_HOST_ASYNC_COMPLETE") {
+            if (e.name === "E_HOST_ASYNC_COMPLETE") {
               c.log("relay:text:code:ok");
             } else {
               c.log("relay:text:code:bad");
@@ -585,7 +585,7 @@ public final class LlvmAsyncRuntimeTest {
             export async function negativeZero(): Promise<number> { return -0; }
             export async function empty(): Promise<void> { return; }
             export async function managed(): Promise<string> { let n = "42"; return `answer:${n}`; }
-            export async function failure(): Promise<number> { throw {code:"PUBLIC_FAIL",message:"failed"}; }
+            export async function failure(): Promise<number> { throw {name:"PUBLIC_FAIL",message:"failed"}; }
             export function main(): null { return null; }
             """);
         String source = """
@@ -906,8 +906,8 @@ public final class LlvmAsyncRuntimeTest {
          * and innermost-first frame snapshot are the ones recorded at detection
          * (no cause, no refresh). */
         Pattern terminal = Pattern.compile(
-            "DEAL_ERROR_CODE: E_RELAY_MUTATED\\nDEAL_ERROR_SNAPSHOT: "
-                + "\\{\\\"code\\\":\\\"E_RELAY_MUTATED\\\",\\\"message\\\":"
+            "DEAL_ERROR_CODE: E8002\\nDEAL_ERROR_SNAPSHOT: "
+                + "\\{\\\"code\\\":\\\"E8002\\\",\\\"message\\\":"
                 + "\\\"mutated before the relay\\\",\\\"sourceFile\\\":"
                 + "\\\"[^\\\"]*src/main\\.deal\\\",\\\"line\\\":10,"
                 + "\\\"column\\\":25,\\\"frames\\\":2\\}\\n");
@@ -948,8 +948,8 @@ public final class LlvmAsyncRuntimeTest {
             export async function run(): Promise<null> {
               let caught = false;
               try { await probe.ingress(); }
-              catch (e) { if (e instanceof Error) { caught = e.code === "E8010"; } }
-              if (!caught) { throw {code:"FAIL", message:"lost graph rejection"}; }
+              catch (e) { if (e instanceof Error) { caught = e.name === "E8010"; } }
+              if (!caught) { throw {name:"FAIL", message:"lost graph rejection"}; }
               c.log("nested:rejected");
               return null;
             }
@@ -965,11 +965,11 @@ public final class LlvmAsyncRuntimeTest {
               try { await probe.ingress(); }
               catch (e) {
                 if (e instanceof Error) {
-                  caught = e.code === "E8001"
+                  caught = e.name === "E8001"
                     && e.message === "expected number";
                 }
               }
-              if (!caught) { throw {code:"FAIL", message:"lost raw callable rejection"}; }
+              if (!caught) { throw {name:"FAIL", message:"lost raw callable rejection"}; }
               c.log("raw:rejected");
               return null;
             }
@@ -985,10 +985,10 @@ public final class LlvmAsyncRuntimeTest {
               try { await probe.ingress(); }
               catch (e) {
                 if (e instanceof Error) {
-                  caught = e.code === "E8001" && e.message === "expected number";
+                  caught = e.name === "E8001" && e.message === "expected number";
                 }
               }
-              if (!caught) { throw {code:"FAIL", message:"lost opaque rejection"}; }
+              if (!caught) { throw {name:"FAIL", message:"lost opaque rejection"}; }
               c.log("opaque:rejected");
               return null;
             }

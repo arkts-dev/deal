@@ -8,20 +8,20 @@ import * as Lib from "./jsonable_batch2_lib";
 export function test_jsonable_optional_nullable_nested_class(): null {
   let explicitNull: Lib.MaybeChild | null = JSON.parse("{\"child\":null}");
   if (explicitNull !== null) {
-    if (explicitNull.child !== null) { throw { code: "TEST_FAIL", message: "explicit null child mismatch" }; }
+    if (explicitNull.child !== null) { throw { name: "TEST_FAIL", message: "explicit null child mismatch" }; }
   } else {
-    throw { code: "TEST_FAIL", message: "explicit null fromJson failed" };
+    throw { name: "TEST_FAIL", message: "explicit null fromJson failed" };
   }
 
   let value: Lib.MaybeChild | null = JSON.parse("{\"child\":{\"value\":8}}");
   if (value !== null) {
     let child: Lib.Child | null | undefined = value.child;
     if (child !== null) { if (child !== undefined) {
-      if (child.value !== 8) { throw { code: "TEST_FAIL", message: "nested value mismatch" }; }
+      if (child.value !== 8) { throw { name: "TEST_FAIL", message: "nested value mismatch" }; }
       return null;
     } }
   }
-  throw { code: "TEST_FAIL", message: "nested value fromJson failed" };
+  throw { name: "TEST_FAIL", message: "nested value fromJson failed" };
 }
 
 export function main(): null {

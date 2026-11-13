@@ -8,7 +8,7 @@ import * as host from "host/nullreturn_ok";
 export function test_host_null_return_ok(): null {
   host.ping();
   if (host.ping() !== null) {
-    throw { code: "TEST_FAIL", message: "sync null return was not the sentinel" };
+    throw { name: "TEST_FAIL", message: "sync null return was not the sentinel" };
   }
   return null;
 }

@@ -29,7 +29,7 @@ class Point {
 }
 
 function fail(message: string): null {
-  throw { code: "DEMO_FAIL", message: message };
+  throw { name: "DEMO_FAIL", message: message };
 }
 
 function assertBoolean(value: boolean, message: string): null {
@@ -175,7 +175,7 @@ function useErrors(): string {
     let missing: number = values[99];
     return "unexpected array read success";
   } catch (e) {
-    return (e as Error).code;
+    return (e as Error).name;
   }
 }
 

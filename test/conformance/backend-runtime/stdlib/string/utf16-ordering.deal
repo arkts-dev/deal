@@ -2,7 +2,7 @@
 // @description: Relational string operators compare UTF-16 units, including isolated surrogates.
 // @expected: runtime-ok
 // @features: string, comparison
-function check(ok:boolean):void { if(!ok){throw {code:"ORDER",message:"UTF-16 ordering"};} }
+function check(ok:boolean):void { if(!ok){throw {name:"ORDER",message:"UTF-16 ordering"};} }
 export function main():null {
   let high:string=`\uD800`;
   let low:string=`\uDC00`;

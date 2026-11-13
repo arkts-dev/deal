@@ -8,16 +8,16 @@ export function test_array_dynamic_nullable_function_ok(): string {
   let holderNull: Record<string, unknown> = { f: null };
   let f: ((b: number[]) => number[]) | null = holderNull.f as ((b: number[]) => number[]) | null;
   if (f !== null) {
-    throw { code: "TEST_FAIL", message: "nullable function null pass-through mismatch" };
+    throw { name: "TEST_FAIL", message: "nullable function null pass-through mismatch" };
   }
   let holderFn: Record<string, unknown> = { g: id };
   let g: ((b: number[]) => number[]) | null = holderFn.g as ((b: number[]) => number[]) | null;
   if (g !== null) {
     if (g([0]).length !== 1) {
-      throw { code: "TEST_FAIL", message: "nullable function call mismatch" };
+      throw { name: "TEST_FAIL", message: "nullable function call mismatch" };
     }
   } else {
-    throw { code: "TEST_FAIL", message: "nullable function value lost" };
+    throw { name: "TEST_FAIL", message: "nullable function value lost" };
   }
   return "dynamic ?(number[])->number[] ok";
 }

@@ -14,7 +14,7 @@ export function test_nested_loop_closure_capture(): number {
     } v14Loop1 = j; v14Loop1 = v14Loop1 + 1; } }
   } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }
   let result: number = fs[0]() + fs[1]() + fs[2]() + fs[3]();
-  if (result !== 22) { throw { code: "TEST_FAIL", message: "nested loop closure capture failed" }; }
+  if (result !== 22) { throw { name: "TEST_FAIL", message: "nested loop closure capture failed" }; }
   return result;
 }
 

@@ -4,37 +4,37 @@
 // @features: arrays, host-abi
 import * as host from "host/probe";
 class Item {x:number;stable:number;}
-function check(ok:boolean):void {if(!ok){throw {code:"PREDICATES",message:"live mismatch"};}}
+function check(ok:boolean):void {if(!ok){throw {name:"PREDICATES",message:"live mismatch"};}}
 export function main():null {
   let xs:number[]=[4,5,9];let alias=xs;let destination:number[]=[123];let stable=destination;
   let booleanDestination=false;let calls=0;let caught=false;
   host.keep(xs);host.corrupt();
   try {destination=xs.filter((value:number):boolean=>{calls=calls+1;return true;});}
-  catch(e){check((e as Error).code==="E8003" && (e as Error).message==="array element 3 type mismatch");caught=true;}
+  catch(e){check((e as Error).name==="E8003" && (e as Error).message==="array element 3 type mismatch");caught=true;}
   check(caught && calls===0 && destination===stable && host.size()===3 && alias[1]===5);
   caught=false;
   try {booleanDestination=xs.some((value:number):boolean=>{calls=calls+1;return true;});}
-  catch(e){check((e as Error).code==="E8003");caught=true;}check(caught && calls===0 && !booleanDestination);
+  catch(e){check((e as Error).name==="E8003");caught=true;}check(caught && calls===0 && !booleanDestination);
   caught=false;
   try {booleanDestination=xs.every((value:number):boolean=>{calls=calls+1;return true;});}
-  catch(e){check((e as Error).code==="E8003");caught=true;}check(caught && calls===0 && !booleanDestination);
+  catch(e){check((e as Error).name==="E8003");caught=true;}check(caught && calls===0 && !booleanDestination);
   host.repair();check(xs===alias && xs.filter((value:number):boolean=>value===9)[0]===9);
   calls=0;caught=false;
   try {destination=xs.filter((value:number,index:number):boolean=>{calls=calls+1;if(index===0){host.corrupt();}return true;});}
-  catch(e){check((e as Error).code==="E8003");caught=true;}check(caught && calls===1 && destination===stable);host.repair();
+  catch(e){check((e as Error).name==="E8003");caught=true;}check(caught && calls===1 && destination===stable);host.repair();
   calls=0;caught=false;
   try {booleanDestination=xs.some((value:number,index:number):boolean=>{calls=calls+1;if(index===1){host.corrupt();}return false;});}
-  catch(e){check((e as Error).code==="E8003");caught=true;}check(caught && calls===2 && !booleanDestination);host.repair();
+  catch(e){check((e as Error).name==="E8003");caught=true;}check(caught && calls===2 && !booleanDestination);host.repair();
   calls=0;caught=false;
   try {booleanDestination=xs.every((value:number,index:number):boolean=>{calls=calls+1;if(index===0){host.corrupt();}return true;});}
-  catch(e){check((e as Error).code==="E8003");caught=true;}check(caught && calls===1 && !booleanDestination);host.repair();
+  catch(e){check((e as Error).name==="E8003");caught=true;}check(caught && calls===1 && !booleanDestination);host.repair();
   calls=0;check(xs.some((value:number):boolean=>{calls=calls+1;host.corrupt();return true;}) && calls===1);host.repair();
   calls=0;check(!xs.every((value:number):boolean=>{calls=calls+1;host.corrupt();return false;}) && calls===1);host.repair();
   let live=host.make();let predicate=():(value:number)=>boolean=>{host.grow();return (value:number):boolean=>value===11;};
   check(live.filter(predicate())[0]===11);
   let item:Item={x:9,stable:4};let items:Item[]=[item];let itemDestination:Item[]=[];let itemStable=itemDestination;
   host.damage(item,false);caught=false;
-  try {itemDestination=items.filter((value:Item):boolean=>true);}catch(e){check((e as Error).code==="E8003");caught=true;}
+  try {itemDestination=items.filter((value:Item):boolean=>true);}catch(e){check((e as Error).name==="E8003");caught=true;}
   check(caught && itemDestination===itemStable && items.length===1);host.damage(null,true);
   check(items.filter(():boolean=>true)[0]===item && item.stable===4);
   let callback=():number=>7;let functions:(()=>number)[]=[callback];host.keep(functions);
@@ -42,12 +42,12 @@ export function main():null {
     if(signature){host.poisonSignature(callback);}else{host.poison(callback);}
     caught=false;
     try {booleanDestination=functions.some((value:()=>number):boolean=>true);}
-    catch(e){check((e as Error).code==="E8003");caught=true;}
+    catch(e){check((e as Error).name==="E8003");caught=true;}
     check(caught && !booleanDestination && functions.length===1);host.restoreFunction();
     check(functions.filter(():boolean=>true)[0]===callback && functions.every(():boolean=>true) && callback()===7);
   }
   let decoded:number[]=JSON.parse("[4,5,9]");host.keep(decoded);host.corrupt();caught=false;
-  try {destination=decoded.filter((value:number):boolean=>true);}catch(e){check((e as Error).code==="E8003");caught=true;}
+  try {destination=decoded.filter((value:number):boolean=>true);}catch(e){check((e as Error).name==="E8003");caught=true;}
   check(caught && destination===stable && decoded.length===3);host.repair();
   check(decoded.some((value:number):boolean=>value===9) && decoded.every((value:number):boolean=>value>0));
   return null;

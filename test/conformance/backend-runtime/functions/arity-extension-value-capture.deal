@@ -10,7 +10,7 @@ class Holder { saved: (ignored: number) => number; }
 function one(): number { return 1; }
 function two(): number { return 2; }
 function check(ok: boolean): void {
-  if (!ok) { throw {code: "TEST_FAIL", message: "adapter value capture"}; }
+  if (!ok) { throw {name: "TEST_FAIL", message: "adapter value capture"}; }
 }
 function make(state: State): () => number {
   state.calls = state.calls + 1;

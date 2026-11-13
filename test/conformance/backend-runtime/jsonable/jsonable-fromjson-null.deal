@@ -10,9 +10,9 @@ export function test_fromJson_null(): null {
   let result = original;
   let rejected = false;
   try { result = JSON.parse("not valid json"); }
-  catch (e) { let error = e as Error; rejected = error.code === "E8001" && error.message.startsWith("JSON parse error at position "); }
+  catch (e) { let error = e as Error; rejected = error.name === "E8001" && error.message.startsWith("JSON parse error at position "); }
   if (!rejected || result !== original || result.name !== "original") {
-    throw {code: "TEST_FAIL", message: "malformed JSON changed destination"};
+    throw {name: "TEST_FAIL", message: "malformed JSON changed destination"};
   }
   return null;
 }

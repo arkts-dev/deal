@@ -7,7 +7,7 @@ export function test_intrinsic_as_function_value(): number {
   let f: (x: number) => number = int;
   let result: number = f(3.0);
   if (result !== 3) {
-    throw { code: "TEST_FAIL", message: "intrinsic function value conversion failed" };
+    throw { name: "TEST_FAIL", message: "intrinsic function value conversion failed" };
   }
   return result;
 }

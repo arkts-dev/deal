@@ -6,16 +6,16 @@
 import * as printer from "std/console";
 
 function expectTrue(what: string, condition: boolean): void {
-  if (!condition) { throw { code: "CHECK_FAIL", message: what }; }
+  if (!condition) { throw { name: "CHECK_FAIL", message: what }; }
 }
 function expectError(what: string, value: Error): void {
-  expectTrue(what, value.code !== "");
+  expectTrue(what, value.name !== "");
 }
 
 function checkIntRefinement(): void {
   let e: number | null = 41;
   if (e !== null) {
-    try { throw { code: "C_INT", message: "number refinement" }; }
+    try { throw { name: "C_INT", message: "number refinement" }; }
     catch (e) {
       let captured: Error = e as Error;
       expectError("the number-refined catch binding", captured);
@@ -28,12 +28,12 @@ function checkIntRefinement(): void {
 function checkStringRefinement(): void {
   let e: string | null = "outer";
   if (e !== null) {
-    try { throw { code: "C_STR", message: "string refinement" }; }
+    try { throw { name: "C_STR", message: "string refinement" }; }
     catch (e) {
       if (e instanceof Error) {
         expectError("the string-refined catch binding", e);
         expectTrue("the string-refined catch message", e.message === "string refinement");
-      } else { throw {code: "CHECK_FAIL", message: "catch is Error"}; }
+      } else { throw {name: "CHECK_FAIL", message: "catch is Error"}; }
     }
     let afterCatch: string = e;
     expectTrue("the outer string refinement after the catch", afterCatch === "outer");
@@ -42,7 +42,7 @@ function checkStringRefinement(): void {
 function checkNullRefinement(): void {
   let e: number | null = null;
   if (e === null) {
-    try { throw { code: "C_NULL", message: "null refinement" }; }
+    try { throw { name: "C_NULL", message: "null refinement" }; }
     catch (e) {
       let captured: Error = e as Error;
       expectError("the null-refined catch binding", captured);
@@ -55,16 +55,16 @@ function checkNullRefinement(): void {
 function checkNestedCatch(): void {
   let e: number | null = 7;
   if (e !== null) {
-    try { throw { code: "C_OUTER", message: "outer" }; }
+    try { throw { name: "C_OUTER", message: "outer" }; }
     catch (e) {
       if (e instanceof Error) {
-        try { throw { code: "C_INNER", message: "inner" }; }
+        try { throw { name: "C_INNER", message: "inner" }; }
         catch (e) {
           let captured: Error = e as Error;
           expectTrue("the inner catch binding", captured.message === "inner");
         }
         expectTrue("the outer catch binding after the inner catch", e.message === "outer");
-      } else { throw { code: "CHECK_FAIL", message: "outer catch is Error" }; }
+      } else { throw { name: "CHECK_FAIL", message: "outer catch is Error" }; }
     }
     let afterCatch: number = e;
     expectTrue("the outer refinement after a nested catch", afterCatch === 7);
@@ -73,7 +73,7 @@ function checkNestedCatch(): void {
 function checkNestedBlock(): void {
   let e: number | null = 9;
   if (e !== null) {
-    try { throw { code: "C_BLOCK", message: "block" }; }
+    try { throw { name: "C_BLOCK", message: "block" }; }
     catch (e) {
       {
         let captured: Error = e as Error;
@@ -90,7 +90,7 @@ function checkNestedBlock(): void {
 function checkRenamedCatch(): void {
   let e: number | null = 11;
   if (e !== null) {
-    try { throw { code: "C_RENAMED", message: "renamed" }; }
+    try { throw { name: "C_RENAMED", message: "renamed" }; }
     catch (err) {
       let captured: Error = err as Error;
       expectTrue("the renamed catch binding", captured.message === "renamed");
@@ -103,7 +103,7 @@ function checkRenamedCatch(): void {
 }
 function checkNoRefinement(): void {
   let e: number | null = null;
-  try { throw { code: "C_NONE", message: "no refinement" }; }
+  try { throw { name: "C_NONE", message: "no refinement" }; }
   catch (e) {
     let captured: Error = e as Error;
     expectError("the unrefined catch binding", captured);
@@ -114,9 +114,9 @@ function checkNoRefinement(): void {
 function checkCatchAssignment(): void {
   let e: number | null = 13;
   if (e !== null) {
-    try { throw { code: "C_ASSIGN", message: "assign" }; }
+    try { throw { name: "C_ASSIGN", message: "assign" }; }
     catch (e) {
-      let replacement: Error = { code: "C_REPLACED", message: "replaced" };
+      let replacement: Error = { name: "C_REPLACED", message: "replaced" };
       e = replacement;
       let captured: Error = e as Error;
       expectTrue("the reassigned catch binding", captured.message === "replaced");
@@ -130,9 +130,9 @@ function checkNestedTryCatchAssignment(): void {
   let e: number | null = 19;
   if (e !== null) {
     try {
-      try { throw { code: "C_NESTED_INNER", message: "nested inner" }; }
+      try { throw { name: "C_NESTED_INNER", message: "nested inner" }; }
       catch (e) {
-        let replacement: Error = { code: "C_NESTED_REPLACED", message: "nested replaced" };
+        let replacement: Error = { name: "C_NESTED_REPLACED", message: "nested replaced" };
         e = replacement;
         let captured: Error = e as Error;
         expectTrue("the reassigned nested catch binding", captured.message === "nested replaced");
@@ -146,7 +146,7 @@ function checkNestedTryCatchAssignment(): void {
 }
 function checkParameterBinding(e: number | null): void {
   if (e !== null) {
-    try { throw { code: "C_PARAM", message: "parameter" }; }
+    try { throw { name: "C_PARAM", message: "parameter" }; }
     catch (e) {
       let captured: Error = e as Error;
       expectError("the parameter-shadowing catch binding", captured);

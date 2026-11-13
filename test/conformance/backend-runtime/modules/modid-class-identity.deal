@@ -14,7 +14,7 @@ export function test_cross_module_class_identity(): number {
     replace();
     return LibB.needBox(item);
   }
-  throw { code: "TEST_FAIL", message: "nominal refinement branch skipped" };
+  throw { name: "TEST_FAIL", message: "nominal refinement branch skipped" };
 }
 
 export function main(): null {

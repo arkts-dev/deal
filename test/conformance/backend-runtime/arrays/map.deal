@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: arrays, functions
 class Item {x:number;}
-function check(ok:boolean):void {if(!ok){throw {code:"MAP",message:"map mismatch"};}}
+function check(ok:boolean):void {if(!ok){throw {name:"MAP",message:"map mismatch"};}}
 export function main():null {
   let xs:number[]=[1,2,3];let calls=0;
   let ys:string[]=xs.map((value:number,index:number,array:number[]):string=>{
@@ -38,15 +38,15 @@ export function main():null {
   let shrink:number[]=[1,2,3];let destination:number[]=[123];let old=destination;let seen=0;let caught=false;
   try {destination=shrink.map((value:number,index:number,array:number[]):number=>{
     seen=seen+1;if(index===0){array.pop();array.pop();}return value;
-  });}catch(e){check((e as Error).code==="E8002" && (e as Error).message==="array index out of bounds");caught=true;}
+  });}catch(e){check((e as Error).name==="E8002" && (e as Error).message==="array index out of bounds");caught=true;}
   check(caught && seen===1 && destination===old && destination[0]===123 && shrink.length===1);
   effects="";caught=false;
-  let abrupt=():(value:number)=>number=>{effects=effects+"m";throw {code:"MAPPER",message:"stop"};};
-  try {destination=receiver().map(abrupt());}catch(e){check((e as Error).code==="MAPPER");caught=true;}
+  let abrupt=():(value:number)=>number=>{effects=effects+"m";throw {name:"MAPPER",message:"stop"};};
+  try {destination=receiver().map(abrupt());}catch(e){check((e as Error).name==="MAPPER");caught=true;}
   check(caught && effects==="rm" && destination===old);
   seen=0;caught=false;
-  try {destination=xs.map((value:number,index:number):number=>{seen=seen+1;if(index===1){throw {code:"CALLBACK",message:"stop"};}return value;});}
-  catch(e){check((e as Error).code==="CALLBACK");caught=true;}
+  try {destination=xs.map((value:number,index:number):number=>{seen=seen+1;if(index===1){throw {name:"CALLBACK",message:"stop"};}return value;});}
+  catch(e){check((e as Error).name==="CALLBACK");caught=true;}
   check(caught && seen===2 && destination===old && xs.length===4);
   let nested=xs.map((value:number):number=>[value].map((inner:number):number=>inner+1)[0]);check(nested[1]===21);
   return null;

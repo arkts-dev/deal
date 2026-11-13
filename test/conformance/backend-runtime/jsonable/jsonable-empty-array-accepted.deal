@@ -8,14 +8,14 @@ export class Values { xs: number[]; }
 export function main(): null {
   let values: Values = JSON.parse("{\"xs\":[]}");
   let other: Values = JSON.parse("{\"xs\":[]}");
-  if (values.xs.length !== 0 || values.xs === other.xs) { throw {code: "TEST_FAIL", message: "empty array freshness lost"}; }
+  if (values.xs.length !== 0 || values.xs === other.xs) { throw {name: "TEST_FAIL", message: "empty array freshness lost"}; }
   values.xs[0] = 7;
-  if (other.xs.length !== 0) { throw {code: "TEST_FAIL", message: "decoded array alias"}; }
+  if (other.xs.length !== 0) { throw {name: "TEST_FAIL", message: "decoded array alias"}; }
   let opaque: unknown = values.xs;
-  if ((opaque as number[]) !== values.xs) { throw {code: "TEST_FAIL", message: "decoded array identity"}; }
+  if ((opaque as number[]) !== values.xs) { throw {name: "TEST_FAIL", message: "decoded array identity"}; }
   let rejected = false;
   try { let invalid = opaque as unknown[]; }
-  catch (e) { rejected = (e as Error).code === "E8001"; }
-  if (!rejected) { throw {code: "TEST_FAIL", message: "decoded array descriptor lost"}; }
+  catch (e) { rejected = (e as Error).name === "E8001"; }
+  if (!rejected) { throw {name: "TEST_FAIL", message: "decoded array descriptor lost"}; }
   return null;
 }

@@ -19,7 +19,7 @@ function allocate(x: number): number { return x + 5; }
 function localShadow(): number {
   let int: (x: number) => number = plus;
   if (int(2) !== 3) {
-    throw { code: "TEST_FAIL", message: "local int shadow dispatched the module callable" };
+    throw { name: "TEST_FAIL", message: "local int shadow dispatched the module callable" };
   }
   return int(3);
 }
@@ -27,7 +27,7 @@ function localShadow(): number {
 // 2. A parameter shadow is the callee for the whole body.
 function parameterShadow(int: (x: number) => number): number {
   if (int(2) !== 3) {
-    throw { code: "TEST_FAIL", message: "parameter int shadow dispatched the module callable" };
+    throw { name: "TEST_FAIL", message: "parameter int shadow dispatched the module callable" };
   }
   return int(4);
 }
@@ -36,7 +36,7 @@ function parameterShadow(int: (x: number) => number): number {
 function numberShadow(): number {
   let number: (x: number) => number = twice;
   if (number(1.0) !== 3.0) {
-    throw { code: "TEST_FAIL", message: "local number shadow dispatched the module callable" };
+    throw { name: "TEST_FAIL", message: "local number shadow dispatched the module callable" };
   }
   return number(1.5);
 }
@@ -46,7 +46,7 @@ function numberShadow(): number {
 function bytesShadow(): number {
   let bytes: (x: number) => number = allocate;
   if (bytes(2) !== 7) {
-    throw { code: "TEST_FAIL", message: "local bytes binding called the wrong function" };
+    throw { name: "TEST_FAIL", message: "local bytes binding called the wrong function" };
   }
   return bytes(3);
 }
@@ -59,17 +59,17 @@ function nestedScopes(): number {
     let int: (x: number) => number = plusTen;
     {
       if (int(1) !== 11) {
-        throw { code: "TEST_FAIL", message: "enclosing shadow ignored in a nested block" };
+        throw { name: "TEST_FAIL", message: "enclosing shadow ignored in a nested block" };
       }
     }
   }
   if (int(1.0) !== 1) {
-    throw { code: "TEST_FAIL", message: "block shadow leaked into the enclosing scope" };
+    throw { name: "TEST_FAIL", message: "block shadow leaked into the enclosing scope" };
   }
   {
     let int: (x: number) => number = plus;
     if (int(1) !== 2) {
-      throw { code: "TEST_FAIL", message: "sibling block shadow ignored" };
+      throw { name: "TEST_FAIL", message: "sibling block shadow ignored" };
     }
   }
   return int(5.0) + 1;
@@ -79,14 +79,14 @@ function nestedScopes(): number {
 function catchShadow(): number {
   let result: number = 0;
   try {
-    throw { code: "CATCH_X", message: "catch payload" };
+    throw { name: "CATCH_X", message: "catch payload" };
   } catch (e) {
     let int: (x: number) => number = plus;
-    if ((e as Error).code !== "CATCH_X") {
-      throw { code: "TEST_FAIL", message: "catch payload changed" };
+    if ((e as Error).name !== "CATCH_X") {
+      throw { name: "TEST_FAIL", message: "catch payload changed" };
     }
     if (int(5) !== 6) {
-      throw { code: "TEST_FAIL", message: "catch-block int shadow dispatched the module callable" };
+      throw { name: "TEST_FAIL", message: "catch-block int shadow dispatched the module callable" };
     }
     result = int(6);
   }
@@ -99,10 +99,10 @@ function declarationOrder(): number {
   let before: number = int(2.0);
   let int: (x: number) => number = plus;
   if (before !== 2) {
-    throw { code: "TEST_FAIL", message: "pre-declaration read missed the module callable" };
+    throw { name: "TEST_FAIL", message: "pre-declaration read missed the module callable" };
   }
   if (int(2) !== 3) {
-    throw { code: "TEST_FAIL", message: "declared shadow is not the callee" };
+    throw { name: "TEST_FAIL", message: "declared shadow is not the callee" };
   }
   return before + int(2);
 }
@@ -121,11 +121,11 @@ function forHeadCounter(): number {
 function currentValueDispatch(): number {
   let int: (x: number) => number = plus;
   if (int(2) !== 3) {
-    throw { code: "TEST_FAIL", message: "initial shadow value ignored" };
+    throw { name: "TEST_FAIL", message: "initial shadow value ignored" };
   }
   int = plusTen;
   if (int(2) !== 12) {
-    throw { code: "TEST_FAIL", message: "reassigned shadow value ignored" };
+    throw { name: "TEST_FAIL", message: "reassigned shadow value ignored" };
   }
   return int(3);
 }
@@ -141,11 +141,11 @@ function onceOnlyEffects(): number {
   };
   let first: number = int(bump());
   if (events !== 2 || first !== 3) {
-    throw { code: "TEST_FAIL", message: "callee and argument effects are not once-only" };
+    throw { name: "TEST_FAIL", message: "callee and argument effects are not once-only" };
   }
   let second: number = int(0);
   if (events !== 3 || second !== 3) {
-    throw { code: "TEST_FAIL", message: "the second call skipped the callee" };
+    throw { name: "TEST_FAIL", message: "the second call skipped the callee" };
   }
   return events;
 }
@@ -156,7 +156,7 @@ function shadowedAlias(): number {
   let int: (x: number) => number = plus;
   let widened: (x: number, y: number) => number = int;
   if (widened(2, 9) !== 3) {
-    throw { code: "TEST_FAIL", message: "shadowed alias adapted the module callable" };
+    throw { name: "TEST_FAIL", message: "shadowed alias adapted the module callable" };
   }
   return widened(1, 0);
 }
@@ -166,7 +166,7 @@ function shadowedAlias(): number {
 function intrinsicAlias(): number {
   let conversion: (x: number, y: number) => number = int;
   if (conversion(2.0, 9.0) !== 2) {
-    throw { code: "TEST_FAIL", message: "intrinsic alias did not convert" };
+    throw { name: "TEST_FAIL", message: "intrinsic alias did not convert" };
   }
   return conversion(1.0, 0.0);
 }
@@ -177,10 +177,10 @@ function intrinsicResults(): number {
   let widened: number = number(7);
 
   if (converted !== 2) {
-    throw { code: "TEST_FAIL", message: "int(2.0) did not convert" };
+    throw { name: "TEST_FAIL", message: "int(2.0) did not convert" };
   }
   if (widened !== 7.0) {
-    throw { code: "TEST_FAIL", message: "number(7) did not widen" };
+    throw { name: "TEST_FAIL", message: "number(7) did not widen" };
   }
 
 
@@ -202,46 +202,46 @@ function capturedShadow(): number {
 
 export function main(): null {
   if (localShadow() !== 4) {
-    throw { code: "TEST_FAIL", message: "local shadow result" };
+    throw { name: "TEST_FAIL", message: "local shadow result" };
   }
   if (parameterShadow(plus) !== 5) {
-    throw { code: "TEST_FAIL", message: "parameter shadow result" };
+    throw { name: "TEST_FAIL", message: "parameter shadow result" };
   }
   if (numberShadow() !== 3.5) {
-    throw { code: "TEST_FAIL", message: "number shadow result" };
+    throw { name: "TEST_FAIL", message: "number shadow result" };
   }
   if (bytesShadow() !== 8) {
-    throw { code: "TEST_FAIL", message: "bytes shadow result" };
+    throw { name: "TEST_FAIL", message: "bytes shadow result" };
   }
   if (nestedScopes() !== 6) {
-    throw { code: "TEST_FAIL", message: "nested scope result" };
+    throw { name: "TEST_FAIL", message: "nested scope result" };
   }
   if (catchShadow() !== 7) {
-    throw { code: "TEST_FAIL", message: "catch shadow result" };
+    throw { name: "TEST_FAIL", message: "catch shadow result" };
   }
   if (declarationOrder() !== 5) {
-    throw { code: "TEST_FAIL", message: "declaration order result" };
+    throw { name: "TEST_FAIL", message: "declaration order result" };
   }
   if (forHeadCounter() !== 6) {
-    throw { code: "TEST_FAIL", message: "for-head counter result" };
+    throw { name: "TEST_FAIL", message: "for-head counter result" };
   }
   if (currentValueDispatch() !== 13) {
-    throw { code: "TEST_FAIL", message: "current-value dispatch result" };
+    throw { name: "TEST_FAIL", message: "current-value dispatch result" };
   }
   if (onceOnlyEffects() !== 3) {
-    throw { code: "TEST_FAIL", message: "once-only effects result" };
+    throw { name: "TEST_FAIL", message: "once-only effects result" };
   }
   if (shadowedAlias() !== 2) {
-    throw { code: "TEST_FAIL", message: "shadowed alias result" };
+    throw { name: "TEST_FAIL", message: "shadowed alias result" };
   }
   if (intrinsicAlias() !== 1) {
-    throw { code: "TEST_FAIL", message: "intrinsic alias result" };
+    throw { name: "TEST_FAIL", message: "intrinsic alias result" };
   }
   if (intrinsicResults() !== 2) {
-    throw { code: "TEST_FAIL", message: "intrinsic result" };
+    throw { name: "TEST_FAIL", message: "intrinsic result" };
   }
   if (capturedShadow() !== 4) {
-    throw { code: "TEST_FAIL", message: "captured shadow result" };
+    throw { name: "TEST_FAIL", message: "captured shadow result" };
   }
   return null;
 }

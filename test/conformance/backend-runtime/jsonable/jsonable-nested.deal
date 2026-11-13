@@ -22,16 +22,16 @@ export function test_nested(): null {
   let p2: Person | null = JSON.parse(json);
   if (p2 !== null) {
     if (p2.name !== "Dave") {
-      throw { code: "TEST_FAIL", message: "nested name mismatch" };
+      throw { name: "TEST_FAIL", message: "nested name mismatch" };
     }
     if (p2.home.city !== "Paris") {
-      throw { code: "TEST_FAIL", message: "nested city mismatch" };
+      throw { name: "TEST_FAIL", message: "nested city mismatch" };
     }
     if (p2.home.zip !== 75001) {
-      throw { code: "TEST_FAIL", message: "nested zip mismatch" };
+      throw { name: "TEST_FAIL", message: "nested zip mismatch" };
     }
   } else {
-    throw { code: "TEST_FAIL", message: "nested roundtrip fromJson null" };
+    throw { name: "TEST_FAIL", message: "nested roundtrip fromJson null" };
   }
   return null;
 }

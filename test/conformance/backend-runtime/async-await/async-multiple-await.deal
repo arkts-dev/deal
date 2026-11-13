@@ -15,16 +15,16 @@ export async function test_multiple_await(): Promise<number> {
   let stage: number = 0;
   let a: number = await double(10);
   if (a !== 20) {
-    throw { code: "TEST_FAIL", message: "first awaited completion mismatch" };
+    throw { name: "TEST_FAIL", message: "first awaited completion mismatch" };
   }
   stage = stage + 1;
   let b: number = await triple(a);
   if (b !== 60) {
-    throw { code: "TEST_FAIL", message: "second awaited completion mismatch" };
+    throw { name: "TEST_FAIL", message: "second awaited completion mismatch" };
   }
   stage = stage + 1;
   if (stage !== 2) {
-    throw { code: "TEST_FAIL", message: "multiple await stage sequence mismatch" };
+    throw { name: "TEST_FAIL", message: "multiple await stage sequence mismatch" };
   }
   return b;
 }

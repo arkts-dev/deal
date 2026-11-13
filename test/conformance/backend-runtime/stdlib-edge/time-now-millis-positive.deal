@@ -7,8 +7,8 @@ import * as time from "std/time";
 
 export function test_time_now_millis_positive(): number {
   let now: number = time.nowMillis();
-  if (now <= 0.0) { throw { code: "TEST_FAIL", message: "time.nowMillis not positive" }; }
-  if (now < 2147483648.0) { throw { code: "TEST_FAIL", message: "time.nowMillis not above the signed-32 range" }; }
+  if (now <= 0.0) { throw { name: "TEST_FAIL", message: "time.nowMillis not positive" }; }
+  if (now < 2147483648.0) { throw { name: "TEST_FAIL", message: "time.nowMillis not above the signed-32 range" }; }
   return now;
 }
 

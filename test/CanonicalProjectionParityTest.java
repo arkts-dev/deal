@@ -1850,7 +1850,7 @@ public class CanonicalProjectionParityTest {
         export function test_use_nullable(): null {
           let v: string | null = host.fetchNullable();
           if (v !== null) {
-            throw { code: "PROBE_SYNC_PRESENCE", message: "the host null return was not the language null" };
+            throw { name: "PROBE_SYNC_PRESENCE", message: "the host null return was not the language null" };
           }
           return null;
         }
@@ -1897,7 +1897,7 @@ public class CanonicalProjectionParityTest {
         export function test_use_int(): null {
           let v: number = host.fetchInt();
           if (v !== 7) {
-            throw { code: "PROBE_NUMERIC_RETURN", message: "the int return lost its value" };
+            throw { name: "PROBE_NUMERIC_RETURN", message: "the int return lost its value" };
           }
           return null;
         }
@@ -1906,17 +1906,17 @@ public class CanonicalProjectionParityTest {
           let v: number | null = host.fetchNullableInt();
           if (v !== null) {
             if (v !== 7) {
-              throw { code: "PROBE_NUMERIC_RETURN", message: "the nullable int return lost its value" };
+              throw { name: "PROBE_NUMERIC_RETURN", message: "the nullable int return lost its value" };
             }
             return null;
           }
-          throw { code: "PROBE_NUMERIC_RETURN", message: "the nullable int return was the language null" };
+          throw { name: "PROBE_NUMERIC_RETURN", message: "the nullable int return was the language null" };
         }
 
         export function test_use_number(): null {
           let v: number = host.fetchNumber();
           if (v !== 7.0) {
-            throw { code: "PROBE_NUMERIC_RETURN", message: "the number return lost its value" };
+            throw { name: "PROBE_NUMERIC_RETURN", message: "the number return lost its value" };
           }
           return null;
         }
@@ -1924,7 +1924,7 @@ public class CanonicalProjectionParityTest {
         export function test_use_fraction(): null {
           let v: number = host.fetchFraction();
           if (v !== 7.5) {
-            throw { code: "PROBE_NUMERIC_RETURN", message: "the fractional number return lost its value" };
+            throw { name: "PROBE_NUMERIC_RETURN", message: "the fractional number return lost its value" };
           }
           return null;
         }
@@ -2546,7 +2546,7 @@ public class CanonicalProjectionParityTest {
           let xs: number[] = await host.fetchInts();
           let v: number = xs[0];
           if (v !== 7) {
-            throw { code: "PROBE_BOXED_ELEMENT", message: "the boxed int element did not land 7" };
+            throw { name: "PROBE_BOXED_ELEMENT", message: "the boxed int element did not land 7" };
           }
           return v + 1;
         }
@@ -2565,7 +2565,7 @@ public class CanonicalProjectionParityTest {
           if (xs !== null) {
             let v: number = xs[0];
             if (v !== 7) {
-              throw { code: "PROBE_BOXED_ELEMENT", message: "the nullable boxed int element did not land 7" };
+              throw { name: "PROBE_BOXED_ELEMENT", message: "the nullable boxed int element did not land 7" };
             }
             return v + 1;
           }
@@ -2589,11 +2589,11 @@ public class CanonicalProjectionParityTest {
           let v: number | null = xs[0];
           let w: number | null = xs[1];
           if (w !== null) {
-            throw { code: "PROBE_BOXED_ELEMENT", message: "the null element did not stay null" };
+            throw { name: "PROBE_BOXED_ELEMENT", message: "the null element did not stay null" };
           }
           if (v !== null) {
             if (v !== 7) {
-              throw { code: "PROBE_BOXED_ELEMENT", message: "the nullable-element boxed int did not land 7" };
+              throw { name: "PROBE_BOXED_ELEMENT", message: "the nullable-element boxed int did not land 7" };
             }
             let total: number = v + 1;
             return total;
@@ -2614,7 +2614,7 @@ public class CanonicalProjectionParityTest {
           let xs: number[][] = await host.fetchNestedInts();
           let v: number = xs[0][0];
           if (v !== 7) {
-            throw { code: "PROBE_BOXED_ELEMENT", message: "the nested boxed int element did not land 7" };
+            throw { name: "PROBE_BOXED_ELEMENT", message: "the nested boxed int element did not land 7" };
           }
           return v + 1;
         }
@@ -2638,7 +2638,7 @@ public class CanonicalProjectionParityTest {
           let xs: number[] = await host.fetchNumbers();
           let v: number = xs[0];
           if (v !== 7.0) {
-            throw { code: "PROBE_BOXED_ELEMENT", message: "the boxed int element did not land 7" };
+            throw { name: "PROBE_BOXED_ELEMENT", message: "the boxed int element did not land 7" };
           }
           return 8;
         }
@@ -3362,12 +3362,12 @@ public class CanonicalProjectionParityTest {
           let xs: number[] = await host.fetchSharedInts();
           let ys: number[] = await host.fetchSharedInts();
           if (xs !== ys) {
-            throw { code: "PROBE_IDENTITY", message: "the same completed array did not keep its identity" };
+            throw { name: "PROBE_IDENTITY", message: "the same completed array did not keep its identity" };
           }
           xs[0] = 8;
           let v: number = ys[0];
           if (v !== 8) {
-            throw { code: "PROBE_ALIAS", message: "the alias-observed write was lost" };
+            throw { name: "PROBE_ALIAS", message: "the alias-observed write was lost" };
           }
           return v;
         }
@@ -4366,7 +4366,7 @@ public class CanonicalProjectionParityTest {
         for (NullAdmission row : NULL_ADMISSIONS) {
             String body = row.prelude() + "let seen: string = " + row.expression() + ";\n"
                 + "if (seen !== \"" + row.seen() + "\") {\n"
-                + "  throw { code: \"PROBE_NULL_CROSSING\", message: \"" + row.message() + "\" };\n"
+                + "  throw { name: \"PROBE_NULL_CROSSING\", message: \"" + row.message() + "\" };\n"
                 + "}\nreturn null;\n";
             blocks.put(row.line(), nullFunction("export ", row.async(), row.export(), "", "null", body));
         }
@@ -4523,13 +4523,13 @@ public class CanonicalProjectionParityTest {
 
     private static String nullArrayCheck(String condition, String message) {
         return "if (" + condition + ") {\n"
-            + "  throw { code: \"PROBE_NULL_ARRAY\", message: \"" + message + "\" };\n}\n";
+            + "  throw { name: \"PROBE_NULL_ARRAY\", message: \"" + message + "\" };\n}\n";
     }
 
     private static String nullArrayIntCheck(String name, int expected) {
         return "if (" + name + " !== null) {\n"
             + nullArrayCheck(name + " !== " + expected, name + " must equal " + expected).indent(2)
-            + "} else {\n  throw { code: \"PROBE_NULL_ARRAY\", message: \"" + name
+            + "} else {\n  throw { name: \"PROBE_NULL_ARRAY\", message: \"" + name
             + " must not be null\" };\n}\n";
     }
 
@@ -6395,7 +6395,7 @@ public class CanonicalProjectionParityTest {
     private static final String INVALID_UNICODE_CALLBACK_SOURCE = """
         export function cb(x: number, values: string[]): number {
           if (values[1] !== `\\uD800`) {
-            throw {code: "LOST_UNIT", message: "callback lost the lone unit"};
+            throw {name: "LOST_UNIT", message: "callback lost the lone unit"};
           }
           return x + 1;
         }
@@ -6547,7 +6547,7 @@ public class CanonicalProjectionParityTest {
         export function main(): null {
           let s: string = host.validString();
           if (s !== "ok") {
-            throw { code: "PROBE_STRING_CARRIER", message: "the valid host string carrier did not decode to 'ok'" };
+            throw { name: "PROBE_STRING_CARRIER", message: "the valid host string carrier did not decode to 'ok'" };
           }
           return null;
         }
@@ -6561,7 +6561,7 @@ public class CanonicalProjectionParityTest {
           let xs: string[] = host.rawStringArray();
           let s: string = xs[0];
           if (s !== "ok") {
-            throw { code: "PROBE_STRING_CARRIER", message: "the raw host string element did not decode to 'ok'" };
+            throw { name: "PROBE_STRING_CARRIER", message: "the raw host string element did not decode to 'ok'" };
           }
           return null;
         }
@@ -6575,7 +6575,7 @@ public class CanonicalProjectionParityTest {
           let xs: string[][] = host.rawNestedStringArray();
           let s: string = xs[0][0];
           if (s !== "ok") {
-            throw { code: "PROBE_STRING_CARRIER", message: "the nested raw host string element did not decode to 'ok'" };
+            throw { name: "PROBE_STRING_CARRIER", message: "the nested raw host string element did not decode to 'ok'" };
           }
           return null;
         }
@@ -6590,11 +6590,11 @@ public class CanonicalProjectionParityTest {
           let s: string | null = xs[0];
           if (s !== null) {
             if (s !== "ok") {
-              throw { code: "PROBE_STRING_CARRIER", message: "the nullable raw host string element did not decode to 'ok'" };
+              throw { name: "PROBE_STRING_CARRIER", message: "the nullable raw host string element did not decode to 'ok'" };
             }
             return null;
           }
-          throw { code: "PROBE_STRING_CARRIER", message: "the nullable raw host string element decoded to null" };
+          throw { name: "PROBE_STRING_CARRIER", message: "the nullable raw host string element decoded to null" };
         }
         """;
 
@@ -6606,17 +6606,17 @@ public class CanonicalProjectionParityTest {
           let xs: (string[] | null)[] = host.rawNullableArrayArray();
           let first: string[] | null = xs[0];
           if (first !== null) {
-            throw { code: "PROBE_NULLABLE_ARRAY", message: "the null nested array element decoded to a non-null value" };
+            throw { name: "PROBE_NULLABLE_ARRAY", message: "the null nested array element decoded to a non-null value" };
           }
           let second: string[] | null = xs[1];
           if (second !== null) {
             let s: string = second[0];
             if (s !== "ok") {
-              throw { code: "PROBE_NULLABLE_ARRAY", message: "the nested raw host string element did not decode to 'ok'" };
+              throw { name: "PROBE_NULLABLE_ARRAY", message: "the nested raw host string element did not decode to 'ok'" };
             }
             return null;
           }
-          throw { code: "PROBE_NULLABLE_ARRAY", message: "the non-null nested array element decoded to null" };
+          throw { name: "PROBE_NULLABLE_ARRAY", message: "the non-null nested array element decoded to null" };
         }
         """;
 
@@ -6656,12 +6656,12 @@ public class CanonicalProjectionParityTest {
         export function main(): null {
           let xs: string[][] = host.sharedNestedStringArray();
           if (xs[0] !== xs[1]) {
-            throw { code: "PROBE_ALIAS", message: "the same host inner array became two DEAL arrays" };
+            throw { name: "PROBE_ALIAS", message: "the same host inner array became two DEAL arrays" };
           }
           xs[0][0] = "changed";
           let s: string = xs[1][0];
           if (s !== "changed") {
-            throw { code: "PROBE_ALIAS", message: "the shared host inner array did not observe the mutation through both aliases" };
+            throw { name: "PROBE_ALIAS", message: "the shared host inner array did not observe the mutation through both aliases" };
           }
           return null;
         }
@@ -6719,7 +6719,7 @@ public class CanonicalProjectionParityTest {
           let xs: string[] = host.nativeStringArray();
           let s: string = xs[0];
           if (s !== "ok") {
-            throw { code: "PROBE_NATIVE_CARRIER", message: "the declared host array carrier did not land 'ok'" };
+            throw { name: "PROBE_NATIVE_CARRIER", message: "the declared host array carrier did not land 'ok'" };
           }
           return null;
         }
@@ -6732,7 +6732,7 @@ public class CanonicalProjectionParityTest {
           let xs: string[][] = host.nativeNestedStringArray();
           let s: string = xs[0][0];
           if (s !== "ok") {
-            throw { code: "PROBE_NATIVE_CARRIER", message: "the nested declared host array carrier did not land 'ok'" };
+            throw { name: "PROBE_NATIVE_CARRIER", message: "the nested declared host array carrier did not land 'ok'" };
           }
           return null;
         }
@@ -6744,12 +6744,12 @@ public class CanonicalProjectionParityTest {
         export function main(): null {
           let xs: string[][] = host.nativeSharedNestedStringArray();
           if (xs[0] !== xs[1]) {
-            throw { code: "PROBE_NATIVE_ALIAS", message: "the same native inner carrier became two DEAL arrays" };
+            throw { name: "PROBE_NATIVE_ALIAS", message: "the same native inner carrier became two DEAL arrays" };
           }
           xs[0][0] = "changed";
           let s: string = xs[1][0];
           if (s !== "changed") {
-            throw { code: "PROBE_NATIVE_ALIAS", message: "the shared native inner carrier did not observe the mutation through both aliases" };
+            throw { name: "PROBE_NATIVE_ALIAS", message: "the shared native inner carrier did not observe the mutation through both aliases" };
           }
           return null;
         }

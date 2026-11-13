@@ -10,10 +10,10 @@ export function test_jsonable_cross_module_nested_class_array(): null {
   let json: string = JSON.stringify(p) as string;
   let p2: Lib.Parent | null = JSON.parse(json);
   if (p2 !== null) {
-    if (p2.children[0].value !== 3 || p2.children[1].value !== 4 || !(p2.children[1] instanceof Lib.Child) || p2.children === p.children) { throw { code: "TEST_FAIL", message: "cross-module nested class array mismatch" }; }
+    if (p2.children[0].value !== 3 || p2.children[1].value !== 4 || !(p2.children[1] instanceof Lib.Child) || p2.children === p.children) { throw { name: "TEST_FAIL", message: "cross-module nested class array mismatch" }; }
     return null;
   }
-  throw { code: "TEST_FAIL", message: "cross-module nested class array fromJson failed" };
+  throw { name: "TEST_FAIL", message: "cross-module nested class array fromJson failed" };
 }
 
 export function main(): null {

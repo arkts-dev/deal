@@ -13,7 +13,7 @@
 -- become null; both zero signs encode as 0. Finite values roundtrip.
 -- Private metadata selects carriers without inspecting user hooks. Class
 -- fields use declaration order and present fields only; Error exposes
--- code/message, never transport metadata. Own object index keys precede
+-- name/message, never transport metadata. Own object index keys precede
 -- other keys in creation order. Path-local cycles reject, shared children
 -- repeat. Explicit frames keep finite depth independent of the call stack.
 -- Exact class plans are artifact-local structural declarations. Reconstruction
@@ -333,11 +333,11 @@ local function encode_value(v, file, line, column, path)
       if carrierKind == 'class' or rawget(val, __K.c) or rawget(val, __K.d) then
         local identity = rawget(val, __K.id) or rawget(val, __K.classname)
         local order = rawget(val, __K.classOrder) or __K.classOrders[identity]
-        if identity == 'Error' or rawget(val, __K.d) then order = {'code', 'message'} end
+        if identity == 'Error' or rawget(val, __K.d) then order = {'name', 'message'} end
         if type(order) ~= 'table' then unsupported(val, file, line, column) end
         local plan = rawget(val,__K.classPlan)
         if identity=='Error' or rawget(val,__K.d) then plan={
-          {name='code',descriptor='string',required=true},
+          {name='name',descriptor='string',required=true},
           {name='message',descriptor='string',required=true}} end
         if type(plan)~='table' then error('JSON class value has no exact field plan',0) end
         -- Inspect structural metadata with raw reads only. Lua's border length
@@ -545,7 +545,7 @@ local function encode_value(v, file, line, column, path)
           local presence = rawget(frame.value, __K.p)
           if rawget(frame.value, __K.d) then
             if k == 'message' then element = rawget(frame.value, 'm')
-            else element = rawget(frame.value, 'code') end
+            else element = rawget(frame.value, 'name') end
           elseif type(fields) == 'table' then
             if type(presence) ~= 'table' or rawget(presence, k) then
               element = rawget(fields,k)
@@ -952,7 +952,7 @@ function json.decode(text, target, plans, file, line, column)
   local schemas, pending, seen = {}, {descriptor}, {}
   local function plan_of(name)
     if name == "Error" then return {
-      {name="code", descriptor="string", optional=false},
+      {name="name", descriptor="string", optional=false},
       {name="message", descriptor="string", optional=false}} end
     return assert(rawget(plans, name), "JSON decoding target has no exact class plan: " .. name)
   end
@@ -1061,7 +1061,7 @@ function json.decode(text, target, plans, file, line, column)
       stack[#stack+1]=child
     else
       completed=frame.value
-      if frame.class=="Error" then completed=__rt.error_value(completed.code,completed.message) end
+      if frame.class=="Error" then completed=__rt.error_value(completed.name,completed.message) end
       stack[#stack]=nil
       if #stack>0 then stack[#stack].value[frame.key]=completed end
     end

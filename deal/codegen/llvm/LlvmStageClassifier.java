@@ -668,7 +668,7 @@ public final class LlvmStageClassifier {
                                                    KindPayload.ClassNewPayload created) {
         switch (created.constructionProvider()) {
             case BUILTIN_ERROR -> {
-                for (String field : List.of("code", "message")) {
+                for (String field : List.of("name", "message")) {
                     boolean supplied = created.providedFields().stream()
                         .anyMatch(provided -> provided.name().equals(field));
                     if (!supplied) {

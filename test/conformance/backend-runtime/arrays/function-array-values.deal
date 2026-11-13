@@ -10,7 +10,7 @@ export function test_function_array_values(): number {
   let fs: ((x: number) => number)[] = [add1, add1];
   fs[1] = add2;
   let result: number = fs[0](3) + fs[1](3);
-  if (result !== 9) { throw { code: "TEST_FAIL", message: "function array failed" }; }
+  if (result !== 9) { throw { name: "TEST_FAIL", message: "function array failed" }; }
   return result;
 }
 

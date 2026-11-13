@@ -7,16 +7,16 @@ export function test_throw(): string {
   let catchRan: boolean = false;
   let caughtCode: string = "";
   try {
-    throw { code: "E_TEST", message: "test error" };
+    throw { name: "E_TEST", message: "test error" };
   } catch (e) {
     catchRan = true;
-    caughtCode = (e as Error).code;
+    caughtCode = (e as Error).name;
   }
   if (catchRan !== true) {
-    throw { code: "TEST_FAIL", message: "expected throw did not reach its catch" };
+    throw { name: "TEST_FAIL", message: "expected throw did not reach its catch" };
   }
   if (caughtCode !== "E_TEST") {
-    throw { code: "TEST_FAIL", message: "thrown Error code mismatch" };
+    throw { name: "TEST_FAIL", message: "thrown Error name mismatch" };
   }
   return "E_TEST";
 }

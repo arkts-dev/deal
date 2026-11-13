@@ -350,7 +350,7 @@ public final class CatchNarrowingIsolationProductionTest {
                   let e: string | null = "outer";
                   if (e !== null) {
                     try {
-                      throw { code: "C_STR", message: "string refinement" };
+                      throw { name: "C_STR", message: "string refinement" };
                     } catch (e) {
                       let unsound: string = e;
                     }
@@ -364,7 +364,7 @@ public final class CatchNarrowingIsolationProductionTest {
                   let e: number | null = 1;
                   if (e !== null) {
                     try {
-                      throw { code: "C_INT", message: "number refinement" };
+                      throw { name: "C_INT", message: "number refinement" };
                     } catch (e) {
                       let unsound: number = e;
                     }
@@ -378,7 +378,7 @@ public final class CatchNarrowingIsolationProductionTest {
                   let value: number | null = 1;
                   if (value !== null) {
                     try {
-                      throw { code: "C_SET_NULL", message: "set null" };
+                      throw { name: "C_SET_NULL", message: "set null" };
                     } catch (err) {
                       value = null;
                     }
@@ -396,7 +396,7 @@ public final class CatchNarrowingIsolationProductionTest {
                 async function probe(e: number | null): Promise<number> {
                   if (e !== null) {
                     try {
-                      throw { code: "C_AWAIT", message: "await" };
+                      throw { name: "C_AWAIT", message: "await" };
                     } catch (e) {
                       let captured: Error = e as Error;
                       let resumed: number = await echoInt(1);
@@ -421,7 +421,7 @@ public final class CatchNarrowingIsolationProductionTest {
                   if (e !== null) {
                     try {
                       let resumed: number = await echoInt(1);
-                      throw { code: "C_AWAIT_TRY", message: "await" };
+                      throw { name: "C_AWAIT_TRY", message: "await" };
                     } catch (e) {
                       let captured: Error = e as Error;
                     }

@@ -4,16 +4,16 @@
 // @features: async, await, try-catch, error
 
 async function boom(): Promise<number> {
-  throw { code: "E_INNER", message: "inner" };
+  throw { name: "E_INNER", message: "inner" };
 }
 
 export async function test_awaited_error_catch(): Promise<null> {
   try {
     let x: number = await boom();
-    throw { code: "TEST_FAIL", message: "awaited throw returned a value" };
+    throw { name: "TEST_FAIL", message: "awaited throw returned a value" };
   } catch (e) {
-    if ((e as Error).code !== "E_INNER") {
-      throw { code: "TEST_FAIL", message: "wrong error code" };
+    if ((e as Error).name !== "E_INNER") {
+      throw { name: "TEST_FAIL", message: "wrong error name" };
     }
   }
   return null;

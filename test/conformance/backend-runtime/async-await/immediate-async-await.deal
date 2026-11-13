@@ -10,7 +10,7 @@ async function immediate(): Promise<number> {
 export async function test_immediate_async(): Promise<null> {
   let v: number = await immediate();
   if (v !== 42) {
-    throw { code: "TEST_FAIL", message: "immediate async result mismatch" };
+    throw { name: "TEST_FAIL", message: "immediate async result mismatch" };
   }
   return null;
 }

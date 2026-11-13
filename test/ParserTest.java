@@ -958,7 +958,7 @@ public class ParserTest {
         // Delete, throw and expression statements.
         assertParseError(parse("function f(t: Record<string, unknown>): null { delete t.x return null; }"),
             "E1053", "delete before return");
-        assertParseError(parse("function f(): null { throw { code: \"x\", message: \"y\" } return null; }"),
+        assertParseError(parse("function f(): null { throw { name: \"x\", message: \"y\" } return null; }"),
             "E1053", "throw before return");
         assertParseError(parse("function f(): null { f() return null; }"),
             "E1053", "expression statement before return");

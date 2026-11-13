@@ -2,7 +2,7 @@
 // @expected: runtime-ok
 // @features: arrays, closures, control-flow, classes
 class Item {x:number;}
-function check(ok:boolean,label:string):void{if(!ok){throw {code:label,message:label};}}
+function check(ok:boolean,label:string):void{if(!ok){throw {name:label,message:label};}}
 function one(x:number):number{return x+1;}
 function fromReturn(xs:number[]):number[]{return Array.from(xs,one);}
 export function main():null {
@@ -38,16 +38,16 @@ export function main():null {
   check(identities[0]===item,"nominal reference identity");identities[0].x=8;check(item.x===8,"nominal alias");
   const nullable:(number|null|undefined)[]=[-0,null,undefined,0/0,1/0];
   const copied=Array.from(nullable,(x:number|null|undefined,i:number):number|null|undefined=>x);
-  let zero=copied[0];if(zero!==null){if(zero!==undefined){check(1/zero===-1/0,"negative zero");}}else{throw {code:"ZERO",message:"zero"};}
+  let zero=copied[0];if(zero!==null){if(zero!==undefined){check(1/zero===-1/0,"negative zero");}}else{throw {name:"ZERO",message:"zero"};}
   check(copied[1]===null && copied[2]===undefined,"nullish values");
   let nan=copied[3];if(nan!==null && nan!==undefined){check(nan!==nan,"NaN");}
   const units=Array.from(["\uD800","🌍"],(x:string,i:number):string=>x);check(units[0]==="\uD800" && units[1]==="🌍","UTF16");
   let mixed:unknown[]=[false,null,undefined,"text",1];let unknowns=Array.from(mixed,(x:unknown,i:number):unknown=>x);
   let first=unknowns[0];check(unknowns.length===5 && typeof first==="boolean" && unknowns[1]===null && unknowns[2]===undefined,"unknown descriptor");
   let destination:number[]=[77];let before:unknown=destination;calls=0;
-  let failure:Error={code:"MAPPER",message:"stop"};
+  let failure:Error={name:"MAPPER",message:"stop"};
   try{destination=Array.from([1,2,3],(x:number,i:number):number=>{calls=calls+1;if(i===1){throw failure;}return x;});}
-  catch(e){if(e instanceof Error){check(e===failure,"failure identity");}else{throw {code:"ERROR",message:"error"};}}
+  catch(e){if(e instanceof Error){check(e===failure,"failure identity");}else{throw {name:"ERROR",message:"error"};}}
   let after:unknown=destination;check(after===before && destination[0]===77 && calls===2,"abrupt no publication");
   calls=0;const badSource=():number[]=>{throw failure;};
   try{Array.from(badSource(),mapper());}catch(e){calls=calls+1;}
@@ -56,10 +56,10 @@ export function main():null {
   try{Array.from(source(),badMapper());}catch(e){calls=calls+1;}
   check(calls===2 && sources===2,"mapper evaluation abrupt");
   let refined:number[]|null=[1];const clear=():void=>{refined=null;};let rejected=false;
-  if(refined!==null){clear();try{Array.from(refined,mapper());}catch(e){check((e as Error).code==="E8001","stale source");rejected=true;}}
+  if(refined!==null){clear();try{Array.from(refined,mapper());}catch(e){check((e as Error).name==="E8001","stale source");rejected=true;}}
   check(rejected && mappers===3,"stale source stops mapper");
   let selected:((x:number)=>number)|null=one;const clearMapper=():void=>{selected=null;};
-  rejected=false;if(selected!==null){clearMapper();try{Array.from(xs,selected);}catch(e){check((e as Error).code==="E8001","stale mapper");rejected=true;}}
+  rejected=false;if(selected!==null){clearMapper();try{Array.from(xs,selected);}catch(e){check((e as Error).name==="E8001","stale mapper");rejected=true;}}
   check(rejected,"stale mapper rejected");
   const recurse=(n:number):number=>{if(n===0){return 1;}const next=Array.from([n-1],(x:number):number=>recurse(x));return n+next[0];};
   check(recurse(4)===11,"recursive mapping");

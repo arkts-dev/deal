@@ -14,11 +14,11 @@ function value(text: string): number {
 function roundtrip(text: string, expected: number): null {
   let parsed: Record<string, unknown> = JSON.parse(text);
   if ((parsed.v as number) !== expected) {
-    throw {code: "TEST_FAIL", message: "numeric parse mismatch"};
+    throw {name: "TEST_FAIL", message: "numeric parse mismatch"};
   }
   let encoded: string = JSON.stringify(parsed) as string;
   if (value(encoded) !== expected) {
-    throw {code: "TEST_FAIL", message: "numeric roundtrip mismatch"};
+    throw {name: "TEST_FAIL", message: "numeric roundtrip mismatch"};
   }
   return null;
 }
@@ -26,16 +26,16 @@ function roundtrip(text: string, expected: number): null {
 export function main(): null {
   let t: Record<string, unknown> = JSON.parse("{\"a\":2147483647,\"b\":2147483648,\"c\":-2147483648,\"d\":-2147483649,\"z\":-0}");
   if ((t.a as number) !== 2147483647 || (t.c as number) !== -2147483648) {
-    throw {code: "TEST_FAIL", message: "signed32 boundary values"};
+    throw {name: "TEST_FAIL", message: "signed32 boundary values"};
   }
   if ((t.b as number) !== 2147483647 + 1 || (t.d as number) !== -2147483648 - 1) {
-    throw {code: "TEST_FAIL", message: "values outside signed32"};
+    throw {name: "TEST_FAIL", message: "values outside signed32"};
   }
   let z: number = t.z as number;
-  if (1 / z !== -1 / 0) { throw {code: "TEST_FAIL", message: "parse lost negative zero"}; }
+  if (1 / z !== -1 / 0) { throw {name: "TEST_FAIL", message: "parse lost negative zero"}; }
   let s: string = JSON.stringify(t) as string;
   if (!str.contains(s, "\"z\":0") || str.contains(s, "-0")) {
-    throw {code: "TEST_FAIL", message: "stringify must normalize negative zero"};
+    throw {name: "TEST_FAIL", message: "stringify must normalize negative zero"};
   }
   roundtrip("{\"v\":-2147483649}", -2147483649);
   roundtrip("{\"v\":-9999999999}", -9999999999);

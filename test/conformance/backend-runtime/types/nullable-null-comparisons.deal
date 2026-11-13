@@ -11,14 +11,14 @@ class Flags {
 
 function expectTrue(what: string, condition: boolean): null {
   if (!condition) {
-    throw { code: "TEST_FAIL", message: what };
+    throw { name: "TEST_FAIL", message: what };
   }
   return null;
 }
 
 function expectFalse(what: string, condition: boolean): null {
   if (condition) {
-    throw { code: "TEST_FAIL", message: what };
+    throw { name: "TEST_FAIL", message: what };
   }
   return null;
 }

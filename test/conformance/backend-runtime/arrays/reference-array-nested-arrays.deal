@@ -9,40 +9,40 @@ export function test_array_nested_arrays(): null {
   // wrapper reference preserved.
   let m: number[][][] = [[[0]], [[0, 0]]];
   if (m.length !== 2 || m[0].length !== 1 || m[1].length !== 1) {
-    throw { code: "TEST_FAIL", message: "number[][][] literal shape mismatch" };
+    throw { name: "TEST_FAIL", message: "number[][][] literal shape mismatch" };
   }
   m[0][0][0] = 9;
   m[1][0][0] = 8;
   if (m[0][0][0] !== 9 || m[1][0][0] !== 8) {
-    throw { code: "TEST_FAIL", message: "number[][][] depth mutation mismatch" };
+    throw { name: "TEST_FAIL", message: "number[][][] depth mutation mismatch" };
   }
   // Append inside a nested array: the outer wrapper identity is stable
   // and every alias observes the grown element plus later writes.
   let alias: number[][][] = m;
   m[0][m[0].length] = [0, 0, 0];
   if (m[0].length !== 2 || alias[0].length !== 2) {
-    throw { code: "TEST_FAIL", message: "number[][][] append-growth length mismatch" };
+    throw { name: "TEST_FAIL", message: "number[][][] append-growth length mismatch" };
   }
   alias[0][1][0] = 44;
   if (m[0][1][0] !== 44) {
-    throw { code: "TEST_FAIL", message: "number[][][] alias must observe the write" };
+    throw { name: "TEST_FAIL", message: "number[][][] alias must observe the write" };
   }
   // number[][] | null: the outer null is the DEAL null and a real array
   // assignment flows through the same wrapper reference.
   let outer: number[][] | null = null;
   if (outer !== null) {
-    throw { code: "TEST_FAIL", message: "number[][] | null outer null mismatch" };
+    throw { name: "TEST_FAIL", message: "number[][] | null outer null mismatch" };
   }
   outer = m[0];
   if (outer !== null) {
     if (outer.length !== 2) {
-      throw { code: "TEST_FAIL", message: "number[][] | null value length mismatch" };
+      throw { name: "TEST_FAIL", message: "number[][] | null value length mismatch" };
     }
     if (outer[0][0] !== 9) {
-      throw { code: "TEST_FAIL", message: "number[][] | null value reference mismatch" };
+      throw { name: "TEST_FAIL", message: "number[][] | null value reference mismatch" };
     }
   } else {
-    throw { code: "TEST_FAIL", message: "number[][] | null assignment lost" };
+    throw { name: "TEST_FAIL", message: "number[][] | null assignment lost" };
   }
   // (((number[] | null)[])[])[] — three array levels over the nullable
   // number[] element (the [[[?number[]]]] canonical-descriptor composition):
@@ -54,50 +54,50 @@ export function test_array_nested_arrays(): null {
   let deep: (((number[] | null)[])[])[] = [middle];
   let innermost: number[] | null = deep[0][0][0];
   if (innermost !== null) {
-    throw { code: "TEST_FAIL", message: "deep composition innermost null mismatch" };
+    throw { name: "TEST_FAIL", message: "deep composition innermost null mismatch" };
   }
   deep[0][0][deep[0][0].length] = null;
   if (deep[0][0].length !== 2) {
-    throw { code: "TEST_FAIL", message: "deep composition null append length mismatch" };
+    throw { name: "TEST_FAIL", message: "deep composition null append length mismatch" };
   }
   deep[0][0][deep[0][0].length] = [0, 0];
   if (deep[0][0].length !== 3) {
-    throw { code: "TEST_FAIL", message: "deep composition value append length mismatch" };
+    throw { name: "TEST_FAIL", message: "deep composition value append length mismatch" };
   }
   let tail: number[] | null = deep[0][0][2];
   if (tail !== null) {
     tail[0] = 5;
   } else {
-    throw { code: "TEST_FAIL", message: "deep composition real element lost" };
+    throw { name: "TEST_FAIL", message: "deep composition real element lost" };
   }
   let again: number[] | null = deep[0][0][2];
   if (again !== null) {
     if (again[0] !== 5) {
-      throw { code: "TEST_FAIL", message: "deep composition depth mutation mismatch" };
+      throw { name: "TEST_FAIL", message: "deep composition depth mutation mismatch" };
     }
   } else {
-    throw { code: "TEST_FAIL", message: "deep composition value element lost" };
+    throw { name: "TEST_FAIL", message: "deep composition value element lost" };
   }
   // Nested past-end read: the strict v1.4 array bounds failure E8002 at
   // the read expression, never a null flowing into the element-typed
   // boundary.
   try {
     let bad: number[][] = m[9];
-    throw { code: "TEST_FAIL", message: "expected E8002 before completing" };
+    throw { name: "TEST_FAIL", message: "expected E8002 before completing" };
   } catch (value) {
     let e: Error = value as Error;
-    if (e.code !== "E8002") {
-      throw { code: "TEST_FAIL", message: "expected E8002, got " + e.code };
+    if (e.name !== "E8002") {
+      throw { name: "TEST_FAIL", message: "expected E8002, got " + e.name };
     }
   }
   // Nested negative index raises E8002 at the read.
   try {
     let bad: number[][] = m[-1];
-    throw { code: "TEST_FAIL", message: "expected E8002 before completing" };
+    throw { name: "TEST_FAIL", message: "expected E8002 before completing" };
   } catch (value) {
     let e: Error = value as Error;
-    if (e.code !== "E8002") {
-      throw { code: "TEST_FAIL", message: "expected E8002, got " + e.code };
+    if (e.name !== "E8002") {
+      throw { name: "TEST_FAIL", message: "expected E8002, got " + e.name };
     }
   }
   return null;

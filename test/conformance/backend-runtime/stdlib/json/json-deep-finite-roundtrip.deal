@@ -22,7 +22,7 @@ export function test_json_deep_finite_roundtrip(): null {
   }
   let leaf: number = cursor.d as number;
   if (leaf !== 1) {
-    throw { code: "TEST_FAIL", message: "the 600-level nesting must round-trip" };
+    throw { name: "TEST_FAIL", message: "the 600-level nesting must round-trip" };
   }
   return null;
 }

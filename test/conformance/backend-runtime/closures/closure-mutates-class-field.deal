@@ -12,7 +12,7 @@ export function test_closure_mutates_class_field(): number {
     return b.value;
   };
   bump();
-  if (b.value !== 5) { throw { code: "TEST_FAIL", message: "closure class field mutation failed" }; }
+  if (b.value !== 5) { throw { name: "TEST_FAIL", message: "closure class field mutation failed" }; }
   return b.value;
 }
 

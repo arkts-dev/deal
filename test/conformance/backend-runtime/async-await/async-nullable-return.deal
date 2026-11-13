@@ -6,7 +6,7 @@
 export async function f_null(): Promise<string | null> {
   let result: string | null = null;
   if (result !== null) {
-    throw { code: "TEST_FAIL", message: "async nullable f_null: expected exact null completion" };
+    throw { name: "TEST_FAIL", message: "async nullable f_null: expected exact null completion" };
   }
   return result;
 }
@@ -15,10 +15,10 @@ export async function f_value(): Promise<string | null> {
   let result: string | null = "hello";
   if (result !== null) {
     if (result !== "hello") {
-      throw { code: "TEST_FAIL", message: "async nullable f_value: expected non-null string 'hello'" };
+      throw { name: "TEST_FAIL", message: "async nullable f_value: expected non-null string 'hello'" };
     }
   } else {
-    throw { code: "TEST_FAIL", message: "async nullable f_value: expected non-null string completion" };
+    throw { name: "TEST_FAIL", message: "async nullable f_value: expected non-null string completion" };
   }
   return result;
 }

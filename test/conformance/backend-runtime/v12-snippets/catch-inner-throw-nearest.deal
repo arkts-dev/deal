@@ -7,11 +7,11 @@ import * as c from "std/console";
 export function main(): null {
  let trace:string="";
  try {
-  try {trace=trace+"A"; throw {code:"FIRST",message:"one"};} catch(value) { let e: Error = value as Error;
-   if(e.code!=="FIRST") {throw {code:"TEST_FAIL",message:"wrong inner"};} trace=trace+"B"; throw {code:"SECOND",message:"two"};
+  try {trace=trace+"A"; throw {name:"FIRST",message:"one"};} catch(value) { let e: Error = value as Error;
+   if(e.name!=="FIRST") {throw {name:"TEST_FAIL",message:"wrong inner"};} trace=trace+"B"; throw {name:"SECOND",message:"two"};
   }
   trace=trace+"X";
- } catch(value) {let e: Error = value as Error; if(e.code!=="SECOND" || e.message!=="two") {throw {code:"TEST_FAIL",message:"wrong outer"};} trace=trace+"C";}
- if(trace!=="ABC") {throw {code:"TEST_FAIL",message:"catch recursively handled own throw"};}
+ } catch(value) {let e: Error = value as Error; if(e.name!=="SECOND" || e.message!=="two") {throw {name:"TEST_FAIL",message:"wrong outer"};} trace=trace+"C";}
+ if(trace!=="ABC") {throw {name:"TEST_FAIL",message:"catch recursively handled own throw"};}
  c.log("catch-inner-throw-nearest"); return null;
 }

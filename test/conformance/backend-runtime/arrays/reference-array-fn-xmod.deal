@@ -9,15 +9,15 @@ export function test_array_fn_xmod(): number {
   let f: (b: number[]) => number[] = Lib.makeId();
   let g: (b: number[]) => number[] = Lib.makeId();
   if (f([0, 0]).length !== 2) {
-    throw { code: "TEST_FAIL", message: "imported fn invoke failed" };
+    throw { name: "TEST_FAIL", message: "imported fn invoke failed" };
   }
   if (!Lib.sameId(f, g)) {
-    throw { code: "TEST_FAIL", message: "imported fn identity failed" };
+    throw { name: "TEST_FAIL", message: "imported fn identity failed" };
   }
   let m: (b: number[]) => number[] = Lib.makeId();
   let h: (b: number[], v: number) => number[] = m;
   if (h([0], 5)[0] !== 0) {
-    throw { code: "TEST_FAIL", message: "imported fn adapter failed" };
+    throw { name: "TEST_FAIL", message: "imported fn adapter failed" };
   }
   return 0;
 }

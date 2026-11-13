@@ -7,13 +7,13 @@ import * as math from "std/math";
 
 export function test_math_int_helpers(): null {
   if (math.absNumber(-7) !== 7) {
-    throw { code: "TEST_FAIL", message: "absNumber mismatch" };
+    throw { name: "TEST_FAIL", message: "absNumber mismatch" };
   }
   if (math.floor(3.75) !== 3) {
-    throw { code: "TEST_FAIL", message: "floor mismatch" };
+    throw { name: "TEST_FAIL", message: "floor mismatch" };
   }
   if (math.ceil(8.25) !== 9) {
-    throw { code: "TEST_FAIL", message: "ceil mismatch" };
+    throw { name: "TEST_FAIL", message: "ceil mismatch" };
   }
   return null;
 }

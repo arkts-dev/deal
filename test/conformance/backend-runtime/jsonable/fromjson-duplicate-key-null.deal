@@ -11,21 +11,21 @@ export function test_fromjson_duplicate_key(): null {
   for (let text of ["{\"value\":1,\"value\":2}", "{\"value\":1,\"\\u0076alue\":2}"]) {
     let rejected = false;
     try { let duplicate: Depth = JSON.parse(text); }
-    catch (e) { let error = e as Error; rejected = error.code === "E8001" && error.message.includes("duplicate key"); }
-    if (!rejected) { throw {code: "TEST_FAIL", message: "a duplicate decoded key must throw"}; }
+    catch (e) { let error = e as Error; rejected = error.name === "E8001" && error.message.includes("duplicate key"); }
+    if (!rejected) { throw {name: "TEST_FAIL", message: "a duplicate decoded key must throw"}; }
   }
   let exact: Depth = JSON.parse("{\"value\":1.0}");
-  if (exact.value !== 1) { throw {code: "TEST_FAIL", message: "decimal value mismatch"}; }
+  if (exact.value !== 1) { throw {name: "TEST_FAIL", message: "decimal value mismatch"}; }
   let padded: Depth = JSON.parse("{\"value\":1e0000000000000000001}");
-  if (padded.value !== 10) { throw {code: "TEST_FAIL", message: "zero-padded exponent value mismatch"}; }
+  if (padded.value !== 10) { throw {name: "TEST_FAIL", message: "zero-padded exponent value mismatch"}; }
   let below: Depth = JSON.parse("{\"value\":-2147483649}");
-  if (below.value !== -2147483649) { throw {code: "TEST_FAIL", message: "below signed32 value mismatch"}; }
+  if (below.value !== -2147483649) { throw {name: "TEST_FAIL", message: "below signed32 value mismatch"}; }
   let far: Depth = JSON.parse("{\"value\":-9999999999}");
-  if (far.value !== -9999999999) { throw {code: "TEST_FAIL", message: "large binary64 value mismatch"}; }
+  if (far.value !== -9999999999) { throw {name: "TEST_FAIL", message: "large binary64 value mismatch"}; }
   let lower: Depth = JSON.parse("{\"value\":-2147483648}");
-  if (lower.value !== -2147483648) { throw {code: "TEST_FAIL", message: "signed32 boundary value mismatch"}; }
+  if (lower.value !== -2147483648) { throw {name: "TEST_FAIL", message: "signed32 boundary value mismatch"}; }
   let rounded: Depth = JSON.parse("{\"value\":2147483647.00000001}");
-  if (rounded.value !== 2147483647) { throw {code: "TEST_FAIL", message: "rounded binary64 value mismatch"}; }
+  if (rounded.value !== 2147483647) { throw {name: "TEST_FAIL", message: "rounded binary64 value mismatch"}; }
   return null;
 }
 

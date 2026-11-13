@@ -9,7 +9,7 @@ export function test_math_sqrt_negative(): number {
   let result = math.sqrt(-1.0);
   if (result === result || math.sqrt(-1 / 0) === math.sqrt(-1 / 0)
       || 1 / math.sqrt(-0) !== -1 / 0 || math.sqrt(1 / 0) !== 1 / 0) {
-    throw {code: "TEST_FAIL", message: "sqrt binary64 contract"};
+    throw {name: "TEST_FAIL", message: "sqrt binary64 contract"};
   }
   return 0;
 }

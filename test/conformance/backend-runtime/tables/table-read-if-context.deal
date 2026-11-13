@@ -6,5 +6,5 @@
 export function main(): null {
   let t: Record<string, unknown> = { enabled: true };
   if (t.enabled as boolean) { return null; }
-  throw { code: "TEST_FAIL", message: "boolean table field was false" };
+  throw { name: "TEST_FAIL", message: "boolean table field was false" };
 }

@@ -194,7 +194,7 @@ function text(): string {
 // Async calls are awaited directly inside async bodies; the embedding
 // owns scheduling and host implementations for declared external modules.
 
-// Error is a builtin nominal class with string code/message fields.
+// Error is a builtin nominal class with required string name/message fields.
 function checkedRead(values: number[]): number | null {
   try {
     return values[99];

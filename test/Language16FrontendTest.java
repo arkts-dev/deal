@@ -37,6 +37,18 @@ public final class Language16FrontendTest {
             throw new AssertionError(source + "\n" + diagnostics);
     }
     public static void main(String[] args) {
+        check("function f():Error{return {name:\"Custom\",message:\"m\"};}",true);
+        check("function f():Error{return {message:\"m\",name:\"Custom\"};}",true);
+        for(String fields:List.of("", "name:\"X\"", "message:\"m\"", "code:\"X\",message:\"m\"",
+                "name:1,message:\"m\"", "name:\"X\",message:false", "name:\"X\",message:\"m\",extra:1"))
+            check("function f():Error{return {"+fields+"};}",false);
+        check("function f(e:Error):string{return e.name;}",true);
+        check("function f(e:Error):string{return e.code;}",false);
+        check("function f():Error{return Error(\"m\");}",false);
+        check("function f():Error{return new Error(\"m\");}",false);
+        check("function f():Error{let r:Record<string,unknown>={name:\"X\",message:\"m\"};return r;}",false);
+        check("function f(e:Error):void{delete e.name;}",false);
+        check("function f(e:Error):void{e.name=undefined;}",false);
         var optionalTokens = new Lexer("a?.x ?? a?.[0] ?? f?.() ? .3 : .4", "test.deal").tokenize();
         if (optionalTokens.hasErrors()) throw new AssertionError(optionalTokens.diagnostics());
         var guards = optionalTokens.tokens().stream().filter(t -> t.type()==TokenType.OPTIONAL_CHAIN).toList();
@@ -387,7 +399,7 @@ public final class Language16FrontendTest {
         check("function f(): null { for (let x: number of [1,2]) {} return null; }", false);
         check("function f(): null { let x: number | undefined = undefined; if (x !== undefined) { let y: number = x; } return null; }", true);
         check("function f(x: unknown): void { if (typeof x === \"string\") { let y: string = x; } }", true);
-        check("function f(): void { try { throw { code: \"E\", message: \"x\" }; } catch(e) { if(e instanceof Error) { let m: string = e.message; } } }", true);
+        check("function f(): void { try { throw { name: \"E\", message: \"x\" }; } catch(e) { if(e instanceof Error) { let m: string = e.message; } } }", true);
         check("function f(): null { let x = 0123; return null; }", false);
         check("function f(): null { return\nnull; }", false);
         check("function f(): null { throw/*\n*/{ code: \"E\", message: \"x\" }; }", false);
@@ -424,9 +436,9 @@ public final class Language16FrontendTest {
         for(String type:java.util.List.of("number","unknown","number[]","null","undefined"))
             check("function f(x:"+type+"):void{Object.hasOwn(x,\"x\");}",false);
         check("class C { x?: string; } function f(): null { let c: C = {}; let x: string | undefined = c.x; return null; }", true);
-        check("function f(x: unknown): void { if (!(x instanceof Error)) {} else { let code: string = x.code; } }", true);
-        check("function f(x: unknown): void { if (!(x instanceof Error)) { let code: string = x.code; } }", false);
-        check("function f(x: unknown): void { if (!!(x instanceof Error)) { let code: string = x.code; } }", true);
+        check("function f(x: unknown): void { if (!(x instanceof Error)) {} else { let name: string = x.name; } }", true);
+        check("function f(x: unknown): void { if (!(x instanceof Error)) { let name: string = x.name; } }", false);
+        check("function f(x: unknown): void { if (!!(x instanceof Error)) { let name: string = x.name; } }", true);
         check("function f(x: unknown): void { if (typeof x === \"number\") { x = \"changed\"; let y: number = x; } }", false);
         check("function f(x: unknown): void { if (typeof x === \"number\") { let g: () => number = function(): number { return x; }; } }", false);
         check("async function tick(): Promise<void> {} async function f(x: unknown): Promise<void> { if (typeof x === \"number\") { await tick(); let y: number = x; } }", false);
@@ -437,7 +449,7 @@ public final class Language16FrontendTest {
         check("function f(a: unknown, b: unknown): boolean { return a === b; }", true);
         check("function f(x: unknown): void { while (typeof x === \"number\") { let y: number = x; x = \"done\"; } }", true);
         check("function f(x: number | null): void { while (x !== null) { let y: number = x; x = null; } }", true);
-        check("function f(x: unknown): void { while (x instanceof Error) { let y: string = x.code; x = null; } }", true);
+        check("function f(x: unknown): void { while (x instanceof Error) { let y: string = x.name; x = null; } }", true);
         check("function f(x: unknown): void { while (typeof x === \"number\") { x = \"done\"; let y: number = x; } }", false);
         check("async function tick(): Promise<void> {} async function f(x: unknown): Promise<void> { while (typeof x === \"number\") { await tick(); let y: number = x; } }", false);
         check("function f(): void { let x: unknown | null | null = 1; }", false);

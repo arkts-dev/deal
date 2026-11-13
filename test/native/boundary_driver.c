@@ -1297,23 +1297,24 @@ static void check_live_graphs(void) {
     }
     deal_error *error = deal_error_create("ABC", "message", &test_origin);
     (void)deal_root_scope_hold(error);
-    const char *code = NULL;
-    (void)deal_error_code(error, &code);
+    size_t name_length = 0u;
+    const char *name = deal_error_name_bytes(error, &name_length);
+    check(name_length == 3u, "builtin Error name has its own length");
     deal_data error_value = deal_data_of_reference(DEAL_DATA_ERROR, error);
     check(live_check(error_value, "Error").error == NULL,
           "valid builtin Error fields admit the original Error");
-    char *missing_code = NULL;
-    memcpy(error, &missing_code, sizeof(missing_code));
+    char *missing_name = NULL;
+    memcpy(error, &missing_name, sizeof(missing_name));
     check(live_check(error_value, "unknown").error != NULL,
-          "unknown graph validation rejects a builtin Error without code");
-    memcpy(error, &code, sizeof(code));
-    memcpy((void *)code, "\xed\xa0\x80", 3u);
+          "unknown graph validation rejects a builtin Error without name");
+    memcpy(error, &name, sizeof(name));
+    memcpy((void *)name, "\xed\xa0\x80", 3u);
     check(live_check(error_value, "Error").error == NULL,
           "builtin Error validation admits a lone UTF-16 unit without replacement");
-    memcpy((void *)code, "\xe2\x82\x00", 3u);
+    memcpy((void *)name, "\xe2\x82\x00", 3u);
     check(live_check(error_value, "Error").error != NULL,
           "builtin Error validation rejects malformed bytes without allocating a string");
-    memcpy((void *)code, "ABC", 3u);
+    memcpy((void *)name, "ABC", 3u);
     deal_gc_collect_full();
     check(live_check(error_value, "Error").error == NULL,
           "the repaired Error keeps its identity across collection");
@@ -1344,8 +1345,8 @@ static void check_error_text_spans(void) {
           "Error snapshot retains text after NUL");
     deal_error_snapshot_release(snapshot);
     size_t length = 0u;
-    const char *bytes = deal_error_code_bytes(error, &length);
-    check(length == sizeof(code_bytes), "Error span retains its full length");
+    const char *bytes = deal_error_name_bytes(error, &length);
+    check(length == sizeof(code_bytes), "Error name span retains its full length");
     deal_data datum = {0};
     datum.tag = DEAL_DATA_ERROR;
     datum.reference = error;
@@ -1355,8 +1356,12 @@ static void check_error_text_spans(void) {
     check(live_check(datum, "Error").error != NULL, "Error checks do not stop at embedded NUL");
     ((char *)bytes)[2] = (char)0xed;
     check(live_check(datum, "Error").error == NULL, "Error span repair retries on the same identity");
-    deal_error_set_code_value(error, message);
+    deal_error_set_name_value(error, message);
     deal_error_set_message_value(error, code);
+    read = deal_error_name_value(error);
+    check(deal_text_compare(message, read) == 0, "Error name mutation preserves full text");
+    read = deal_error_code_value(error);
+    check(deal_text_compare(code, read) == 0, "Error name mutation leaves diagnostic code unchanged");
     deal_gc_collect_full();
     read = deal_error_message_value(error);
     check(deal_text_compare(code, read) == 0, "Error mutation and collection preserve full text");

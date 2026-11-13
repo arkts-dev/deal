@@ -10,7 +10,7 @@ export function test_closure_captures_imported_function(): number {
     return Lib.add(x, 3);
   };
   let result: number = f(4);
-  if (result !== 7) { throw { code: "TEST_FAIL", message: "closure imported function failed" }; }
+  if (result !== 7) { throw { name: "TEST_FAIL", message: "closure imported function failed" }; }
   return result;
 }
 

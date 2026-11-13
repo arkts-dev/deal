@@ -11,6 +11,6 @@ export function main(): null {
     return a * 10 + b;
   };
   let n: number = pair(one(next(),), next(),);
-  if (n !== 12 || order !== 2) { throw { code: "TEST", message: "trailing call effects" }; }
+  if (n !== 12 || order !== 2) { throw { name: "TEST", message: "trailing call effects" }; }
   return null;
 }

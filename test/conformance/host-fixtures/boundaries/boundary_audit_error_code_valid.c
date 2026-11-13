@@ -5,12 +5,12 @@ static deal_host_result impl_edit(const deal_value *args, size_t argc) {
     (void)argc;
     if (saved) checked(deal_release(saved));
     checked(deal_retain(args[0], &saved));
-    checked(deal_field_set(args[0], "code", text("changed 🌍")));
+    checked(deal_field_set(args[0], "name", text("changed 🌍")));
     return result(undefined_value());
 }
 static deal_host_result impl_repair(const deal_value *args, size_t argc) {
     (void)args; (void)argc;
-    checked(deal_field_set(retained(saved, "Error"), "code", text("repaired")));
+    checked(deal_field_set(retained(saved, "Error"), "name", text("repaired")));
     return result(undefined_value());
 }
 const deal_host_export deal_host_exports_probe[] = {

@@ -5,7 +5,7 @@
 import * as c from "std/console";
 
 function check(ok:boolean):void {
-  if(!ok){throw {code:"TEST_FAIL",message:"nested for-of"};}
+  if(!ok){throw {name:"TEST_FAIL",message:"nested for-of"};}
 }
 
 export function main():null {

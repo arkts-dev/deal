@@ -8,5 +8,5 @@ export async function plusOne(x: number): Promise<number> {
 }
 
 export async function fail(): Promise<number> {
-  throw { code: "ASYNC_FAIL", message: "async failure" };
+  throw { name: "ASYNC_FAIL", message: "async failure" };
 }

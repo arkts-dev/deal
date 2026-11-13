@@ -15,7 +15,7 @@ public record ClassLayout(ClassId classId, List<FieldLayout> fields) {
 
     public static final ClassLayout BUILTIN_ERROR = new ClassLayout(
         ClassId.ERROR, List.of(
-            new FieldLayout("code", RuntimeDescriptor.String.INSTANCE, true,
+            new FieldLayout("name", RuntimeDescriptor.String.INSTANCE, true,
                 ConstructionProvider.BUILTIN_ERROR),
             new FieldLayout("message", RuntimeDescriptor.String.INSTANCE, true,
                 ConstructionProvider.BUILTIN_ERROR)));

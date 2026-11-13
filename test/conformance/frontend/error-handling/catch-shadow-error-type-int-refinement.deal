@@ -7,7 +7,7 @@ export function main(): null {
   let e: number | null = 1;
   if (e !== null) {
     try {
-      throw { code: "C_INT", message: "number refinement" };
+      throw { name: "C_INT", message: "number refinement" };
     } catch (e) {
       let captured: Error = e as Error;
       let message: string = captured.message;

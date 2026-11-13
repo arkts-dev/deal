@@ -4,30 +4,30 @@
 // @features: type-system, nullable, narrowing, tables, runtime-errors
 
 function expectNoError(what: string): null {
-  throw { code: "CONTROL_FAIL", message: what + ": no error was raised" };
+  throw { name: "CONTROL_FAIL", message: what + ": no error was raised" };
 }
 
 function expectCaught(value: unknown, what: string): null {
   let e: Error = value as Error;
-  if (e.code !== "E8001") {
-    throw { code: "CONTROL_FAIL", message: what + ": expected E8001, got " + e.code };
+  if (e.name !== "E8001") {
+    throw { name: "CONTROL_FAIL", message: what + ": expected E8001, got " + e.name };
   }
   if (e.message !== "expected table") {
-    throw { code: "CONTROL_FAIL", message: what + ": expected the typed-boundary text, got " + e.message };
+    throw { name: "CONTROL_FAIL", message: what + ": expected the typed-boundary text, got " + e.message };
   }
   return null;
 }
 
 function expectEqual(what: string, actual: number, expected: number): null {
   if (actual !== expected) {
-    throw { code: "CONTROL_FAIL", message: what + " changed the value" };
+    throw { name: "CONTROL_FAIL", message: what + " changed the value" };
   }
   return null;
 }
 
 function expectTrue(what: string, condition: boolean): null {
   if (!condition) {
-    throw { code: "CONTROL_FAIL", message: what + " changed the value" };
+    throw { name: "CONTROL_FAIL", message: what + " changed the value" };
   }
   return null;
 }

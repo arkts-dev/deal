@@ -1,25 +1,25 @@
 // @spec: Runtime execution model
-// @description: Lone UTF-16 Error code survives Record graph admission with live aliases
+// @description: Lone UTF-16 Error name survives Record graph admission with live aliases
 // @expected: runtime-ok
 // @features: boundary-validation, host-abi
 import * as printer from "std/console";
 import * as host from "host/probe";
 
 export function main():null {
-  let e:Error={code:"X",message:"original"};
+  let e:Error={name:"X",message:"original"};
   let alias=e;
   let original:Record<string,unknown>={};
   let destination=original;
   host.edit(e);
   destination={unread:e};
   let admitted=destination.unread as Error;
-  if(admitted!==alias || admitted.code!==`\uD800` || destination===original) {
-    throw {code:"TEST",message:"Record admission lost lone code or identity"};
+  if(admitted!==alias || admitted.name!==`\uD800` || destination===original) {
+    throw {name:"TEST",message:"Record admission lost lone name or identity"};
   }
   printer.log("ACCEPT");
   host.repair();
-  if(e!==alias || admitted.code!=="repaired") {
-    throw {code:"TEST",message:"Record alias did not observe repair"};
+  if(e!==alias || admitted.name!=="repaired") {
+    throw {name:"TEST",message:"Record alias did not observe repair"};
   }
   printer.log("IDENTITY");
   destination={unread:e};

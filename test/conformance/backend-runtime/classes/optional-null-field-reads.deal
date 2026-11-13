@@ -14,7 +14,7 @@ class Box {
 
 function require(what: string, condition: boolean): void {
   if (!condition) {
-    throw { code: "TEST_FAIL", message: what };
+    throw { name: "TEST_FAIL", message: what };
   }
 }
 

@@ -4,5 +4,5 @@
 // (ISSUE-0107) removes unclassified skips: every .deal file carries an
 // explicit classification, and companions must keep compiling standalone.
 export function fail(): null {
-  throw { code: "MODULE_EXPLICIT_FAIL", message: "module function fail" };
+  throw { name: "MODULE_EXPLICIT_FAIL", message: "module function fail" };
 }

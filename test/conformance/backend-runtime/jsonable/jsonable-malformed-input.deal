@@ -8,8 +8,8 @@ import * as Lib from "./jsonable_complex_lib";
 export function test_jsonable_malformed_input(): null {
   let rejected = false;
   try { let u: Lib.User = JSON.parse("{bad json"); }
-  catch (e) { let error = e as Error; rejected = error.code === "E8001" && error.message.startsWith("JSON parse error at position "); }
-  if (!rejected) { throw { code: "TEST_FAIL", message: "malformed input must throw syntax error" }; }
+  catch (e) { let error = e as Error; rejected = error.name === "E8001" && error.message.startsWith("JSON parse error at position "); }
+  if (!rejected) { throw { name: "TEST_FAIL", message: "malformed input must throw syntax error" }; }
   return null;
 }
 

@@ -22,10 +22,10 @@ function testArrayDirectMutation(): void {
     visits = visits + 1;
   }
   if (visits !== 3) {
-    throw { code: "TEST_FAIL", message: "for-of array body skipped or repeated" };
+    throw { name: "TEST_FAIL", message: "for-of array body skipped or repeated" };
   }
   if (total !== 36) {
-    throw { code: "TEST_FAIL", message: "for-of array direct mutation lost" };
+    throw { name: "TEST_FAIL", message: "for-of array direct mutation lost" };
   }
   return;
 }
@@ -39,19 +39,19 @@ function testArrayClosureReadsMutation(): void {
     visits = visits + 1;
   }
   if (visits !== 3) {
-    throw { code: "TEST_FAIL", message: "for-of closure body skipped or repeated" };
+    throw { name: "TEST_FAIL", message: "for-of closure body skipped or repeated" };
   }
   let r0: number = readers[0]();
   let r1: number = readers[1]();
   let r2: number = readers[2]();
   if (r0 !== 11) {
-    throw { code: "TEST_FAIL", message: "for-of first closure reader mismatch" };
+    throw { name: "TEST_FAIL", message: "for-of first closure reader mismatch" };
   }
   if (r1 !== 12) {
-    throw { code: "TEST_FAIL", message: "for-of second closure reader mismatch" };
+    throw { name: "TEST_FAIL", message: "for-of second closure reader mismatch" };
   }
   if (r2 !== 13) {
-    throw { code: "TEST_FAIL", message: "for-of third closure reader mismatch" };
+    throw { name: "TEST_FAIL", message: "for-of third closure reader mismatch" };
   }
   return;
 }
@@ -66,19 +66,19 @@ function testArrayClosureWritesMutation(): void {
     visits = visits + 1;
   }
   if (visits !== 2) {
-    throw { code: "TEST_FAIL", message: "for-of closure write body skipped or repeated" };
+    throw { name: "TEST_FAIL", message: "for-of closure write body skipped or repeated" };
   }
   if (bump[0]() !== 11) {
-    throw { code: "TEST_FAIL", message: "for-of closure write did not reach the binding" };
+    throw { name: "TEST_FAIL", message: "for-of closure write did not reach the binding" };
   }
   if (read[0]() !== 11) {
-    throw { code: "TEST_FAIL", message: "for-of closure write is not visible to a sibling capture" };
+    throw { name: "TEST_FAIL", message: "for-of closure write is not visible to a sibling capture" };
   }
   if (read[1]() !== 2) {
-    throw { code: "TEST_FAIL", message: "for-of iterations share one binding cell" };
+    throw { name: "TEST_FAIL", message: "for-of iterations share one binding cell" };
   }
   if (bump[0]() !== 21) {
-    throw { code: "TEST_FAIL", message: "the first iteration binding is not a live cell" };
+    throw { name: "TEST_FAIL", message: "the first iteration binding is not a live cell" };
   }
   return;
 }
@@ -92,10 +92,10 @@ function testStringDirectMutation(): void {
     visits = visits + 1;
   }
   if (visits !== 3) {
-    throw { code: "TEST_FAIL", message: "for-of string body skipped or repeated" };
+    throw { name: "TEST_FAIL", message: "for-of string body skipped or repeated" };
   }
   if (joined !== "a!b!c!") {
-    throw { code: "TEST_FAIL", message: "for-of string direct mutation lost" };
+    throw { name: "TEST_FAIL", message: "for-of string direct mutation lost" };
   }
   return;
 }
@@ -109,16 +109,16 @@ function testStringClosureReadsMutation(): void {
     visits = visits + 1;
   }
   if (visits !== 3) {
-    throw { code: "TEST_FAIL", message: "for-of string closure body skipped or repeated" };
+    throw { name: "TEST_FAIL", message: "for-of string closure body skipped or repeated" };
   }
   if (readers[0]() !== "x?") {
-    throw { code: "TEST_FAIL", message: "for-of string first closure reader mismatch" };
+    throw { name: "TEST_FAIL", message: "for-of string first closure reader mismatch" };
   }
   if (readers[1]() !== "y?") {
-    throw { code: "TEST_FAIL", message: "for-of string second closure reader mismatch" };
+    throw { name: "TEST_FAIL", message: "for-of string second closure reader mismatch" };
   }
   if (readers[2]() !== "z?") {
-    throw { code: "TEST_FAIL", message: "for-of string third closure reader mismatch" };
+    throw { name: "TEST_FAIL", message: "for-of string third closure reader mismatch" };
   }
   return;
 }
@@ -134,10 +134,10 @@ function testBreakAndContinueAfterMutation(): void {
     total = total + n;
   }
   if (visits !== 4) {
-    throw { code: "TEST_FAIL", message: "for-of break/continue visit count mismatch" };
+    throw { name: "TEST_FAIL", message: "for-of break/continue visit count mismatch" };
   }
   if (total !== 40) {
-    throw { code: "TEST_FAIL", message: "for-of break/continue after mutation mismatch" };
+    throw { name: "TEST_FAIL", message: "for-of break/continue after mutation mismatch" };
   }
   return;
 }
@@ -152,10 +152,10 @@ function testIterableReassignmentDoesNotRedirect(): void {
     visits = visits + 1;
   }
   if (visits !== 3) {
-    throw { code: "TEST_FAIL", message: "for-of iterable reassignment shortened the traversal" };
+    throw { name: "TEST_FAIL", message: "for-of iterable reassignment shortened the traversal" };
   }
   if (total !== 6) {
-    throw { code: "TEST_FAIL", message: "for-of iterable reassignment redirected the traversal" };
+    throw { name: "TEST_FAIL", message: "for-of iterable reassignment redirected the traversal" };
   }
   return;
 }
@@ -169,13 +169,13 @@ function testArrayIterableEvaluatedOnce(): void {
     total = total + n;
   }
   if (visits !== 2) {
-    throw { code: "TEST_FAIL", message: "iterable-once array visits mismatch" };
+    throw { name: "TEST_FAIL", message: "iterable-once array visits mismatch" };
   }
   if (total !== 3) {
-    throw { code: "TEST_FAIL", message: "iterable-once array total mismatch" };
+    throw { name: "TEST_FAIL", message: "iterable-once array total mismatch" };
   }
   if (counter[0] !== 1) {
-    throw { code: "TEST_FAIL", message: "the array iterable expression was evaluated more than once" };
+    throw { name: "TEST_FAIL", message: "the array iterable expression was evaluated more than once" };
   }
   return;
 }
@@ -190,13 +190,13 @@ function testStringIterableEvaluatedOnce(): void {
     visits = visits + 1;
   }
   if (visits !== 2) {
-    throw { code: "TEST_FAIL", message: "iterable-once string visits mismatch" };
+    throw { name: "TEST_FAIL", message: "iterable-once string visits mismatch" };
   }
   if (joined !== "a!b!") {
-    throw { code: "TEST_FAIL", message: "iterable-once string joined mismatch" };
+    throw { name: "TEST_FAIL", message: "iterable-once string joined mismatch" };
   }
   if (counter[0] !== 1) {
-    throw { code: "TEST_FAIL", message: "the string iterable expression was evaluated more than once" };
+    throw { name: "TEST_FAIL", message: "the string iterable expression was evaluated more than once" };
   }
   return;
 }
@@ -213,13 +213,13 @@ function testUnvisitedReplacementIsObserved(): void {
     }
   }
   if (visits !== 3) {
-    throw { code: "TEST_FAIL", message: "for-of live replacement visits mismatch" };
+    throw { name: "TEST_FAIL", message: "for-of live replacement visits mismatch" };
   }
   if (total !== 33) {
-    throw { code: "TEST_FAIL", message: "for-of unvisited replacement was not observed" };
+    throw { name: "TEST_FAIL", message: "for-of unvisited replacement was not observed" };
   }
   if (xs.length !== 3) {
-    throw { code: "TEST_FAIL", message: "for-of traversal changed the iterable's length" };
+    throw { name: "TEST_FAIL", message: "for-of traversal changed the iterable's length" };
   }
   return;
 }
@@ -236,10 +236,10 @@ function testAppendIsObserved(): void {
     }
   }
   if (visits !== 3) {
-    throw { code: "TEST_FAIL", message: "for-of live append was not observed" };
+    throw { name: "TEST_FAIL", message: "for-of live append was not observed" };
   }
   if (total !== 6) {
-    throw { code: "TEST_FAIL", message: "for-of live contents mismatch" };
+    throw { name: "TEST_FAIL", message: "for-of live contents mismatch" };
   }
   return;
 }

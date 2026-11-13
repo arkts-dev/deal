@@ -1,25 +1,25 @@
 // @spec: Runtime execution model
-// @description: Lone UTF-16 Error code survives unknown graph admission with live aliases
+// @description: Lone UTF-16 Error name survives unknown graph admission with live aliases
 // @expected: runtime-ok
 // @features: boundary-validation, host-abi
 import * as printer from "std/console";
 import * as host from "host/probe";
 
 export function main():null {
-  let e:Error={code:"X",message:"original"};
+  let e:Error={name:"X",message:"original"};
   let alias=e;
   let original:unknown=null;
   let destination=original;
   host.edit(e);
   destination=e;
   let admitted=destination as Error;
-  if(admitted!==alias || admitted.code!==`\uD800`) {
-    throw {code:"TEST",message:"unknown admission lost lone code or identity"};
+  if(admitted!==alias || admitted.name!==`\uD800`) {
+    throw {name:"TEST",message:"unknown admission lost lone name or identity"};
   }
   printer.log("ACCEPT");
   host.repair();
-  if(e!==alias || admitted.code!=="repaired") {
-    throw {code:"TEST",message:"unknown alias did not observe repair"};
+  if(e!==alias || admitted.name!=="repaired") {
+    throw {name:"TEST",message:"unknown alias did not observe repair"};
   }
   printer.log("IDENTITY");
   destination=e;

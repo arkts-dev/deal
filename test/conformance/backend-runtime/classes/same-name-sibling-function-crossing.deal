@@ -9,7 +9,7 @@ import * as host from "host/signature_mutation";
 
 export function main(): null {
   let source: (x: b.Item) => b.Item = function(x: b.Item): b.Item { return x; };
-  if (!host.replaceSignature({value: source}, "(@conformance/backend-runtime/classes/same_name_sibling_a.deal/Item)->@conformance/backend-runtime/classes/same_name_sibling_a.deal/Item")) { throw {code: "TEST_FAIL", message: "signature mutation failed"}; }
+  if (!host.replaceSignature({value: source}, "(@conformance/backend-runtime/classes/same_name_sibling_a.deal/Item)->@conformance/backend-runtime/classes/same_name_sibling_a.deal/Item")) { throw {name: "TEST_FAIL", message: "signature mutation failed"}; }
   let wrong: (x: b.Item) => b.Item = source;
   return null;
 }

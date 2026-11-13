@@ -8,10 +8,10 @@ export function test_array_write(): number {
   xs[0] = 99;
   let result: number = xs[0];
   if (xs.length !== 3) {
-    throw { code: "TEST_FAIL", message: "array write length mismatch" };
+    throw { name: "TEST_FAIL", message: "array write length mismatch" };
   }
   if (result !== 99) {
-    throw { code: "TEST_FAIL", message: "array write value mismatch" };
+    throw { name: "TEST_FAIL", message: "array write value mismatch" };
   }
   return result;
 }

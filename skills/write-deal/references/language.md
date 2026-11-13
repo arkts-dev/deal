@@ -75,7 +75,7 @@ Use declared, implemented host APIs.
 
 ## Error handling
 
-Throw Error values with explicit code/message fields. Catch binds unknown: extract Error or refine inside instanceof Error before reading members. Rethrow preserves identity. Translate expected failures only when the application contract requires it.
+Construct nominal Error values with required string name/message fields, for example { name: "InvalidInput", message: "count must be nonnegative" }, then throw the value. Both fields remain mutable; JSON.parse can reconstruct Error under an explicit contextual target. Catch binds unknown: extract Error or refine inside instanceof Error before reading members. Rethrow preserves identity. Translate expected failures only when the application contract requires it.
 
 ## Async/Await
 

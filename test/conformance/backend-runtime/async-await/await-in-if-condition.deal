@@ -17,13 +17,13 @@ export async function test_await_in_if_condition(): Promise<number> {
     result = 0;
   }
   if (!trueBranch) {
-    throw { code: "TEST_FAIL", message: "awaited condition did not select the true branch" };
+    throw { name: "TEST_FAIL", message: "awaited condition did not select the true branch" };
   }
   if (falseBranch) {
-    throw { code: "TEST_FAIL", message: "awaited condition selected the forbidden false branch" };
+    throw { name: "TEST_FAIL", message: "awaited condition selected the forbidden false branch" };
   }
   if (result !== 1) {
-    throw { code: "TEST_FAIL", message: "true branch result mismatch" };
+    throw { name: "TEST_FAIL", message: "true branch result mismatch" };
   }
   return result;
 }

@@ -15,10 +15,10 @@ export function test_jsonable_optional_nullable_three_state(): null {
   let missing2: User | null = JSON.parse(missingJson);
   if (missing2 !== null) {
     if (Object.hasOwn(missing2, "nick")) {
-      throw { code: "TEST_FAIL", message: "missing optional field not preserved" };
+      throw { name: "TEST_FAIL", message: "missing optional field not preserved" };
     }
   } else {
-    throw { code: "TEST_FAIL", message: "fromJson returned null for missing-state user" };
+    throw { name: "TEST_FAIL", message: "fromJson returned null for missing-state user" };
   }
 
   let explicitNull: User = { name: "B", nick: null };
@@ -26,10 +26,10 @@ export function test_jsonable_optional_nullable_three_state(): null {
   let null2: User | null = JSON.parse(nullJson);
   if (null2 !== null) {
     if (!Object.hasOwn(null2, "nick") || null2.nick !== null) {
-      throw { code: "TEST_FAIL", message: "explicit null optional field not preserved" };
+      throw { name: "TEST_FAIL", message: "explicit null optional field not preserved" };
     }
   } else {
-    throw { code: "TEST_FAIL", message: "fromJson returned null for explicit-null user" };
+    throw { name: "TEST_FAIL", message: "fromJson returned null for explicit-null user" };
   }
 
   let value: User = { name: "C", nick: "cee" };
@@ -37,18 +37,18 @@ export function test_jsonable_optional_nullable_three_state(): null {
   let value2: User | null = JSON.parse(valueJson);
   if (value2 !== null) {
     if (!Object.hasOwn(value2, "nick")) {
-      throw { code: "TEST_FAIL", message: "optional field value not present" };
+      throw { name: "TEST_FAIL", message: "optional field value not present" };
     }
     let nick: string | null | undefined = value2.nick;
     if (nick !== null) {
       if ((nick as string) !== "cee") {
-        throw { code: "TEST_FAIL", message: "optional field value not preserved" };
+        throw { name: "TEST_FAIL", message: "optional field value not preserved" };
       }
     } else {
-      throw { code: "TEST_FAIL", message: "optional field value became null" };
+      throw { name: "TEST_FAIL", message: "optional field value became null" };
     }
   } else {
-    throw { code: "TEST_FAIL", message: "fromJson returned null for value user" };
+    throw { name: "TEST_FAIL", message: "fromJson returned null for value user" };
   }
   return null;
 }

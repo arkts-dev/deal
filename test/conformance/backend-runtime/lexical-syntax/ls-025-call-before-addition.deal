@@ -8,7 +8,7 @@ function add(left: number, right: number): number { return left + right; }
 export function test_call_before_addition(): null {
   let value: number = add(1, 2) + 4;
   if (value !== 7) {
-    throw { code: "TEST_FAIL", message: "call did not bind before addition" };
+    throw { name: "TEST_FAIL", message: "call did not bind before addition" };
   }
   return null;
 }

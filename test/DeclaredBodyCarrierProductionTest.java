@@ -1332,7 +1332,7 @@ public class DeclaredBodyCarrierProductionTest {
                 console.log("async-recursion-direct-fail-bad");
                 return v;
               } catch (e) {
-                console.log("async-recursion-direct-fail:" + (e as Error).code);
+                console.log("async-recursion-direct-fail:" + (e as Error).name);
                 return 1;
               }
             }
@@ -1353,7 +1353,7 @@ public class DeclaredBodyCarrierProductionTest {
                 console.log("async-recursion-alias-fail-bad");
                 return v;
               } catch (e) {
-                console.log("async-recursion-alias-fail:" + (e as Error).code);
+                console.log("async-recursion-alias-fail:" + (e as Error).name);
                 return 1;
               }
             }
@@ -1377,7 +1377,7 @@ public class DeclaredBodyCarrierProductionTest {
                 let bad: number = await fail(1);
                 console.log("seq-await-fail-bad");
               } catch (e) {
-                console.log("seq-await-fail:" + (e as Error).code);
+                console.log("seq-await-fail:" + (e as Error).name);
               }
               return total;
             }

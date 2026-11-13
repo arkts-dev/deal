@@ -4,7 +4,7 @@
 // round-trip conformance test. The host reports the member kinds it
 // observed (the DEAL class instance identity and top-level fields, the
 // function wrapper and its invocation result, and the builtin Error
-// instance identity with its code/message), and echoes the container back.
+// instance identity with its name/message), and echoes the container back.
 // The echoed container is a fresh table carrier holding the same member
 // values, so the values the host observed are the values DEAL receives
 // back. The array export reports each element's class member the same way
@@ -47,7 +47,7 @@ function report(t) {
   const err = t.get("err");
   if (err !== null && typeof err === "object" && err.$kind === "class" &&
       err.$classname === "Error") {
-    errText = "true:" + String(err.code) + ":" + String(err.message);
+    errText = "true:" + String(err.name) + ":" + String(err.message);
   }
   return kind + "|" + fields + "|" + alias + "|" + stepText + "|" + errText;
 }

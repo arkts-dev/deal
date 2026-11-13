@@ -8,10 +8,10 @@ export function test_table_reference_identity(): null {
   let b: Record<string, unknown> = { x: 1 };
   let c: Record<string, unknown> = a;
   if (!(a === c)) {
-    throw { code: "TEST_FAIL", message: "same table reference must be equal" };
+    throw { name: "TEST_FAIL", message: "same table reference must be equal" };
   }
   if (a === b) {
-    throw { code: "TEST_FAIL", message: "distinct table references must not be equal" };
+    throw { name: "TEST_FAIL", message: "distinct table references must not be equal" };
   }
   return null;
 }

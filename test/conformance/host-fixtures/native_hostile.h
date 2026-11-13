@@ -112,6 +112,8 @@ static inline void fixture_surrogate_string(deal_value value) {
 /* Error text is platform-owned. Replace only the selected field; retain the
  * old pointer for repair, without making invalid text into a DEAL string. */
 typedef struct {
+    char *name;
+    size_t name_length;
     char *code, *message;
     size_t code_length, message_length;
 } fixture_error_text;
@@ -123,13 +125,13 @@ static inline char *fixture_error_text_replace(deal_value value, int message,
     if (cause != NULL || input.datum.tag != DEAL_DATA_ERROR) abort();
     unsigned char *record = input.datum.reference;
     unsigned char *slot = record + (message ? offsetof(fixture_error_text, message)
-        : offsetof(fixture_error_text, code));
+        : offsetof(fixture_error_text, name));
     char *previous;
     memcpy(&previous, slot, sizeof(previous));
     memcpy(slot, &replacement, sizeof(replacement));
     size_t length = replacement == NULL ? 0u : strlen(replacement);
     memcpy(record + (message ? offsetof(fixture_error_text, message_length)
-        : offsetof(fixture_error_text, code_length)), &length, sizeof(length));
+        : offsetof(fixture_error_text, name_length)), &length, sizeof(length));
     return previous;
 }
 /* Mirror emitted field storage only here: atom, presence bytes, aligned

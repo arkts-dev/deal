@@ -4,14 +4,14 @@
 // @features: error-handling, return, v1.2
 
 function produce(): Error {
-  try { throw { code: "ROUND", message: "roundtrip" }; }
+  try { throw { name: "ROUND", message: "roundtrip" }; }
   catch (e) { return e as Error; }
 }
 
 export function test_error_return_roundtrip(): null {
   let e: Error = produce();
-  if (e.code !== "ROUND" || e.message !== "roundtrip") {
-    throw { code: "TEST_FAIL", message: "Error roundtrip lost fields" };
+  if (e.name !== "ROUND" || e.message !== "roundtrip") {
+    throw { name: "TEST_FAIL", message: "Error roundtrip lost fields" };
   }
   return null;
 }

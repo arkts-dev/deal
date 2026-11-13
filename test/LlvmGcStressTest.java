@@ -609,24 +609,24 @@ public final class LlvmGcStressTest {
           gc.collect();
           let after: number = gc.sweptObjects();
           if (after !== before) {
-            throw { code: "TEST_FAIL", message: "a fully live heap reclaimed objects" };
+            throw { name: "TEST_FAIL", message: "a fully live heap reclaimed objects" };
           }
           let same: Node = holder as Node;
           if (same !== a) {
-            throw { code: "TEST_FAIL", message: "unknown lost class identity" };
+            throw { name: "TEST_FAIL", message: "unknown lost class identity" };
           }
           let following: Node = a.next as Node;
           if (following !== b) {
-            throw { code: "TEST_FAIL", message: "class field identity changed" };
+            throw { name: "TEST_FAIL", message: "class field identity changed" };
           }
           if (rows.length !== 3) {
-            throw { code: "TEST_FAIL", message: "array elements were reclaimed" };
+            throw { name: "TEST_FAIL", message: "array elements were reclaimed" };
           }
           let total: number = 0;
           for (let row of rows) {
             let name: string = row.name;
             if (name !== "r0" && name !== "r1" && name !== "r2") {
-              throw { code: "TEST_FAIL", message: "element value changed" };
+              throw { name: "TEST_FAIL", message: "element value changed" };
             }
             total = total + 1;
           }
@@ -662,13 +662,13 @@ public final class LlvmGcStressTest {
           let read: () => string = function (): string { return ""; };
           let held: Error | null = null;
           try {
-            throw { code: "E_CELL", message: "caught" };
+            throw { name: "E_CELL", message: "caught" };
           } catch (e) {
             read = function (): string { return errorOf(e).message; };
             held = e as Error;
           }
           if (held === null) {
-            throw { code: "TEST_FAIL", message: "the caught Error was dropped" };
+            throw { name: "TEST_FAIL", message: "the caught Error was dropped" };
           }
           let caught: Error = held as Error;
           gc.collect();
@@ -676,19 +676,19 @@ public final class LlvmGcStressTest {
           gc.collect();
           let after: number = gc.sweptObjects();
           if (after !== before) {
-            throw { code: "TEST_FAIL", message: "live cells were reclaimed" };
+            throw { name: "TEST_FAIL", message: "live cells were reclaimed" };
           }
           if (readers[0]() !== 0 || readers[1]() !== 1 || readers[2]() !== 2) {
-            throw { code: "TEST_FAIL", message: "iteration cells were shared" };
+            throw { name: "TEST_FAIL", message: "iteration cells were shared" };
           }
           if (bump() !== 1 || alias() !== 2) {
-            throw { code: "TEST_FAIL", message: "cell aliases diverged" };
+            throw { name: "TEST_FAIL", message: "cell aliases diverged" };
           }
           if (read() !== "caught") {
-            throw { code: "TEST_FAIL", message: "the captured catch cell was replaced" };
+            throw { name: "TEST_FAIL", message: "the captured catch cell was replaced" };
           }
-          if (caught.code !== "E_CELL" || caught.message !== "caught") {
-            throw { code: "TEST_FAIL", message: "the caught Error changed" };
+          if (caught.name !== "E_CELL" || caught.message !== "caught") {
+            throw { name: "TEST_FAIL", message: "the caught Error changed" };
           }
           return counter;
         }
@@ -721,23 +721,23 @@ public final class LlvmGcStressTest {
           gc.collect();
           let after: number = gc.sweptObjects();
           if (after !== before) {
-            throw { code: "TEST_FAIL", message: "shaded stores were reclaimed" };
+            throw { name: "TEST_FAIL", message: "shaded stores were reclaimed" };
           }
           let projected: Box[] = table["boxes"] as Box[];
           if (projected.length !== 3) {
-            throw { code: "TEST_FAIL", message: "record slot length changed" };
+            throw { name: "TEST_FAIL", message: "record slot length changed" };
           }
           let i: number = 0;
           while (i < 3) {
             let read: Box = projected[i];
             if (read.value !== i) {
-              throw { code: "TEST_FAIL", message: "stored value changed" };
+              throw { name: "TEST_FAIL", message: "stored value changed" };
             }
             if (read !== fresh[i]) {
-              throw { code: "TEST_FAIL", message: "stored identity changed" };
+              throw { name: "TEST_FAIL", message: "stored identity changed" };
             }
             if (previous[i].value !== -1) {
-              throw { code: "TEST_FAIL", message: "replaced value changed" };
+              throw { name: "TEST_FAIL", message: "replaced value changed" };
             }
             i = i + 1;
           }
@@ -778,11 +778,11 @@ public final class LlvmGcStressTest {
           gc.collect();
           let after: number = gc.sweptObjects();
           if (after <= before) {
-            throw { code: "TEST_FAIL", message: "the dropped cycles were not reclaimed" };
+            throw { name: "TEST_FAIL", message: "the dropped cycles were not reclaimed" };
           }
           let self: Cycle = kept.self as Cycle;
           if (self !== kept) {
-            throw { code: "TEST_FAIL", message: "the live cycle lost identity" };
+            throw { name: "TEST_FAIL", message: "the live cycle lost identity" };
           }
           return after - before;
         }
@@ -800,7 +800,7 @@ public final class LlvmGcStressTest {
         export function test_error_identity(): number {
           let kept: Error | null = null;
           try {
-            throw { code: "E_KEPT", message: "kept" };
+            throw { name: "E_KEPT", message: "kept" };
           } catch (e) {
             let caught: unknown = e;
             let error: Error = caught as Error;
@@ -808,12 +808,12 @@ public final class LlvmGcStressTest {
             kept = error;
           }
           if (kept === null) {
-            throw { code: "TEST_FAIL", message: "the caught Error was dropped" };
+            throw { name: "TEST_FAIL", message: "the caught Error was dropped" };
           }
           let current: Error = kept as Error;
           gc.collect();
-          if (current.code !== "E_KEPT" || current.message !== "mutated") {
-            throw { code: "TEST_FAIL", message: "Error fields changed" };
+          if (current.name !== "E_KEPT" || current.message !== "mutated") {
+            throw { name: "TEST_FAIL", message: "Error fields changed" };
           }
           let rethrown: Error | null = null;
           try {
@@ -823,14 +823,14 @@ public final class LlvmGcStressTest {
             rethrown = caught as Error;
           }
           if (rethrown === null) {
-            throw { code: "TEST_FAIL", message: "the rethrown Error was dropped" };
+            throw { name: "TEST_FAIL", message: "the rethrown Error was dropped" };
           }
           let again: Error = rethrown as Error;
           if (again !== current) {
-            throw { code: "TEST_FAIL", message: "rethrow replaced the Error" };
+            throw { name: "TEST_FAIL", message: "rethrow replaced the Error" };
           }
-          if (again.code !== "E_KEPT" || again.message !== "mutated") {
-            throw { code: "TEST_FAIL", message: "rethrow changed the fields" };
+          if (again.name !== "E_KEPT" || again.message !== "mutated") {
+            throw { name: "TEST_FAIL", message: "rethrow changed the fields" };
           }
           return 1;
         }
@@ -856,28 +856,28 @@ public final class LlvmGcStressTest {
           gc.collect();
           let label: string = holder.label;
           if (label !== "built") {
-            throw { code: "TEST_FAIL", message: "host graph label changed" };
+            throw { name: "TEST_FAIL", message: "host graph label changed" };
           }
           let tags: string[] = holder.tags;
           if (tags.length !== 2 || tags[0] !== "alpha" || tags[1] !== "beta") {
-            throw { code: "TEST_FAIL", message: "host graph array changed" };
+            throw { name: "TEST_FAIL", message: "host graph array changed" };
           }
           let alpha: number = record["alpha"] as number;
           if (alpha !== 3) {
-            throw { code: "TEST_FAIL", message: "host-built table member changed" };
+            throw { name: "TEST_FAIL", message: "host-built table member changed" };
           }
           let beta: string = record["beta"] as string;
           if (beta !== "two") {
-            throw { code: "TEST_FAIL", message: "host-built table text changed" };
+            throw { name: "TEST_FAIL", message: "host-built table text changed" };
           }
           let aliased: string[] = record["tags"] as string[];
           if (aliased !== tags) {
-            throw { code: "TEST_FAIL", message: "host graph alias identity changed" };
+            throw { name: "TEST_FAIL", message: "host graph alias identity changed" };
           }
           let nested: Record<string, unknown> = record["nested"] as Record<string, unknown>;
           let deep: number = nested["deep"] as number;
           if (deep !== 1) {
-            throw { code: "TEST_FAIL", message: "nested host table changed" };
+            throw { name: "TEST_FAIL", message: "nested host table changed" };
           }
           let table: Record<string, unknown> = {};
           table["holder"] = holder;
@@ -885,30 +885,30 @@ public final class LlvmGcStressTest {
           gc.collect();
           let stored: gccross.Holder = table["holder"] as gccross.Holder;
           if (stored !== holder) {
-            throw { code: "TEST_FAIL", message: "stored graph lost identity" };
+            throw { name: "TEST_FAIL", message: "stored graph lost identity" };
           }
           if (stored.count !== 2) {
-            throw { code: "TEST_FAIL", message: "host graph field changed" };
+            throw { name: "TEST_FAIL", message: "host graph field changed" };
           }
           let storedRecord: Record<string, unknown> = table["record"] as Record<string, unknown>;
           if (storedRecord !== record) {
-            throw { code: "TEST_FAIL", message: "stored table lost identity" };
+            throw { name: "TEST_FAIL", message: "stored table lost identity" };
           }
           let again: number = storedRecord["alpha"] as number;
           if (again !== 3) {
-            throw { code: "TEST_FAIL", message: "stored table member changed" };
+            throw { name: "TEST_FAIL", message: "stored table member changed" };
           }
           let kept: gccross.Holder[] = [stored];
           gc.collect();
           if (kept[0].label !== "built") {
-            throw { code: "TEST_FAIL", message: "kept graph changed" };
+            throw { name: "TEST_FAIL", message: "kept graph changed" };
           }
           if (kept[0].record !== record) {
-            throw { code: "TEST_FAIL", message: "kept table lost identity" };
+            throw { name: "TEST_FAIL", message: "kept table lost identity" };
           }
           let keptDeep: Record<string, unknown> = (kept[0].record)["nested"] as Record<string, unknown>;
           if ((keptDeep["deep"] as number) !== 1) {
-            throw { code: "TEST_FAIL", message: "kept nested table changed" };
+            throw { name: "TEST_FAIL", message: "kept nested table changed" };
           }
           return kept.length;
         }
@@ -931,12 +931,12 @@ public final class LlvmGcStressTest {
           gc.collect();
           let label: string = gccross.retainedLabel();
           if (label !== "retained") {
-            throw { code: "TEST_FAIL", message: "the retained value was reclaimed" };
+            throw { name: "TEST_FAIL", message: "the retained value was reclaimed" };
           }
           gccross.release();
           gc.collect();
           if (holder.label !== "retained") {
-            throw { code: "TEST_FAIL", message: "the DEAL value changed" };
+            throw { name: "TEST_FAIL", message: "the DEAL value changed" };
           }
           return 1;
         }
@@ -955,20 +955,20 @@ public final class LlvmGcStressTest {
         export function test_error_crossing(): number {
           let kept: Error | null = null;
           try {
-            throw { code: "E_DISCARD", message: "discarded" };
+            throw { name: "E_DISCARD", message: "discarded" };
           } catch (e) {
             let caught: unknown = e;
             kept = caught as Error;
           }
           if (kept === null) {
-            throw { code: "TEST_FAIL", message: "the thrown Error was dropped" };
+            throw { name: "TEST_FAIL", message: "the thrown Error was dropped" };
           }
           let current: Error = kept as Error;
           let thrower: () => number = function (): number { throw current; };
           gc.collect();
           let swallowed: number = gccross.swallow(thrower);
           if (swallowed !== 7) {
-            throw { code: "TEST_FAIL", message: "the discarded failure propagated" };
+            throw { name: "TEST_FAIL", message: "the discarded failure propagated" };
           }
           gc.collect();
           let caught: Error | null = null;
@@ -979,14 +979,14 @@ public final class LlvmGcStressTest {
             caught = next as Error;
           }
           if (caught === null) {
-            throw { code: "TEST_FAIL", message: "the relayed failure propagated nothing" };
+            throw { name: "TEST_FAIL", message: "the relayed failure propagated nothing" };
           }
           let relayed: Error = caught as Error;
           if (relayed !== current) {
-            throw { code: "TEST_FAIL", message: "the relayed Error was replaced" };
+            throw { name: "TEST_FAIL", message: "the relayed Error was replaced" };
           }
-          if (relayed.code !== "E_DISCARD" || relayed.message !== "discarded") {
-            throw { code: "TEST_FAIL", message: "the relayed Error changed" };
+          if (relayed.name !== "E_DISCARD" || relayed.message !== "discarded") {
+            throw { name: "TEST_FAIL", message: "the relayed Error changed" };
           }
           return 1;
         }
@@ -1008,7 +1008,7 @@ public final class LlvmGcStressTest {
           let value: number = await probe.pending();
           gc.collect();
           if (value !== 21) {
-            throw { code: "TEST_FAIL", message: "completion value changed" };
+            throw { name: "TEST_FAIL", message: "completion value changed" };
           }
           return value;
         }
@@ -1030,7 +1030,7 @@ public final class LlvmGcStressTest {
           let value: number = await probe.pending();
           gc.collect();
           if (value !== 21) {
-            throw { code: "TEST_FAIL", message: "posted completion changed" };
+            throw { name: "TEST_FAIL", message: "posted completion changed" };
           }
           return value;
         }
@@ -1065,16 +1065,16 @@ public final class LlvmGcStressTest {
         export async function test_delivered(): Promise<null> {
           let delivered: async.Payload = await async.pendingManaged();
           if (delivered.value !== 42) {
-            throw { code: "TEST_FAIL", message: "the delivered completion value" };
+            throw { name: "TEST_FAIL", message: "the delivered completion value" };
           }
           let alias: unknown = delivered;
           gc.collect();
           let again: async.Payload = alias as async.Payload;
           if (again !== delivered) {
-            throw { code: "TEST_FAIL", message: "the delivered completion identity" };
+            throw { name: "TEST_FAIL", message: "the delivered completion identity" };
           }
           if (again.value !== 42) {
-            throw { code: "TEST_FAIL", message: "the consumed completion value" };
+            throw { name: "TEST_FAIL", message: "the consumed completion value" };
           }
           return null;
         }

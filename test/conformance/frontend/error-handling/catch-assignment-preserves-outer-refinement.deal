@@ -7,9 +7,9 @@ export function main(): null {
   let e: number | null = 13;
   if (e !== null) {
     try {
-      throw { code: "C_ASSIGN", message: "assign" };
+      throw { name: "C_ASSIGN", message: "assign" };
     } catch (e) {
-      let replacement: Error = { code: "C_REPLACED", message: "replaced" };
+      let replacement: Error = { name: "C_REPLACED", message: "replaced" };
       e = replacement;
       let checked: Error = e as Error;
       let message: string = checked.message;

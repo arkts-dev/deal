@@ -6,7 +6,7 @@
 export function test_number(): number {
   let n: number = (3);
   if (n !== 3.0) {
-    throw { code: "TEST_FAIL", message: "(3) did not produce number 3.0" };
+    throw { name: "TEST_FAIL", message: "(3) did not produce number 3.0" };
   }
   return n;
 }

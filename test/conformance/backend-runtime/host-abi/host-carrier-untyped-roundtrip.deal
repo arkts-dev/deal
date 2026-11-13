@@ -1,5 +1,5 @@
 // @spec: Modules, declarations, standard library, and host ABI
-// @description: The untyped-nested-carrier round trip: a DEAL-declared class value (twice, and once more inside an array element), a DEAL function value whose signature is no declared host position, and a builtin Error value carried in a table member cross to the host as the documented shapes, keep their alias identity, and round-trip to the exact DEAL values; the host reports the observed class, function and builtin Error instance shapes (identity, top-level fields, invocation result, Error code/message), the class instance each array element carries and the observed alias identity between the elements, and the container back.
+// @description: The untyped-nested-carrier round trip: a DEAL-declared class value (twice, and once more inside an array element), a DEAL function value whose signature is no declared host position, and a builtin Error value carried in a table member cross to the host as the documented shapes, keep their alias identity, and round-trip to the exact DEAL values; the host reports the observed class, function and builtin Error instance shapes (identity, top-level fields, invocation result, Error name/message), the class instance each array element carries and the observed alias identity between the elements, and the container back.
 // @expected: runtime-ok
 // @features: modules, host-abi, tables, classes, functions, errors
 
@@ -13,14 +13,14 @@ class Point {
 
 function check(condition: boolean, message: string): null {
   if (!condition) {
-    throw { code: "TEST_FAIL", message: message };
+    throw { name: "TEST_FAIL", message: message };
   }
   return null;
 }
 
 export function test_untyped_container(): null {
   let point: Point = { x: 3, y: 4 };
-  let failure: Error = { code: "E_X", message: "boom" };
+  let failure: Error = { name: "E_X", message: "boom" };
   let holder: Record<string, unknown> = { point: point, twin: point, step: util.bump, err: failure };
   let back: Record<string, unknown> = host.roundTrip(holder);
   let observed: string = back.observed as string;
@@ -32,7 +32,7 @@ export function test_untyped_container(): null {
   let step: (x: number) => number = back.step as (x: number) => number;
   check(step(41) === 42, "the DEAL function value round-trips invocable");
   let err: Error = back.err as Error;
-  check(err.code === "E_X" && err.message === "boom", "the builtin Error value round-trips");
+  check(err.name === "E_X" && err.message === "boom", "the builtin Error value round-trips");
   return null;
 }
 

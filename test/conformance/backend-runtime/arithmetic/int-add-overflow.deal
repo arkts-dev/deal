@@ -6,7 +6,7 @@
 export function test_int_add_overflow(): number {
   let result: number = 2147483647 + 1;
   if (result !== (2147483648)) {
-    throw { code: "TEST_FAIL", message: "binary64 arithmetic value mismatch" };
+    throw { name: "TEST_FAIL", message: "binary64 arithmetic value mismatch" };
   }
   return result;
 }

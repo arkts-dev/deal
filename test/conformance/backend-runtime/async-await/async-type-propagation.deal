@@ -14,7 +14,7 @@ async function stringFn(): Promise<string> {
 export async function test_int_propagation(): Promise<number> {
   let x: number = await intFn();
   if (x !== 42) {
-    throw { code: "TEST_FAIL", message: "awaited int type propagation mismatch: expected 42" };
+    throw { name: "TEST_FAIL", message: "awaited int type propagation mismatch: expected 42" };
   }
   return x;
 }
@@ -22,7 +22,7 @@ export async function test_int_propagation(): Promise<number> {
 export async function test_string_propagation(): Promise<string> {
   let s: string = await stringFn();
   if (s !== "hello") {
-    throw { code: "TEST_FAIL", message: "awaited string type propagation mismatch: expected hello" };
+    throw { name: "TEST_FAIL", message: "awaited string type propagation mismatch: expected hello" };
   }
   return s;
 }

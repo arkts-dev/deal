@@ -12,7 +12,7 @@ export function test_dynamic_to_int_param_runtime_error(): number {
     clear();
     return needInt(value);
   }
-  throw { code: "TEST_FAIL", message: "refined parameter branch skipped" };
+  throw { name: "TEST_FAIL", message: "refined parameter branch skipped" };
 }
 
 export function main(): null {

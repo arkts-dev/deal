@@ -34,12 +34,17 @@ static deal_host_result impl_roundTrip(const deal_value *args,size_t argc){
     point_report(p,point,sizeof point);int same;checked(deal_same(p,get(args[0],"twin"),&same));
     deal_value_kind kind;checked(deal_kind_of(f,&kind));
     if(kind==DEAL_KIND_FUNCTION){deal_value arg=number(41);deal_host_result r=apply(f,&arg,1u);
-        if(r.failed){char code[128];copy_string(field(r.value,"code"),code,sizeof code);
+        if(r.failed){char code[128];size_t length;
+            deal_check_input input;deal_error *cause=NULL;
+            checked(deal_host_value_presentation(r.value,&input,&cause));
+            if(input.datum.tag!=DEAL_DATA_ERROR)abort();
+            const char *bytes=deal_error_code_bytes(input.datum.reference,&length);
+            if(length>=sizeof code)abort();memcpy(code,bytes,length);code[length]=0;
             snprintf(step,sizeof step,"false:%s",code);checked(deal_failure_discard(r.failure.error));}
         else snprintf(step,sizeof step,"true:%.17g",as_number(r.value));}
     checked(deal_kind_of(e,&kind));if(kind==DEAL_KIND_CLASS){const char *atom;checked(deal_class_identity(e,&atom));
-        if(!strcmp(atom,"Error")){char code[128],message[256];copy_string(field(e,"code"),code,sizeof code);
-            copy_string(field(e,"message"),message,sizeof message);snprintf(error,sizeof error,"true:%s:%s",code,message);}}
+        if(!strcmp(atom,"Error")){char name[128],message[256];copy_string(field(e,"name"),name,sizeof name);
+            copy_string(field(e,"message"),message,sizeof message);snprintf(error,sizeof error,"true:%s:%s",name,message);}}
     int n=snprintf(buffer,sizeof buffer,"%s|%s|%s|%s",point,same?"true":"false",step,error);
     if(n<0||(size_t)n>=sizeof buffer)abort();deal_value out=copy_table(args[0]);set(out,"observed",text(buffer));return result(out);
 }

@@ -13,7 +13,7 @@ export function test_dynamic_bad_imported_class_param(): number {
     clear();
     return Lib.needBox(item);
   }
-  throw { code: "TEST_FAIL", message: "imported refinement branch skipped" };
+  throw { name: "TEST_FAIL", message: "imported refinement branch skipped" };
 }
 
 export function main(): null {

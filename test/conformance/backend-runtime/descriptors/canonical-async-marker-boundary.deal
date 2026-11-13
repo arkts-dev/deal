@@ -12,7 +12,7 @@ export async function test_canonical_async_marker_boundary(): Promise<number> {
   let f: () => Promise<number> = holder.f as () => Promise<number>;
   let result: number = await f();
   if (result !== 42) {
-    throw { code: "TEST_FAIL", message: "async marker boundary value mismatch" };
+    throw { name: "TEST_FAIL", message: "async marker boundary value mismatch" };
   }
   return result;
 }

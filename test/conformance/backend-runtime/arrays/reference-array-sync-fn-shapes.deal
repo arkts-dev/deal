@@ -28,39 +28,39 @@ export function test_array_sync_fn_shapes(): number {
   let g: (b: number[]) => number[] = function(b: number[]): number[] { return b; };
   let via: number[] = apply(id, [0, 0]);
   if (via[0] !== 0) {
-    throw { code: "TEST_FAIL", message: "callback invoke failed" };
+    throw { name: "TEST_FAIL", message: "callback invoke failed" };
   }
   let viaExpr: number[] = apply(g, [0, 0, 0]);
   if (viaExpr.length !== 3) {
-    throw { code: "TEST_FAIL", message: "expression callback failed" };
+    throw { name: "TEST_FAIL", message: "expression callback failed" };
   }
   if (f !== id) {
-    throw { code: "TEST_FAIL", message: "fn identity failed" };
+    throw { name: "TEST_FAIL", message: "fn identity failed" };
   }
   if (f === g) {
-    throw { code: "TEST_FAIL", message: "distinct fn identity failed" };
+    throw { name: "TEST_FAIL", message: "distinct fn identity failed" };
   }
   let one: number[][] = [[0]];
   one[0][0] = 9;
   if (firstOf(one) !== 9) {
-    throw { code: "TEST_FAIL", message: "array param failed" };
+    throw { name: "TEST_FAIL", message: "array param failed" };
   }
   let mn: (number[] | null)[] = [];
   mn[mn.length] = [0];
   mn[mn.length] = null;
   if (firstMaybe(mn, 7) !== 7) {
-    throw { code: "TEST_FAIL", message: "nullable array param failed" };
+    throw { name: "TEST_FAIL", message: "nullable array param failed" };
   }
   if (maybeLen(null) !== -1) {
-    throw { code: "TEST_FAIL", message: "nullable param null failed" };
+    throw { name: "TEST_FAIL", message: "nullable param null failed" };
   }
   if (maybeLen([0, 0, 0, 0, 0]) !== 5) {
-    throw { code: "TEST_FAIL", message: "nullable param value failed" };
+    throw { name: "TEST_FAIL", message: "nullable param value failed" };
   }
   let fs: ((b: number[]) => number[])[] = [id, g];
   fs[fs.length] = id;
   if (fs[2]([0, 0])[0] !== 0) {
-    throw { code: "TEST_FAIL", message: "fn array failed" };
+    throw { name: "TEST_FAIL", message: "fn array failed" };
   }
   let ns: (((b: number[]) => number[]) | null)[] = [];
   ns[ns.length] = id;
@@ -69,11 +69,11 @@ export function test_array_sync_fn_shapes(): number {
   let pick: ((b: number[]) => number[]) | null = ns[2];
   if (pick !== null) {
     if (pick([0, 0, 0, 0]).length !== 4) {
-      throw { code: "TEST_FAIL", message: "nullable fn array failed" };
+      throw { name: "TEST_FAIL", message: "nullable fn array failed" };
     }
   }
   if (ns[1] !== null) {
-    throw { code: "TEST_FAIL", message: "nullable fn null slot failed" };
+    throw { name: "TEST_FAIL", message: "nullable fn null slot failed" };
   }
   return 0;
 }

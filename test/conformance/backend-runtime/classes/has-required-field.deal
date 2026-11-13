@@ -12,15 +12,15 @@ export function test_has(): boolean {
   let u: User = { name: "Ada" };
   let missing: boolean = Object.hasOwn(u, "nick"); // false
   if (missing !== false) {
-    throw { code: "TEST_FAIL", message: "has() reported optional field present before assignment" };
+    throw { name: "TEST_FAIL", message: "has() reported optional field present before assignment" };
   }
   u.nick = "ads";
   let present: boolean = Object.hasOwn(u, "nick"); // true
   if (present !== true) {
-    throw { code: "TEST_FAIL", message: "has() reported optional field missing after assignment" };
+    throw { name: "TEST_FAIL", message: "has() reported optional field missing after assignment" };
   }
   if (!Object.hasOwn(u, "name")) {
-    throw { code: "TEST_FAIL", message: "required field must be present" };
+    throw { name: "TEST_FAIL", message: "required field must be present" };
   }
   return !missing && present;
 }

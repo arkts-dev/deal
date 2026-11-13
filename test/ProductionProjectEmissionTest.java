@@ -117,36 +117,36 @@ public class ProductionProjectEmissionTest {
     // ProductionProjectEmission directly)
     // =========================================================================
 
-    static final String SHADOWING_SOURCE = "export function main(): null {\n  let x: number = 3;\n  {\n    let x: number = x + 1;\n    if (x !== 4) { throw { code: \"SHADOW_FAIL\", message: \"shadowing initializer\" }; }\n  }\n  if (x !== 3) { throw { code: \"SHADOW_FAIL\", message: \"block outer restored\" }; }\n  if (true) {\n    let x: number = 9;\n    if (x !== 9) { throw { code: \"SHADOW_FAIL\", message: \"if-body shadow\" }; }\n  }\n  if (x !== 3) { throw { code: \"SHADOW_FAIL\", message: \"if-body outer restored\" }; }\n  while (false) {\n    let x: number = 11;\n    if (x !== 11) { throw { code: \"SHADOW_FAIL\", message: \"loop-body shadow\" }; }\n  }\n  if (x !== 3) { throw { code: \"SHADOW_FAIL\", message: \"loop-body outer restored\" }; }\n  let sum: number = 0;\n  let values: number[] = [1.0, 2];\n  for (let v of values) {\n    let before: number = v;\n    let v: number = 10;\n    sum = sum + before + v;\n  }\n  if (sum !== 23) { throw { code: \"SHADOW_FAIL\", message: \"for-of shadow\" }; }\n  let h: number = 3;\n  let hsum: number = 0;\n  { let v14Loop0: number = h + 1; while (hsum < 9) { let h: number = v14Loop0; { hsum = hsum + h; } v14Loop0 = h;  } }\n  if (hsum !== 12) { throw { code: \"SHADOW_FAIL\", message: \"for-head initializer\" }; }\n  if (h !== 3) { throw { code: \"SHADOW_FAIL\", message: \"for-head outer restored\" }; }\n  let nl: string | null = \"ab\";\n  if (nl !== null) {\n    { let v14Loop1: number = 0; while (false) { let nl: number = v14Loop1; {} v14Loop1 = nl;  } }\n    let nlText: string = nl;\n    if (nlText !== \"ab\") { throw { code: \"SHADOW_FAIL\", message: \"for-head shadow restored\" }; }\n  }\n  let nb: string | null = \"cd\";\n  if (nb !== null) {\n    { let nb: number = 0; if (true) {} else {} }\n    let nbText: string = nb;\n    if (nbText !== \"cd\") { throw { code: \"SHADOW_FAIL\", message: \"branch shadow restored\" }; }\n  }\n  try {\n    throw { code: \"SHADOW_X\", message: \"catch shadow\" };\n  } catch (e) {\n    let e: Error = e as Error;\n    if (e.code !== \"SHADOW_X\") { throw { code: \"SHADOW_FAIL\", message: \"catch shadow\" }; }\n  }\n  return null;\n}\n";
+    static final String SHADOWING_SOURCE = "export function main(): null {\n  let x: number = 3;\n  {\n    let x: number = x + 1;\n    if (x !== 4) { throw { name: \"SHADOW_FAIL\", message: \"shadowing initializer\" }; }\n  }\n  if (x !== 3) { throw { name: \"SHADOW_FAIL\", message: \"block outer restored\" }; }\n  if (true) {\n    let x: number = 9;\n    if (x !== 9) { throw { name: \"SHADOW_FAIL\", message: \"if-body shadow\" }; }\n  }\n  if (x !== 3) { throw { name: \"SHADOW_FAIL\", message: \"if-body outer restored\" }; }\n  while (false) {\n    let x: number = 11;\n    if (x !== 11) { throw { name: \"SHADOW_FAIL\", message: \"loop-body shadow\" }; }\n  }\n  if (x !== 3) { throw { name: \"SHADOW_FAIL\", message: \"loop-body outer restored\" }; }\n  let sum: number = 0;\n  let values: number[] = [1.0, 2];\n  for (let v of values) {\n    let before: number = v;\n    let v: number = 10;\n    sum = sum + before + v;\n  }\n  if (sum !== 23) { throw { name: \"SHADOW_FAIL\", message: \"for-of shadow\" }; }\n  let h: number = 3;\n  let hsum: number = 0;\n  { let v14Loop0: number = h + 1; while (hsum < 9) { let h: number = v14Loop0; { hsum = hsum + h; } v14Loop0 = h;  } }\n  if (hsum !== 12) { throw { name: \"SHADOW_FAIL\", message: \"for-head initializer\" }; }\n  if (h !== 3) { throw { name: \"SHADOW_FAIL\", message: \"for-head outer restored\" }; }\n  let nl: string | null = \"ab\";\n  if (nl !== null) {\n    { let v14Loop1: number = 0; while (false) { let nl: number = v14Loop1; {} v14Loop1 = nl;  } }\n    let nlText: string = nl;\n    if (nlText !== \"ab\") { throw { name: \"SHADOW_FAIL\", message: \"for-head shadow restored\" }; }\n  }\n  let nb: string | null = \"cd\";\n  if (nb !== null) {\n    { let nb: number = 0; if (true) {} else {} }\n    let nbText: string = nb;\n    if (nbText !== \"cd\") { throw { name: \"SHADOW_FAIL\", message: \"branch shadow restored\" }; }\n  }\n  try {\n    throw { name: \"SHADOW_X\", message: \"catch shadow\" };\n  } catch (e) {\n    let e: Error = e as Error;\n    if (e.name !== \"SHADOW_X\") { throw { name: \"SHADOW_FAIL\", message: \"catch shadow\" }; }\n  }\n  return null;\n}\n";
 
     static final String DYNAMIC_TABLE_SOURCE = """
         export function main(): null {
           let t: Record<string, unknown> = { x: 7 };
           let k: string = "x";
           let n: number = t[k] as number;
-          if (n !== 7) { throw { code: "DYN_FAIL", message: "variable key" }; }
+          if (n !== 7) { throw { name: "DYN_FAIL", message: "variable key" }; }
           let u: Record<string, unknown> = {};
           let mk: () => string = function(): string { return "y"; };
           u[mk()] = 9;
           let m: number = u[mk()] as number;
-          if (m !== 9) { throw { code: "DYN_FAIL", message: "effectful key" }; }
+          if (m !== 9) { throw { name: "DYN_FAIL", message: "effectful key" }; }
           let q: Record<string, unknown> = {};
           let miss: number | undefined = q[k] as number | undefined;
-          if (miss !== undefined) { throw { code: "DYN_FAIL", message: "missing" }; }
+          if (miss !== undefined) { throw { name: "DYN_FAIL", message: "missing" }; }
           let v: Record<string, unknown> = { s: 1 };
           let nn: number | null = v["s"] as number | null;
           let got: number = 0;
           if (nn !== null) { got = nn; }
-          if (got !== 1) { throw { code: "DYN_FAIL", message: "nullable" }; }
+          if (got !== 1) { throw { name: "DYN_FAIL", message: "nullable" }; }
           let order: number = 0;
           let receiver: () => Record<string, unknown> = function(): Record<string, unknown> { order = order * 10 + 1; return u; };
           let key: () => string = function(): string { order = order * 10 + 2; return "y"; };
           let value: () => number = function(): number { order = order * 10 + 3; return 11; };
           receiver()[key()] = value();
-          if (order !== 123) { throw { code: "DYN_FAIL", message: "write evaluation order" }; }
+          if (order !== 123) { throw { name: "DYN_FAIL", message: "write evaluation order" }; }
           order = 0;
           let ordered: number = receiver()[key()] as number;
-          if (order !== 12 || ordered !== 11) { throw { code: "DYN_FAIL", message: "read evaluation order" }; }
+          if (order !== 12 || ordered !== 11) { throw { name: "DYN_FAIL", message: "read evaluation order" }; }
           return null;
         }
         """;
@@ -516,11 +516,11 @@ public class ProductionProjectEmissionTest {
           let f: (a: number, b: number) => number = make();
           let r: number = f(1, 2);
           if (r !== 1) {
-            throw { code: "ARITY_ADAPTER", message: "the adapted call did not run" };
+            throw { name: "ARITY_ADAPTER", message: "the adapted call did not run" };
           }
           let second: number = f(5, 9);
           if (second !== 5) {
-            throw { code: "ARITY_ADAPTER_ARGS", message: "the extra argument changed the result" };
+            throw { name: "ARITY_ADAPTER_ARGS", message: "the extra argument changed the result" };
           }
           c.log("ARITY_ADAPTER|OK");
           return null;
@@ -534,7 +534,7 @@ public class ProductionProjectEmissionTest {
           let g: (a: number, b: number) => Promise<number> = makeAsync();
           let r: number = await g(3, 4);
           if (r !== 3) {
-            throw { code: "ARITY_ASYNC_ADAPTER", message: "the adapted await did not run" };
+            throw { name: "ARITY_ASYNC_ADAPTER", message: "the adapted await did not run" };
           }
           c.log("ARITY_ASYNC_ADAPTER|OK");
           return null;
@@ -568,7 +568,7 @@ public class ProductionProjectEmissionTest {
           let u: User = { name: "x" };
           let d: Defaulted = makeDefaulted();
           if (u.name !== "x" || d.tag !== 7) {
-            throw { code: "FORWARD_CLASS", message: "the forward class shapes did not execute" };
+            throw { name: "FORWARD_CLASS", message: "the forward class shapes did not execute" };
           }
           c.log("FORWARD_CLASS|OK");
           return null;
@@ -694,25 +694,25 @@ public class ProductionProjectEmissionTest {
 
         export function main(): null {
           if (cfg.alpha === cfg2.alpha) {
-            throw { code: "JS_PROBE", message: "one typed surface per import" };
+            throw { name: "JS_PROBE", message: "one typed surface per import" };
           }
           if (cfg.alpha() !== cfg2.alpha()) {
-            throw { code: "JS_PROBE", message: "same host entry" };
+            throw { name: "JS_PROBE", message: "same host entry" };
           }
           let e: cfg.Endpoint = {path: "/"};
           if (e.path !== "/") {
-            throw { code: "JS_PROBE", message: "host class default" };
+            throw { name: "JS_PROBE", message: "host class default" };
           }
           if (cfg.describe("probe") !== "/probe") {
-            throw { code: "JS_PROBE", message: "host call" };
+            throw { name: "JS_PROBE", message: "host call" };
           }
           let p: lib.Point = { x: cfg.alpha(), y: 0 };
           let total: number = lib.add(p.x, p.y);
           if (total !== 7) {
-            throw { code: "JS_PROBE", message: "cross-module call" };
+            throw { name: "JS_PROBE", message: "cross-module call" };
           }
           if (lib.encode({ x: 3, y: 4 }) !== "{\\"x\\":3,\\"y\\":4}") {
-            throw { code: "JS_PROBE", message: "ordinary JSON encoder" };
+            throw { name: "JS_PROBE", message: "ordinary JSON encoder" };
           }
           output.log("PROBE|JS|MAIN");
           return null;
@@ -738,17 +738,17 @@ public class ProductionProjectEmissionTest {
           let first: number = f(4, 5);
           let second: number = f(7, 8);
           if (first !== 4 || second !== 7) {
-            throw { code: "JS_PROBE", message: "adapter result" };
+            throw { name: "JS_PROBE", message: "adapter result" };
           }
           if (c.n !== 1) {
-            throw { code: "JS_PROBE", message: "source evaluated more than once" };
+            throw { name: "JS_PROBE", message: "source evaluated more than once" };
           }
           if (c.x !== 11) {
-            throw { code: "JS_PROBE", message: "later class default" };
+            throw { name: "JS_PROBE", message: "later class default" };
           }
           let holder: Holder = {counter: {n: 0, x: 11}};
           if (holder.counter.n !== 0) {
-            throw { code: "JS_PROBE", message: "nested later-class default" };
+            throw { name: "JS_PROBE", message: "nested later-class default" };
           }
           output.log("PROBE|JS|DECLARATION-ORDER");
           return null;
@@ -793,7 +793,7 @@ public class ProductionProjectEmissionTest {
           let first: number = f(1, 2);
           let second: number = f(3, 4);
           if (first !== 41 || second !== 43) {
-            throw { code: "JS_PROBE", message: "await adapter result" };
+            throw { name: "JS_PROBE", message: "await adapter result" };
           }
           output.log("PROBE|JS|AWAIT-ADAPTER");
           return first;
@@ -804,7 +804,7 @@ public class ProductionProjectEmissionTest {
           let first: number = await f(1, 2);
           let second: number = await f(3, 4);
           if (first !== 41 || second !== 43) {
-            throw { code: "JS_PROBE", message: "await async adapter result" };
+            throw { name: "JS_PROBE", message: "await async adapter result" };
           }
           output.log("PROBE|JS|AWAIT-ASYNC-ADAPTER");
           return first;
@@ -841,7 +841,7 @@ public class ProductionProjectEmissionTest {
           let first: number = await f(1, 2);
           let second: number = await f(3, 4);
           if (first !== 41 || second !== 43) {
-            throw { code: "JS_PROBE", message: "async adapter result" };
+            throw { name: "JS_PROBE", message: "async adapter result" };
           }
           output.log("PROBE|JS|ASYNC-ADAPTER");
           return first;
@@ -867,7 +867,7 @@ public class ProductionProjectEmissionTest {
           let b: B = {n: 2, makeA: makeA};
           let self: Self = {n: 3, make: makeSelf};
           if (a.makeB().n !== 2 || b.makeA().makeB().n !== 2 || self.make().n !== 3) {
-            throw {code: "JS_PROBE", message: "provided recursive callable"};
+            throw {name: "JS_PROBE", message: "provided recursive callable"};
           }
           output.log("PROBE|JS|RECURSIVE-CALLABLES");
           return null;
@@ -892,24 +892,24 @@ public class ProductionProjectEmissionTest {
           let child: Self | null = self.child;
           if (child !== null) {
             if (child.child !== null) {
-              throw { code: "JS_PROBE", message: "provided child field" };
+              throw { name: "JS_PROBE", message: "provided child field" };
             }
           } else {
-            throw { code: "JS_PROBE", message: "self default child" };
+            throw { name: "JS_PROBE", message: "self default child" };
           }
 
           let outer: A = {b: {a: null}};
           if (outer.b.a !== null) {
-            throw { code: "JS_PROBE", message: "provided mutual field" };
+            throw { name: "JS_PROBE", message: "provided mutual field" };
           }
           let b: B = {a: {b: {a: null}}};
           let a: A | null = b.a;
           if (a !== null) {
             if (a.b.a !== null) {
-              throw { code: "JS_PROBE", message: "mutual provided field" };
+              throw { name: "JS_PROBE", message: "mutual provided field" };
             }
           } else {
-            throw { code: "JS_PROBE", message: "mutual default a" };
+            throw { name: "JS_PROBE", message: "mutual default a" };
           }
           output.log("PROBE|JS|NESTED-FIELDS");
           return null;
@@ -1889,15 +1889,15 @@ public class ProductionProjectEmissionTest {
         export function main(): null {
           let n: Node = { next: null };
           if (n.next !== null) {
-            throw { code: "JS_PROBE", message: "override lost" };
+            throw { name: "JS_PROBE", message: "override lost" };
           }
           let a: A = { b: null };
           if (a.b !== null) {
-            throw { code: "JS_PROBE", message: "mutual override lost" };
+            throw { name: "JS_PROBE", message: "mutual override lost" };
           }
           let b: B = { a: null };
           if (b.a !== null) {
-            throw { code: "JS_PROBE", message: "mutual override lost" };
+            throw { name: "JS_PROBE", message: "mutual override lost" };
           }
           output.log("PROBE|JS|SUPPLIED-FIELDS");
           return null;

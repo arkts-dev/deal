@@ -18,29 +18,29 @@ export function test_toJson_omits_missing(): null {
   let c2: Config | null = JSON.parse(json);
   if (c2 !== null) {
     if (c2.name !== "test") {
-      throw { code: "TEST_FAIL", message: "name mismatch" };
+      throw { name: "TEST_FAIL", message: "name mismatch" };
     }
     if (Object.hasOwn(c2, "debug")) {
-      throw {code: "TEST_FAIL", message: "omitted optional became present"};
+      throw {name: "TEST_FAIL", message: "omitted optional became present"};
     }
   } else {
-    throw { code: "TEST_FAIL", message: "roundtrip fromJson null" };
+    throw { name: "TEST_FAIL", message: "roundtrip fromJson null" };
   }
 
   // Also test that fromJson with explicit optional field works
   let c3: Config | null = JSON.parse("{\"name\":\"withDebug\",\"debug\":true}");
   if (c3 !== null) {
     if (c3.name !== "withDebug" || !Object.hasOwn(c3, "debug")) {
-      throw { code: "TEST_FAIL", message: "withDebug name or presence mismatch" };
+      throw { name: "TEST_FAIL", message: "withDebug name or presence mismatch" };
     }
     let debug: boolean | undefined = c3.debug;
     if (debug !== undefined) {
-      if (!debug) { throw {code: "TEST_FAIL", message: "explicit true was lost"}; }
+      if (!debug) { throw {name: "TEST_FAIL", message: "explicit true was lost"}; }
     } else {
-      throw {code: "TEST_FAIL", message: "explicit true became null"};
+      throw {name: "TEST_FAIL", message: "explicit true became null"};
     }
   } else {
-    throw { code: "TEST_FAIL", message: "fromJson with optional returned null" };
+    throw { name: "TEST_FAIL", message: "fromJson with optional returned null" };
   }
 
   return null;

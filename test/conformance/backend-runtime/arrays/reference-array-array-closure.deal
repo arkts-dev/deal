@@ -12,10 +12,10 @@ export function test_array_array_closure(): number {
   let b: number[] = [0, 0];
   let xs: number[][][] = [[b]];
   if (stamp(xs) !== 7) {
-    throw { code: "TEST_FAIL", message: "nested number[] write failed" };
+    throw { name: "TEST_FAIL", message: "nested number[] write failed" };
   }
   if (b[0] !== 7) {
-    throw { code: "TEST_FAIL", message: "alias mutation not visible through the source buffer" };
+    throw { name: "TEST_FAIL", message: "alias mutation not visible through the source buffer" };
   }
   let ns: (number[] | null)[] = [];
   ns[ns.length] = [0];
@@ -24,20 +24,20 @@ export function test_array_array_closure(): number {
   if (first !== null) {
     first[0] = 9;
     if (first[0] !== 9) {
-      throw { code: "TEST_FAIL", message: "nullable element write not visible" };
+      throw { name: "TEST_FAIL", message: "nullable element write not visible" };
     }
   }
   if (ns[1] !== null) {
-    throw { code: "TEST_FAIL", message: "null element lost" };
+    throw { name: "TEST_FAIL", message: "null element lost" };
   }
   let alias: number[][] = xs[0];
   alias[0][0] = 11;
   if (b[0] !== 11) {
-    throw { code: "TEST_FAIL", message: "array alias must share storage" };
+    throw { name: "TEST_FAIL", message: "array alias must share storage" };
   }
   let distinct: number[][] = [[0, 0]];
   if (distinct === xs[0]) {
-    throw { code: "TEST_FAIL", message: "distinct arrays must not be reference-equal" };
+    throw { name: "TEST_FAIL", message: "distinct arrays must not be reference-equal" };
   }
   let maybe: number[][] | null = alias;
   if (maybe !== null) {
@@ -45,7 +45,7 @@ export function test_array_array_closure(): number {
       return 0;
     }
   }
-  throw { code: "TEST_FAIL", message: "nullable array alias failed" };
+  throw { name: "TEST_FAIL", message: "nullable array alias failed" };
 }
 
 export function main(): null {

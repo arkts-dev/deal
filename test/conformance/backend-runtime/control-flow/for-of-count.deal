@@ -10,7 +10,7 @@ export function test_array_count(): number {
     n = n + 1;
   }
   if (n !== 5) {
-    throw { code: "TEST_FAIL", message: "for-of array count mismatch" };
+    throw { name: "TEST_FAIL", message: "for-of array count mismatch" };
   }
   return n;
 }
@@ -22,7 +22,7 @@ export function test_string_count(): number {
     n = n + 1;
   }
   if (n !== 5) {
-    throw { code: "TEST_FAIL", message: "for-of string byte count mismatch" };
+    throw { name: "TEST_FAIL", message: "for-of string byte count mismatch" };
   }
   return n;
 }

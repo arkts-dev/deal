@@ -16,12 +16,12 @@ export function test_nested_empty_array_rejected(): null {
   for (let text of ["{\"child\":[],\"items\":[]}", "{\"child\":{\"n\":7},\"items\":[[]]}"]) {
     let rejected = false;
     try { let value: Parent = JSON.parse(text); }
-    catch (e) { rejected = (e as Error).code === "E8001"; }
-    if (!rejected) { throw {code: "TEST_FAIL", message: "nested array accepted as class"}; }
+    catch (e) { rejected = (e as Error).name === "E8001"; }
+    if (!rejected) { throw {name: "TEST_FAIL", message: "nested array accepted as class"}; }
   }
   let ok: Parent = JSON.parse("{\"child\":{\"n\":7},\"items\":[]}");
-  if (ok.child.n !== 7) { throw {code: "TEST_FAIL", message: "provided nested value changed"}; }
-  if (ok.items.length !== 0) { throw {code: "TEST_FAIL", message: "empty class array changed"}; }
+  if (ok.child.n !== 7) { throw {name: "TEST_FAIL", message: "provided nested value changed"}; }
+  if (ok.items.length !== 0) { throw {name: "TEST_FAIL", message: "empty class array changed"}; }
   return null;
 }
 

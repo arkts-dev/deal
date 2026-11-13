@@ -7,14 +7,14 @@
 // conditional operand out of its branch, the process would abort with
 // SC_SKIPPED at this origin instead of the pinned snapshot.
 function skippedOperand(): boolean {
-  throw { code: "SC_SKIPPED", message: "a skipped right operand executed" };
+  throw { name: "SC_SKIPPED", message: "a skipped right operand executed" };
 }
 
 // The selected right operand: the short-circuit decides the result from
 // the left operand only for the two skipped assignments above, so this
 // throw is the fixture's single terminal.
 function selectedOperand(): boolean {
-  throw { code: "SC_SELECTED", message: "the selected right operand executed" };
+  throw { name: "SC_SELECTED", message: "the selected right operand executed" };
 }
 
 export function selectedRightOperandAbrupt(): null {

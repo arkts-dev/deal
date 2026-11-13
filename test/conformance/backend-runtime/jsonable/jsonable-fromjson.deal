@@ -11,7 +11,7 @@ export class User {
 export function test_fromJson(): null {
   let u: User = JSON.parse("{\"name\":\"Alice\",\"age\":30}");
   if (!(u instanceof User) || u.name !== "Alice" || u.age !== 30) {
-    throw {code: "TEST_FAIL", message: "decoded nominal class value mismatch"};
+    throw {name: "TEST_FAIL", message: "decoded nominal class value mismatch"};
   }
   return null;
 }

@@ -12,7 +12,7 @@ function apply2(cb: (b: number[], v: number) => number[], b: number[]): number[]
 
 export function test_array_fn_adapter_e8010(): number {
   let source: (b: number[], v: number) => number[] = function(b: number[], v: number): number[] { return b; };
-  if (!host.replaceSignature({value: source}, "([number])->[number]")) { throw {code: "TEST_FAIL", message: "signature mutation failed"}; }
+  if (!host.replaceSignature({value: source}, "([number])->[number]")) { throw {name: "TEST_FAIL", message: "signature mutation failed"}; }
   let cb: (b: number[], v: number) => number[] = source;
   return apply2(cb, [0])[0];
 }

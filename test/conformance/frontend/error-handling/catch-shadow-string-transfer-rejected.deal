@@ -7,7 +7,7 @@ export function main(): null {
   let e: string | null = "outer";
   if (e !== null) {
     try {
-      throw { code: "C_STR", message: "string refinement" };
+      throw { name: "C_STR", message: "string refinement" };
     } catch (e) {
       let unsound: string = e;
     }

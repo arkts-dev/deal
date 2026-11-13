@@ -13,7 +13,7 @@ public final class ClassPresenceProductionTest {
         // @jsonable
         export class Outer { item: model.Item; }
         function ensure(ok: boolean): null {
-          if (!ok) { throw {code: "CLASS_TEST", message: "presence contract"}; }
+          if (!ok) { throw {name: "CLASS_TEST", message: "presence contract"}; }
           return null;
         }
         export function main(): null {
@@ -25,7 +25,7 @@ public final class ClassPresenceProductionTest {
           ensure(Object.hasOwn(hosted, "optional"));
           let optionalValue: number | undefined = hosted.optional;
           if (optionalValue !== undefined) { ensure(optionalValue === 12); }
-          else { throw {code: "CLASS_HOST", message: "provided optional"}; }
+          else { throw {name: "CLASS_HOST", message: "provided optional"}; }
           delete hosted.optional;
           ensure(!Object.hasOwn(hosted, "optional"));
           let item: model.Item = {value: 7, nullable: null};
@@ -44,7 +44,7 @@ public final class ClassPresenceProductionTest {
             try { item = JSON.parse(text); }
             catch (failure) {
               if (failure instanceof Error) {
-                rejected = failure.code === "E8001" || failure.code === "E8007";
+                rejected = failure.name === "E8001" || failure.name === "E8007";
                 if (!rejected) { throw failure; }
               }
             }
@@ -56,13 +56,13 @@ public final class ClassPresenceProductionTest {
             ensure(decoded.nullable === null);
             ensure(!Object.hasOwn(decoded, "optional"));
             ensure(!Object.hasOwn(decoded, "optionalNullable"));
-          } else { throw {code: "CLASS_DECODE", message: "required fields"}; }
+          } else { throw {name: "CLASS_DECODE", message: "required fields"}; }
           let rejectedNested: boolean = false;
           let outer: Outer | null = null;
           try { outer = JSON.parse(`{"item":{}}`); }
           catch (failure) {
             if (failure instanceof Error) {
-              rejectedNested = failure.code === "E8001";
+              rejectedNested = failure.name === "E8001";
               if (!rejectedNested) { throw failure; }
             }
           }
@@ -71,12 +71,12 @@ public final class ClassPresenceProductionTest {
           if (outer !== null) {
             ensure(outer.item.value === 4);
             ensure(!Object.hasOwn(outer.item, "optionalNullable"));
-          } else { throw {code: "CLASS_NESTED", message: "nested fields"}; }
+          } else { throw {name: "CLASS_NESTED", message: "nested fields"}; }
           let present: model.Item | null = JSON.parse(`{"value":5,"nullable":null,"optionalNullable":null}`);
           if (present !== null) {
             ensure(Object.hasOwn(present, "optionalNullable"));
             ensure((present.optionalNullable as number | null) === null);
-          } else { throw {code: "CLASS_NULL", message: "present null"}; }
+          } else { throw {name: "CLASS_NULL", message: "present null"}; }
           output.log("class-presence-ok");
           return null;
         }
@@ -126,7 +126,7 @@ public final class ClassPresenceProductionTest {
                     rawHost(host, "C", "delete v.x;", "v.x=nil;");
                     CompositionProductionTest.execute(imports + "export function main():null{"
                         + "let n:host.C={x:1};host.mutate(n);if(Object.hasOwn(n,\"x\")){"
-                        + "throw {code:\"TEST\",message:\"required field still present\"};}output.log(\"ABSENT\");return null;}",
+                        + "throw {name:\"TEST\",message:\"required field still present\"};}output.log(\"ABSENT\");return null;}",
                         "ABSENT\n", root.resolve("live-" + field + "-" + parameter), host,
                         List.of(deal.codegen.Backend.JS, deal.codegen.Backend.LUAJIT));
                     cases++;

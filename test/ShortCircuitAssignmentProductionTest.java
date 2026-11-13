@@ -476,7 +476,7 @@ public final class ShortCircuitAssignmentProductionTest {
         List<String> lines = Files.readAllLines(sourceFile, StandardCharsets.UTF_8);
         for (int i = 0; i < lines.size(); i++) {
             String line = lines.get(i);
-            int at = line.indexOf("throw { code: \"" + ABRUPT_CODE + "\"");
+            int at = line.indexOf("throw { name: \"" + ABRUPT_CODE + "\"");
             if (at >= 0) {
                 return new ThrowCoordinate(i + 1, at + 1);
             }

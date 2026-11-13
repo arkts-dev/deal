@@ -291,6 +291,8 @@ int deal_arm_table_install(const deal_arm_table *table) {
  * ========================================================================= */
 
 struct deal_error {
+    char *name;
+    size_t name_length;
     char *code;
     char *message;
     size_t code_length;
@@ -337,6 +339,8 @@ static const deal_layout deal_error_layout = {
  */
 static void deal_error_release(void *object) {
     deal_error *error = object;
+    deal_platform_release(error->name);
+    error->name = NULL;
     deal_platform_release(error->code);
     error->code = NULL;
     deal_platform_release(error->message);
@@ -373,6 +377,8 @@ static deal_error *deal_error_allocate(const char *code, const char *message,
     deal_layout_define(&deal_error_layout);
     deal_layout_release_register(DEAL_LAYOUT_ERROR, deal_error_release);
     deal_error *error = deal_alloc(DEAL_LAYOUT_ERROR, sizeof(*error));
+    error->name = deal_platform_duplicate(code);
+    error->name_length = strlen(code);
     error->code = deal_platform_duplicate(code);
     error->message = deal_platform_duplicate(message);
     error->code_length = strlen(code);
@@ -432,20 +438,24 @@ static char *deal_error_text_of_string(deal_string *value) {
     return text;
 }
 
-deal_error *deal_error_create_strings(deal_string *code, deal_string *message,
+deal_error *deal_error_create_strings(deal_string *name, deal_string *message,
                                       const deal_origin *origin) {
-    if (code == NULL || message == NULL) {
+    if (name == NULL || message == NULL) {
         deal_platform_fault("error record: absent required class field");
     }
-    char *code_text = deal_error_text_of_string(code);
+    char *name_text = deal_error_text_of_string(name);
+    char *code_text = deal_error_text_of_string(name);
     char *message_text = deal_error_text_of_string(message);
-    deal_error *error = deal_error_allocate(code_text, message_text, origin, origin != NULL);
+    deal_error *error = deal_error_allocate("", "", origin, origin != NULL);
     error->unraised_construction = origin == NULL;
+    deal_platform_release(error->name);
     deal_platform_release(error->code);
     deal_platform_release(error->message);
+    error->name = name_text;
     error->code = code_text;
     error->message = message_text;
-    error->code_length = deal_text_transport_length(code);
+    error->name_length = deal_text_transport_length(name);
+    error->code_length = error->name_length;
     error->message_length = deal_text_transport_length(message);
     return error;
 }
@@ -456,6 +466,12 @@ void deal_error_raise(deal_error *error, const deal_origin *origin) {
     }
     if (!error->unraised_construction) return;
     error->unraised_construction = 0;
+    char *code = deal_platform_allocate(deal_platform_checked_add(error->name_length, 1u));
+    memcpy(code, error->name, error->name_length);
+    code[error->name_length] = 0;
+    deal_platform_release(error->code);
+    error->code = code;
+    error->code_length = error->name_length;
     error->source_file = deal_platform_duplicate(origin->source_file);
     error->line = origin->line;
     error->column = origin->column;
@@ -468,6 +484,25 @@ void deal_error_raise(deal_error *error, const deal_origin *origin) {
         }
         error->frame_count = count;
     }
+}
+
+deal_string *deal_error_name_value(deal_error *error) {
+    if (error == NULL) deal_platform_fault("error record: invalid text access");
+    return error->name == NULL ? NULL : deal_text_new(error->name, error->name_length);
+}
+
+const char *deal_error_name_bytes(deal_error *error, size_t *length) {
+    if (error == NULL || length == NULL) deal_platform_fault("error record: invalid text access");
+    *length = error->name_length;
+    return error->name;
+}
+
+void deal_error_set_name_value(deal_error *error, deal_string *name) {
+    if (error == NULL) deal_platform_fault("error record: invalid text access");
+    char *text = deal_error_text_of_string(name);
+    deal_platform_release(error->name);
+    error->name = text;
+    error->name_length = deal_text_transport_length(name);
 }
 
 deal_string *deal_error_code_value(deal_error *error) {

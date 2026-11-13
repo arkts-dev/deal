@@ -12,7 +12,7 @@ export function test_table_default_freshness_extended(): null {
   let b: Holder = {data: {}};
   a.data.count = 9;
   let count: unknown = b.data.count;
-  if (count !== undefined || Object.hasOwn(b.data, "count")) { throw { code: "TEST_FAIL", message: "provided tables shared" }; }
+  if (count !== undefined || Object.hasOwn(b.data, "count")) { throw { name: "TEST_FAIL", message: "provided tables shared" }; }
   return null;
 }
 

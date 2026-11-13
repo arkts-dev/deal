@@ -9,7 +9,7 @@ export function test_json_stringify_invalid_string(): void {
   let text = JSON.stringify(value) as string;
   let decoded: Record<string, unknown> = JSON.parse(text);
   if((value.a as string)!==`\uD800` || (decoded.a as string)!==`\uD800`) {
-    throw {code:"FAIL",message:"lone string lost during host or JSON crossing"};
+    throw {name:"FAIL",message:"lone string lost during host or JSON crossing"};
   }
 }
 export function main(): null { return null; }

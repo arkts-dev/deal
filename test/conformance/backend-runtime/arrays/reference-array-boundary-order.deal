@@ -7,11 +7,11 @@ export function main(): null {
   let b: number[] = [0, 0];
   let alias: number[] = b;
   if (b.length !== 2 || b[0] !== 0 || b[1] !== 0 || b !== alias) {
-    throw { code: "TEST_FAIL", message: "number[] allocation or identity mismatch" };
+    throw { name: "TEST_FAIL", message: "number[] allocation or identity mismatch" };
   }
   alias[0] = 255;
   if (b[0] !== 255) {
-    throw { code: "TEST_FAIL", message: "number[] alias mutation mismatch" };
+    throw { name: "TEST_FAIL", message: "number[] alias mutation mismatch" };
   }
 
   let trace: string = "";
@@ -26,7 +26,7 @@ export function main(): null {
     trace = trace + "C";
   }
   if (trace !== "TIVC" || b[1] !== 0) {
-    throw { code: "TEST_FAIL", message: "failed byte write behavior: " + trace };
+    throw { name: "TEST_FAIL", message: "failed byte write behavior: " + trace };
   }
   return null;
 }

@@ -8,7 +8,7 @@ import * as Lib from "./value_lib";
 export function test_import_member_in_closure_after_init(): number {
   let f: () => number = function(): number { return Lib.make(); };
   let result: number = f();
-  if (result !== 3) { throw { code: "TEST_FAIL", message: "import member in closure failed" }; }
+  if (result !== 3) { throw { name: "TEST_FAIL", message: "import member in closure failed" }; }
   return result;
 }
 

@@ -1,12 +1,12 @@
 // @spec: Runtime execution model
-// @description: Invalid live Error code rejects record graph admission and permits repair
+// @description: Invalid live Error name rejects record graph admission and permits repair
 // @expected: runtime-ok
 // @features: boundary-validation, host-abi
 import * as printer from "std/console";
 import * as host from "host/probe";
 
 export function main():null {
-  let e:Error={code:"X",message:"original"};
+  let e:Error={name:"X",message:"original"};
   let alias=e;
   let original:Record<string,unknown>={};
   let destination=original;
@@ -15,7 +15,7 @@ export function main():null {
     destination={unread:e};
     printer.log("BAD");
   } catch(x) {
-    if(x instanceof Error) { printer.log(x.code); }
+    if(x instanceof Error) { printer.log(x.name); }
   }
   host.repair();
   if(e===alias && destination===original) { printer.log("UNCHANGED"); }

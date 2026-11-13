@@ -98,7 +98,7 @@ public class JsBackendTest {
                         ? "let r:Record<string,unknown>=JSON.parse(\"{\\\"a\\\":[1,2]}\");let a=r.a as unknown[];"
                         : "let a:unknown[]=[1,2];";
                     String assertion = operation == 1 ? ""
-                        : "if((a[0] as number)!==9){throw {code:\"TEST\",message:\"stale projection\"};}output.log(\"LIVE\");";
+                        : "if((a[0] as number)!==9){throw {name:\"TEST\",message:\"stale projection\"};}output.log(\"LIVE\");";
                     Files.writeString(host.resolve("probe.js"), "module.exports={f:v=>{" + mutations[operation] + "}};");
                     CompositionProductionTest.execute(imports + "export function main():null{" + array
                         + "host.f(a);" + assertion + "return null;}",
@@ -138,7 +138,7 @@ public class JsBackendTest {
                 CompositionProductionTest.execute(imports + "export function main():null{" + array + """
                     let alias:unknown[]=a;
                     host.f(a);
-                    if(a!==alias || alias.length!==1 || (alias[0] as number)!==9){throw {code:"TEST",message:"retry lost live storage"};}
+                    if(a!==alias || alias.length!==1 || (alias[0] as number)!==9){throw {name:"TEST",message:"retry lost live storage"};}
                     output.log("LIVE");return null;
                 }
                 """, "LIVE\n", root.resolve("reject-repair-retry-" + parsed), host, List.of(Backend.JS));
@@ -163,7 +163,7 @@ public class JsBackendTest {
                     : "let child:unknown[]=[1,2];let a:unknown[]=[child,child];";
                 CompositionProductionTest.execute(imports + "export function main():null{" + arrays + """
                     host.f(a);
-                    if((a[0] as unknown[])!==child || (a[1] as unknown[])!==child || (child[0] as number)!==9){throw {code:"TEST",message:"nested alias lost storage"};}
+                    if((a[0] as unknown[])!==child || (a[1] as unknown[])!==child || (child[0] as number)!==9){throw {name:"TEST",message:"nested alias lost storage"};}
                     output.log("LIVE");return null;
                 }
                 """, "LIVE\n", root.resolve("nested-reflection-" + parsed), host, List.of(Backend.JS));
@@ -248,7 +248,7 @@ public class JsBackendTest {
             testCanonicalDescriptorMatcherPins();
             testLegacyDescriptorRejectionPins();
             testCanonicalClassIdentityIndex();
-            testErrorDefaultFilling();
+            testErrorRequiredFields();
             testContextualErrorConstruction();
             testRethrowPreservesCode();
             testArrayElementDeleteSemantics();
@@ -878,12 +878,12 @@ public class JsBackendTest {
               let f: (x: number, y: number) => Promise<number> = small;
               let r: number = await f(await value("A", 7), await value("B", 8));
               if (r !== 7 || trace !== "ABF") {
-                throw { code: "ARITY_FAIL", message: "async extended arguments: " + trace };
+                throw { name: "ARITY_FAIL", message: "async extended arguments: " + trace };
               }
               const twice = async (x: number): Promise<number> => x * 2;
               const block = async (): Promise<number> => { return await twice(4); };
               const quiet = async (): Promise<void> => c.log("async-extended-argument-order");
-              if ((await block()) !== 8) { throw {code:"TEST", message:"async arrow result"}; }
+              if ((await block()) !== 8) { throw {name:"TEST", message:"async arrow result"}; }
               await quiet();
               return null;
             }
@@ -1121,7 +1121,7 @@ public class JsBackendTest {
               let index = function(): number { trace = trace + "I"; return 2; };
               let receiver = function(): number[] { trace = trace + "R"; return xs; };
               try { receiver()[index()] = await value(); trace = trace + "X"; }
-              catch (e) { if ((e as Error).code !== "E8002") { return 0; } trace = trace + "C"; }
+              catch (e) { if ((e as Error).name !== "E8002") { return 0; } trace = trace + "C"; }
               if (trace !== "RIVC" || alias.length !== 1 || alias[0] !== 7) { return 0; }
               alias[alias.length] = 8;
               if (xs.length !== 2 || xs[1] !== 8) { return 0; }
@@ -2029,12 +2029,12 @@ public class JsBackendTest {
                   let extra: U = u;
                   let extraCaught:boolean = false;
                   try { extra = JSON.parse("{\\"name\\":\\"Ada\\",\\"extra\\":1}"); }
-                  catch(e) { extraCaught = (e as Error).code === "E8007"; }
+                  catch(e) { extraCaught = (e as Error).name === "E8007"; }
                   if (!extraCaught || extra !== u || u.name !== "Ada" || u.age !== 36) { return 0; }
                   let scalar: U = u;
                   let scalarCaught:boolean = false;
                   try { scalar = JSON.parse("42"); }
-                  catch(e) { scalarCaught = (e as Error).code === "E8001"; }
+                  catch(e) { scalarCaught = (e as Error).name === "E8001"; }
                   if (!scalarCaught || scalar !== u || u.nick !== null) { return 0; }
                   return 1;
                 }
@@ -2537,22 +2537,22 @@ public class JsBackendTest {
     }
 
     private static void testErrorEmissionPins() {
-        System.out.println("-- Error emission pins: literal default filling, "
+        System.out.println("-- Error emission pins: required name/message, "
             + "contextual construction, rethrow --");
 
         JsEmission res = generate("""
             function boomCode(): null {
-              if (true) { throw { code: "E_CODE", message: "" }; }
+              if (true) { throw { name: "E_CODE", message: "" }; }
               return null;
             }
             function boomMsg(): null {
-              if (true) { throw { code: "", message: "m" }; }
+              if (true) { throw { name: "", message: "m" }; }
               return null;
             }
-            function produce(): Error { return { code: "", message: "ret" }; }
+            function produce(): Error { return { name: "", message: "ret" }; }
             function rethrow(): null {
               try {
-                throw { code: "C", message: "m" };
+                throw { name: "C", message: "m" };
               } catch (e) {
                 throw e as Error;
               }
@@ -2571,19 +2571,18 @@ public class JsBackendTest {
         if (res == null || res.hasErrors()) return;
 
         String js = res.source();
-        check(js.contains("{name: \"code\", descriptor: \"string\", optional: false}")
+        check(js.contains("{name: \"name\", descriptor: \"string\", optional: false}")
                 && js.contains("{name: \"message\", descriptor: \"string\", optional: false}"),
             "the builtin Error structural layout requires both fields");
         check(js.contains("$rt.classPlan(\"Error\", ")
-                && js.contains("{[\"code\"]: ")
+                && js.contains("{[\"name\"]: ")
                 && js.contains("\"jstest-errpins.deal\", 2, 21)"),
-            "a literal throw with an omitted message keeps the code-only "
-                + "provided map at the literal span");
+            "a literal throw keeps its supplied name at the literal span");
         check(js.contains("[\"message\"]: ")
                 && js.contains("\"jstest-errpins.deal\", 6, 21)"),
             "a literal throw keeps the explicitly supplied message");
         check(js.contains("\"Error\"")
-                && js.contains("[\"code\"]: ") && js.contains("[\"message\"]: "),
+                && js.contains("[\"name\"]: ") && js.contains("[\"message\"]: "),
             "a contextual Error literal constructs through the canonical "
                 + "Error factory");
         check(js.contains("throw $rt.throwValue(")
@@ -2990,7 +2989,7 @@ public class JsBackendTest {
               };
               let described: string = cfg.describe(s);
               if (described !== "/api:9090") {
-                throw { code: "TEST_FAIL", message: "described" };
+                throw { name: "TEST_FAIL", message: "described" };
               }
               return null;
             }
@@ -3287,16 +3286,16 @@ public class JsBackendTest {
             import * as util from "./occ_util";
             export function main(): null {
               if (h1.alpha !== h1.alpha) {
-                throw { code: "SAME_IMPORT_IDENTITY", message: "same import" };
+                throw { name: "SAME_IMPORT_IDENTITY", message: "same import" };
               }
               if (h1.alpha === h2.alpha) {
-                throw { code: "CROSS_IMPORT_INEQUALITY", message: "imports" };
+                throw { name: "CROSS_IMPORT_INEQUALITY", message: "imports" };
               }
               if (h1.alpha() !== 7 || h2.alpha() !== 7) {
-                throw { code: "HOST_CALL", message: "direct" };
+                throw { name: "HOST_CALL", message: "direct" };
               }
               if (util.read() !== 7) {
-                throw { code: "CROSS_UNIT_CALL", message: "cross unit" };
+                throw { name: "CROSS_UNIT_CALL", message: "cross unit" };
               }
               let xs: number[] = [1, 2, 3];
               let sum: number = 0;
@@ -3305,7 +3304,7 @@ public class JsBackendTest {
                 if (e === 1) { xs[1] = 2; }
               }
               if (sum !== 6) {
-                throw { code: "LIVE_WRITE", message: "live slot" };
+                throw { name: "LIVE_WRITE", message: "live slot" };
               }
               let ys: number[] = [1, 2];
               let appended: number = 0;
@@ -3314,14 +3313,14 @@ public class JsBackendTest {
                 if (e === 1) { ys[ys.length] = 7; }
               }
               if (appended !== 10) {
-                throw { code: "APPEND_VISIT", message: "appended element" };
+                throw { name: "APPEND_VISIT", message: "appended element" };
               }
               let once: number = 0;
               for (let e of h1.values()) {
                 once = once + e;
               }
               if (once !== 3) {
-                throw { code: "ITERABLE_ONCE", message: "iterable" };
+                throw { name: "ITERABLE_ONCE", message: "iterable" };
               }
               return null;
             }
@@ -3418,10 +3417,10 @@ public class JsBackendTest {
             import * as h from "host/ord";
             export function main(): null {
               if (h.alpha() !== 7) {
-                throw { code: "ALPHA", message: "alpha" };
+                throw { name: "ALPHA", message: "alpha" };
               }
               if (h.zeta() !== 9) {
-                throw { code: "ZETA", message: "zeta" };
+                throw { name: "ZETA", message: "zeta" };
               }
               return null;
             }
@@ -4144,7 +4143,7 @@ public class JsBackendTest {
               b[1] = 3;
               let out: number[] = lib.syncId(b);
               if (out[0] !== 0 || out[1] !== 3 || b[1] !== 3) {
-                throw { code: "TEST_FAIL", message: "sync cross-module number[] mismatch" };
+                throw { name: "TEST_FAIL", message: "sync cross-module number[] mismatch" };
               }
               return 1;
             }
@@ -4152,7 +4151,7 @@ public class JsBackendTest {
               let b: number[] = [0, 0];
               let out: number[] = await lib.tx(b);
               if (out[0] !== 5 || b[0] !== 5) {
-                throw { code: "TEST_FAIL", message: "async cross-module number[] mismatch" };
+                throw { name: "TEST_FAIL", message: "async cross-module number[] mismatch" };
               }
               return 1;
             }
@@ -4677,6 +4676,28 @@ public class JsBackendTest {
             if ($err.$kind !== "class" || $err.$classname !== "Error") {
               $fail = "error-identity:" + String($err.$classname);
             }
+            if ($err.name !== "E_TEST" || !$rt.has($err,"name") || !$rt.has($err,"message")
+                || $rt.has($err,"code") || $rt.has($err,"$kind")
+                || $rt.objectKeys($err,"probe.js",1,1).join(",") !== "name,message") {
+              $fail = "error-declared-presence";
+            }
+            const $literal = $rt.classPlan("Error", [
+              {name:"name",descriptor:"string",optional:false},
+              {name:"message",descriptor:"string",optional:false}
+            ], {name:"First",message:"m"}, "probe.js",1,1);
+            if ($rt.has($literal,"code")) $fail = "unraised-code-presence";
+            try { $rt.throwValue($literal,"probe.js",2,3); } catch(e) {
+              if(e !== $literal || e.code !== "First") $fail = "first-throw";
+            }
+            $literal.name="Second";
+            if($rt.has($literal,"code") || $literal.code !== "First"
+                || Object.keys($literal).includes("code")) $fail = "diagnostic-isolation";
+            const $ordinary=$rt.classPlan("@m/Presence",[
+              {name:"code",descriptor:"string",optional:false}
+            ],{code:"user data"},"probe.js",1,1);
+            if(!$rt.has($ordinary,"code") || $ordinary.code !== "user data") $fail="ordinary-code";
+            const $record=new Map([["code",undefined],["name",null]]);
+            if(!$rt.has($record,"code") || !$rt.has($record,"name") || $rt.has($record,"message")) $fail="record-code";
             if ($rt.reifyError($err) !== $err) { $fail = "reify-passthrough"; }
             if ($rt.checkType("Error", $err, "probe.js", 1, 1) !== $err) {
               $fail = "error-boundary";
@@ -4853,24 +4874,24 @@ public class JsBackendTest {
         throw new AssertionError("expected the module-identity index");
     }
 
-    private static void testErrorDefaultFilling() throws Exception {
-        System.out.println("-- Node: Error-literal default filling --");
+    private static void testErrorRequiredFields() throws Exception {
+        System.out.println("-- Node: Error-literal required fields and empty strings --");
 
         NodeResult run = runDealNode("""
             function checkMsg(): number {
               try {
-                throw { code: "", message: "x" };
+                throw { name: "", message: "x" };
               } catch (e) {
-                if ((e as Error).code === "" && (e as Error).message === "x") { return 1; }
+                if ((e as Error).name === "" && (e as Error).message === "x") { return 1; }
                 return 0;
               }
               return 0;
             }
             function checkCode(): number {
               try {
-                throw { code: "C", message: "" };
+                throw { name: "C", message: "" };
               } catch (e) {
-                if ((e as Error).code === "C" && (e as Error).message === "") { return 1; }
+                if ((e as Error).name === "C" && (e as Error).message === "") { return 1; }
                 return 0;
               }
               return 0;
@@ -4878,8 +4899,7 @@ public class JsBackendTest {
             export function test(): number { return checkMsg() * 10 + checkCode(); }
             """, "err-default");
         check(run.exitCode() == 0 && run.output().equals("11"),
-            "throw { message: \"x\" } catches with e.code === \"\" and "
-                + "throw { code: \"C\" } catches with e.message === \"\": "
+            "explicit empty name and message strings survive throw/catch: "
                 + run.output());
     }
 
@@ -4887,18 +4907,17 @@ public class JsBackendTest {
         System.out.println("-- Node: contextual Error construction --");
 
         NodeResult run = runDealNode("""
-            function produce(): Error { return { code: "", message: "ret" }; }
+            function produce(): Error { return { name: "", message: "ret" }; }
             export function test(): number {
-              let e: Error = { code: "", message: "x" };
-              if (e.code !== "" || e.message !== "x") { return 0; }
+              let e: Error = { name: "", message: "x" };
+              if (e.name !== "" || e.message !== "x") { return 0; }
               let f: Error = produce();
-              if (f.code !== "" || f.message !== "ret") { return 0; }
+              if (f.name !== "" || f.message !== "ret") { return 0; }
               return 1;
             }
             """, "err-contextual");
         check(run.exitCode() == 0 && run.output().equals("1"),
-            "let e: Error = { message: \"x\" } and a return-position "
-                + "contextual literal fill the omitted code with \"\": "
+            "annotated and return-position literals retain explicit required fields: "
                 + run.output());
     }
 
@@ -4908,7 +4927,7 @@ public class JsBackendTest {
         NodeResult caught = runDealNode("""
             function inner(): null {
               try {
-                throw { code: "USER_RETHROW", message: "boom" };
+                throw { name: "USER_RETHROW", message: "boom" };
               } catch (e) {
                 throw e as Error;
               }
@@ -4918,7 +4937,7 @@ public class JsBackendTest {
               try {
                 inner();
               } catch (e) {
-                if ((e as Error).code === "USER_RETHROW" && (e as Error).message === "boom") { return 1; }
+                if ((e as Error).name === "USER_RETHROW" && (e as Error).message === "boom") { return 1; }
                 return 0;
               }
               return 0;
@@ -4931,7 +4950,7 @@ public class JsBackendTest {
         NodeResult shim = runDealNode("""
             function inner(): null {
               try {
-                throw { code: "SHIM_CODE", message: "shim" };
+                throw { name: "SHIM_CODE", message: "shim" };
               } catch (e) {
                 throw e as Error;
               }
@@ -5055,7 +5074,7 @@ public class JsBackendTest {
                 let arr: Record<string, unknown> = JSON.parse("[1,2]");
                 arrayOutcome = "accepted";
               } catch (e) {
-                arrayOutcome = (e as Error).code + ":" + (e as Error).message;
+                arrayOutcome = (e as Error).name + ":" + (e as Error).message;
               }
               if (arrayOutcome !== "E8001:expected table") { return 0; }
               let nullOutcome: string = "";
@@ -5063,7 +5082,7 @@ public class JsBackendTest {
                 let n: Record<string, unknown> = JSON.parse("null");
                 nullOutcome = "accepted";
               } catch (e) {
-                nullOutcome = (e as Error).code + ":" + (e as Error).message;
+                nullOutcome = (e as Error).name + ":" + (e as Error).message;
               }
               if (nullOutcome !== "E8001:expected table") { return 0; }
               let p: Record<string, unknown> = { __proto__: "x" };
@@ -5089,7 +5108,7 @@ public class JsBackendTest {
         // The exact JS-lane tuple for both decode carriers, captured from
         // the emitted artifact's thrown error (the production JS emission
         // under node; the raw catch preserves the expected/actual fields
-        // the source-level Error projects as code/message only).
+        // the source-level Error projects as name/message only).
         NodeResult tuple = runArtifactScript(checkedEmission(prepareJs("""
 
             export function test_array(): null {
@@ -5218,7 +5237,7 @@ public class JsBackendTest {
               try {
                 let oob: unknown = xs[2];
               } catch (e) {
-                if ((e as Error).code === "E8002"
+                if ((e as Error).name === "E8002"
                     && (e as Error).message === "array index out of bounds") { caught = true; }
               }
               if (!caught) { return 0; }
@@ -5317,7 +5336,7 @@ public class JsBackendTest {
               vb.nums = (decodeBox("{\\"nums\\":[2147483647.00000001],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}") as Box).nums;
               let intnum: string = "";
               try { intnum = JSON.stringify(vb) as string; }
-              catch (e) { intnum = (e as Error).code + "|" + (e as Error).message; }
+              catch (e) { intnum = (e as Error).name + "|" + (e as Error).message; }
               if (!equivalent(intnum, "{\\"nums\\":[2147483647],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
               return 1;
             }
@@ -5443,7 +5462,7 @@ public class JsBackendTest {
               if (xsC.length !== 3) { return 0; }
               if (xsC[1] !== 9) { return 0; }
               let dnil: string = "";
-              try { dnil = JSON.stringify(t3d) as string; } catch (e) { dnil = (e as Error).code + "|" + (e as Error).message; }
+              try { dnil = JSON.stringify(t3d) as string; } catch (e) { dnil = (e as Error).name + "|" + (e as Error).message; }
               if (!equivalent(dnil, "{\\"a\\":[1,9,3],\\"b\\":[1]}")) { return 0; }
 
               // (2) The element read materializes the slot's own variant at
@@ -5453,7 +5472,7 @@ public class JsBackendTest {
               let ib: IBox = {n: 0};
               ib.n = xs4[0];
               let r1: string = "";
-              try { r1 = JSON.stringify(ib) as string; } catch (e) { r1 = (e as Error).code + "|" + (e as Error).message; }
+              try { r1 = JSON.stringify(ib) as string; } catch (e) { r1 = (e as Error).name + "|" + (e as Error).message; }
               if (!equivalent(r1, "{\\"n\\":2147483647}")) { return 0; }
               let t5: Record<string, unknown> = declaredArrays("{\\"values\\":[1]}");
               let xs5: number[] = t5.values as number[];
@@ -5504,7 +5523,7 @@ public class JsBackendTest {
               let xs6: number[] = t6.values as number[];
               xs6[0] = 0;
               let d1: string = "";
-              try { d1 = JSON.stringify(t6) as string; } catch (e) { d1 = (e as Error).code + "|" + (e as Error).message; }
+              try { d1 = JSON.stringify(t6) as string; } catch (e) { d1 = (e as Error).name + "|" + (e as Error).message; }
               if (!equivalent(d1, "{\\"values\\":[0,2]}")) { return 0; }
               let t7: Record<string, unknown> = declaredArrays("{\\"values\\":[1,2]}");
               let db: WBox = {nums: []};
@@ -5512,12 +5531,12 @@ public class JsBackendTest {
               let ys: number[] = db.nums;
               ys[0] = 0;
               let d2: string = "";
-              try { d2 = JSON.stringify(db) as string; } catch (e) { d2 = (e as Error).code + "|" + (e as Error).message; }
+              try { d2 = JSON.stringify(db) as string; } catch (e) { d2 = (e as Error).name + "|" + (e as Error).message; }
               if (!equivalent(d2, "{\\"nums\\":[0,2]}")) { return 0; }
               let zs: number[] = [1,2];
               zs[0] = 0;
               let d3: string = "";
-              try { d3 = JSON.stringify({xs: zs}) as string; } catch (e) { d3 = (e as Error).code + "|" + (e as Error).message; }
+              try { d3 = JSON.stringify({xs: zs}) as string; } catch (e) { d3 = (e as Error).name + "|" + (e as Error).message; }
               if (!equivalent(d3, "{\\"xs\\":[0,2]}")) { return 0; }
               let t8: Record<string, unknown> = JSON.parse("{\\"values\\":[1,null,2]}");
               if (!equivalent(JSON.stringify(t8) as string, "{\\"values\\":[1,null,2]}")) { return 0; }
@@ -6275,11 +6294,11 @@ public class JsBackendTest {
               let h: Holder = { f: f };
               let out: number[] = await h.f(b);
               if (out[0] !== 2 || b[0] !== 2 || b[1] !== 41) {
-                throw { code: "ORACLE_FAIL", message: "number[] closure content" };
+                throw { name: "ORACLE_FAIL", message: "number[] closure content" };
               }
               out[0] = 9;
               if (b[0] !== 9) {
-                throw { code: "ORACLE_FAIL", message: "number[] closure identity" };
+                throw { name: "ORACLE_FAIL", message: "number[] closure identity" };
               }
               return null;
             }

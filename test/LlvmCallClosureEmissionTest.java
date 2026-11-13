@@ -1326,7 +1326,7 @@ public final class LlvmCallClosureEmissionTest {
             function one(): number { return 1; }
             function two(): number { return 2; }
             function check(ok: boolean): void {
-                if (!ok) { throw {code: "TEST_FAIL", message: "adapter snapshot"}; }
+                if (!ok) { throw {name: "TEST_FAIL", message: "adapter snapshot"}; }
             }
             function make(state: State): () => number {
                 state.calls = state.calls + 1;
@@ -1644,7 +1644,7 @@ public final class LlvmCallClosureEmissionTest {
      */
     private static final String ADAPTER_THROWN_FRAMES_SOURCE = """
         function one(n: number): number {
-          if (n > 0) { throw { code: "E9001", message: "adapted call failed" }; }
+          if (n > 0) { throw { name: "E9001", message: "adapted call failed" }; }
           return n;
         }
         function use2(f: (a: number, b: number) => number): number {
@@ -1684,7 +1684,7 @@ public final class LlvmCallClosureEmissionTest {
               let unused: number = value;
             } catch (failure) {
               let error: Error = failure as Error;
-              if (error.code === "E8001") { caught = caught + 1; }
+              if (error.name === "E8001") { caught = caught + 1; }
             }
             round = round + 1;
           }

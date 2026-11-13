@@ -4,14 +4,14 @@
 // @features: async-await, error-handling, reachability, v1.2
 
 async function fail(): Promise<number> {
-  throw { code: "X", message: "async failure" };
+  throw { name: "X", message: "async failure" };
   return 99;
 }
 
 export async function check(): Promise<number> {
   try { return await fail(); }
   catch (e) {
-    if ((e as Error).code !== "X") { throw e as Error; }
+    if ((e as Error).name !== "X") { throw e as Error; }
     return 7;
   }
 }

@@ -81,7 +81,7 @@ public final class ClassPresenceAdmissionTest {
             class LocalRecord { required: number; nullable: number | null; optional?: number; }
             export function main(): null {
               let record: LocalRecord = {required: 1, nullable: null};
-              let error: Error = {code: "TEST", message: "complete"};
+              let error: Error = {name: "TEST", message: "complete"};
               let imported: model.Shared = {required: 2, nullable: null};
               return null;
             }

@@ -9,7 +9,7 @@ function call(f: (n: number) => number, n: number): number { return f(n); }
 
 export function test_imported_recursive_callback(): number {
   let result: number = call(Lib.recursiveCountdown, 4);
-  if (result !== 4) { throw { code: "TEST_FAIL", message: "imported recursive callback failed" }; }
+  if (result !== 4) { throw { name: "TEST_FAIL", message: "imported recursive callback failed" }; }
   return result;
 }
 

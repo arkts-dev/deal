@@ -10,9 +10,9 @@ export function test_fromJson_extra_keys(): null {
   let result = original;
   let rejected = false;
   try { result = JSON.parse("{\"name\":\"ok\",\"extra\":42}"); }
-  catch (e) { let error = e as Error; rejected = error.code === "E8007" && error.message.includes("extra field 'extra'"); }
+  catch (e) { let error = e as Error; rejected = error.name === "E8007" && error.message.includes("extra field 'extra'"); }
   if (!rejected || result !== original || result.name !== "original") {
-    throw {code: "TEST_FAIL", message: "extra key rejection changed destination"};
+    throw {name: "TEST_FAIL", message: "extra key rejection changed destination"};
   }
   return null;
 }

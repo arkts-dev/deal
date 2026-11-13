@@ -12,7 +12,7 @@ function badFn(s: string): number {
 
 export function test_host_nullable_function_param_bad(): number {
   let source: (x: number) => number = function(x: number): number { return x; };
-  if (!mutation.replaceSignature({value: source}, "(string)->number")) { throw {code: "TEST_FAIL", message: "signature mutation failed"}; }
+  if (!mutation.replaceSignature({value: source}, "(string)->number")) { throw {name: "TEST_FAIL", message: "signature mutation failed"}; }
   return host.register(source);
 }
 

@@ -5,7 +5,7 @@
 function check(ok:boolean):void{
   if(!ok){
     throw {
-      code:"TEST",message:"async dynamic activation"
+      name:"TEST",message:"async dynamic activation"
     };
   }
 }

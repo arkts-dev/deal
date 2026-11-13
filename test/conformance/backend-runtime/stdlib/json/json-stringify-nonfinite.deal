@@ -11,18 +11,18 @@ export function test_json_stringify_nonfinite(): null {
   t.negative = -1 / 0;
   t.nan = 0 / 0;
   if ((JSON.stringify(t) as string) !== "{\"x\":null,\"negative\":null,\"nan\":null}") {
-    throw {code: "TEST_FAIL", message: "nonfinite object serialization"};
+    throw {name: "TEST_FAIL", message: "nonfinite object serialization"};
   }
   if ((t.x as number) !== 1 / 0 || (t.negative as number) !== -1 / 0) {
-    throw {code: "TEST_FAIL", message: "stringify mutated infinity"};
+    throw {name: "TEST_FAIL", message: "stringify mutated infinity"};
   }
   let nan: number = t.nan as number;
-  if (nan === nan) { throw {code: "TEST_FAIL", message: "stringify mutated NaN"}; }
+  if (nan === nan) { throw {name: "TEST_FAIL", message: "stringify mutated NaN"}; }
   if ((JSON.stringify([1 / 0, -1 / 0, nan]) as string) !== "[null,null,null]") {
-    throw {code: "TEST_FAIL", message: "nonfinite array serialization"};
+    throw {name: "TEST_FAIL", message: "nonfinite array serialization"};
   }
   if ((JSON.stringify(nan) as string) !== "null") {
-    throw {code: "TEST_FAIL", message: "nonfinite top-level serialization"};
+    throw {name: "TEST_FAIL", message: "nonfinite top-level serialization"};
   }
   return null;
 }

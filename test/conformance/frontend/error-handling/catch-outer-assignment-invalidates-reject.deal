@@ -7,7 +7,7 @@ export function main(): null {
   let value: number | null = 1;
   if (value !== null) {
     try {
-      throw { code: "C_SET_NULL", message: "set null" };
+      throw { name: "C_SET_NULL", message: "set null" };
     } catch (err) {
       value = null;
     }

@@ -9,14 +9,14 @@ export function test_host_nullable_return_ok(): null {
   let found: string | null = host.find("hello");
   if (found !== null) {
     if (found !== "hello") {
-      throw { code: "TEST_FAIL", message: "nullable string return mismatch" };
+      throw { name: "TEST_FAIL", message: "nullable string return mismatch" };
     }
   } else {
-    throw { code: "TEST_FAIL", message: "expected a string result" };
+    throw { name: "TEST_FAIL", message: "expected a string result" };
   }
   let missing: string | null = host.find("__NULL__");
   if (missing !== null) {
-    throw { code: "TEST_FAIL", message: "nullable null return was not the sentinel" };
+    throw { name: "TEST_FAIL", message: "nullable null return was not the sentinel" };
   }
   return null;
 }

@@ -8,12 +8,12 @@ import * as host from "host/presence";
 export function test_export_presence(): string {
   let pong: string = host.ping();
   if (pong !== "pong") {
-    throw { code: "TEST_FAIL", message: "host.ping returned unexpected value" };
+    throw { name: "TEST_FAIL", message: "host.ping returned unexpected value" };
   }
 
   let cfg: host.Config = { port: 9090 };
   if (cfg.port !== 9090) {
-    throw { code: "TEST_FAIL", message: "host class field access failed" };
+    throw { name: "TEST_FAIL", message: "host class field access failed" };
   }
 
   return "host export presence ok";

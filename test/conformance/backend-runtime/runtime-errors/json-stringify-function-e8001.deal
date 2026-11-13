@@ -9,21 +9,21 @@ export function test_json_stringify_function_error(): null {
   let f: () => number = function(): number { return 1; };
   let t: Record<string, unknown> = { f: f, present: null, missing: undefined };
   if ((JSON.stringify(t) as string) !== "{\"present\":null}") {
-    throw {code: "TEST_FAIL", message: "callable and undefined property omission"};
+    throw {name: "TEST_FAIL", message: "callable and undefined property omission"};
   }
   if (!Object.hasOwn(t, "f") || !Object.hasOwn(t, "missing")) {
-    throw {code: "TEST_FAIL", message: "serialization deleted properties"};
+    throw {name: "TEST_FAIL", message: "serialization deleted properties"};
   }
   let retained: () => number = t.f as () => number;
   if (retained !== f || retained() !== 1) {
-    throw {code: "TEST_FAIL", message: "serialization changed callable identity"};
+    throw {name: "TEST_FAIL", message: "serialization changed callable identity"};
   }
   if (JSON.stringify(f) !== undefined) {
-    throw {code: "TEST_FAIL", message: "top-level callable serialization"};
+    throw {name: "TEST_FAIL", message: "top-level callable serialization"};
   }
   let entries: unknown[] = [f, undefined, null];
   if ((JSON.stringify(entries) as string) !== "[null,null,null]") {
-    throw {code: "TEST_FAIL", message: "callable array substitution"};
+    throw {name: "TEST_FAIL", message: "callable array substitution"};
   }
   return null;
 }

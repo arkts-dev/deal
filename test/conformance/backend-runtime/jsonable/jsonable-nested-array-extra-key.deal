@@ -10,8 +10,8 @@ export function test_jsonable_nested_array_extra_key_rejected(): null {
   let p = original;
   let rejected = false;
   try { p = JSON.parse("{\"children\":[{\"value\":1,\"extra\":2}]}"); }
-  catch (e) { let error = e as Error; rejected = error.code === "E8007" && error.message.includes("extra field 'extra'"); }
-  if (!rejected || p !== original || p.children[1].value !== 4) { throw { code: "TEST_FAIL", message: "nested extra key rejection or rollback failed" }; }
+  catch (e) { let error = e as Error; rejected = error.name === "E8007" && error.message.includes("extra field 'extra'"); }
+  if (!rejected || p !== original || p.children[1].value !== 4) { throw { name: "TEST_FAIL", message: "nested extra key rejection or rollback failed" }; }
   return null;
 }
 

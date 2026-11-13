@@ -4,7 +4,7 @@
 // @features: arrays, host-abi
 import * as host from "host/probe";
 class Item {x:number;stable:number;}
-function check(ok:boolean):void {if(!ok){throw {code:"SLICE",message:"live mismatch"};}}
+function check(ok:boolean):void {if(!ok){throw {name:"SLICE",message:"live mismatch"};}}
 export function main():null {
   let xs:number[]=[4,5,9];let alias=xs;
   let matrix:number[][]=[[1],xs];let dynamic:unknown[]=[xs];let original:unknown=xs;
@@ -13,14 +13,14 @@ export function main():null {
   let prefix=xs.slice(0,2);check(prefix!==xs && prefix.length===2 && prefix[0]===4 && prefix[1]===5);
   check(xs.slice(3,1).length===0);
   try {destination=xs.slice(1,3);} catch(e) {
-    check((e as Error).code==="E8003" && (e as Error).message==="array element 3 type mismatch");caught=true;
+    check((e as Error).name==="E8003" && (e as Error).message==="array element 3 type mismatch");caught=true;
   }
   check(caught && destination===previous && destination[0]===17 && host.size()===3 && alias[1]===5);
   caught=false;
   check(dynamic.slice(0,1)[0]===original);
   check(matrix.slice(0,1)[0]===matrix[0]);
   try {matrix.slice(0,2);} catch(e) {
-    check((e as Error).code==="E8003" && (e as Error).message==="array element 2 type mismatch");caught=true;
+    check((e as Error).name==="E8003" && (e as Error).message==="array element 2 type mismatch");caught=true;
   }
   check(caught && matrix.length===2 && matrix[0][0]===1 && host.size()===3);
   host.repair();let restored=alias.slice(1,3);check(restored[0]===5 && restored[1]===9 && xs===alias && xs.length===3);
@@ -32,7 +32,7 @@ export function main():null {
   let item:Item={x:9,stable:4};let items:Item[]=[item,item];host.damage(item,false);caught=false;
   let objects:Item[]=[];let oldObjects=objects;
   try {objects=items.slice(1,2);} catch(e) {
-    check((e as Error).code==="E8003" && (e as Error).message==="array element 2 type mismatch");caught=true;
+    check((e as Error).name==="E8003" && (e as Error).message==="array element 2 type mismatch");caught=true;
   }
   check(caught && objects===oldObjects && items.length===2);
   host.damage(null,true);objects=items.slice(0,2);check(objects[0]===item && objects[1]===item && item.stable===4);
@@ -40,22 +40,22 @@ export function main():null {
   for(let signature of [false,true]) {
     if(signature){host.poisonSignature(callback);}else{host.poison(callback);}
     caught=false;let before=calls;
-    try {functions.slice(0,1);} catch(e){check((e as Error).code==="E8003");caught=true;}
+    try {functions.slice(0,1);} catch(e){check((e as Error).name==="E8003");caught=true;}
     check(caught && calls===before && functions.length===1);
     host.restoreFunction();let copied=functions.slice(0,1);check(copied!==functions && copied[0]===callback && copied[0]()===7);
   }
   check(calls===2);
   let decoded:number[]=JSON.parse("[4,5,9]");host.keep(decoded);host.corrupt();caught=false;
   check(decoded.slice(0,2)[1]===5);
-  try {destination=decoded.slice(2,3);} catch(e){check((e as Error).code==="E8003");caught=true;}
+  try {destination=decoded.slice(2,3);} catch(e){check((e as Error).name==="E8003");caught=true;}
   check(caught && destination===previous && decoded.length===3);host.repair();check(decoded.slice(2,3)[0]===9);
   let log="";let receiver=():number[]=>{log=log+"r";return xs;};
-  let start=():number=>{log=log+"s";throw {code:"STOP",message:"stop"};};
+  let start=():number=>{log=log+"s";throw {name:"STOP",message:"stop"};};
   let end=():number=>{log=log+"e";return 3;};caught=false;
-  try {destination=receiver().slice(start(),end());} catch(e){check((e as Error).code==="STOP");caught=true;}
+  try {destination=receiver().slice(start(),end());} catch(e){check((e as Error).name==="STOP");caught=true;}
   check(caught && log==="rs" && destination===previous && xs.length===3);
   let stale:number[]|null=[1];let clear=():void=>{stale=null;};caught=false;
-  if(stale!==null){clear();try{stale.slice(0,1);}catch(e){check((e as Error).code==="E8001");caught=true;}}
+  if(stale!==null){clear();try{stale.slice(0,1);}catch(e){check((e as Error).name==="E8001");caught=true;}}
   check(caught);
   return null;
 }

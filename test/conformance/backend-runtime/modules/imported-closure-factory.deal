@@ -8,7 +8,7 @@ import * as Lib from "./module_extra_lib";
 export function test_imported_closure_factory(): number {
   let f: (x: number) => number = Lib.makeAdder(10);
   let result: number = f(5);
-  if (result !== 15) { throw { code: "TEST_FAIL", message: "imported closure factory failed" }; }
+  if (result !== 15) { throw { name: "TEST_FAIL", message: "imported closure factory failed" }; }
   return result;
 }
 

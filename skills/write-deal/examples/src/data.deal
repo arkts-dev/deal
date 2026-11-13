@@ -3,7 +3,7 @@ import * as check from "./check";
 function readCount(data: Record<string, unknown>): number {
   let count: number = data.count as number;
   if (count < 0) {
-    throw { code: "NEGATIVE_COUNT", message: "count must be nonnegative" };
+    throw { name: "NEGATIVE_COUNT", message: "count must be nonnegative" };
   }
   return count;
 }
@@ -13,7 +13,7 @@ function wrongTypeRejected(): boolean {
   try {
     readCount(data);
   } catch (e) {
-    return (e as Error).code === "E8001";
+    return (e as Error).name === "E8001";
   }
   return false;
 }

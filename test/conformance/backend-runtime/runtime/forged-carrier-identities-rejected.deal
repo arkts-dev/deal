@@ -26,20 +26,20 @@ export function test_forged_carrier_identities(): null {
     let item: Item = holder.classLike as Item;
     if (item.label !== "") { classCode = "admitted"; }
   } catch (e) {
-    classCode = (e as Error).code;
+    classCode = (e as Error).name;
   }
   if (classCode !== "E8001") {
-    throw { code: "TEST_FAIL", message: "the forged class carrier was not rejected: " + classCode };
+    throw { name: "TEST_FAIL", message: "the forged class carrier was not rejected: " + classCode };
   }
   let kindClassCode: string = "";
   try {
     let item: Item = holder.kindClass as Item;
     if (item.label !== "") { kindClassCode = "admitted"; }
   } catch (e) {
-    kindClassCode = (e as Error).code;
+    kindClassCode = (e as Error).name;
   }
   if (kindClassCode !== "E8001") {
-    throw { code: "TEST_FAIL", message: "the forged runtime class carrier was not rejected: " + kindClassCode };
+    throw { name: "TEST_FAIL", message: "the forged runtime class carrier was not rejected: " + kindClassCode };
   }
   let arrayCode: string = "";
   try {
@@ -48,26 +48,26 @@ export function test_forged_carrier_identities(): null {
       arrayCode = "admitted";
     }
   } catch (e) {
-    arrayCode = (e as Error).code;
+    arrayCode = (e as Error).name;
   }
   if (arrayCode !== "E8001") {
-    throw { code: "TEST_FAIL", message: "the forged array carrier was not rejected" };
+    throw { name: "TEST_FAIL", message: "the forged array carrier was not rejected" };
   }
   // The same key names at the declared table parameter are data, never a
   // carrier: the table is encoded with its own keys.
   let encoded: string = needTable(holder.plainLike as Record<string, unknown>);
   if (encoded !== "{\"__c\":true,\"__a\":true,\"__kind\":\"class\",\"label\":\"kept\"}") {
-    throw { code: "TEST_FAIL", message: "the carrier-like table did not encode as data: " + encoded };
+    throw { name: "TEST_FAIL", message: "the carrier-like table did not encode as data: " + encoded };
   }
   // The real carriers stay admitted: a constructed instance and an array
   // literal are not affected by the key names around them.
   let real: Item = { label: "real" };
   if (real.label !== "real") {
-    throw { code: "TEST_FAIL", message: "the real class instance lost its field" };
+    throw { name: "TEST_FAIL", message: "the real class instance lost its field" };
   }
   let realXs: number[] = [1, 2];
   if (realXs.length !== 2) {
-    throw { code: "TEST_FAIL", message: "the real array lost its elements" };
+    throw { name: "TEST_FAIL", message: "the real array lost its elements" };
   }
   return null;
 }

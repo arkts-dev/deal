@@ -10,19 +10,19 @@ class User {
 export function test_has_optional_nullable(): null {
   let u: User = {};
   if (Object.hasOwn(u, "nick")) {
-    throw { code: "TEST_FAIL", message: "missing optional field reported present" };
+    throw { name: "TEST_FAIL", message: "missing optional field reported present" };
   }
   u.nick = null;
   if (!Object.hasOwn(u, "nick")) {
-    throw { code: "TEST_FAIL", message: "present null optional field reported missing" };
+    throw { name: "TEST_FAIL", message: "present null optional field reported missing" };
   }
   u.nick = "ada";
   if (!Object.hasOwn(u, "nick")) {
-    throw { code: "TEST_FAIL", message: "present value optional field reported missing" };
+    throw { name: "TEST_FAIL", message: "present value optional field reported missing" };
   }
   delete u.nick;
   if (Object.hasOwn(u, "nick")) {
-    throw { code: "TEST_FAIL", message: "deleted optional field reported present" };
+    throw { name: "TEST_FAIL", message: "deleted optional field reported present" };
   }
   return null;
 }

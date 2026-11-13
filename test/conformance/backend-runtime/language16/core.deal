@@ -31,8 +31,8 @@ export async function run(): Promise<number> {
   numbers[0] = 7;
   let rejected: boolean = false;
   try { let widened = opaque as unknown[]; }
-  catch (e) { if (e instanceof Error) { rejected = e.code === "E8001"; } }
-  if (!rejected) { throw {code: "FAIL", message: "async array descriptor"}; }
+  catch (e) { if (e instanceof Error) { rejected = e.name === "E8001"; } }
+  if (!rejected) { throw {name: "FAIL", message: "async array descriptor"}; }
   return numbers[0];
 }
 export async function exportedNumbers(): Promise<number[]> {
@@ -50,241 +50,241 @@ export function main(): null {
   fall();
   let node: JsonNode = {tail: null, first: true};
   let nodeUnknown: unknown = node;
-  if ((JSON.stringify(nodeUnknown) as string) !== "{\"first\":true,\"tail\":null}") { throw {code: "FAIL", message: "class JSON declaration order"}; }
+  if ((JSON.stringify(nodeUnknown) as string) !== "{\"first\":true,\"tail\":null}") { throw {name: "FAIL", message: "class JSON declaration order"}; }
   node.next = node;
   let classCycle: boolean = false;
-  try { JSON.stringify(nodeUnknown); } catch (e) { if (e instanceof Error) { classCycle = e.code === "E8001"; } }
-  if (!classCycle) { throw {code: "FAIL", message: "class JSON cycle"}; }
+  try { JSON.stringify(nodeUnknown); } catch (e) { if (e instanceof Error) { classCycle = e.name === "E8001"; } }
+  if (!classCycle) { throw {name: "FAIL", message: "class JSON cycle"}; }
   delete node.next;
-  if ((JSON.stringify(nodeUnknown) as string) !== "{\"first\":true,\"tail\":null}") { throw {code: "FAIL", message: "class JSON deletion"}; }
+  if ((JSON.stringify(nodeUnknown) as string) !== "{\"first\":true,\"tail\":null}") { throw {name: "FAIL", message: "class JSON deletion"}; }
   let sharedNodes: Record<string, unknown> = {a: node, b: node};
-  if ((JSON.stringify(sharedNodes) as string) !== "{\"a\":{\"first\":true,\"tail\":null},\"b\":{\"first\":true,\"tail\":null}}") { throw {code: "FAIL", message: "class JSON shared DAG"}; }
+  if ((JSON.stringify(sharedNodes) as string) !== "{\"a\":{\"first\":true,\"tail\":null},\"b\":{\"first\":true,\"tail\":null}}") { throw {name: "FAIL", message: "class JSON shared DAG"}; }
   let deepNode: JsonNode = node;
   let depth: number = 0;
   while (depth < 600) {
     deepNode = {tail: null, first: true, next: deepNode};
     depth = depth + 1;
   }
-  if (strings.split(JSON.stringify(deepNode) as string, "\"first\":true").length !== 602) { throw {code: "FAIL", message: "deep class JSON frames"}; }
-  let error: Error = {message: "m", code: "C"};
+  if (strings.split(JSON.stringify(deepNode) as string, "\"first\":true").length !== 602) { throw {name: "FAIL", message: "deep class JSON frames"}; }
+  let error: Error = {message: "m", name: "C"};
   try { throw error; } catch (e) {
-    if ((JSON.stringify(e) as string) !== "{\"code\":\"C\",\"message\":\"m\"}") { throw {code: "FAIL", message: "Error JSON declared fields"}; }
+    if ((JSON.stringify(e) as string) !== "{\"name\":\"C\",\"message\":\"m\"}") { throw {name: "FAIL", message: "Error JSON declared fields"}; }
   }
   let narrow: (n: number) => number = function(n: number): number { return n; };
   let wide: (n: number, unused: number) => number = function(n: number, unused: number): number { return n + unused; };
   let original = (wide = narrow);
-  if (original(5) !== 5) { throw {code: "FAIL", message: "assignment original RHS"}; }
-  if (wide(6, 7) !== 6) { throw {code: "FAIL", message: "assignment storage adaptation"}; }
+  if (original(5) !== 5) { throw {name: "FAIL", message: "assignment original RHS"}; }
+  if (wide(6, 7) !== 6) { throw {name: "FAIL", message: "assignment storage adaptation"}; }
   let callbacks: ((n: number, unused: number) => number)[] = [wide];
   let arrayOriginal = (callbacks[0] = narrow);
-  if (arrayOriginal(8) !== 8) { throw {code: "FAIL", message: "array assignment RHS"}; }
-  if (callbacks[0](9, 10) !== 9) { throw {code: "FAIL", message: "array assignment storage"}; }
+  if (arrayOriginal(8) !== 8) { throw {name: "FAIL", message: "array assignment RHS"}; }
+  if (callbacks[0](9, 10) !== 9) { throw {name: "FAIL", message: "array assignment storage"}; }
   let callbackBox: CallbackBox = {callback: wide};
   let fieldOriginal = (callbackBox.callback = narrow);
-  if (fieldOriginal(11) !== 11) { throw {code: "FAIL", message: "class assignment RHS"}; }
-  if (callbackBox.callback(12, 13) !== 12) { throw {code: "FAIL", message: "class assignment storage"}; }
+  if (fieldOriginal(11) !== 11) { throw {name: "FAIL", message: "class assignment RHS"}; }
+  if (callbackBox.callback(12, 13) !== 12) { throw {name: "FAIL", message: "class assignment storage"}; }
   let assignmentEvaluations: number = 0;
   let makeCallback: () => ((n: number) => number) = function(): (n: number) => number {
     assignmentEvaluations = assignmentEvaluations + 1;
     return narrow;
   };
   let nestedOriginal = (wide = (callbacks[0] = (callbackBox.callback = makeCallback())));
-  if (assignmentEvaluations !== 1) { throw {code: "FAIL", message: "nested assignment evaluates RHS once"}; }
-  if (nestedOriginal !== narrow) { throw {code: "FAIL", message: "nested assignment original identity"}; }
-  if (nestedOriginal(15) !== 15) { throw {code: "FAIL", message: "nested assignment original signature"}; }
-  if (wide(16, 17) !== 16) { throw {code: "FAIL", message: "nested assignment adapted storage"}; }
-  if (assignmentEvaluations !== 1) { throw {code: "FAIL", message: "stored adapter must not re-evaluate assignment RHS"}; }
+  if (assignmentEvaluations !== 1) { throw {name: "FAIL", message: "nested assignment evaluates RHS once"}; }
+  if (nestedOriginal !== narrow) { throw {name: "FAIL", message: "nested assignment original identity"}; }
+  if (nestedOriginal(15) !== 15) { throw {name: "FAIL", message: "nested assignment original signature"}; }
+  if (wide(16, 17) !== 16) { throw {name: "FAIL", message: "nested assignment adapted storage"}; }
+  if (assignmentEvaluations !== 1) { throw {name: "FAIL", message: "stored adapter must not re-evaluate assignment RHS"}; }
   let evaluations: number = 0;
   let produce: () => unknown = function(): unknown { evaluations = evaluations + 1; return 42; };
   let once: number = produce() as number;
-  if (evaluations !== 1) { throw {code: "FAIL", message: "assertion evaluated more than once"}; }
-  if (once !== 42) { throw {code: "FAIL", message: "assertion value"}; }
+  if (evaluations !== 1) { throw {name: "FAIL", message: "assertion evaluated more than once"}; }
+  if (once !== 42) { throw {name: "FAIL", message: "assertion value"}; }
   let record: Record<string, unknown> = { n: 42, absent: undefined };
   let recordOriginal = (record.callback = narrow);
-  if (recordOriginal(27) !== 27) { throw {code: "FAIL", message: "record member assignment RHS type"}; }
+  if (recordOriginal(27) !== 27) { throw {name: "FAIL", message: "record member assignment RHS type"}; }
   let recordIndexOriginal = (record["callback"] = narrow);
-  if (recordIndexOriginal(28) !== 28) { throw {code: "FAIL", message: "record index assignment RHS type"}; }
+  if (recordIndexOriginal(28) !== 28) { throw {name: "FAIL", message: "record index assignment RHS type"}; }
   let adaptedLength = lengthAdapted(strings.length);
-  if (adaptedLength !== 8) { throw {code: "FAIL", message: "stdlib adapter return"}; }
+  if (adaptedLength !== 8) { throw {name: "FAIL", message: "stdlib adapter return"}; }
   let lengthWide: (text: string, extra: number) => number = strings.length;
-  if (lengthWide("{\"n\":43}", 99) !== 8) { throw {code: "FAIL", message: "stdlib adapter callee"}; }
+  if (lengthWide("{\"n\":43}", 99) !== 8) { throw {name: "FAIL", message: "stdlib adapter callee"}; }
   let recordBox: RecordBox = { data: record };
-  if (recordBox.data !== record) { throw {code: "FAIL", message: "Record field identity"}; }
+  if (recordBox.data !== record) { throw {name: "FAIL", message: "Record field identity"}; }
   let decodedRecord: RecordBox = JSON.parse("{\"data\":{\"n\":42}}");
-  if ((decodedRecord.data.n as number) !== 42) { throw {code: "FAIL", message: "Record field decode"}; }
+  if ((decodedRecord.data.n as number) !== 42) { throw {name: "FAIL", message: "Record field decode"}; }
   let roundtrip: RecordBox = JSON.parse(JSON.stringify(decodedRecord) as string);
-  if ((roundtrip.data.n as number) !== 42 || roundtrip === decodedRecord) { throw {code: "FAIL", message: "Record field fresh roundtrip"}; }
+  if ((roundtrip.data.n as number) !== 42 || roundtrip === decodedRecord) { throw {name: "FAIL", message: "Record field fresh roundtrip"}; }
   let value: number = record.n as number;
-  if (value !== 42) { throw {code: "FAIL", message: "assertion"}; }
+  if (value !== 42) { throw {name: "FAIL", message: "assertion"}; }
   let key: string = "absent";
-  if (!Object.hasOwn(record, key)) { throw {code: "FAIL", message: "present undefined"}; }
-  if (Object.hasOwn(record, "missing")) { throw {code: "FAIL", message: "absent key"}; }
-  if (typeof record.absent !== "undefined") { throw {code: "FAIL", message: "undefined typeof"}; }
-  if (typeof null !== "object") { throw {code: "FAIL", message: "null typeof"}; }
-  if (typeof record.n !== "number") { throw {code: "FAIL", message: "number typeof"}; }
+  if (!Object.hasOwn(record, key)) { throw {name: "FAIL", message: "present undefined"}; }
+  if (Object.hasOwn(record, "missing")) { throw {name: "FAIL", message: "absent key"}; }
+  if (typeof record.absent !== "undefined") { throw {name: "FAIL", message: "undefined typeof"}; }
+  if (typeof null !== "object") { throw {name: "FAIL", message: "null typeof"}; }
+  if (typeof record.n !== "number") { throw {name: "FAIL", message: "number typeof"}; }
   let box: Box = {};
-  if (!(box instanceof Box)) { throw {code: "FAIL", message: "class instance"}; }
-  if (record instanceof Box) { throw {code: "FAIL", message: "record instance"}; }
+  if (!(box instanceof Box)) { throw {name: "FAIL", message: "class instance"}; }
+  if (record instanceof Box) { throw {name: "FAIL", message: "record instance"}; }
   let classUnknown: unknown = box;
-  if (!(classUnknown instanceof Box)) { throw {code: "FAIL", message: "negated nominal branch"}; }
-  else { if (typeof classUnknown.value !== "undefined") { throw {code: "FAIL", message: "nominal else refinement"}; } }
+  if (!(classUnknown instanceof Box)) { throw {name: "FAIL", message: "negated nominal branch"}; }
+  else { if (typeof classUnknown.value !== "undefined") { throw {name: "FAIL", message: "nominal else refinement"}; } }
   let checkedBox: Box = classUnknown as Box;
-  if (checkedBox !== box) { throw {code: "FAIL", message: "class assertion identity"}; }
+  if (checkedBox !== box) { throw {name: "FAIL", message: "class assertion identity"}; }
   let recordRejected: boolean = false;
   let recordUnknown: unknown = record;
   try { let forged: Box = recordUnknown as Box; } catch (e) { if (e instanceof Error) { recordRejected = true; } }
-  if (!recordRejected) { throw {code: "FAIL", message: "records must not retag as classes"}; }
-  if (typeof box.value !== "undefined") { throw {code: "FAIL", message: "optional absence"}; }
+  if (!recordRejected) { throw {name: "FAIL", message: "records must not retag as classes"}; }
+  if (typeof box.value !== "undefined") { throw {name: "FAIL", message: "optional absence"}; }
   let nullable: string | null | undefined = undefined;
-  if (nullable !== undefined) { throw {code: "FAIL", message: "undefined equality"}; }
+  if (nullable !== undefined) { throw {name: "FAIL", message: "undefined equality"}; }
   nullable = null;
-  if (nullable === undefined) { throw {code: "FAIL", message: "null is not undefined"}; }
-  if (nullable !== null) { throw {code: "FAIL", message: "null equality"}; }
+  if (nullable === undefined) { throw {name: "FAIL", message: "null is not undefined"}; }
+  if (nullable !== null) { throw {name: "FAIL", message: "null equality"}; }
   let raw: unknown = undefined;
-  if (raw !== undefined) { throw {code: "FAIL", message: "unknown undefined"}; }
+  if (raw !== undefined) { throw {name: "FAIL", message: "unknown undefined"}; }
   raw = null;
-  if (raw !== null) { throw {code: "FAIL", message: "unknown null"}; }
+  if (raw !== null) { throw {name: "FAIL", message: "unknown null"}; }
   let inferredSum: number = 0;
   for (let element of [1, 2, 3]) { inferredSum = inferredSum + element; }
-  if (inferredSum !== 6) { throw {code: "FAIL", message: "inferred for-of"}; }
+  if (inferredSum !== 6) { throw {name: "FAIL", message: "inferred for-of"}; }
   let text: unknown = "narrowed";
   if ("string" === typeof text) {
     let checked: string = text;
-    if (checked !== "narrowed") { throw {code: "FAIL", message: "typeof narrowing"}; }
-  } else { throw {code: "FAIL", message: "typeof branch"}; }
+    if (checked !== "narrowed") { throw {name: "FAIL", message: "typeof narrowing"}; }
+  } else { throw {name: "FAIL", message: "typeof branch"}; }
   let singleton: undefined = undefined;
-  if (singleton !== undefined) { throw {code: "FAIL", message: "singleton equality"}; }
+  if (singleton !== undefined) { throw {name: "FAIL", message: "singleton equality"}; }
   let ordered: Record<string, unknown> = {last: true};
   ordered["10"] = true;
   ordered["2"] = false;
   ordered["01"] = null;
   let orderJson: string = JSON.stringify(ordered) as string;
-  if (orderJson !== "{\"2\":false,\"10\":true,\"last\":true,\"01\":null}") { throw {code: "FAIL", message: "JSON own key order"}; }
+  if (orderJson !== "{\"2\":false,\"10\":true,\"last\":true,\"01\":null}") { throw {name: "FAIL", message: "JSON own key order"}; }
   let encoded = JSON.stringify({first: undefined, n: 1 / 0, z: -0, last: 2.5});
-  if ((encoded as string) !== "{\"n\":null,\"z\":0,\"last\":2.5}") { throw {code: "FAIL", message: "JSON omit nonfinite zero"}; }
+  if ((encoded as string) !== "{\"n\":null,\"z\":0,\"last\":2.5}") { throw {name: "FAIL", message: "JSON omit nonfinite zero"}; }
   let top = JSON.stringify(undefined);
-  if (top !== undefined) { throw {code: "FAIL", message: "JSON top undefined"}; }
+  if (top !== undefined) { throw {name: "FAIL", message: "JSON top undefined"}; }
   let fn: () => void = function(): void {};
   let functionTop = JSON.stringify(fn);
-  if (functionTop !== undefined) { throw {code: "FAIL", message: "JSON top function"}; }
+  if (functionTop !== undefined) { throw {name: "FAIL", message: "JSON top function"}; }
   let functionObject = JSON.stringify({skip: fn, keep: true});
-  if ((functionObject as string) !== "{\"keep\":true}") { throw {code: "FAIL", message: "JSON object function"}; }
+  if ((functionObject as string) !== "{\"keep\":true}") { throw {name: "FAIL", message: "JSON object function"}; }
   let entries: unknown[] = [undefined, fn, 0 / 0];
   let arrayText = JSON.stringify(entries);
-  if ((arrayText as string) !== "[null,null,null]") { throw {code: "FAIL", message: "JSON array undefined function nonfinite"}; }
+  if ((arrayText as string) !== "[null,null,null]") { throw {name: "FAIL", message: "JSON array undefined function nonfinite"}; }
   let shared: Record<string, unknown> = {value: true};
   let sharedGraph: Record<string, unknown> = {left: shared, right: shared};
   let sharedJson = JSON.stringify(sharedGraph) as string;
-  if (sharedJson !== "{\"left\":{\"value\":true},\"right\":{\"value\":true}}") { throw {code: "FAIL", message: "shared JSON children are not cycles"}; }
+  if (sharedJson !== "{\"left\":{\"value\":true},\"right\":{\"value\":true}}") { throw {name: "FAIL", message: "shared JSON children are not cycles"}; }
   let cycle: Record<string, unknown> = {};
   cycle.self = cycle;
   let cycleRejected: boolean = false;
   try { JSON.stringify(cycle); }
   catch (e) { if (e instanceof Error) { cycleRejected = true; } }
-  if (!cycleRejected) { throw {code: "FAIL", message: "JSON cycle"}; }
+  if (!cycleRejected) { throw {name: "FAIL", message: "JSON cycle"}; }
   let duplicatesRejected: boolean = false;
   try { JSON.parse("{\"nested\":{\"a\":1,\"\\u0061\":2}}"); }
   catch (e) { if (e instanceof Error) { duplicatesRejected = true; } }
-  if (!duplicatesRejected) { throw {code: "FAIL", message: "duplicate decoded JSON keys"}; }
+  if (!duplicatesRejected) { throw {name: "FAIL", message: "duplicate decoded JSON keys"}; }
   let jsonBox: JsonBox = {omitted: undefined, value: undefined, entries: [undefined, "ok"]};
   let boxJson: string = JSON.stringify(jsonBox) as string;
-  if (boxJson !== "{\"entries\":[null,\"ok\"]}") { throw {code: "FAIL", message: "generated JSON undefined"}; }
+  if (boxJson !== "{\"entries\":[null,\"ok\"]}") { throw {name: "FAIL", message: "generated JSON undefined"}; }
   let decoded: DecodedBox = JSON.parse("{\"value\":\"ok\"}");
-  if ((decoded.value as string) !== "ok") { throw {code: "FAIL", message: "decode undefined union"}; }
+  if ((decoded.value as string) !== "ok") { throw {name: "FAIL", message: "decode undefined union"}; }
   let rejected: boolean = false;
   try { let missing: DecodedBox = JSON.parse("{}"); }
-  catch (e) { rejected = (e as Error).code === "E8001"; }
-  if (!rejected) { throw {code: "FAIL", message: "required undefined presence"}; }
+  catch (e) { rejected = (e as Error).name === "E8001"; }
+  if (!rejected) { throw {name: "FAIL", message: "required undefined presence"}; }
   let nullRejected: boolean = false;
   try { let invalid: DecodedBox = JSON.parse("{\"value\":null}"); }
-  catch (e) { nullRejected = (e as Error).code === "E8001"; }
-  if (!nullRejected) { throw {code: "FAIL", message: "undefined union rejects null"}; }
+  catch (e) { nullRejected = (e as Error).name === "E8001"; }
+  if (!nullRejected) { throw {name: "FAIL", message: "undefined union rejects null"}; }
   let decodedArrays: DecodedArrays = JSON.parse("{\"numbers\":[],\"nested\":[[]],\"nullish\":[null,2]}");
   let arrayBox = decodedArrays;
   let dynamicFunctionBox: RecordBox = {data: {callback: fn}};
-  if ((JSON.stringify(dynamicFunctionBox) as string) !== "{\"data\":{}}") { throw {code: "FAIL", message: "generated Record function omission"}; }
+  if ((JSON.stringify(dynamicFunctionBox) as string) !== "{\"data\":{}}") { throw {name: "FAIL", message: "generated Record function omission"}; }
   let dynamicUndefinedBox: RecordBox = {data: {absent: undefined}};
-  if ((JSON.stringify(dynamicUndefinedBox) as string) !== "{\"data\":{}}") { throw {code: "FAIL", message: "generated Record undefined omission"}; }
+  if ((JSON.stringify(dynamicUndefinedBox) as string) !== "{\"data\":{}}") { throw {name: "FAIL", message: "generated Record undefined omission"}; }
   let nonfiniteArrays: DecodedArrays = {numbers: [1 / 0, 0 / 0, -1 / 0], nested: [], nullish: []};
   if ((JSON.stringify(nonfiniteArrays) as string) !== "{\"numbers\":[null,null,null],\"nested\":[],\"nullish\":[]}") {
-    throw {code: "FAIL", message: "generated declared nonfinite number array"};
+    throw {name: "FAIL", message: "generated declared nonfinite number array"};
   }
   let decodedNumbers: unknown = arrayBox.numbers;
   let decodedStrings: unknown = arrayBox.nested[0];
   let sameDecodedNumbers = decodedNumbers as number[];
-  if (sameDecodedNumbers !== arrayBox.numbers) { throw {code: "FAIL", message: "decoded array assertion identity"}; }
+  if (sameDecodedNumbers !== arrayBox.numbers) { throw {name: "FAIL", message: "decoded array assertion identity"}; }
   sameDecodedNumbers[0] = 9;
-  if (arrayBox.numbers[0] !== 9) { throw {code: "FAIL", message: "decoded array write alias"}; }
+  if (arrayBox.numbers[0] !== 9) { throw {name: "FAIL", message: "decoded array write alias"}; }
   let decodedNullish: unknown = arrayBox.nullish;
   let sameNullish = decodedNullish as (number | null | undefined)[];
   sameNullish[0] = undefined;
-  if (arrayBox.nullish[0] !== undefined) { throw {code: "FAIL", message: "decoded nullish array write"}; }
+  if (arrayBox.nullish[0] !== undefined) { throw {name: "FAIL", message: "decoded nullish array write"}; }
   let decodedNullishRejected: boolean = false;
   try { let invalidNullish = decodedNullish as (number | null)[]; }
-  catch (e) { if (e instanceof Error) { decodedNullishRejected = e.code === "E8001"; } }
-  if (!decodedNullishRejected) { throw {code: "FAIL", message: "decoded nullish descriptor"}; }
+  catch (e) { if (e instanceof Error) { decodedNullishRejected = e.name === "E8001"; } }
+  if (!decodedNullishRejected) { throw {name: "FAIL", message: "decoded nullish descriptor"}; }
   let decodedNumbersRejected: boolean = false;
   try { let invalidDecoded = decodedNumbers as unknown[]; }
-  catch (e) { if (e instanceof Error) { decodedNumbersRejected = e.code === "E8001"; } }
-  if (!decodedNumbersRejected) { throw {code: "FAIL", message: "decoded number array descriptor"}; }
+  catch (e) { if (e instanceof Error) { decodedNumbersRejected = e.name === "E8001"; } }
+  if (!decodedNumbersRejected) { throw {name: "FAIL", message: "decoded number array descriptor"}; }
   let decodedStringsRejected: boolean = false;
   try { let invalidNested = decodedStrings as number[]; }
-  catch (e) { if (e instanceof Error) { decodedStringsRejected = e.code === "E8001"; } }
-  if (!decodedStringsRejected) { throw {code: "FAIL", message: "decoded nested array descriptor"}; }
+  catch (e) { if (e instanceof Error) { decodedStringsRejected = e.name === "E8001"; } }
+  if (!decodedStringsRejected) { throw {name: "FAIL", message: "decoded nested array descriptor"}; }
   let splitValues: string[] = strings.split("a,b", ",");
   let splitOpaque: unknown = splitValues;
   let splitRejected: boolean = false;
   try { let widenedSplit = splitOpaque as unknown[]; } catch (e) { if (e instanceof Error) { splitRejected = true; } }
-  if (!splitRejected) { throw {code: "FAIL", message: "split persistent descriptor"}; }
+  if (!splitRejected) { throw {name: "FAIL", message: "split persistent descriptor"}; }
   let keyValues: string[] = tables.keys({a: true});
   let keyOpaque: unknown = keyValues;
   let keysRejected: boolean = false;
   try { let widenedKeys = keyOpaque as unknown[]; } catch (e) { if (e instanceof Error) { keysRejected = true; } }
-  if (!keysRejected) { throw {code: "FAIL", message: "keys persistent descriptor"}; }
+  if (!keysRejected) { throw {name: "FAIL", message: "keys persistent descriptor"}; }
   let numbers: number[] = [1, 2];
   let opaque: unknown = numbers;
   let sameNumbers: number[] = opaque as number[];
   sameNumbers[0] = 3;
-  if (numbers[0] !== 3) { throw {code: "FAIL", message: "array identity"}; }
+  if (numbers[0] !== 3) { throw {name: "FAIL", message: "array identity"}; }
   let emptyNumbers: number[] = [];
   let emptyUnknown: unknown = emptyNumbers;
   let emptyRejected: boolean = false;
   try { let wrongEmpty: unknown[] = emptyUnknown as unknown[]; } catch (e) { if (e instanceof Error) { emptyRejected = true; } }
-  if (!emptyRejected) { throw {code: "FAIL", message: "empty persistent descriptor"}; }
+  if (!emptyRejected) { throw {name: "FAIL", message: "empty persistent descriptor"}; }
   let broadArray: unknown[] = [1, 2];
   let broadUnknown: unknown = broadArray;
   let broadRejected: boolean = false;
   try { let narrowedArray: number[] = broadUnknown as number[]; } catch (e) { if (e instanceof Error) { broadRejected = true; } }
-  if (!broadRejected) { throw {code: "FAIL", message: "array cannot narrow its descriptor"}; }
+  if (!broadRejected) { throw {name: "FAIL", message: "array cannot narrow its descriptor"}; }
   let arrayRejected: boolean = false;
   try { let wrong: unknown[] = opaque as unknown[]; } catch (e) { if (e instanceof Error) { arrayRejected = true; } }
-  if (!arrayRejected) { throw {code: "FAIL", message: "persistent array descriptor"}; }
+  if (!arrayRejected) { throw {name: "FAIL", message: "persistent array descriptor"}; }
   let callableUnknown: unknown = narrow;
   let checkedCallable: (n: number) => number = callableUnknown as (n: number) => number;
-  if (checkedCallable !== narrow) { throw {code: "FAIL", message: "function assertion identity"}; }
-  if (checkedCallable(14) !== 14) { throw {code: "FAIL", message: "asserted function invocation"}; }
+  if (checkedCallable !== narrow) { throw {name: "FAIL", message: "function assertion identity"}; }
+  if (checkedCallable(14) !== 14) { throw {name: "FAIL", message: "asserted function invocation"}; }
   let signatureRejected: boolean = false;
   try { let mismatch = callableUnknown as (n: number, m: number) => number; }
-  catch (e) { if (e instanceof Error) { if (e.code === "E8001") { if (e.message === "expected function") { signatureRejected = true; } } } }
-  if (!signatureRejected) { throw {code: "FAIL", message: "assertion signature failure contract"}; }
+  catch (e) { if (e instanceof Error) { if (e.name === "E8001") { if (e.message === "expected function") { signatureRejected = true; } } } }
+  if (!signatureRejected) { throw {name: "FAIL", message: "assertion signature failure contract"}; }
   let badElements: Record<string, unknown> = JSON.parse("{\"items\":[\"bad\"]}");
   let elementAssertionRejected: boolean = false;
   try { let invalidElements = badElements.items as number[]; }
-  catch (e) { if (e instanceof Error) { if (e.code === "E8001") { if (e.message === "expected array") { elementAssertionRejected = true; } } } }
-  if (!elementAssertionRejected) { throw {code: "FAIL", message: "nested assertion E8001"}; }
+  catch (e) { if (e instanceof Error) { if (e.name === "E8001") { if (e.message === "expected array") { elementAssertionRejected = true; } } } }
+  if (!elementAssertionRejected) { throw {name: "FAIL", message: "nested assertion E8001"}; }
   let failed: boolean = false;
   try { let bad: string = record.n as string; } catch (e) { if (e instanceof Error) { failed = true; } }
-  if (!failed) { throw {code: "FAIL", message: "checked assertion failure"}; }
+  if (!failed) { throw {name: "FAIL", message: "checked assertion failure"}; }
   let mutableSource: (n: number) => number = function(n: number): number { return n; };
   let retainedRhs = (wide = mutableSource);
   let retainedArrayRhs = (callbacks[0] = mutableSource);
   let retainedFieldRhs = (callbackBox.callback = mutableSource);
   mutableSource = function(n: number): number { return n + 100; };
-  if (retainedRhs(18) !== 18) { throw {code: "FAIL", message: "assignment retains original mutable binding value"}; }
-  if (wide(19, 20) !== 19) { throw {code: "FAIL", message: "stored adapter captures evaluated RHS, not later binding"}; }
-  if (retainedArrayRhs(21) !== 21) { throw {code: "FAIL", message: "array original mutable RHS"}; }
-  if (retainedFieldRhs(22) !== 22) { throw {code: "FAIL", message: "field original mutable RHS"}; }
-  if (callbacks[0](23, 24) !== 23) { throw {code: "FAIL", message: "array stored adapter retains RHS"}; }
-  if (callbackBox.callback(25, 26) !== 25) { throw {code: "FAIL", message: "field stored adapter retains RHS"}; }
+  if (retainedRhs(18) !== 18) { throw {name: "FAIL", message: "assignment retains original mutable binding value"}; }
+  if (wide(19, 20) !== 19) { throw {name: "FAIL", message: "stored adapter captures evaluated RHS, not later binding"}; }
+  if (retainedArrayRhs(21) !== 21) { throw {name: "FAIL", message: "array original mutable RHS"}; }
+  if (retainedFieldRhs(22) !== 22) { throw {name: "FAIL", message: "field original mutable RHS"}; }
+  if (callbacks[0](23, 24) !== 23) { throw {name: "FAIL", message: "array stored adapter retains RHS"}; }
+  if (callbackBox.callback(25, 26) !== 25) { throw {name: "FAIL", message: "field stored adapter retains RHS"}; }
   return null;
 }

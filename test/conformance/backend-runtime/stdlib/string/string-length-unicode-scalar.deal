@@ -8,7 +8,7 @@ import * as strings from "std/string";
 export function main(): null {
   let n: number = strings.length("é");
   if (n !== 1) {
-    throw { code: "TEST_FAIL", message: "std/string: scalar length mismatch" };
+    throw { name: "TEST_FAIL", message: "std/string: scalar length mismatch" };
   }
   return null;
 }

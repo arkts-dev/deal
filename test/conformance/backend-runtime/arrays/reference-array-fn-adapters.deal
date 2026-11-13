@@ -14,26 +14,26 @@ export function test_array_fn_adapters(): number {
   let h: (b: number[], v: number) => number[] = id;
   let out: number[] = h([0, 0], 999);
   if (out[0] !== 0) {
-    throw { code: "TEST_FAIL", message: "adapter ignored extra failed" };
+    throw { name: "TEST_FAIL", message: "adapter ignored extra failed" };
   }
   let b: number[] = [0];
   let again: number[] = h(b, 12345);
   if (again !== b) {
-    throw { code: "TEST_FAIL", message: "adapter prefix identity failed" };
+    throw { name: "TEST_FAIL", message: "adapter prefix identity failed" };
   }
   let h2: (b: number[], v: number) => number[] = id;
   if (h2([0], 1)[0] !== 0) {
-    throw { code: "TEST_FAIL", message: "second adapter failed" };
+    throw { name: "TEST_FAIL", message: "second adapter failed" };
   }
   let two: (b: number[], v: number, extra: string) => number[] = id;
   let r: number[] = two([0, 0], 7, "ignored");
   if (r[0] !== 0) {
-    throw { code: "TEST_FAIL", message: "three-param adapter failed" };
+    throw { name: "TEST_FAIL", message: "three-param adapter failed" };
   }
   let withBump: (b: number[], v: number) => number[] = bump;
   let rb: number[] = withBump([0, 0], 5);
   if (rb[0] !== 5) {
-    throw { code: "TEST_FAIL", message: "same-arity failed" };
+    throw { name: "TEST_FAIL", message: "same-arity failed" };
   }
   return 0;
 }

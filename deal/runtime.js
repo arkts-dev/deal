@@ -1539,7 +1539,7 @@ function $encodeJsonText($v, $active, $file, $line, $column, $variant) {
       $out.push("{");
       const $plan = $instanceClassPlans.get($value) || $hostClassPlans.get($value.$classname)
         || ($value.$classname === "Error" ? [
-          {name: "code", descriptor: "string", optional: false},
+          {name: "name", descriptor: "string", optional: false},
           {name: "message", descriptor: "string", optional: false}] : null);
       if (!$plan) throw new Error("JSON class value has no exact field plan");
       $stack.push({ map: { get: key => $value[key] }, owner: $value, plan: $plan,
@@ -1913,9 +1913,10 @@ const $rt = {
     const $value = {};
     $rt.setProp($value, "$kind", "class");
     $rt.setProp($value, "$classname", "Error");
-    $rt.setProp($value, "code", code);
+    $rt.setProp($value, "name", code);
     $rt.setProp($value, "message", message);
-    $classFieldOrder.set($value, ["code", "message"]);
+    Object.defineProperty($value, "code", {value: code, writable: true, configurable: true});
+    $classFieldOrder.set($value, ["name", "message"]);
     if (file !== $undefined) $rt.setProp($value, "file", file);
     if (line !== $undefined) $rt.setProp($value, "line", line);
     if (column !== $undefined) $rt.setProp($value, "column", column);
@@ -1952,7 +1953,7 @@ const $rt = {
   // exitCode to 1. All host-global access goes through the T1 captures.
   reportUncaught: function $reportUncaught(e) {
     const $err = $rt.reifyError(e);
-    $process.stderr.write("DEAL_ERROR_CODE: " + $err.code + " " + $err.message + "\n");
+    $process.stderr.write("DEAL_ERROR_CODE: " + ($err.code === $undefined ? $err.name : $err.code) + " " + $err.message + "\n");
     $process.exitCode = 1;
   },
 
@@ -2038,7 +2039,7 @@ const $rt = {
         }
       } else if (v.$kind === "class") {
         if (v.$classname === "Error") {
-          $rt.checkString(v.code, file, line, column);
+          $rt.checkString(v.name, file, line, column);
           $rt.checkString(v.message, file, line, column);
         }
         const fields = $classFieldOrder.get(v) || Object.keys(v).filter(key => key !== "$kind" && key !== "$classname");
@@ -2678,7 +2679,7 @@ const $rt = {
   // Explicit target reconstruction; descriptor assertions never call this.
   jsonDecode: function(text, descriptor, file, line, column) {
     const layouts = name => name === "Error" ? [
-      {name: "code", descriptor: "string", optional: false},
+      {name: "name", descriptor: "string", optional: false},
       {name: "message", descriptor: "string", optional: false}
     ] : $hostClassPlans.get(name);
     const pending = [descriptor], visited = new Set();
@@ -2839,6 +2840,8 @@ const $rt = {
   // The checker restricts has to optional class fields.
   has: function $has(obj, field) {
     if (obj instanceof $Map) return obj.has(field);
+    const fields = $classFieldOrder.get(obj);
+    if (fields && !fields.includes(field)) return false;
     return Object.prototype.hasOwnProperty.call(obj, field) && obj[field] !== $MISSING;
   },
 
@@ -3415,6 +3418,8 @@ const $rt = {
     if (v !== null && typeof v === "object" && v.$kind === "class"
         && v.$classname === "Error" && v.file === $undefined
         && v.line === $undefined && v.column === $undefined) {
+      if (v.code === $undefined) Object.defineProperty(v, "code",
+        {value: v.name, writable: true, configurable: true});
       $rt.setProp(v, "file", file);
       $rt.setProp(v, "line", line);
       $rt.setProp(v, "column", column);

@@ -38,11 +38,11 @@ public final class NestedCatchTransferProductionTest {
                         String body = "let readers:(()=>string)[]=[];let tails:string=\"\";"
                             + "for(let x of " + iterables[0] + "){for(let y of " + iterables[1]
                             + "){for(let z of " + iterables[2] + "){"
-                            + "let original:Error={code:\"C\",message:x+y+z};"
+                            + "let original:Error={name:\"C\",message:x+y+z};"
                             + "try{throw original;}catch(e){"
-                            + "if((e as Error)!==original){throw {code:\"IDENTITY\",message:\"" + name + "\"};}"
+                            + "if((e as Error)!==original){throw {name:\"IDENTITY\",message:\"" + name + "\"};}"
                             + "readers[readers.length]=function():string{"
-                            + "if((e as Error)!==original){throw {code:\"ESCAPED_IDENTITY\",message:\"" + name + "\"};}"
+                            + "if((e as Error)!==original){throw {name:\"ESCAPED_IDENTITY\",message:\"" + name + "\"};}"
                             + "return (e as Error).message+x+y+z;};"
                             + "original.message=original.message+\"?\";z=z+\"!\";"
                             + switch (transfer) {
@@ -53,12 +53,12 @@ public final class NestedCatchTransferProductionTest {
                             + "}tails=tails+\"t\";}}}"
                             + "let result:string=\"\";for(let f of readers){result=result+f();}"
                             + "if(tails!==\"" + (transfer == Transfer.NORMAL ? "t".repeat(8) : "")
-                            + "\"){throw {code:\"TAIL\",message:\"" + name + "\"};}return result;";
+                            + "\"){throw {name:\"TAIL\",message:\"" + name + "\"};}return result;";
                         source.append("function ").append(name).append("():string{")
                             .append(closure ? "let run:()=>string=function():string{" + body + "};return run();" : body)
                             .append("}\n");
                         calls.append("if(").append(name).append("()!==\"").append(expected)
-                            .append("\"){throw {code:\"VALUE\",message:\"").append(name).append("\"};}\n");
+                            .append("\"){throw {name:\"VALUE\",message:\"").append(name).append("\"};}\n");
                     }
                 }
             }

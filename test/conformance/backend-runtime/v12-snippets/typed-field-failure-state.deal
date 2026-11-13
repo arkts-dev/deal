@@ -7,7 +7,7 @@ import * as c from "std/console";
 class Cell { value: number; }
 export function main(): null {
  let cell: Cell = {value:7}; let alias: Cell = cell; let t: Record<string, unknown> = {bad:"not-int"}; let caught: boolean = false;
- try {cell.value = t.bad as number;} catch(e) {if((e as Error).code !== "E8001") {throw {code:"TEST_FAIL",message:"wrong type code"};} caught = true;}
- if(!caught || alias.value !== 7 || alias !== cell) {throw {code:"TEST_FAIL",message:"failed field write changed instance"};}
+ try {cell.value = t.bad as number;} catch(e) {if((e as Error).name !== "E8001") {throw {name:"TEST_FAIL",message:"wrong type name"};} caught = true;}
+ if(!caught || alias.value !== 7 || alias !== cell) {throw {name:"TEST_FAIL",message:"failed field write changed instance"};}
  c.log("typed-field-failure-state"); return null;
 }

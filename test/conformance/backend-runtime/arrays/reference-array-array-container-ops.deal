@@ -9,30 +9,30 @@ export function test_array_array_container_ops(): null {
   // wrapper references, never copies.
   let xs: number[][] = [[0], [0, 0]];
   if (xs.length !== 2) {
-    throw { code: "TEST_FAIL", message: "number[][] literal length mismatch" };
+    throw { name: "TEST_FAIL", message: "number[][] literal length mismatch" };
   }
   if (xs[0].length !== 1 || xs[1].length !== 2) {
-    throw { code: "TEST_FAIL", message: "number[][] element length mismatch" };
+    throw { name: "TEST_FAIL", message: "number[][] element length mismatch" };
   }
   // Reads and mutation route through the shared wrapper: a write into
   // an element buffer is visible through the container read.
   xs[0][0] = 200;
   if (xs[0][0] !== 200 || xs[1][0] !== 0) {
-    throw { code: "TEST_FAIL", message: "number[][] element mutation mismatch" };
+    throw { name: "TEST_FAIL", message: "number[][] element mutation mismatch" };
   }
   // Append at i == length grows the wrapper storage in place: every
   // alias observes the appended element and later writes through it.
   let alias: number[][] = xs;
   xs[xs.length] = [0, 0, 0];
   if (xs.length !== 3 || alias.length !== 3) {
-    throw { code: "TEST_FAIL", message: "number[][] append-growth length mismatch" };
+    throw { name: "TEST_FAIL", message: "number[][] append-growth length mismatch" };
   }
   if (xs[2] !== alias[2]) {
-    throw { code: "TEST_FAIL", message: "number[][] append must share the stored reference" };
+    throw { name: "TEST_FAIL", message: "number[][] append must share the stored reference" };
   }
   alias[2][0] = 77;
   if (xs[2][0] !== 77) {
-    throw { code: "TEST_FAIL", message: "number[][] alias must observe the write" };
+    throw { name: "TEST_FAIL", message: "number[][] alias must observe the write" };
   }
   // (number[] | null)[]: the OrNull element policy stores and accepts the
   // DEAL null element and keeps real buffer references; bounds remain strict.
@@ -41,61 +41,61 @@ export function test_array_array_container_ops(): null {
   ys[1] = [0, 0];
   let first: number[] | null = ys[0];
   if (first !== null) {
-    throw { code: "TEST_FAIL", message: "(number[] | null)[] must accept the null element" };
+    throw { name: "TEST_FAIL", message: "(number[] | null)[] must accept the null element" };
   }
   let second: number[] | null = ys[1];
   if (second !== null) {
     second[0] = 5;
   } else {
-    throw { code: "TEST_FAIL", message: "(number[] | null)[] value element lost" };
+    throw { name: "TEST_FAIL", message: "(number[] | null)[] value element lost" };
   }
   let checkBack: number[] | null = ys[1];
   if (checkBack !== null) {
     if (checkBack[0] !== 5) {
-      throw { code: "TEST_FAIL", message: "(number[] | null)[] element reference mismatch" };
+      throw { name: "TEST_FAIL", message: "(number[] | null)[] element reference mismatch" };
     }
   } else {
-    throw { code: "TEST_FAIL", message: "(number[] | null)[] value element lost on re-read" };
+    throw { name: "TEST_FAIL", message: "(number[] | null)[] value element lost on re-read" };
   }
   // A past-end read of either element form is the strict array
   // bounds failure: E8002 at the read expression, never a language null
   // and never the element descriptor check.
   try {
     let past: number[] | null = ys[9];
-    throw { code: "TEST_FAIL", message: "expected E8002 before completing" };
+    throw { name: "TEST_FAIL", message: "expected E8002 before completing" };
   } catch (caught) {
     let e: Error = caught as Error;
-    if (e.code !== "E8002") {
-      throw { code: "TEST_FAIL", message: "expected E8002, got " + e.code };
+    if (e.name !== "E8002") {
+      throw { name: "TEST_FAIL", message: "expected E8002, got " + e.name };
     }
   }
   try {
     let z: number[] = xs[9];
-    throw { code: "TEST_FAIL", message: "expected E8002 before completing" };
+    throw { name: "TEST_FAIL", message: "expected E8002 before completing" };
   } catch (caught) {
     let e: Error = caught as Error;
-    if (e.code !== "E8002") {
-      throw { code: "TEST_FAIL", message: "expected E8002, got " + e.code };
+    if (e.name !== "E8002") {
+      throw { name: "TEST_FAIL", message: "expected E8002, got " + e.name };
     }
   }
   // A negative index raises E8002 in both element forms (the strict
   // bounds check runs unconditionally at the read).
   try {
     let z: number[] = xs[-1];
-    throw { code: "TEST_FAIL", message: "expected E8002 before completing" };
+    throw { name: "TEST_FAIL", message: "expected E8002 before completing" };
   } catch (caught) {
     let e: Error = caught as Error;
-    if (e.code !== "E8002") {
-      throw { code: "TEST_FAIL", message: "expected E8002, got " + e.code };
+    if (e.name !== "E8002") {
+      throw { name: "TEST_FAIL", message: "expected E8002, got " + e.name };
     }
   }
   try {
     let z: number[] | null = ys[-1];
-    throw { code: "TEST_FAIL", message: "expected E8002 before completing" };
+    throw { name: "TEST_FAIL", message: "expected E8002 before completing" };
   } catch (caught) {
     let e: Error = caught as Error;
-    if (e.code !== "E8002") {
-      throw { code: "TEST_FAIL", message: "expected E8002, got " + e.code };
+    if (e.name !== "E8002") {
+      throw { name: "TEST_FAIL", message: "expected E8002, got " + e.name };
     }
   }
   return null;

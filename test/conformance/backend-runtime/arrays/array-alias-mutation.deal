@@ -9,7 +9,7 @@ export function test_array_alias_mutation(): number {
   b[2] = 4;
   a[1] = 9;
   let result: number = b[0] + b[1] + b[2];
-  if (result !== 14) { throw { code: "TEST_FAIL", message: "array alias mutation failed" }; }
+  if (result !== 14) { throw { name: "TEST_FAIL", message: "array alias mutation failed" }; }
   return result;
 }
 

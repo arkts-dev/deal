@@ -10,10 +10,10 @@ export function test_jsonable_helper_exports(): null {
   if (u !== null) {
     let encoded: string = JSON.stringify(u) as string;
     let u2: Lib.User | null = JSON.parse(encoded);
-    if (u2 === null) { throw { code: "TEST_FAIL", message: "helper export toJson failed" }; }
+    if (u2 === null) { throw { name: "TEST_FAIL", message: "helper export toJson failed" }; }
     return null;
   }
-  throw { code: "TEST_FAIL", message: "helper export fromJson failed" };
+  throw { name: "TEST_FAIL", message: "helper export fromJson failed" };
 }
 
 export function main(): null {

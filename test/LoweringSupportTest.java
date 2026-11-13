@@ -1089,7 +1089,7 @@ public class LoweringSupportTest {
                       return 1;
                     }
                     """,
-                "main.deal", "import * as time from \"std/time\";\nimport * as helper from \"./helper\";\n\nexport class Point {\n  x: number;\n  y?: number;\n}\n\nasync function asyncOne(): Promise<number> { return 1; }\n\nexport async function compute(a: number[]): Promise<number> {\n  let sum: number = 0;\n  let n: number = 1.5;\n  let s: string = \"a\" + \"b\";\n  let t: string = `v${s}`;\n  let neg: number = -sum;\n  let eq: boolean = sum === 0 && n > 1.0;\n  let arr: number[] = [1, 2];\n  let obj: Record<string, unknown> = { k: 1 };\n  let checked: number = obj.k as number;\n  let p: Point = { x: 2, y: 4 };\n  p.y = 3;\n  delete obj.k;\n  if (Object.hasOwn(p, \"y\")) { sum = 1; } else { sum = 2; }\n  let i: number = 0;\n  while (i < a.length) {\n    if (i > 5) { break; }\n    sum = sum + a[i];\n    i = i + 1;\n  }\n  { let v14Loop0: number = 0; while (v14Loop0 < 2) { let j: number = v14Loop0; {\n    if (j === 1) { { v14Loop0 = j; v14Loop0 = v14Loop0 + 1; continue; } }\n    sum = sum + j;\n  } v14Loop0 = j; v14Loop0 = v14Loop0 + 1; } }\n  for (let v of a) { sum = sum + v; }\n  let f: () => number = function(): number { return 1; };\n  let g: () => number = f;\n  g();\n  sum = sum + g();\n  sum = sum + await asyncOne();\n  sum = sum + helper.helperFn();\n  let now: number = time.nowMillis();\n  try {\n    if (now < 0.0) { throw { code: \"E\", message: \"x\" }; }\n  } catch (e) {\n    sum = 9;\n  }\n  return sum;\n}\n\nexport function main(): null {\n  return null;\n}\n"), "main.deal");
+                "main.deal", "import * as time from \"std/time\";\nimport * as helper from \"./helper\";\n\nexport class Point {\n  x: number;\n  y?: number;\n}\n\nasync function asyncOne(): Promise<number> { return 1; }\n\nexport async function compute(a: number[]): Promise<number> {\n  let sum: number = 0;\n  let n: number = 1.5;\n  let s: string = \"a\" + \"b\";\n  let t: string = `v${s}`;\n  let neg: number = -sum;\n  let eq: boolean = sum === 0 && n > 1.0;\n  let arr: number[] = [1, 2];\n  let obj: Record<string, unknown> = { k: 1 };\n  let checked: number = obj.k as number;\n  let p: Point = { x: 2, y: 4 };\n  p.y = 3;\n  delete obj.k;\n  if (Object.hasOwn(p, \"y\")) { sum = 1; } else { sum = 2; }\n  let i: number = 0;\n  while (i < a.length) {\n    if (i > 5) { break; }\n    sum = sum + a[i];\n    i = i + 1;\n  }\n  { let v14Loop0: number = 0; while (v14Loop0 < 2) { let j: number = v14Loop0; {\n    if (j === 1) { { v14Loop0 = j; v14Loop0 = v14Loop0 + 1; continue; } }\n    sum = sum + j;\n  } v14Loop0 = j; v14Loop0 = v14Loop0 + 1; } }\n  for (let v of a) { sum = sum + v; }\n  let f: () => number = function(): number { return 1; };\n  let g: () => number = f;\n  g();\n  sum = sum + g();\n  sum = sum + await asyncOne();\n  sum = sum + helper.helperFn();\n  let now: number = time.nowMillis();\n  try {\n    if (now < 0.0) { throw { name: \"E\", message: \"x\" }; }\n  } catch (e) {\n    sum = 9;\n  }\n  return sum;\n}\n\nexport function main(): null {\n  return null;\n}\n"), "main.deal");
             if (result == null) {
                 return;
             }
@@ -1432,7 +1432,7 @@ public class LoweringSupportTest {
             ProductionObservation production = productionAccept(tmp,
                 Map.of("main.deal", """
                     export function main(): null {
-                      throw { code: "TEST_FAIL", message: "boom" };
+                      throw { name: "TEST_FAIL", message: "boom" };
                     }
                     """), "main.deal", "the builtin-Error-only E10 arm", "TEST_FAIL");
             RequirementManifestResult result = production.manifests();
@@ -1679,7 +1679,7 @@ public class LoweringSupportTest {
                 export function main(): null {
                   let xs: number[] = [1, 2, 3];
                   if (xs.length !== 3) {
-                    throw { code: "TEST_FAIL", message: "array length mismatch" };
+                    throw { name: "TEST_FAIL", message: "array length mismatch" };
                   }
                   return null;
                 }

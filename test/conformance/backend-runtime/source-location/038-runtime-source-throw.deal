@@ -4,5 +4,5 @@
 // @features: diagnostics, runtime-location, throw
 
 export function main(): null {
-  throw { code: "PINNED_THROW", message: "location" };
+  throw { name: "PINNED_THROW", message: "location" };
 }

@@ -156,7 +156,7 @@ public class CompositeTerminatorAnalysisTest {
           "nullBodyTailMarker";
           let tailMarker: number = 715;
           if (tailMarker === 715) {
-            throw { code: "TAIL_EXECUTED", message: "TAIL715" };
+            throw { name: "TAIL_EXECUTED", message: "TAIL715" };
           }
         }
 
@@ -638,7 +638,7 @@ public class CompositeTerminatorAnalysisTest {
                 return null;""", true),
             new PartialShape("if without else then throw", """
                 if (c) { break; }
-                throw { code: "PARTIAL", message: "partial" };""", true),
+                throw { name: "PARTIAL", message: "partial" };""", true),
             new PartialShape("if/else with one open branch then return", """
                 if (c) { break; } else { }
                 return null;""", true),
@@ -659,10 +659,10 @@ public class CompositeTerminatorAnalysisTest {
                 return null;""", false),
             new PartialShape("if without else with continue then throw", """
                 if (c) { continue; }
-                throw { code: "PARTIAL", message: "partial" };""", false),
+                throw { name: "PARTIAL", message: "partial" };""", false),
             new PartialShape("try/catch with continue then throw", """
                 try { if (c) { continue; } } catch (e) { }
-                throw { code: "PARTIAL", message: "partial" };""", false));
+                throw { name: "PARTIAL", message: "partial" };""", false));
         List<String> names = new ArrayList<>();
         StringBuilder source = new StringBuilder();
         int fallOffProbes = 0;
@@ -1433,7 +1433,7 @@ public class CompositeTerminatorAnalysisTest {
                     case "Continue" -> "if (i < 1) { "
                         + "i = i + 1; "
                         + "continue; }\nif (c) { break; }\nreturn null;";
-                    case "Throw" -> "try {\nif (c) { break; }\nthrow { code: \""
+                    case "Throw" -> "try {\nif (c) { break; }\nthrow { name: \""
                         + codes[i] + "\", message: \"partial\" };\n} catch (e) { return null; }";
                     default -> "if (c) { break; }\nreturn null;";
                 };
@@ -1553,9 +1553,9 @@ public class CompositeTerminatorAnalysisTest {
     private static final List<AllThrowForLetProgram> ALL_THROW_FOR_LET_PROGRAMS =
         List.of(
             new AllThrowForLetProgram(
-                "the all-throw while loop", false, "export function main(): null {\n  while (true) { {\n    throw { code: \"THROW_ONLY\", message: \"throw only\" };\n  } }\n}\n"),
+                "the all-throw while loop", false, "export function main(): null {\n  while (true) { {\n    throw { name: \"THROW_ONLY\", message: \"throw only\" };\n  } }\n}\n"),
             new AllThrowForLetProgram(
-                "the all-throw explicit-true for-let", false, "export function main(): null {\n  while (true) { {\n    throw { code: \"THROW_ONLY\", message: \"throw only\" };\n  } }\n}\n"));
+                "the all-throw explicit-true for-let", false, "export function main(): null {\n  while (true) { {\n    throw { name: \"THROW_ONLY\", message: \"throw only\" };\n  } }\n}\n"));
 
     static void testAllThrowForLetParity() throws Exception {
         System.out.println("-- the all-throw for-let bodies through the oracle "
@@ -1691,7 +1691,7 @@ public class CompositeTerminatorAnalysisTest {
                 "import * as fx from \"./" + fixture.relativePath() + "\";\n\n"
                     + "export function main(): null {\n"
                     + "  if (fx." + fixture.probe() + "() !== " + fixture.pinnedValue() + ") {\n"
-                    + "    throw { code: \"TEST_FAIL\", message: \""
+                    + "    throw { name: \"TEST_FAIL\", message: \""
                     + fixture.relativePath() + " pinned probe value\" };\n"
                     + "  }\n  return null;\n}\n");
             lowered = lowerProjectRoot(root, "src/app.deal");

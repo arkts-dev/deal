@@ -5,13 +5,13 @@
 
 export function main(): null {
   try {
-    try { throw {code:"CONTROL",message:"control"}; } catch (inner) {
+    try { throw {name:"CONTROL",message:"control"}; } catch (inner) {
       let innerError = inner as Error;
       let innerMessage: string = innerError.message;
     }
   } catch (outer) {
     let outerError = outer as Error;
-    let outerCode: string = outerError.code;
+    let outerCode: string = outerError.name;
   }
   return null;
 }

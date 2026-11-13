@@ -9,10 +9,10 @@ export function test_precedence(): number {
   // (2 + 3) * 4 = 5 * 4 = 20
   let b: number = (2 + 3) * 4;
   if (a !== 14) {
-    throw { code: "TEST_FAIL", message: "arithmetic precedence: 2 + 3 * 4 should be 14" };
+    throw { name: "TEST_FAIL", message: "arithmetic precedence: 2 + 3 * 4 should be 14" };
   }
   if (b !== 20) {
-    throw { code: "TEST_FAIL", message: "arithmetic precedence: (2 + 3) * 4 should be 20" };
+    throw { name: "TEST_FAIL", message: "arithmetic precedence: (2 + 3) * 4 should be 20" };
   }
   // a should be 14, b should be 20; return their sum (34)
   return a + b;

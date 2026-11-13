@@ -10,13 +10,13 @@ export function main(): null {
   let doc: Record<string, unknown> = { count: 42, ratio: 2.5, flag: true, nothing: null, name: "Ada" };
   let encoded: string = JSON.stringify(doc) as string;
   if (!str.contains(encoded, "\"count\":42")) {
-    throw { code: "TEST_FAIL", message: "int must serialize as a JSON number" };
+    throw { name: "TEST_FAIL", message: "int must serialize as a JSON number" };
   }
   if (!str.contains(encoded, "\"ratio\":2.5")) {
-    throw { code: "TEST_FAIL", message: "number must serialize as a JSON number" };
+    throw { name: "TEST_FAIL", message: "number must serialize as a JSON number" };
   }
   if (!str.contains(encoded, "\"nothing\":null")) {
-    throw { code: "TEST_FAIL", message: "null must serialize as JSON null" };
+    throw { name: "TEST_FAIL", message: "null must serialize as JSON null" };
   }
   let back: Record<string, unknown> = JSON.parse(encoded);
   let count: number = back.count as number;
@@ -24,16 +24,16 @@ export function main(): null {
   let flag: boolean = back.flag as boolean;
   let name: string = back.name as string;
   if (count !== 42) {
-    throw { code: "TEST_FAIL", message: "int round-trip mismatch" };
+    throw { name: "TEST_FAIL", message: "int round-trip mismatch" };
   }
   if (ratio !== 2.5) {
-    throw { code: "TEST_FAIL", message: "number round-trip mismatch" };
+    throw { name: "TEST_FAIL", message: "number round-trip mismatch" };
   }
   if (!flag) {
-    throw { code: "TEST_FAIL", message: "boolean round-trip mismatch" };
+    throw { name: "TEST_FAIL", message: "boolean round-trip mismatch" };
   }
   if (name !== "Ada") {
-    throw { code: "TEST_FAIL", message: "string round-trip mismatch" };
+    throw { name: "TEST_FAIL", message: "string round-trip mismatch" };
   }
   return null;
 }

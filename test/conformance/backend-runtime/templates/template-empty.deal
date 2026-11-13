@@ -6,7 +6,7 @@
 export function test_empty(): string {
   let s: string = ``;
   if (s !== "") {
-    throw { code: "TEST_FAIL", message: "empty template literal did not produce an empty string" };
+    throw { name: "TEST_FAIL", message: "empty template literal did not produce an empty string" };
   }
   return s;
 }

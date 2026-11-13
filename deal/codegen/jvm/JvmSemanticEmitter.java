@@ -4726,19 +4726,19 @@ public final class JvmSemanticEmitter {
                 SemanticOp boundary = requireClassNewFieldBoundary(op, entry);
                 String checked = "__ec_" + boundary.opId().id();
                 emitClassNewFieldAdmission(op, boundary, checked, indent);
-                if ("code".equals(entry.field())) {
+                if ("name".equals(entry.field())) {
                     code = checked;
                 } else if ("message".equals(entry.field())) {
                     message = checked;
                 } else {
                     throw rejectedOp(op, "CLASS_NEW " + op.opId()
                         + " names the builtin Error field '" + entry.field() + "':"
-                        + " the builtin class declares exactly code and message —"
+                        + " the builtin class declares exactly name and message —"
                         + " a fail-closed producer defect, never emitted");
                 }
             }
             if (code == null || message == null) {
-                throw rejectedOp(op, "builtin Error construction omits code or message (producer defect)");
+                throw rejectedOp(op, "builtin Error construction omits name or message (producer defect)");
             }
             String instName = "__inst_" + op.opId().id();
             out.append(indent(indent)).append("JvmRuntime.ErrorValue ")

@@ -8,7 +8,7 @@ class Ordered { first:Node; later:number; }
 class Envelope { item:Node; values:(boolean|null)[]; }
 class OptionalArray { items?:number[]; key?:string; index?:number; }
 function verify(ok:boolean):void {
-  if (!ok) { throw {code:"TEST",message:"JSON reconstruction"}; }
+  if (!ok) { throw {name:"TEST",message:"JSON reconstruction"}; }
 }
 function returned():Node { return (JSON.parse(`{"value":7}`)); }
 function consume(node:Node):number { return node.value; }
@@ -42,14 +42,14 @@ export function main():null {
   verify((record["$kind"] as string)==="class" && (record["__proto__"] as number)===1);
   verify((record.nested as unknown[]).length===3);
   verify(JSON.parse("null")===null && (JSON.parse("false") as boolean)===false && (JSON.parse("2") as number)===2);
-  let err:Error=JSON.parse(`{"message":"decoded","code":"JSON"}`);
-  keys=Object.keys(err);verify(err.code==="JSON" && err.message==="decoded" && keys.length===2 && keys[0]==="code" && keys[1]==="message");
-  let binaryError:Error=JSON.parse(`{"code":"A\\u0000B","message":"C\\u0000D"}`);
-  verify(binaryError.code==="A\u0000B" && binaryError.message==="C\u0000D");
-  verify((JSON.stringify(binaryError) as string)===`{"code":"A\\u0000B","message":"C\\u0000D"}`);
+  let err:Error=JSON.parse(`{"message":"decoded","name":"JSON"}`);
+  keys=Object.keys(err);verify(err.name==="JSON" && err.message==="decoded" && keys.length===2 && keys[0]==="name" && keys[1]==="message");
+  let binaryError:Error=JSON.parse(`{"name":"A\\u0000B","message":"C\\u0000D"}`);
+  verify(binaryError.name==="A\u0000B" && binaryError.message==="C\u0000D");
+  verify((JSON.stringify(binaryError) as string)===`{"name":"A\\u0000B","message":"C\\u0000D"}`);
   let loneKeyRejected=false;
   try { let bad:Node=JSON.parse(`{"value":1,"x\\ud800y":2}`); } catch(e) {
-    verify((e as Error).code==="E8007" && (e as Error).message.startsWith("extra field 'x\ud800y' in class '"));
+    verify((e as Error).name==="E8007" && (e as Error).message.startsWith("extra field 'x\ud800y' in class '"));
     loneKeyRejected=true;
   }
   verify(loneKeyRejected);
@@ -60,7 +60,7 @@ export function main():null {
   let extraIndex=0;
   for(let document of extraDocuments) {
     try { let bad:Node=JSON.parse(document); } catch(e) {
-      verify((e as Error).code==="E8007"
+      verify((e as Error).name==="E8007"
         && (e as Error).message.startsWith("extra field '"+extraKeys[extraIndex]+"' in class '"));
       extraCount=extraCount+1;
     }
@@ -70,7 +70,7 @@ export function main():null {
   let thrown=false;try { throw err; } catch(e) { verify((e as Error)===err); thrown=true; } verify(thrown);
   let caught=0;
   try { node=JSON.parse(`{"value":"bad","extra":1}`); } catch(e) {
-    verify((e as Error).code==="E8007"); caught=caught+1;
+    verify((e as Error).name==="E8007"); caught=caught+1;
   }
   verify(node.value===8);
   try { let bad:Node=JSON.parse(`{"value":1,"x\\u0000y":2}`); } catch(e) {
@@ -88,7 +88,7 @@ export function main():null {
     verify((e as Error).message==="expected number"); caught=caught+1;
   }
   try { let bad:Node=JSON.parse(`{"value":1}`) as Node; } catch(e) {
-    verify((e as Error).code==="E8001"); caught=caught+1;
+    verify((e as Error).name==="E8001"); caught=caught+1;
   }
   try { let bad:Record<string,unknown>=JSON.parse("[]"); } catch(e) {
     verify((e as Error).message==="expected table"); caught=caught+1;
@@ -135,14 +135,14 @@ export function main():null {
   let absent:OptionalArray=JSON.parse("{}");
   let readFailure=false;
   try { (absent.items as number[])[0]=4; } catch(e) {
-    verify((e as Error).code==="E8001");readFailure=true;
+    verify((e as Error).name==="E8001");readFailure=true;
   }
   verify(readFailure && !Object.hasOwn(absent,"items"));
   // Syntax scanning completes before target reconstruction, including
   // duplicate keys in a later field after an earlier target mismatch.
   let syntaxFirst=false;
   try { let bad:Node=JSON.parse(`{"value":"bad","extra":{"x":1,"x":2}}`); } catch(e) {
-    verify((e as Error).code==="E8001" && (e as Error).message.startsWith("JSON parse error at position "));
+    verify((e as Error).name==="E8001" && (e as Error).message.startsWith("JSON parse error at position "));
     syntaxFirst=true;
   }
   verify(syntaxFirst);

@@ -8,7 +8,7 @@ async function value(): Promise<number> { return 6; }
 export async function test_async_function_value(): Promise<number> {
   let f: () => Promise<number> = value;
   let result: number = await f();
-  if (result !== 6) { throw { code: "TEST_FAIL", message: "async function value failed" }; }
+  if (result !== 6) { throw { name: "TEST_FAIL", message: "async function value failed" }; }
   return result;
 }
 

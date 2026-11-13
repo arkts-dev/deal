@@ -13,7 +13,7 @@ export function test_same_module_helpers(): null {
   let decoder: (text: string) => Model = decode;
   let b: Model = decoder(encoder(a));
   if (b.name !== "" || Object.hasOwn(b, "nick") || b === a || encoder !== encode || decoder !== decode) {
-    throw {code: "TEST_FAIL", message: "same-module JSON function roundtrip"};
+    throw {name: "TEST_FAIL", message: "same-module JSON function roundtrip"};
   }
   return null;
 }

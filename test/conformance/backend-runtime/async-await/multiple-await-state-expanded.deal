@@ -10,7 +10,7 @@ export async function test_multiple_await_state(): Promise<number> {
   x = await inc(x);
   x = await inc(x);
   x = await inc(x);
-  if (x !== 3) { throw { code: "TEST_FAIL", message: "await state failed" }; }
+  if (x !== 3) { throw { name: "TEST_FAIL", message: "await state failed" }; }
   return x;
 }
 

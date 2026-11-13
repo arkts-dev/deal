@@ -7,8 +7,8 @@ import * as c from "std/console";
 export function main(): null {
  let trace:string="";
  let mark = function(s:string): string {trace=trace+s; return s;};
- let fail = function(): string {trace=trace+"B"; throw {code:"STOP",message:"template"};};
- try {let text:string=`${mark("A")}${fail()}${mark("X")}`; trace=trace+"Y";} catch(e) {if((e as Error).code!=="STOP") {throw {code:"TEST_FAIL",message:"wrong error"};} trace=trace+"C";}
- if(trace!=="ABC") {throw {code:"TEST_FAIL",message:"interpolation order: "+trace};}
+ let fail = function(): string {trace=trace+"B"; throw {name:"STOP",message:"template"};};
+ try {let text:string=`${mark("A")}${fail()}${mark("X")}`; trace=trace+"Y";} catch(e) {if((e as Error).name!=="STOP") {throw {name:"TEST_FAIL",message:"wrong error"};} trace=trace+"C";}
+ if(trace!=="ABC") {throw {name:"TEST_FAIL",message:"interpolation order: "+trace};}
  c.log("template-interpolation-abrupt"); return null;
 }

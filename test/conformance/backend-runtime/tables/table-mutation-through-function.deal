@@ -12,7 +12,7 @@ export function test_table_mutation_through_function(): number {
   let t: Record<string, unknown> = {};
   setValue(t, 12);
   let result: number = t.value as number;
-  if (result !== 12) { throw { code: "TEST_FAIL", message: "table mutation through function failed" }; }
+  if (result !== 12) { throw { name: "TEST_FAIL", message: "table mutation through function failed" }; }
   return result;
 }
 

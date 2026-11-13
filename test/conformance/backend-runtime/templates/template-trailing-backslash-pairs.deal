@@ -6,7 +6,7 @@
 export function test_closing_run(): null {
   let text: string = `a\\`;
   if (text !== "a\\") {
-    throw { code: "TEST_FAIL", message: "closing run must decode once" };
+    throw { name: "TEST_FAIL", message: "closing run must decode once" };
   }
   return null;
 }
@@ -15,7 +15,7 @@ export function test_interpolation_boundary(): null {
   let name: string = "N";
   let text: string = `Hello \\${name}`;
   if (text !== "Hello \\N") {
-    throw { code: "TEST_FAIL", message: "run before interpolation must decode once" };
+    throw { name: "TEST_FAIL", message: "run before interpolation must decode once" };
   }
   return null;
 }
@@ -23,7 +23,7 @@ export function test_interpolation_boundary(): null {
 export function test_nested_run(): null {
   let text: string = `[${ `in\\` }]`;
   if (text !== "[in\\]") {
-    throw { code: "TEST_FAIL", message: "nested run must decode once" };
+    throw { name: "TEST_FAIL", message: "nested run must decode once" };
   }
   return null;
 }

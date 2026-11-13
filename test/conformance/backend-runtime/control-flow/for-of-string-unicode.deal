@@ -11,13 +11,13 @@ export function test_for_of_unicode(): number {
     collected[collected.length] = c;
   }
   if (collected.length !== 5) {
-    throw { code: "TEST_FAIL", message: "expected 5 scalar values" };
+    throw { name: "TEST_FAIL", message: "expected 5 scalar values" };
   }
-  if (collected[0] !== "a") { throw { code: "TEST_FAIL", message: "scalar 0 mismatch" }; }
-  if (collected[1] !== "é") { throw { code: "TEST_FAIL", message: "scalar 1 mismatch" }; }
-  if (collected[2] !== "中") { throw { code: "TEST_FAIL", message: "scalar 2 mismatch" }; }
-  if (collected[3] !== "😀") { throw { code: "TEST_FAIL", message: "scalar 3 mismatch" }; }
-  if (collected[4] !== "b") { throw { code: "TEST_FAIL", message: "scalar 4 mismatch" }; }
+  if (collected[0] !== "a") { throw { name: "TEST_FAIL", message: "scalar 0 mismatch" }; }
+  if (collected[1] !== "é") { throw { name: "TEST_FAIL", message: "scalar 1 mismatch" }; }
+  if (collected[2] !== "中") { throw { name: "TEST_FAIL", message: "scalar 2 mismatch" }; }
+  if (collected[3] !== "😀") { throw { name: "TEST_FAIL", message: "scalar 3 mismatch" }; }
+  if (collected[4] !== "b") { throw { name: "TEST_FAIL", message: "scalar 4 mismatch" }; }
   return collected.length;
 }
 

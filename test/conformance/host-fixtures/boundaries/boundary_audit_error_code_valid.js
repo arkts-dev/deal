@@ -1,1 +1,1 @@
-let saved;module.exports={edit:e=>{saved=e;e.code="changed 🌍";},repair:()=>{saved.code="repaired";}};
+let saved;module.exports={edit:e=>{saved=e;e.name="changed 🌍";},repair:()=>{saved.name="repaired";}};

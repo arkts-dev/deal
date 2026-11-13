@@ -58,32 +58,32 @@ export function test_table_carrier_keys_are_data(): null {
   let tt: boolean = back.__t as boolean;
   let data: number = back.data as number;
   if (kind !== "class" || c !== true || tt !== true) {
-    throw { code: "TEST_FAIL", message: "carrier-like keys did not survive the JSON round-trip" };
+    throw { name: "TEST_FAIL", message: "carrier-like keys did not survive the JSON round-trip" };
   }
   if (keysData !== "keys-data" || orderData !== "order-data") {
-    throw { code: "TEST_FAIL", message: "the map-shaped carrier keys did not survive as data" };
+    throw { name: "TEST_FAIL", message: "the map-shaped carrier keys did not survive as data" };
   }
   if (classname !== "Error" || id !== "@conformance/forged/Item") {
-    throw { code: "TEST_FAIL", message: "the identity-shaped carrier keys did not survive as data" };
+    throw { name: "TEST_FAIL", message: "the identity-shaped carrier keys did not survive as data" };
   }
   if (data !== 9) {
-    throw { code: "TEST_FAIL", message: "the ordinary key did not survive the round-trip" };
+    throw { name: "TEST_FAIL", message: "the ordinary key did not survive the round-trip" };
   }
   let keys: string[] = tablelib.keys(t);
   if (keys.length !== 30) {
-    throw { code: "TEST_FAIL", message: "table.keys lost or invented a key" };
+    throw { name: "TEST_FAIL", message: "table.keys lost or invented a key" };
   }
   let small: Record<string, unknown> = { __kind: 1, __keys: 2, plain: 3 };
   let smallKeys: string[] = tablelib.keys(small);
   if (smallKeys.length !== 3) {
-    throw { code: "TEST_FAIL", message: "a small tagged table lost keys" };
+    throw { name: "TEST_FAIL", message: "a small tagged table lost keys" };
   }
   let tagged: Tagged = {__kind: "kind-field", __classname: "classname-field", __c: 1, __keys: "keys-field", __t: true};
   if (tagged.__kind !== "kind-field" || tagged.__classname !== "classname-field") {
-    throw { code: "TEST_FAIL", message: "a class field named after a carrier key lost its value" };
+    throw { name: "TEST_FAIL", message: "a class field named after a carrier key lost its value" };
   }
   if (tagged.__c !== 1 || tagged.__keys !== "keys-field" || tagged.__t !== true) {
-    throw { code: "TEST_FAIL", message: "a class field named after a carrier key lost its value" };
+    throw { name: "TEST_FAIL", message: "a class field named after a carrier key lost its value" };
   }
   return null;
 }

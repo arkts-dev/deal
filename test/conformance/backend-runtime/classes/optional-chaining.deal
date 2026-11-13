@@ -3,7 +3,7 @@
 import * as left from "./same_name_sibling_a";
 import * as right from "./same_name_sibling_b";
 class Item { x:number; child:Item|null; f:(x:number)=>number; note?:string|null|undefined; }
-function require(ok:boolean, message:string):void { if(!ok){throw {code:"TEST",message:message};} }
+function require(ok:boolean, message:string):void { if(!ok){throw {name:"TEST",message:message};} }
 export function main():null {
  let calls=0;
  let key=():number=>{calls=calls+1;return 0;};
@@ -48,13 +48,13 @@ export function main():null {
  a=null;saved=a?.child??item;require((saved as Item)===item,"assignment chain");
  let table:Record<string,unknown>={};table["saved"]=a?.x;
  require(table.saved===undefined,"record assignment");
- let skipped=():number=>{throw {code:"SKIP",message:"must not run"};};
+ let skipped=():number=>{throw {name:"SKIP",message:"must not run"};};
  require((a?.f(skipped())??5)===5,"abrupt argument skipped");
  let destination=41;
  a=item;
  try { destination=a?.f(skipped())??0; } catch(e) {
   require(destination===41,"argument abrupt rollback");
-  let error=e as Error;require(error.code==="SKIP","argument failure");
+  let error=e as Error;require(error.name==="SKIP","argument failure");
  }
  let readIndex=():number=>{calls=calls+1;return 99;};
  let before=calls;
@@ -62,7 +62,7 @@ export function main():null {
  xs=[item];
  try { saved=xs?.[readIndex()]; } catch(e) {
   require((saved as Item)===item&&calls===before+1,"bounds rollback");
-  let error=e as Error;require(error.code==="E8002","selected bounds");
+  let error=e as Error;require(error.name==="E8002","selected bounds");
  }
  let recursive:((n:number)=>number)|null=(n:number):number=>n===0?1:(recursive?.(n - 1)??0)+1;
  require((recursive?.(5)??0)===6,"recursive optional callee");
@@ -83,7 +83,7 @@ export function main():null {
  let untyped:unknown=sibling;
  try { owned=exact?.(untyped as left.Item); } catch(e) {
   require((owned as left.Item).value===24,"sibling rejection preserves destination");
-  require((e as Error).code==="E8001","sibling nominal failure");
+  require((e as Error).name==="E8001","sibling nominal failure");
  }
  let dynamic:Record<string,unknown>|null={value:17};
  let extracted:unknown=dynamic?.value;
@@ -103,7 +103,7 @@ export function main():null {
   clear();destination=42;
   try { destination=stale?.x??0; } catch(e) {
    require(destination===42,"refined receiver failure preserves destination");
-   require((e as Error).code==="E8001","refined receiver consumption boundary");
+   require((e as Error).name==="E8001","refined receiver consumption boundary");
   }
  }
  let holder:Record<string,unknown>={};

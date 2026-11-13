@@ -1,1 +1,1 @@
-let saved;module.exports={edit:e=>{saved=e;e.code="\ud800";},repair:()=>{saved.code="repaired";}};
+let saved;module.exports={edit:e=>{saved=e;e.name="\ud800";},repair:()=>{saved.name="repaired";}};

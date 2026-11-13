@@ -7,8 +7,8 @@ export function test_table_delete_dynamic_field(): null {
   let t: Record<string, unknown> = { value: 4 };
   delete t.value;
   let v: number | undefined = t.value as number | undefined;
-  if (Object.hasOwn(t, "value")) { throw { code: "TEST_FAIL", message: "deleted key present" }; }
-  if (v !== undefined) { throw { code: "TEST_FAIL", message: "deleted table field still present" }; }
+  if (Object.hasOwn(t, "value")) { throw { name: "TEST_FAIL", message: "deleted key present" }; }
+  if (v !== undefined) { throw { name: "TEST_FAIL", message: "deleted table field still present" }; }
   return null;
 }
 

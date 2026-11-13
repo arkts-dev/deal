@@ -55,10 +55,10 @@ public final class BoundaryHistoryProductionTest {
                     valid = false;
                     body.append("""
                         host.corrupt();let before=calls;let rejected=false;
-                        try{destination=get();}catch(e){check((e as Error).code==="E8003");rejected=true;}
+                        try{destination=get();}catch(e){check((e as Error).name==="E8003");rejected=true;}
                         check(rejected && calls===before+1 && destination===untouched);
                         effects="";rejected=false;
-                        try{receiver()[index()]=rhs();}catch(e){check((e as Error).code==="E8002");rejected=true;}
+                        try{receiver()[index()]=rhs();}catch(e){check((e as Error).name==="E8002");rejected=true;}
                         check(rejected && effects==="RIV");
                         """);
                 }
@@ -89,7 +89,7 @@ public final class BoundaryHistoryProductionTest {
                 int end = Math.min(batch + 4, traces.size());
                 StringBuilder source = new StringBuilder("""
                     import * as c from "std/console";import * as host from "host/probe";
-                    function check(ok:boolean):void{if(!ok){throw {code:"HISTORY",message:"mismatch"};}}
+                    function check(ok:boolean):void{if(!ok){throw {name:"HISTORY",message:"mismatch"};}}
                     """);
                 for (int i = batch; i < end; i++) source.append(trace(traces.get(i), i));
                 source.append("export function main():null{");

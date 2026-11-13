@@ -314,7 +314,7 @@ public class DefaultSemanticSerializerTest {
                   for (let value of arr) { total = total + value; }
                   let t: Record<string, unknown> = {k: 1};
                   delete t.k;
-                  try { if (total < 0) { throw {code: "BAD", message: "bad"}; } }
+                  try { if (total < 0) { throw {name: "BAD", message: "bad"}; } }
                   catch (e) { total = 0; }
                   let innerFn: (v: number) => number = function(v: number): number { return v + 1; };
                   let nested: (x: number) => number = function(x: number): number {

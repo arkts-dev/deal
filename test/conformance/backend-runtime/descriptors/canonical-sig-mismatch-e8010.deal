@@ -10,7 +10,7 @@ function asString(x: number): string {
 
 export function test_canonical_sig_mismatch(): number {
   let source: (x: number) => number = function(x: number): number { return x; };
-  if (!host.replaceSignature({value: source}, "(number)->string")) { throw {code: "TEST_FAIL", message: "signature mutation failed"}; }
+  if (!host.replaceSignature({value: source}, "(number)->string")) { throw {name: "TEST_FAIL", message: "signature mutation failed"}; }
   let f: (x: number) => number = source;
   return f(1);
 }

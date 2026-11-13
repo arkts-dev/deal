@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: unknown, equality, jsonable, undefined, contextual-identifiers
 
-function check(ok:boolean):void{if(!ok){throw {code:"FAIL",message:"scalar audit contract"};}}
+function check(ok:boolean):void{if(!ok){throw {name:"FAIL",message:"scalar audit contract"};}}
 function equal(a:unknown,b:unknown):boolean{check((a===b)!==(a!==b));return a===b;}
 export class U { missing:undefined; optional?:undefined; values:(null|undefined)[]; }
 export function main():null{

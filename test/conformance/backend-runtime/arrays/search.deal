@@ -1,7 +1,7 @@
 // @spec: Arrays
 // @description: Array search normalization, equality, identity and saved operand effects
 // @expected: runtime-ok
-function check(ok:boolean,detail:string):void{if(!ok){throw {code:"CHECK",message:detail};}}
+function check(ok:boolean,detail:string):void{if(!ok){throw {name:"CHECK",message:detail};}}
 class Item{x:number;}
 export function main():null{
   let xs:number[]=[1,2,1,0/0,-0,1/0,-1/0];
@@ -41,10 +41,10 @@ export function main():null{
   log="";check(receiver().indexOf(value(),from())===9 && log==="rvf" && xs.length===11,"indexOf effects");
   let saved=xs;let replace=():number=>{xs=[99];return 1;};
   check(xs.indexOf(replace())===0 && saved.length===11 && xs[0]===99,"saved receiver");
-  let stop=():number=>{log=log+"v";throw {code:"STOP",message:"stop"};};
-  let result=123;log="";try{result=receiver().indexOf(stop(),from());}catch(e){check((e as Error).code==="STOP","abrupt error");}
+  let stop=():number=>{log=log+"v";throw {name:"STOP",message:"stop"};};
+  let result=123;log="";try{result=receiver().indexOf(stop(),from());}catch(e){check((e as Error).name==="STOP","abrupt error");}
   check(log==="rv","abrupt log: "+log);check(result===123,"abrupt destination");check(xs.length===1,"abrupt length");
-  log="";let failFrom=():number=>{log=log+"f";throw {code:"STOP",message:"from"};};
+  log="";let failFrom=():number=>{log=log+"f";throw {name:"STOP",message:"from"};};
   try{result=receiver().indexOf(value(),failFrom());}catch(e){check((e as Error).message==="from","from abrupt error");}
   check(log==="rvf" && result===123 && xs.length===2,"from abrupt rollback");
   log="";result=receiver().indexOf(value(),from());check(log==="rvf" && result===2 && xs.length===4,"assignment search order");

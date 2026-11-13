@@ -8,7 +8,7 @@ import * as host from "host/extra_export";
 export function test_host_extra_export_ignored(): string {
   let pong: string = host.ping();
   if (pong !== "pong") {
-    throw { code: "TEST_FAIL", message: "declared export returned unexpected value" };
+    throw { name: "TEST_FAIL", message: "declared export returned unexpected value" };
   }
   return "host extra export ignored ok";
 }

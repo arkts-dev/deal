@@ -12,7 +12,7 @@ export function main(): null {
   if (xs !== null) {
     clear();
     for (let n of xs) {
-      throw { code: "TEST_FAIL", message: "the loop body must not run" };
+      throw { name: "TEST_FAIL", message: "the loop body must not run" };
     }
   }
   return null;

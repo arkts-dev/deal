@@ -10,7 +10,7 @@ export function test_sum(): number {
     total = total + x;
   }
   if (total !== 15) {
-    throw { code: "TEST_FAIL", message: "for-of array sum mismatch" };
+    throw { name: "TEST_FAIL", message: "for-of array sum mismatch" };
   }
   return total;
 }

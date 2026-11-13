@@ -7,16 +7,16 @@ import * as math from "std/math";
 
 export function test_math_int_extremes(): null {
   if (math.floor(-2147483648.25) !== -2147483649) {
-    throw { code: "TEST_FAIL", message: "minInt extremes mismatch" };
+    throw { name: "TEST_FAIL", message: "minInt extremes mismatch" };
   }
   if (math.ceil(2147483647.25) !== 2147483648) {
-    throw { code: "TEST_FAIL", message: "maxInt extremes mismatch" };
+    throw { name: "TEST_FAIL", message: "maxInt extremes mismatch" };
   }
   if (math.absNumber(-2147483648) !== 2147483648) {
-    throw { code: "TEST_FAIL", message: "minInt MIN/MIN mismatch" };
+    throw { name: "TEST_FAIL", message: "minInt MIN/MIN mismatch" };
   }
   if (math.sqrt(16) !== 4) {
-    throw { code: "TEST_FAIL", message: "maxInt MAX/MAX mismatch" };
+    throw { name: "TEST_FAIL", message: "maxInt MAX/MAX mismatch" };
   }
   return null;
 }

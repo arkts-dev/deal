@@ -4,16 +4,16 @@
 // @features: host-abi, unknown, undefined, arrays, functions, async
 import * as host from "host/audit16";
 
-function check(ok:boolean):void { if(!ok){throw {code:"FAIL",message:"host audit contract"};} }
+function check(ok:boolean):void { if(!ok){throw {name:"FAIL",message:"host audit contract"};} }
 function callback():void {}
-function thrown():void { throw {code:"CALLBACK",message:"callback"}; }
+function thrown():void { throw {name:"CALLBACK",message:"callback"}; }
 export function test_sync():void {
   check(host.nullish()===undefined);
   let lone=host.badClass(1);
   check(lone.x===`\uD800`);
   for(let kind of [0,2,3]) {
     let caught=false;
-    try { let invalid=host.badClass(kind); } catch(e) {if(e instanceof Error){caught=e.code==="E8010";}}
+    try { let invalid=host.badClass(kind); } catch(e) {if(e instanceof Error){caught=e.name==="E8010";}}
     check(caught);
   }
   let n:(number|undefined)[]=[undefined,1]; check(host.numbers(n)===n);
@@ -30,16 +30,16 @@ export function test_sync():void {
   check((nestedEcho[0] as unknown[])===(nested[0] as unknown[]));
   let cyclic:unknown[]=[];cyclic[0]=cyclic;check(host.echoArray(cyclic)===cyclic);
   check((cyclic[0] as unknown[])===cyclic);
-  let mismatch=false;try{host.conflict();}catch(e){if(e instanceof Error){mismatch=e.code==="E8010";}}check(mismatch);
+  let mismatch=false;try{host.conflict();}catch(e){if(e instanceof Error){mismatch=e.name==="E8010";}}check(mismatch);
   check(host.callbacks(callback,callback));check(host.callbacks(callback,callback));
   check(host.echoFunction(callback)===callback);host.echoFunction(callback)();
   let caught=false;try{host.nativeFailure();}catch(e){if(e instanceof Error){caught=true;}}check(caught);
-  caught=false;try{host.callbackFailure(thrown);}catch(e){if(e instanceof Error){caught=e.code==="CALLBACK" && e.message==="callback";}}check(caught);
-  let original:Error={code:"ORIGINAL",message:"original"};
+  caught=false;try{host.callbackFailure(thrown);}catch(e){if(e instanceof Error){caught=e.name==="CALLBACK" && e.message==="callback";}}check(caught);
+  let original:Error={name:"ORIGINAL",message:"original"};
   let rethrow:()=>void=function():void{throw original;};
-  caught=false;try{host.callbackFailure(rethrow);}catch(e){if(e instanceof Error){caught=e===original && e.code==="ORIGINAL";}}check(caught);
+  caught=false;try{host.callbackFailure(rethrow);}catch(e){if(e instanceof Error){caught=e===original && e.name==="ORIGINAL";}}check(caught);
   caught=false;try{host.nativeCallable()();}catch(e){if(e instanceof Error){caught=true;}}check(caught);
-  caught=false;try{host.echoError(original);}catch(e){if(e instanceof Error){caught=e===original && e.code==="ORIGINAL";}}check(caught);
+  caught=false;try{host.echoError(original);}catch(e){if(e instanceof Error){caught=e===original && e.name==="ORIGINAL";}}check(caught);
   for(let kind of [0,1]){
     let graph:unknown[]=[1];host.keepUnknown(graph);host.corrupt(kind);
     if(kind===0){
@@ -47,15 +47,15 @@ export function test_sync():void {
       check(admitted===(graph as unknown));
       check((graph[0] as string)===`\uD800`);
     }else{
-      caught=false;try{let invalid:unknown=graph;}catch(e){if(e instanceof Error){caught=e.code==="E8001";}}check(caught);
+      caught=false;try{let invalid:unknown=graph;}catch(e){if(e instanceof Error){caught=e.name==="E8001";}}check(caught);
     }
   }
-  caught=false;try{host.opaqueArray();}catch(e){if(e instanceof Error){caught=e.code==="E8010";}}check(caught);
+  caught=false;try{host.opaqueArray();}catch(e){if(e instanceof Error){caught=e.name==="E8010";}}check(caught);
 }
 export async function test_async():Promise<void>{
   let caught=false;try{await host.asyncFailure();}catch(e){if(e instanceof Error){caught=true;}}check(caught);
-  caught=false;try{await host.asyncCallback(thrown);}catch(e){if(e instanceof Error){caught=e.code==="CALLBACK";}}check(caught);
-  let original:Error={code:"ASYNC",message:"identity"};
+  caught=false;try{await host.asyncCallback(thrown);}catch(e){if(e instanceof Error){caught=e.name==="CALLBACK";}}check(caught);
+  let original:Error={name:"ASYNC",message:"identity"};
   let rethrow:()=>void=function():void{throw original;};
   caught=false;try{await host.asyncCallback(rethrow);}catch(e){if(e instanceof Error){caught=e===original && e.message==="identity";}}check(caught);
 }

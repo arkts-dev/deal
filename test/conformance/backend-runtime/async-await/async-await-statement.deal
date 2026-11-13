@@ -17,10 +17,10 @@ export async function f(): Promise<number> {
   await g();
 
   if (completionState !== 42) {
-    throw { code: "TEST_FAIL", message: "discarded await completion state mismatch" };
+    throw { name: "TEST_FAIL", message: "discarded await completion state mismatch" };
   }
   if (completionCount !== 1) {
-    throw { code: "TEST_FAIL", message: "discarded await invocation count mismatch" };
+    throw { name: "TEST_FAIL", message: "discarded await invocation count mismatch" };
   }
 
   return 0;

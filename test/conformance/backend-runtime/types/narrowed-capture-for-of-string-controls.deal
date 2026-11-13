@@ -4,7 +4,7 @@
 // @features: type-system, nullable, narrowing, control-flow, for-of, strings, unicode, closure, async-await, runtime-errors
 
 function fail(what: string): null {
-  throw { code: "CONTROL_FAIL", message: what };
+  throw { name: "CONTROL_FAIL", message: what };
 }
 
 async function echoText(value: string): Promise<string> {
@@ -24,7 +24,7 @@ function checkClearedIterable(): null {
       }
     } catch (value) {
       let e: Error = value as Error;
-      if (e.code !== "E8001") {
+      if (e.name !== "E8001") {
         fail("the cleared string iterable did not raise E8001");
       }
       if (e.message !== "expected string") {
@@ -54,7 +54,7 @@ function checkClearedParameter(s: string | null): null {
       }
     } catch (value) {
       let e: Error = value as Error;
-      if (e.code !== "E8001" || e.message !== "expected string") {
+      if (e.name !== "E8001" || e.message !== "expected string") {
         fail("the cleared string parameter did not raise the canonical E8001");
       }
       caught = caught + 1;
@@ -184,7 +184,7 @@ async function checkAsyncAdmission(s: string | null): Promise<null> {
       }
     } catch (value) {
       let e: Error = value as Error;
-      if (e.code !== "E8001" || e.message !== "expected string") {
+      if (e.name !== "E8001" || e.message !== "expected string") {
         fail("the async string iterable did not raise the canonical E8001");
       }
       caught = caught + 1;

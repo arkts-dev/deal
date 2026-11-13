@@ -16,7 +16,7 @@ static deal_host_result impl_repair(const deal_value *args, size_t argc) {
     checked(deal_handle_value(saved, NULL, &value));
     (void)fixture_error_text_replace(value, 0, original);
     original = NULL;
-    checked(deal_field_set(value, "code", text("repaired")));
+    checked(deal_field_set(value, "name", text("repaired")));
     checked(deal_release(saved)); saved = 0u;
     return result(undefined_value());
 }

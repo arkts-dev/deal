@@ -11,7 +11,7 @@ public final class NumberProductionTest {
         import * as text from "std/string";
 
         function ensure(ok: boolean): null {
-          if (!ok) { throw {code: "TEST_FAIL", message: "number contract"}; }
+          if (!ok) { throw {name: "TEST_FAIL", message: "number contract"}; }
           return null;
         }
         export function main(): null {
@@ -27,11 +27,11 @@ public final class NumberProductionTest {
           for (let index of [0.5, nan, inf, -inf, -1, 3]) {
             let failed: boolean = false;
             try { let value: number = a[index]; }
-            catch (e) { let error = e as Error; ensure(error.code === "E8002"); failed = true; }
+            catch (e) { let error = e as Error; ensure(error.name === "E8002"); failed = true; }
             ensure(failed);
             failed = false;
             try { a[index] = 30; }
-            catch (e) { let error = e as Error; ensure(error.code === "E8002"); failed = true; }
+            catch (e) { let error = e as Error; ensure(error.name === "E8002"); failed = true; }
             ensure(failed);
             ensure(a.length === 2);
             ensure(a[0] === 10);
@@ -55,11 +55,11 @@ public final class NumberProductionTest {
           let rounded: number = parsed.a as number;
           let zero: number = parsed.z as number;
           let near: number = parsed.b as number;
-          if (rounded !== 9007199254740992) { throw {code: "JSON_ROUND", message: "rounding"}; }
-          if (!(1 / zero < 0)) { throw {code: "JSON_ZERO", message: "negative zero"}; }
-          if (near !== 2147483647) { throw {code: "JSON_NEAR", message: "near integer"}; }
+          if (rounded !== 9007199254740992) { throw {name: "JSON_ROUND", message: "rounding"}; }
+          if (!(1 / zero < 0)) { throw {name: "JSON_ZERO", message: "negative zero"}; }
+          if (near !== 2147483647) { throw {name: "JSON_NEAR", message: "near integer"}; }
           let zeroObject: Record<string, unknown> = {z: -0};
-          if ((JSON.stringify(zeroObject) as string) !== "{\\\"z\\\":0}") { throw {code: "JSON_ENCODE_ZERO", message: "zero encoding"}; }
+          if ((JSON.stringify(zeroObject) as string) !== "{\\\"z\\\":0}") { throw {name: "JSON_ENCODE_ZERO", message: "zero encoding"}; }
           let int: (x: number) => number = function(x: number): number { return x + 10; };
           let number: (x: number) => number = function(x: number): number { return x + 20; };
           ensure(int(1) === 11);

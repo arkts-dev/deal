@@ -13,7 +13,7 @@ export function test_nested_closure_mutation(): number {
   let f: () => number = make();
   x = 9;
   let result: number = f();
-  if (result !== 9) { throw { code: "TEST_FAIL", message: "closure mutation failed" }; }
+  if (result !== 9) { throw { name: "TEST_FAIL", message: "closure mutation failed" }; }
   return result;
 }
 

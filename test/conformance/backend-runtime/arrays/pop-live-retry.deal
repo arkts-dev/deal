@@ -4,20 +4,20 @@
 // @features: arrays, host-abi
 import * as host from "host/probe";
 class Item {x:number; stable:number;}
-function check(ok:boolean):void { if(!ok){throw {code:"POP",message:"mismatch"};} }
+function check(ok:boolean):void { if(!ok){throw {name:"POP",message:"mismatch"};} }
 export function main():null {
   let xs:number[]=[4,9]; let alias=xs;
   let nested:number[][]=[xs]; let dynamic:unknown[]=[xs]; let dynamicAlias:unknown=xs;
   host.keep(xs); host.corrupt(); let caught=false;
   try { nested.pop(); } catch(e) {
-    check((e as Error).code==="E8003");
+    check((e as Error).name==="E8003");
     check((e as Error).message==="array element 1 type mismatch");
     caught=true;
   }
   check(caught && nested.length===1 && host.size()===2); caught=false;
   check(dynamic.pop()===dynamicAlias && dynamic.length===0);
   try { xs.pop(); } catch(e) {
-    check((e as Error).code==="E8003");
+    check((e as Error).name==="E8003");
     check((e as Error).message==="array element 2 type mismatch");
     caught=true;
   }
@@ -38,7 +38,7 @@ export function main():null {
   let record:Record<string,unknown>={child:item}; let records:Record<string,unknown>[]=[record];
   let data:unknown[]=[record];
   host.damage(item,false); caught=false;
-  try { items.pop(); } catch(e) {check((e as Error).code==="E8003");caught=true;}
+  try { items.pop(); } catch(e) {check((e as Error).name==="E8003");caught=true;}
   check(caught && items.length===1);
   // Dynamic descendants are data-checked, not reinterpreted as typed fields.
   check((records.pop() as Record<string,unknown>)===record);

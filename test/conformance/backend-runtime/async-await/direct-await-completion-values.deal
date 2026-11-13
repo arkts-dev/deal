@@ -20,15 +20,15 @@ export async function test_direct_await_completion_values(): Promise<number> {
   let b: number = await intValue();
   let sum: number = a + b;
   if (sum !== 42) {
-    throw { code: "TEST_FAIL", message: "direct await int completion mismatch" };
+    throw { name: "TEST_FAIL", message: "direct await int completion mismatch" };
   }
   let s: string = await textValue();
   if (s !== "hello") {
-    throw { code: "TEST_FAIL", message: "direct await string completion mismatch" };
+    throw { name: "TEST_FAIL", message: "direct await string completion mismatch" };
   }
   let m: string | null = await maybeValue();
   if (m !== null) {
-    throw { code: "TEST_FAIL", message: "direct await nullable completion mismatch" };
+    throw { name: "TEST_FAIL", message: "direct await nullable completion mismatch" };
   }
   await textValue();
   return sum;

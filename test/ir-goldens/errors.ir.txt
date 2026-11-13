@@ -17,7 +17,7 @@ module @test/ir-goldens/fixtures/errors.deal:5:1-14:1
               ident e : unknown @test/ir-goldens/fixtures/errors.deal:9:28-9:28
           let code: string @test/ir-goldens/fixtures/errors.deal:10:9-11:5
             [boundary: var-annotation]
-            member .code : string @test/ir-goldens/fixtures/errors.deal:10:28-10:37
+            member .name : string @test/ir-goldens/fixtures/errors.deal:10:28-10:37
               ident error : Error @test/ir-goldens/fixtures/errors.deal:10:28-10:32
       return @test/ir-goldens/fixtures/errors.deal:12:5-13:1
         [boundary: return]

@@ -12,12 +12,12 @@ export function test_host_rest_ok(): string {
   let parts: string[] = ["a", "b", "c"];
   let joined: string = host.join("-", parts);
   if (joined !== "a-b-c") {
-    throw { code: "TEST_FAIL", message: "array-param join mismatch" };
+    throw { name: "TEST_FAIL", message: "array-param join mismatch" };
   }
   let empty: string[] = [];
   let none: string = host.join("+", empty);
   if (none !== "") {
-    throw { code: "TEST_FAIL", message: "array-param empty mismatch" };
+    throw { name: "TEST_FAIL", message: "array-param empty mismatch" };
   }
   return "host array param ok";
 }

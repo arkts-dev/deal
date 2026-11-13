@@ -17,13 +17,13 @@ export function test_array_function_array_closure(): number {
   fs[fs.length] = bump;
   let r: number[] = fs[0]([0, 0], 5);
   if (r[0] !== 5) {
-    throw { code: "TEST_FAIL", message: "two-param function array invoke failed" };
+    throw { name: "TEST_FAIL", message: "two-param function array invoke failed" };
   }
   let gs: ((b: number[]) => number[])[] = [id, id];
   gs[1] = id;
   let out: number[] = gs[0]([0]);
   if (out.length !== 1) {
-    throw { code: "TEST_FAIL", message: "single-param function array invoke failed" };
+    throw { name: "TEST_FAIL", message: "single-param function array invoke failed" };
   }
   let ns: (((b: number[]) => number[]) | null)[] = [];
   ns[ns.length] = id;
@@ -32,7 +32,7 @@ export function test_array_function_array_closure(): number {
   if (first !== null) {
     let via: number[] = first([0, 0, 0]);
     if (via.length !== 3) {
-      throw { code: "TEST_FAIL", message: "nullable function array invoke failed" };
+      throw { name: "TEST_FAIL", message: "nullable function array invoke failed" };
     }
   }
   return 0;

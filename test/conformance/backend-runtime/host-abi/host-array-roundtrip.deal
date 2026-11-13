@@ -12,27 +12,27 @@ export function test_host_array_roundtrip(): string {
   b[2] = 200;
   let back: number[] = host.echoArray(b);
   if (back.length !== 3) {
-    throw { code: "TEST_FAIL", message: "host number[] roundtrip length mismatch" };
+    throw { name: "TEST_FAIL", message: "host number[] roundtrip length mismatch" };
   }
   if (back[0] !== 1 || back[1] !== 2 || back[2] !== 200) {
-    throw { code: "TEST_FAIL", message: "host number[] roundtrip content mismatch" };
+    throw { name: "TEST_FAIL", message: "host number[] roundtrip content mismatch" };
   }
   let fresh: number[] = host.makeArray(2);
   if (fresh.length !== 2) {
-    throw { code: "TEST_FAIL", message: "host-created buffer length mismatch" };
+    throw { name: "TEST_FAIL", message: "host-created buffer length mismatch" };
   }
   if (host.readElement(fresh) !== 0) {
-    throw { code: "TEST_FAIL", message: "host-created buffer is not zero-filled" };
+    throw { name: "TEST_FAIL", message: "host-created buffer is not zero-filled" };
   }
   let alias: number[] = back;
   alias[0] = 9;
   if (back[0] !== 9) {
-    throw { code: "TEST_FAIL", message: "returned array local alias mutation is invisible" };
+    throw { name: "TEST_FAIL", message: "returned array local alias mutation is invisible" };
   }
   let second: number[] = host.makeArray(2);
   fresh[0] = 8;
   if (second[0] !== 0 || fresh === second) {
-    throw { code: "TEST_FAIL", message: "host-created arrays share storage" };
+    throw { name: "TEST_FAIL", message: "host-created arrays share storage" };
   }
   return "host-array-ok";
 }

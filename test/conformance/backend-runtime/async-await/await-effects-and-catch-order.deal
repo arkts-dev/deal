@@ -12,7 +12,7 @@ async function value(state: Record<string, unknown>, tag: string, n: number): Pr
 async function fail(state: Record<string, unknown>): Promise<number> {
   let before: string = state.trace as string;
   state.trace = before + "F";
-  throw { code: "ASYNC_ORDER", message: "expected" };
+  throw { name: "ASYNC_ORDER", message: "expected" };
 }
 
 export async function test_async_effect_order(): Promise<null> {
@@ -31,14 +31,14 @@ export async function test_async_effect_order(): Promise<null> {
   } catch (e) {
     let caught: string = state.trace as string;
     state.trace = caught + "C";
-    if ((e as Error).code !== "ASYNC_ORDER") {
-      throw { code: "TEST_FAIL", message: "awaited error code changed" };
+    if ((e as Error).name !== "ASYNC_ORDER") {
+      throw { name: "TEST_FAIL", message: "awaited error name changed" };
     }
   }
 
   let trace: string = state.trace as string;
   if (a !== 1 || b !== 2 || trace !== "AaBbFC") {
-    throw { code: "TEST_FAIL", message: "async effect order: " + trace };
+    throw { name: "TEST_FAIL", message: "async effect order: " + trace };
   }
   return null;
 }
