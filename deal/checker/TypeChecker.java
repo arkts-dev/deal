@@ -1207,14 +1207,15 @@ public final class TypeChecker {
         boolean savedMode = assignmentTargetMode;
         assignmentTargetMode = true;
         Type targetType = checkExpression(ds.target());
-        if (ds.target() instanceof IndexExpr index && typeOf(index.array()) instanceof Type.Array) {
+        ExpressionNode target = ds.target() instanceof OptionalChainExpr chain ? chain.expression() : ds.target();
+        if (target instanceof IndexExpr index && typeOf(index.array()) instanceof Type.Array) {
             error(DiagnosticCode.E3017, "Array elements cannot be deleted", ds.span());
         }
         assignmentTargetMode = savedMode;
 
         if (targetType instanceof Type.Error) return;
 
-        if (ds.target() instanceof MemberAccessExpr mae) {
+        if (target instanceof MemberAccessExpr mae) {
             Type objType = typeOf(mae.object());
             // D3 (typed-boundary-enforcement): array .length is read-only.
             // Defensive rejection — codegen would otherwise emit invalid
@@ -1318,6 +1319,8 @@ public final class TypeChecker {
 
     private Type computeExpressionType(ExpressionNode expr) {
         return switch (expr) {
+            case OptionalGuardExpr guard -> checkOptionalGuard(guard);
+            case OptionalChainExpr chain -> checkOptionalChain(chain);
             case LiteralExpr lit       -> checkLiteral(lit);
             case IdentifierExpr id     -> checkIdentifier(id);
             case AssertionExpr assertion -> checkAssertion(assertion);
@@ -1630,6 +1633,16 @@ public final class TypeChecker {
     // Call expression
     // =======================================================================
 
+    private static boolean optionalCallee(ExpressionNode expression) {
+        return switch (expression) {
+            case OptionalGuardExpr ignored -> true;
+            case MemberAccessExpr member -> optionalCallee(member.object());
+            case IndexExpr index -> optionalCallee(index.array());
+            case CallExpr call -> optionalCallee(call.callee());
+            default -> false;
+        };
+    }
+
     private Type checkCall(CallExpr call) {
         if (call.callee() instanceof MemberAccessExpr member
                 && member.object() instanceof IdentifierExpr namespace
@@ -1671,6 +1684,11 @@ public final class TypeChecker {
         Type calleeType;
         try { calleeType = checkExpression(call.callee()); }
         finally { directBuiltinCall = savedBuiltinCall; }
+        if (optionalCallee(call.callee()) && calleeType instanceof Type.Func f && f.isAsync()) {
+            error(DiagnosticCode.E3014, "Async calls are not permitted in optional chains", call.span());
+            for (ExpressionNode arg : call.args()) checkExpression(arg);
+            return Type.Error.INSTANCE;
+        }
         if (calleeType == Type.Error.INSTANCE) {
             for (ExpressionNode arg : call.args()) checkExpression(arg);
             return Type.Error.INSTANCE;
@@ -1937,6 +1955,7 @@ public final class TypeChecker {
      */
     private Symbol.FunctionSymbol calleeDeclarationOf(CallExpr call) {
         ExpressionNode callee = call.callee();
+        while (callee instanceof OptionalGuardExpr guard) callee = guard.value();
         if (callee instanceof IdentifierExpr id) {
             Symbol sym = currentScope.resolve(id.name());
             return sym instanceof Symbol.FunctionSymbol fs ? fs : null;
@@ -2677,6 +2696,32 @@ public final class TypeChecker {
         return conditionalResult(consequent, alternate, context, conditional.span());
     }
 
+    private Type checkOptionalGuard(OptionalGuardExpr guard) {
+        Type context = expectedType;
+        Symbol.ClassSymbol declaration = contextualClassDecl;
+        expectedType = null;
+        contextualClassDecl = null;
+        Type type;
+        try { type = checkAddressOperand(guard.value()); }
+        finally { expectedType = context; contextualClassDecl = declaration; }
+        Type base = type instanceof Type.Nullable nullable ? nullable.inner() : type;
+        recordExactClassDecl(guard, base, exactClassDecls.get(guard.value()));
+        if (base instanceof Type.Void) {
+            error(DiagnosticCode.E3007, "Void results are not data", guard.span());
+            return Type.Error.INSTANCE;
+        }
+        return base;
+    }
+
+    private Type checkOptionalChain(OptionalChainExpr chain) {
+        NullNarrowing skipped = narrowing.branch();
+        Type type = checkExpression(chain.expression());
+        skipped.merge(narrowing);
+        narrowing = skipped;
+        recordExactClassDecl(chain, type, exactClassDecls.get(chain.expression()));
+        return type instanceof Type.Void || type instanceof Type.Error ? type : Types.optionalRead(type);
+    }
+
     private Type checkCoalesce(BinaryExpr binary) {
         Type context = expectedType;
         Symbol.ClassSymbol classContext = contextualClassDecl;
@@ -3073,6 +3118,8 @@ public final class TypeChecker {
     private Type inferTypeFromExpression(ExpressionNode init, Type exprType) {
         if (exprType == Type.Error.INSTANCE) return null;
         return switch (init) {
+            case OptionalGuardExpr guard -> exprType;
+            case OptionalChainExpr chain -> exprType;
             case LiteralExpr lit -> exprType;
             case ArrayLiteralExpr arr -> {
                 if (arr.elements().isEmpty()) {

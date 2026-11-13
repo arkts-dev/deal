@@ -674,7 +674,7 @@ public final class DefaultSemanticSerializer {
                 }
                 case ARRAY_LITERAL, ASSIGNMENT, AWAIT, BINARY, CONDITIONAL, CALL,
                      HAS, IDENTIFIER, INDEX, MEMBER_ACCESS,
-                     OBJECT_LITERAL, TEMPLATE_LITERAL, UNARY -> {
+                     OBJECT_LITERAL, OPTIONAL_CHAIN, OPTIONAL_GUARD, TEMPLATE_LITERAL, UNARY -> {
                     for (DefaultIrNode child : node.children()) {
                         children.add(serializeNode(child, input, siteSet,
                             occurrenceIdentities, false, inheritedScope));

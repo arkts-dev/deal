@@ -466,6 +466,8 @@ public final class NameResolver {
      */
     private void walkExpression(ExpressionNode expr) {
         switch (expr) {
+            case OptionalGuardExpr guard -> walkExpression(guard.value());
+            case OptionalChainExpr chain -> walkExpression(chain.expression());
             case FunctionExpr fe -> walkFunctionExpr(fe);
             case ConditionalExpr conditional -> {
                 walkExpression(conditional.condition());

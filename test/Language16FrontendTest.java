@@ -37,6 +37,49 @@ public final class Language16FrontendTest {
             throw new AssertionError(source + "\n" + diagnostics);
     }
     public static void main(String[] args) {
+        var optionalTokens = new Lexer("a?.x ?? a?.[0] ?? f?.() ? .3 : .4", "test.deal").tokenize();
+        if (optionalTokens.hasErrors()) throw new AssertionError(optionalTokens.diagnostics());
+        var guards = optionalTokens.tokens().stream().filter(t -> t.type()==TokenType.OPTIONAL_CHAIN).toList();
+        if (guards.size()!=3 || guards.get(0).column()!=2 || guards.get(1).column()!=10
+                || guards.get(2).column()!=20 || guards.stream().anyMatch(t -> !t.lexeme().equals("?.")))
+            throw new AssertionError(optionalTokens.tokens());
+        var digitTokens = new Lexer("true?.3:4", "test.deal").tokenize();
+        if (digitTokens.hasErrors() || digitTokens.tokens().get(1).type()!=TokenType.QUESTION
+                || digitTokens.tokens().get(2).type()!=TokenType.NUMBER_LITERAL)
+            throw new AssertionError(digitTokens);
+        rejectsAt("function f(fn:(()=>Promise<number>)|null):void{fn?.();}","fn?.()","E3014");
+        rejectsAt("class Item{x:number;}function f(a:Item|null):void{a?.x=1;}","a?.x","E1033");
+        check("function f(a:unknown):void{a?.x;}",false);
+        check("function f(a:null):void{a?.x;}",false);
+        check("function f(a:undefined):void{a?.();}",false);
+        check("function f():number|undefined{return \"abc\"?.length;}",true);
+        check("function f(s:string|null):void{let method=s?.slice;}",false);
+        check("function f(s:string|null):void{s.slice?.(1);}",false);
+        check("function f():void{JSON?.parse(\"1\");}",false);
+        for (String expression : List.of("a?.child.x", "a?.child?.x", "a?.f(1)", "(a?.child)?.x"))
+            check("class Item{x:number;child:Item;f:(n:number)=>number;}function f(a:Item|null):number|undefined{return "+expression+";}",true);
+        check("function f(xs:number[]|null):number|undefined{return xs?.[0];}",true);
+        check("function f(fn:((x:number)=>number)|undefined):number|undefined{return fn?.(1);}",true);
+        check("function f(fn:(()=>void)|null):void{fn?.();}",true);
+        check("function f(fn:(()=>void)|null):void{return fn?.();}",false);
+        check("function f(fn:(()=>void)|null):void{let x=fn?.();}",false);
+        check("class Item{x:number;}function f(a:Item|null):number{return a?.x;}",false);
+        check("class Item{x:number;}function f(a:Item|null):void{a?.x=1;}",false);
+        check("class Item{x:number;}function f(a:Item|null):number{return (a?.x)+1;}",false);
+        check("class Item{x:number;child:Item;}function f(a:Item|null):number{return (a?.child).x;}",false);
+        check("class Item{x:number;child:Item|null;}function f(a:Item|null):number|undefined{return a?.child.x;}",false);
+        check("function f(fn:(()=>Promise<number>)|null):void{fn?.();}",false);
+        check("class Item{f:()=>Promise<number>;}function f(a:Item|null):void{a?.f();}",false);
+        check("class Item{x?:number;}function f(a:Item|null):void{delete a?.x;}",true);
+        check("class Item{x:number;}function f(a:Item|null):void{delete a?.x;}",false);
+        check("function f(xs:number[]|null):void{delete xs?.[0];}",false);
+        check("function f(s:string|null):void{delete s?.length;}",false);
+        check("function f(a:Record<string,unknown>|null):void{delete a?.[1];}",false);
+        check("function f(s:string|null):number|undefined{return s?.slice(1).length;}",true);
+        check("function f(xs:number[]|null):number[]|undefined{return xs?.map((x:number):number=>x+1);}",true);
+        check("function f():number{return true?.3:4;}",true);
+        for(String source:List.of("function f(a:number):void{a?.;}","function f(a:number):void{a?.[ ];}",
+                "function f(a:number):void{a?.(,);}","function f(a:number):void{a?..x;}")) check(source,false);
         for (String expression : List.of("a??b", "a??b??true", "(a??b)||true", "a??(b&&true)",
                 "(true||false)??true", "true||false&&false", "false&&true||true", "a??b?true:false"))
             check("function f(a:boolean|null,b:boolean):boolean{return " + expression + ";}", true);

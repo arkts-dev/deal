@@ -36,6 +36,15 @@ function defaultUser(user: User | null | undefined): User {
   return user ?? { name: "Ada", bio: null, active: true };
 }
 
+// Optional chains skip all remaining postfix work, including keys/arguments,
+// when a guarded receiver/callee is null/undefined. Parentheses end a chain.
+function optionalUserName(user: User | null): string {
+  return user?.name ?? "Guest";
+}
+function optionalCallback(callback: ((value: number) => number) | null): number {
+  return callback?.(3) ?? 0;
+}
+
 // Functions require parameter and return annotations. A caller may choose
 // to reject a zero divisor; ordinary division itself is nontrapping.
 function divide(a: number, b: number): number | null {

@@ -20,6 +20,8 @@ Numbers are binary64, preserving signed zero, infinities and NaN; division is no
 
 Use a ?? fallback to replace only null/undefined while preserving false, zero, NaN, empty strings and reference identity. The left evaluates once; the fallback runs only when selected and inherits an annotated destination's contextual type. Parenthesize combinations with &&/||. See the defaulted find result in [dynamic data](../examples/src/data.deal).
 
+Use receiver?.field, receiver?.[key] or callback?.(argument) to skip the remaining chain when that receiver/callee is null/undefined. Receivers evaluate once; skipped keys and arguments do not run. Non-void results add undefined; coalesce or extract before concrete use. Parentheses end a chain. Optional calls are synchronous; void calls remain result-only. Delete optional class fields or Record keys with delete receiver?.field. See [dynamic data](../examples/src/data.deal).
+
 ## Classes
 
 Classes are module-level nominal schemas, unlike TypeScript's structural compatibility: same-shaped classes remain distinct. Annotate fields; ? marks optional presence. Literals supply every required field, including nullable fields, allocating fresh storage; supplied references preserve aliases. Use Records for dynamic keys and functions for behavior.

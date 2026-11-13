@@ -32,7 +32,7 @@ Object.hasOwn accepts Record/class receivers and string keys without field narro
 
 Object.keys is direct-call-only with exactly one checked Record/class argument and a string[] result; unknown, arrays, functions and nullish receivers require appropriate extraction/narrowing. It grants no contextual extraction and never narrows fields.
 
-Coalescing checks its left without enclosing context and propagates the contextual target only to its fallback. Join the left's non-nullish type with the right through conditional rules; a nullish-only left uses the right's type. Reject void operands and merge fallback invalidations without granting post-expression refinement.
+Optional guards check receivers/callees as reads without enclosing result context, remove only nullable envelopes and preserve exact declarations. Complete chains add undefined to non-void results, merge skipped-path invalidations and reject async calls; existing direct-only and deletion restrictions remain. Coalescing checks its left without enclosing context and propagates the contextual target only to its fallback. Join the left's non-nullish type with the right through conditional rules; a nullish-only left uses the right's type. Reject void operands and merge fallback invalidations without granting post-expression refinement.
 
 Conditional conditions require boolean and receive no outer result context. Both arms inherit the result context and their guard refinements; merge invalidations at continuation. Context-free branches require identical types or permitted nullish joins. Contextual function arity extension requires selected-arm adapters; void joins require two void results and cannot be stored as data.
 

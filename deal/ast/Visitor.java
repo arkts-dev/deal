@@ -36,6 +36,8 @@ public interface Visitor<T> {
     default T visit(IdentifierExpr node) { return null; }
     default T visit(BinaryExpr node) { return null; }
     default T visit(ConditionalExpr node) { return null; }
+    default T visit(OptionalGuardExpr node) { return null; }
+    default T visit(OptionalChainExpr node) { return null; }
     default T visit(UnaryExpr node) { return null; }
     default T visit(AssertionExpr node) { return null; }
     default T visit(InstanceofExpr node) { return null; }

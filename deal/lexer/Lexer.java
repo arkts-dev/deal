@@ -688,6 +688,10 @@ public final class Lexer {
             case '?' -> {
                 bump();
                 if (pos < source.length() && source.charAt(pos) == '?') { bump(); yield makeToken(TokenType.COALESCE, "??"); }
+                if (pos < source.length() && source.charAt(pos) == '.'
+                        && (pos + 1 == source.length() || !isDigit(source.charAt(pos + 1)))) {
+                    bump(); yield makeToken(TokenType.OPTIONAL_CHAIN, "?.");
+                }
                 yield makeToken(TokenType.QUESTION, "?");
             }
             case ':' -> { bump(); yield makeToken(TokenType.COLON, ":"); }

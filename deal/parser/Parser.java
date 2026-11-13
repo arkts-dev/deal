@@ -547,7 +547,8 @@ public final class Parser {
         ExpressionNode target = parseExpression();
         if (target == null) { synchronize(); return null; }
 
-        if (!(target instanceof MemberAccessExpr) && !(target instanceof IndexExpr)) {
+        ExpressionNode storage = target instanceof OptionalChainExpr chain ? chain.expression() : target;
+        if (!(storage instanceof MemberAccessExpr) && !(storage instanceof IndexExpr)) {
             error(DiagnosticCode.E1025,
                 "Delete target must be a member access (obj.field) or index access (arr[idx])",
                 target);
@@ -1088,8 +1089,15 @@ public final class Parser {
         ExpressionNode expr = parsePrimary();
         if (expr == null) return null;
 
+        boolean optionalChain = false;
         while (true) {
-            if (match(TokenType.DOT)) {
+            boolean optionalPart = match(TokenType.OPTIONAL_CHAIN);
+            if (optionalPart) {
+                optionalChain = true;
+                expr = new OptionalGuardExpr(expr.span(), expr);
+            }
+            if ((!optionalPart && match(TokenType.DOT))
+                    || optionalPart && peek().type() != TokenType.LBRACKET && peek().type() != TokenType.LPAREN) {
                 Token fieldToken = expectPropertyName(DiagnosticCode.E1034,
                         "Expected field name after '.'");
                 if (fieldToken == null) break;
@@ -1144,7 +1152,7 @@ public final class Parser {
             }
         }
 
-        return expr;
+        return optionalChain ? new OptionalChainExpr(expr.span(), expr) : expr;
     }
 
     private ExpressionNode parsePrimary() {

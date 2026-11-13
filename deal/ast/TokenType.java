@@ -71,7 +71,7 @@ public enum TokenType {
 
     DOT,         // .
     QUESTION,    // ?
-    COALESCE,    // ??
+    COALESCE, OPTIONAL_CHAIN,    // ??
     COLON,       // :
     SEMICOLON,   // ;
     COMMA,       // ,

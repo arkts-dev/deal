@@ -284,6 +284,10 @@ public class DefaultSemanticSerializerTest {
           let j: (x: number) => number = function(x: number): number { return x; };
           let l: number = (function(x: number): number { return (x = 2); })(1);
           let m: () => Promise<number> = async function(): Promise<number> { return await source(); };
+          let optional: HasBox|null = box();
+          let selected: number|undefined = optional?.tag;
+          let callable: ((x:number)=>number)|null = helper;
+          let called: number|undefined = callable?.(2);
           return a;
         }
         """;
@@ -295,7 +299,7 @@ public class DefaultSemanticSerializerTest {
             String content = compile.providerContentOf("lib.deal", "expressions");
             for (String kind : List.of("ARRAY_LITERAL", "ASSIGNMENT", "AWAIT", "BINARY", "CALL",
                     "FUNCTION_EXPRESSION", "HAS", "IDENTIFIER", "INDEX", "LITERAL", "MEMBER_ACCESS",
-                    "OBJECT_LITERAL", "TEMPLATE_LITERAL", "UNARY")) {
+                    "OBJECT_LITERAL", "OPTIONAL_CHAIN", "OPTIONAL_GUARD", "TEMPLATE_LITERAL", "UNARY")) {
                 check(content.contains("\"kind\":\"" + kind + "\""), "ordinary expression grammar covers " + kind);
             }
             String statements = """

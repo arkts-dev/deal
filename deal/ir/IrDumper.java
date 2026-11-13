@@ -304,6 +304,8 @@ public final class IrDumper implements Visitor<String> {
             case LiteralExpr le            -> visit(le);
             case IdentifierExpr ie         -> visit(ie);
             case BinaryExpr be             -> visit(be);
+            case OptionalGuardExpr g -> optionalNode("optional-guard", g, g.value());
+            case OptionalChainExpr c -> optionalNode("optional-chain", c, c.expression());
             case ConditionalExpr c -> "(" + dispatchExpr(c.condition()) + " ? " + dispatchExpr(c.consequent()) + " : " + dispatchExpr(c.alternate()) + ")";
             case UnaryExpr ue              -> visit(ue);
             case CallExpr ce               -> visit(ce);
@@ -725,6 +727,14 @@ public final class IrDumper implements Visitor<String> {
         sb.append(dispatchExpr(node.expr()));
         popIndent();
         return sb.toString();
+    }
+
+    private String optionalNode(String label, ExpressionNode node, ExpressionNode child) {
+        String header = indent() + label + " : " + specTypeDescriptor(typeOf(node))
+            + " " + spanStr(node.span()) + "\n";
+        pushIndent();
+        try { return header + dispatchExpr(child); }
+        finally { popIndent(); }
     }
 
     @Override

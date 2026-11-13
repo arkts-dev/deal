@@ -469,6 +469,11 @@ public final class LoweringSupport {
                 scan.cover(ConstructKind.UNARY_ARITHMETIC_COMPARISON);
                 walkExpression(test.value(), module, scan, checkerScope);
             }
+            case deal.ast.OptionalGuardExpr guard -> {
+                scan.cover(ConstructKind.UNARY_ARITHMETIC_COMPARISON);
+                walkExpression(guard.value(),module,scan,checkerScope);
+            }
+            case deal.ast.OptionalChainExpr chain -> walkExpression(chain.expression(),module,scan,checkerScope);
             case ConditionalExpr conditional -> {
                 scan.cover(ConstructKind.UNARY_ARITHMETIC_COMPARISON);
                 walkExpression(conditional.condition(), module, scan, checkerScope);

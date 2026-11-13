@@ -32,13 +32,13 @@ public record DefaultIrNode(
     }
 
     /**
-     * The closed node-kind set: the fourteen {@code deal.ast}
+     * The closed node-kind set: the {@code deal.ast}
      * expression kinds plus the {@code provider-versioned-default-plans}
      * D9 statement kinds that can appear inside a default's nested
      * function bodies.
      */
     public enum NodeKind {
-        // Expression kinds (the fourteen deal.ast construct set).
+        // Target-neutral expression kinds.
         ARRAY_LITERAL,
         ASSIGNMENT,
         AWAIT,
@@ -52,6 +52,8 @@ public record DefaultIrNode(
         LITERAL,
         MEMBER_ACCESS,
         OBJECT_LITERAL,
+        OPTIONAL_CHAIN,
+        OPTIONAL_GUARD,
         TEMPLATE_LITERAL,
         UNARY,
         // Statement kinds (the D9 closed body statement set).

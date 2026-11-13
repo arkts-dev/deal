@@ -1,0 +1,118 @@
+// @spec: Control flow — Optional chaining and whole-chain laziness
+// @expected: runtime-ok
+import * as left from "./same_name_sibling_a";
+import * as right from "./same_name_sibling_b";
+class Item { x:number; child:Item|null; f:(x:number)=>number; note?:string|null|undefined; }
+function require(ok:boolean, message:string):void { if(!ok){throw {code:"TEST",message:message};} }
+export function main():null {
+ let calls=0;
+ let key=():number=>{calls=calls+1;return 0;};
+ let a:Item|null=null;
+ let noop:((x:number)=>void)|null=null;
+ noop?.(key());require(calls===0,"skipped void");
+ noop=(x:number):void=>{calls=calls+10;};noop?.(key());
+ require(calls===11,"void");calls=0;
+ let record:Record<string,unknown>|null=null;
+ delete record?.[String(key())];require(calls===0,"skipped delete key");
+ record={x:1};delete record?.x;
+ require(!Object.hasOwn(record as Record<string,unknown>,"x"),"delete");
+ require((a?.x??7)===7,"absent");
+ let xs:Item[]|null=null;
+ require((xs?.[key()].x??9)===9&&calls===0,"key");
+ let fn:((x:number)=>number)|null=null;
+ require((fn?.(key())??8)===8&&calls===0,"call");
+ let item:Item={x:4,child:null,f:(x:number):number=>x+2};
+ a=item;
+ require((a?.x??0)===4&&(a?.f(3)??0)===5,"present");
+ require((a?.child?.x??6)===6,"nested");
+ xs=[item];require((xs?.[key()].x??0)===4&&calls===1,"live");
+ fn=(x:number):number=>x+1;require((fn?.(key())??0)===1&&calls===2,"present call");
+ let get=():Item|null=>{calls=calls+10;return a;};
+ require((get()?.child?.f(key())??3)===3&&calls===12,"receiver once and later skip");
+ item.child=item;
+ require((get()?.child?.f(key())??0)===2&&calls===23,"receiver once and selected");
+ let alias:Item|null|undefined=a?.child;
+ require((alias as Item)===item,"original identity");
+ item.note=undefined;require(a?.note===undefined&&Object.hasOwn(item,"note"),"stored undefined");
+ item.note=null;require(a?.note===null,"stored null");
+ delete a?.note;require(!Object.hasOwn(item,"note"),"class optional delete");
+ let text:string|null="\u0000\uD800𝄞";
+ require((text?.slice(1).length??0)===3,"UTF16");
+ text="";require((text?.length??9)===0,"empty string");
+ let numbers:number[]|undefined=[-0,0/0,1/0];
+ let mapped:number[]|undefined=numbers?.map((x:number):number=>x);
+ let kept:number[]=mapped as number[];
+ require(1/kept[0]===-1/0&&Number.isNaN(kept[1])&&kept[2]===1/0,"numeric data");
+ let zero:number|undefined=kept?.[0];require(1/(zero??1)===-1/0,"zero not nullish");
+ let saved:Item|null|undefined=item;
+ a=null;saved=a?.child??item;require((saved as Item)===item,"assignment chain");
+ let table:Record<string,unknown>={};table["saved"]=a?.x;
+ require(table.saved===undefined,"record assignment");
+ let skipped=():number=>{throw {code:"SKIP",message:"must not run"};};
+ require((a?.f(skipped())??5)===5,"abrupt argument skipped");
+ let destination=41;
+ a=item;
+ try { destination=a?.f(skipped())??0; } catch(e) {
+  require(destination===41,"argument abrupt rollback");
+  let error=e as Error;require(error.code==="SKIP","argument failure");
+ }
+ let readIndex=():number=>{calls=calls+1;return 99;};
+ let before=calls;
+ xs=null;require(xs?.[readIndex()]===undefined&&calls===before,"absent bounds skip");
+ xs=[item];
+ try { saved=xs?.[readIndex()]; } catch(e) {
+  require((saved as Item)===item&&calls===before+1,"bounds rollback");
+  let error=e as Error;require(error.code==="E8002","selected bounds");
+ }
+ let recursive:((n:number)=>number)|null=(n:number):number=>n===0?1:(recursive?.(n - 1)??0)+1;
+ require((recursive?.(5)??0)===6,"recursive optional callee");
+ let make=(value:number):(()=>number)=>():number=>value;
+ let closures:(()=>number)[]|null=[make(8),make(9)];
+ let closure:(()=>number)|undefined=closures?.[1];require((closure?.()??0)===9,"captured callable");
+ let outer:Item[][]|null=[[item]];
+ require((outer?.[0][0].x??0)===4,"remaining chain");
+ require(((outer?.[0])?.[0].x??0)===4,"parenthesis new chain");
+ let exact:((value:left.Item)=>left.Item)|null=left.identity;
+ let sibling:right.Item=right.make();
+ let owned:left.Item|undefined=exact?.({value:24});
+ require((owned as left.Item).value===24,"optional literal exact provider");
+ let decoded:left.Item|undefined=exact?.(JSON.parse("{\"value\":25}"));
+ require((decoded as left.Item).value===25,"optional JSON exact provider");
+ let direct:left.Item|undefined=left.identity?.({value:26});
+ require((direct as left.Item).value===26,"guarded imported declaration");
+ let untyped:unknown=sibling;
+ try { owned=exact?.(untyped as left.Item); } catch(e) {
+  require((owned as left.Item).value===24,"sibling rejection preserves destination");
+  require((e as Error).code==="E8001","sibling nominal failure");
+ }
+ let dynamic:Record<string,unknown>|null={value:17};
+ let extracted:unknown=dynamic?.value;
+ require((extracted as number)===17,"checked optional record read");
+ let take:((n:number)=>number)|null=(n:number):number=>n;
+ require((take?.(JSON.parse("18"))??0)===18,"contextual parse argument");
+ take=null;require((take?.(JSON.parse("invalid"))??19)===19,"skipped parse argument");
+ let adapt:(n:number,index:number)=>number=closures?.[0] as ()=>number;
+ require((adapt?.(1,2)??0)===8,"selected function adaptation");
+ let done:((n:number)=>void)|null=(n:number):void=>{calls=calls+n;};
+ let voidArrow=():void=>done?.(2);
+ before=calls;voidArrow();require(calls===before+2,"void expression arrow");
+ done=null;voidArrow();require(calls===before+2,"void arrow skipped");
+ let stale:Item|null=item;
+ let clear=():void=>{stale=null;};
+ if(stale!==null) {
+  clear();destination=42;
+  try { destination=stale?.x??0; } catch(e) {
+   require(destination===42,"refined receiver failure preserves destination");
+   require((e as Error).code==="E8001","refined receiver consumption boundary");
+  }
+ }
+ let holder:Record<string,unknown>={};
+ holder[String(closures?.[0]?.()??0)]=a?.x;
+ require((holder["8"] as number)===4,"optional key and RHS address ownership");
+ return null;
+}
+function failure():number|undefined {
+ let item:Item|null={x:1,child:null,f:(x:number):number=>x};
+ let bad:unknown="bad";
+ return item?.f(bad as number);
+}

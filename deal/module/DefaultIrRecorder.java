@@ -345,6 +345,14 @@ final class DefaultIrRecorder {
                     List.of(recordExpression(test.value(), scope, List.of(), evaluatorScope)),
                     null, null, null, test, test.span());
             }
+            case deal.ast.OptionalGuardExpr g -> {
+                return node(DefaultIrNode.NodeKind.OPTIONAL_GUARD, null, typeMap.get(g), contexts,
+                    List.of(recordExpression(g.value(),scope,List.of(),evaluatorScope)),null,null,null,g,g.span());
+            }
+            case deal.ast.OptionalChainExpr c -> {
+                return node(DefaultIrNode.NodeKind.OPTIONAL_CHAIN, null, typeMap.get(c), contexts,
+                    List.of(recordExpression(c.expression(),scope,contexts,evaluatorScope)),null,null,null,c,c.span());
+            }
             case ConditionalExpr c -> {
                 return node(DefaultIrNode.NodeKind.CONDITIONAL, null, typeMap.get(c), contexts,
                     List.of(recordExpression(c.condition(), scope, List.of(), evaluatorScope),
@@ -551,7 +559,9 @@ final class DefaultIrRecorder {
             SymbolTable scope) {
         TypeNode[] paramNodes = null;
         DefaultPlanImport owner = null;
-        if (call.callee() instanceof MemberAccessExpr mae
+        ExpressionNode callee = call.callee();
+        while (callee instanceof deal.ast.OptionalGuardExpr guard) callee = guard.value();
+        if (callee instanceof MemberAccessExpr mae
                 && mae.object() instanceof IdentifierExpr id
                 && visibleBinding(scope, id.name())
                     instanceof Symbol.ModuleSymbol) {
@@ -565,7 +575,7 @@ final class DefaultIrRecorder {
                     .toArray(TypeNode[]::new);
                 owner = provider;
             }
-        } else if (call.callee() instanceof IdentifierExpr cid
+        } else if (callee instanceof IdentifierExpr cid
                 && visibleBinding(scope, cid.name())
                     instanceof Symbol.FunctionSymbol function) {
             // The resolved module declaration owns its parameter contexts.
@@ -577,7 +587,7 @@ final class DefaultIrRecorder {
                     .toArray(TypeNode[]::new);
             }
         }
-        if (call.callee() instanceof IdentifierExpr cid
+        if (callee instanceof IdentifierExpr cid
                 && visibleBinding(scope, cid.name())
                     instanceof Symbol.VariableSymbol variable
                 && variable.declaredType() instanceof deal.ast.FunctionType functionType) {
@@ -1566,6 +1576,8 @@ final class DefaultIrRecorder {
     private DefaultPlanImport expressionContextProvider(ExpressionNode expr,
             SymbolTable scope) {
         return switch (expr) {
+            case deal.ast.OptionalGuardExpr guard -> expressionContextProvider(guard.value(), scope);
+            case deal.ast.OptionalChainExpr chain -> expressionContextProvider(chain.expression(), scope);
             case IdentifierExpr id -> bindingContextProvider(id, scope);
             case MemberAccessExpr mae -> memberContextProvider(mae, scope);
             case IndexExpr index -> expressionContextProvider(
@@ -1588,7 +1600,9 @@ final class DefaultIrRecorder {
      */
     private DefaultPlanImport callReturnContextProvider(CallExpr call,
             SymbolTable scope) {
-        if (call.callee() instanceof MemberAccessExpr mae
+        ExpressionNode callee = call.callee();
+        while (callee instanceof deal.ast.OptionalGuardExpr guard) callee = guard.value();
+        if (callee instanceof MemberAccessExpr mae
                 && mae.object() instanceof IdentifierExpr id
                 && visibleBinding(scope, id.name())
                     instanceof Symbol.ModuleSymbol) {
@@ -1602,7 +1616,7 @@ final class DefaultIrRecorder {
             return declaration == null ? null : providerForTypeNode(
                 declaration.returnType(), provider);
         }
-        if (call.callee() instanceof IdentifierExpr cid
+        if (callee instanceof IdentifierExpr cid
                 && visibleBinding(scope, cid.name())
                     instanceof Symbol.FunctionSymbol function) {
             FunctionDeclaration declaration = functionDeclarationOf(
@@ -1610,7 +1624,7 @@ final class DefaultIrRecorder {
             return declaration == null ? null : providerForTypeNode(
                 declaration.returnType(), null);
         }
-        if (call.callee() instanceof IdentifierExpr cid
+        if (callee instanceof IdentifierExpr cid
                 && visibleBinding(scope, cid.name())
                     instanceof Symbol.VariableSymbol variable
                 && variable.declaredType() instanceof deal.ast.FunctionType functionType) {

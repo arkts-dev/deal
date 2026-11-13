@@ -5952,6 +5952,8 @@ public final class SemanticLowerer {
                         references.add(identifier.name());
                     }
                 }
+                case deal.ast.OptionalGuardExpr g -> walkReferenceExpr(g.value(),bound,references);
+                case deal.ast.OptionalChainExpr c -> walkReferenceExpr(c.expression(),bound,references);
                 case ConditionalExpr c -> { walkReferenceExpr(c.condition(), bound, references); walkReferenceExpr(c.consequent(), bound, references); walkReferenceExpr(c.alternate(), bound, references); }
                 case BinaryExpr binary -> {
                     walkReferenceExpr(binary.left(), bound, references);
@@ -6086,6 +6088,8 @@ public final class SemanticLowerer {
             switch (expr) {
                 case LiteralExpr ignored -> { }
                 case IdentifierExpr ignored -> { }
+                case deal.ast.OptionalGuardExpr g -> collectAssignedNames(g.value(),assigned);
+                case deal.ast.OptionalChainExpr c -> collectAssignedNames(c.expression(),assigned);
                 case ConditionalExpr c -> { collectAssignedNames(c.condition(), assigned); collectAssignedNames(c.consequent(), assigned); collectAssignedNames(c.alternate(), assigned); }
                 case BinaryExpr binary -> {
                     collectAssignedNames(binary.left(), assigned);
@@ -6497,8 +6501,12 @@ public final class SemanticLowerer {
         }
 
 
+        private final Map<ExpressionNode,BindingId> optionalValues = new java.util.IdentityHashMap<>();
+
         public ValueId lowerExpression(ExpressionNode expr, ValueId slot) {
             Objects.requireNonNull(expr, "expr must not be null");
+            if(optionalValues.containsKey(expr)) return emitBuiltinLoad(optionalValues.get(expr),
+                valueDescriptorOf(checkedType(expr)),expr.span(),slot);
             try {
                 return lowerExpressionCore(expr, slot);
             } catch (ContainerPayloadDescriptors.Defect defect) {
@@ -6512,6 +6520,8 @@ public final class SemanticLowerer {
 
         private ValueId lowerExpressionCore(ExpressionNode expr, ValueId slot) {
             return switch (expr) {
+                case deal.ast.OptionalChainExpr chain -> lowerOptionalChain(chain,slot);
+                case deal.ast.OptionalGuardExpr guard -> throw new ConstructUnlowered("optional guard outside its chain",guard.span());
                 case AssertionExpr assertion -> {
                     ValueId value = lowerExpression(assertion.value());
                     RuntimeDescriptor descriptor = valueDescriptorOf(checkedType(assertion));
@@ -6809,6 +6819,12 @@ public final class SemanticLowerer {
         public void lowerDelete(DeleteStatement delete) {
             Objects.requireNonNull(delete, "delete must not be null");
             ExpressionNode target = delete.target();
+            if(target instanceof deal.ast.OptionalChainExpr chain) {
+                var guards=new ArrayList<deal.ast.OptionalGuardExpr>();
+                optionalGuards(chain.expression(),guards);
+                lowerOptionalStep(chain,guards,0,null,true);
+                return;
+            }
             if (target instanceof MemberAccessExpr access) {
                 Type objectType = checkedType(access.object());
                 if (objectType instanceof Type.Table) {
@@ -13117,6 +13133,74 @@ public final class SemanticLowerer {
             }
             emit(comparison);
             return (ValueId) comparison.result();
+        }
+
+        private static void optionalGuards(ExpressionNode expression,List<deal.ast.OptionalGuardExpr> guards) {
+            switch(expression) {
+                case deal.ast.OptionalGuardExpr guard -> { optionalGuards(guard.value(),guards); guards.add(guard); }
+                case MemberAccessExpr member -> optionalGuards(member.object(),guards);
+                case IndexExpr index -> optionalGuards(index.array(),guards);
+                case CallExpr call -> optionalGuards(call.callee(),guards);
+                default -> { }
+            }
+        }
+
+        private ValueId lowerOptionalChain(deal.ast.OptionalChainExpr chain,ValueId slot) {
+            var guards=new ArrayList<deal.ast.OptionalGuardExpr>();
+            optionalGuards(chain.expression(),guards);
+            return lowerOptionalStep(chain,guards,0,slot,false);
+        }
+
+        private ValueId lowerOptionalStep(deal.ast.OptionalChainExpr chain,List<deal.ast.OptionalGuardExpr> guards,int at,ValueId slot,boolean deletion) {
+            boolean voidResult=checkedType(chain) instanceof Type.Void;
+            if(at==guards.size()) {
+                if(deletion) lowerDelete(new DeleteStatement(chain.span(),chain.expression()));
+                else {
+                    ValueId value=lowerExpression(chain.expression(),voidResult?null:slot);
+                    if(!voidResult) return value;
+                    emitNullOp(SemanticOpKind.DISCARD,new KindPayload.DiscardPayload(value),chain.span(),
+                        FailurePolicyId.NO_DEAL_FAILURE,SourceOriginKind.SYNTHETIC,currentParent());
+                }
+                return emitValueOp(SemanticOpKind.CONST,new KindPayload.ConstPayload(ScalarValue.Undefined.INSTANCE),
+                    chain.span(),RuntimeDescriptor.Undefined.INSTANCE,FailurePolicyId.NO_DEAL_FAILURE,slot);
+            }
+            var guard=guards.get(at);
+            ValueId saved=lowerOperand(guard.value());
+            RuntimeDescriptor source=valueDescriptorOf(checkedType(guard.value()));
+            ValueId condition=emitOperandOp(SemanticOpKind.UNARY,new KindPayload.UnaryPayload(UnarySelector.IS_NULLISH),
+                List.of(saved),List.of(source),guard.span(),RuntimeDescriptor.Boolean.INSTANCE,FailurePolicyId.NO_DEAL_FAILURE,null);
+            BlockId selected=allocateBlock(),alternate=allocateBlock();
+            OpId owner=ids.nextOpId(module,nextOrdinal++,0);
+            ValueId result=slot!=null?slot:ids.nextValueId(module,nextOrdinal++,0);
+            int mark=emitTarget().size();
+            ValueId absent,present;
+            pushBlockParent(owner);
+            pushBlock(selected);
+            try { absent=emitValueOp(SemanticOpKind.CONST,new KindPayload.ConstPayload(ScalarValue.Undefined.INSTANCE),
+                chain.span(),RuntimeDescriptor.Undefined.INSTANCE,FailurePolicyId.NO_DEAL_FAILURE,null); }
+            finally { popBlock(); }
+            pushBlock(alternate);
+            try {
+                ValueId projected=ids.nextValueId(module,nextOrdinal++,0);
+                OpId projection=ids.nextOpId(module,nextOrdinal++,0);
+                SourceOrigin origin=new SourceOrigin(sourceId,toSourceSpan(guard.span()),SourceOriginKind.USER,
+                    ids.nextAnchorId(module,nextOrdinal++,0),owner);
+                RuntimeDescriptor base=valueDescriptorOf(checkedType(guard));
+                emit(buildOp(projection,SemanticOpKind.UNARY,new KindPayload.UnaryPayload(UnarySelector.NON_NULLISH),
+                    projected,base,List.of(saved),List.of(source),FailurePolicyId.NO_DEAL_FAILURE,origin));
+                registerDynamicMaterialization(projected,projection,base);
+                optionalValues.put(guard,emitBuiltinBinding(projected,guard.span()));
+                try { present=lowerOptionalStep(chain,guards,at+1,null,deletion); }
+                finally { optionalValues.remove(guard); }
+            } finally { popBlock(); popBlockParent(); }
+            RuntimeDescriptor target=deletion||voidResult?RuntimeDescriptor.Undefined.INSTANCE:valueDescriptorOf(checkedType(chain));
+            SourceOrigin origin=new SourceOrigin(sourceId,toSourceSpan(chain.span()),SourceOriginKind.USER,
+                ids.nextAnchorId(module,nextOrdinal++,0),currentParent());
+            emitAt(mark,buildOp(owner,SemanticOpKind.BRANCH,
+                new KindPayload.BranchPayload(ControlSelector.CONDITIONAL,condition,selected,alternate,absent,present),
+                result,target,FailurePolicyId.NO_DEAL_FAILURE,origin));
+            registerDynamicMaterialization(result,owner,target);
+            return result;
         }
 
         /** Coalescing owns the saved left value and two lazy conditional arms. */
