@@ -714,6 +714,11 @@ public final class LuaSemanticEmitter {
         }
 
         @Override
+        protected String captureReference(BindingId binding) {
+            return "__captures." + captureCell(binding);
+        }
+
+        @Override
         protected String sourceCommentMarker() {
             return "-- ";
         }
@@ -1447,6 +1452,14 @@ public final class LuaSemanticEmitter {
             }
             out.append(fnFactory(functionId)).append(" = function(")
                 .append(params).append(")\n");
+            // Preserve cell identities in one factory-local table: a body
+            // captures one Lua upvalue regardless of its IR capture count.
+            out.append("  local __captures = {}\n");
+            for (BindingGeneration capture : captures) {
+                String cell = captureCell(capture.binding());
+                out.append("  __captures.").append(cell).append(" = ")
+                    .append(cell).append("\n");
+            }
             // The body carries its own frame label through the balanced
             // wrapper: every invocation of the carrier — the in-project
             // call paths and the host invoking the published callable —

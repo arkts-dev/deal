@@ -134,8 +134,13 @@ public abstract class EmitterSessionBase {
      * creation-site incarnation's cell.
      */
     protected final String cellSource(BindingId binding, long generation) {
-        return isCurrentCapture(binding) ? captureCell(binding)
+        return isCurrentCapture(binding) ? captureReference(binding)
             : cell(binding, generation);
+    }
+
+    /** Backend presentation of an already-recorded capture cell. */
+    protected String captureReference(BindingId binding) {
+        return captureCell(binding);
     }
 
 

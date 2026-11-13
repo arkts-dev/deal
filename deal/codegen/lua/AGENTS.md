@@ -20,7 +20,7 @@ Accept dense host storage as arrays only at declared array positions. Leave spar
 
 ## Control flow and JSON
 
-Function carriers protect their own activation slots with balanced save/restore and protected invocation on returns, throws and async drains. Restore cell references without undoing live captured-cell mutations; dynamic invocation cannot rely on static call-site guards.
+Function factories pack the recorded capture cells into one factory-local table; preserve each cell's identity while avoiding one Lua upvalue per capture. Function carriers protect their own activation slots with balanced save/restore and protected invocation on returns, throws and async drains. Restore cell references without undoing live captured-cell mutations; dynamic invocation cannot rely on static call-site guards.
 
 Object.hasOwn queries private class presence, Error name/message or Record key metadata/raw presence, never a field-value read. Refined dynamic keys must pass their recorded operand boundary before lookup.
 
