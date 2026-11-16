@@ -2318,8 +2318,8 @@ public final class TypeChecker {
     private Type checkObjectLiteral(ObjectLiteralExpr obj) {
         Set<String> propertyNames = new HashSet<>();
         for (Property property : obj.properties()) {
-            if (!propertyNames.add(property.name())) {
-                error(DiagnosticCode.E3001, "Duplicate property '" + property.name() + "'", property.span());
+            if (property.staticName() != null && !propertyNames.add(property.staticName())) {
+                error(DiagnosticCode.E3001, "Duplicate property '" + property.staticName() + "'", property.span());
                 return Type.Error.INSTANCE;
             }
         }
@@ -2337,6 +2337,11 @@ public final class TypeChecker {
         Type savedExpected = expectedType;
         expectedType = null;
         for (Property prop : obj.properties()) {
+            if (prop.key() != null) {
+                Type key = checkExpression(prop.key());
+                if (!(key instanceof Type.String) && key != Type.Error.INSTANCE)
+                    error(DiagnosticCode.E3018, "Record key must be string", prop.key().span());
+            }
             if (checkExpression(prop.value()) instanceof Type.Void)
                 error(DiagnosticCode.E3001, "Void results cannot be stored in records", prop.value().span());
         }
@@ -2377,6 +2382,12 @@ public final class TypeChecker {
     }
 
     private Type checkClassConstruction(ObjectLiteralExpr obj, Type.Class cls) {
+        for (Property property : obj.properties()) {
+            if (property.key() != null) {
+                error(DiagnosticCode.E3001, "Computed class keys are not permitted", property.span());
+                return Type.Error.INSTANCE;
+            }
+        }
         // The contextual declaration wins when it names this exact class
         // (same canonical identity): the value is laid out for the
         // declaration that supplied the context, not for a same-named
@@ -2886,8 +2897,7 @@ public final class TypeChecker {
         // F3: Use the target type as contextual expected type for the value
         Type savedExpected = expectedType;
         Symbol.ClassSymbol savedContextualClass = contextualClassDecl;
-        if (declaredTarget != null && declaredTarget != Type.Error.INSTANCE
-                && !(declaredTarget instanceof Type.Table)) {
+        if (declaredTarget != null && declaredTarget != Type.Error.INSTANCE) {
             expectedType = declaredTarget;
         }
         // The target binding's exact class declaration is the construction

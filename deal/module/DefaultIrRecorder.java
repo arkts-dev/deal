@@ -952,6 +952,8 @@ final class DefaultIrRecorder {
         }
         List<DefaultIrNode> children = new ArrayList<>();
         for (Property property : obj.properties()) {
+            if (property.key() != null) children.add(recordExpression(property.key(), scope,
+                List.of(), evaluatorScope));
             DefaultPlanImport childProvider =
                 resolvedType instanceof Type.Class cls
                     && declaringProgram != null

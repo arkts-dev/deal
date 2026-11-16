@@ -248,6 +248,7 @@ public final class ModuleShapeValidator {
             }
             case ObjectLiteralExpr ole -> {
                 for (Property property : ole.properties()) {
+                    if (property.key() != null) checkExpression(property.key(), diagnostics, isDeclarationFile);
                     checkExpression(property.value(), diagnostics,
                         isDeclarationFile);
                 }

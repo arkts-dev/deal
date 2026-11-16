@@ -481,6 +481,16 @@ public final class Language16FrontendTest {
         check("import * as from from \"std/math\"; function f():number{return from.floor(1.5);}", true);
         check("import * as as from \"std/math\"; function f():void{let value:unknown=as;}", false);
         check("function f():void {let r:Record<string,unknown>={};}", true);
+        check("function f(key:string):void {let r:Record<string,unknown>={\"content-type\":1,[key]:2};r={[key]:3};}", true);
+        check("class C{x:number;} function f():void {let c:C={\"x\":1};}", true);
+        check("function f():void {let r:Record<string,unknown>={a:1,\"\\u0061\":2};}", false);
+        check("function f():void {let r:Record<string,unknown>={[\"\\u0061\"]:1,\"a\":2};}", false);
+        rejectsAt("function f():void {let r:Record<string,unknown>={a:1,\"a\":2};}", "\"a\":2", "E3001");
+        rejectsAt("function f():void {let r:Record<string,unknown>={a:1,[\"a\"]:2};}", "[\"a\"]", "E3001");
+        rejectsAt("function f():void {let r:Record<string,unknown>={[1]:2};}", "1]", "E3018");
+        check("function f(k:unknown):void {let r:Record<string,unknown>={[k]:2};}", false);
+        check("function f():void {let r:Record<string,unknown>={[missing]:2};}", false);
+        check("class C{x:number;} function f():void {let c:C={[\"x\"]:1};}", false);
         for (String expression : List.of("{a:1}", "[{a:1}]", "[[{a:1}]]", "true?{a:1}:{a:2}")) {
             check("function f():void {let r=" + expression + ";}", false);
         }

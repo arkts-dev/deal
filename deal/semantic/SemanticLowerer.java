@@ -5971,6 +5971,7 @@ public final class SemanticLowerer {
                 }
                 case ObjectLiteralExpr object -> {
                     for (Property property : object.properties()) {
+                        if (property.key() != null) walkReferenceExpr(property.key(), bound, references);
                         walkReferenceExpr(property.value(), bound, references);
                     }
                 }
@@ -6107,6 +6108,7 @@ public final class SemanticLowerer {
                 }
                 case ObjectLiteralExpr object -> {
                     for (Property property : object.properties()) {
+                        if (property.key() != null) collectAssignedNames(property.key(), assigned);
                         collectAssignedNames(property.value(), assigned);
                     }
                 }
@@ -12441,6 +12443,9 @@ public final class SemanticLowerer {
                     + "type " + typeName(type) + " (a checked ObjectLiteralExpr must be "
                     + "table- or class-typed)", literal.span());
             }
+            if (literal.properties().stream().anyMatch(p -> p.key() != null)) {
+                return lowerComputedRecord(literal, slot);
+            }
             List<KindPayload.TableEntry> entries = new ArrayList<>();
             for (Property property : literal.properties()) {
                 ValueId value = lowerExpression(property.value());
@@ -12450,6 +12455,106 @@ public final class SemanticLowerer {
                 new KindPayload.TableNewPayload(entries), literal.span(),
                 ContainerPayloadDescriptors.resultDescriptorOf(Type.Table.INSTANCE),
                 FailurePolicyId.NO_DEAL_FAILURE, slot);
+        }
+
+        /** Computed literals build private storage and publish only after every entry succeeds. */
+        private ValueId lowerComputedRecord(ObjectLiteralExpr literal, ValueId slot) {
+            Span span = literal.span();
+            RuntimeDescriptor table = RuntimeDescriptor.Table.INSTANCE;
+            BindingId storage = ids.nextBindingId(module, nextOrdinal++, 0);
+            emitUserNullOp(SemanticOpKind.BINDING_ALLOC,
+                new KindPayload.BindingAllocPayload(storage, currentBlock(), true, BindingCellKind.DIRECT, 0),
+                span, FailurePolicyId.NO_DEAL_FAILURE);
+            ValueId empty = emitValueOp(SemanticOpKind.TABLE_NEW, new KindPayload.TableNewPayload(List.of()),
+                span, table, FailurePolicyId.NO_DEAL_FAILURE);
+            emitUserNullOp(SemanticOpKind.BINDING_INIT, new KindPayload.BindingInitPayload(storage, 0, empty),
+                span, FailurePolicyId.NO_DEAL_FAILURE);
+            for (Property property : literal.properties()) {
+                Span entrySpan = property.span();
+                ValueId key = property.key() == null ? emitRecordKey(property.name(), entrySpan)
+                    : lowerOperand(property.key());
+                ValueId value = lowerExpression(property.value());
+                ValueId receiver = emitBuiltinLoad(storage, table, entrySpan, null);
+                ValueId duplicate = emitValueOp(SemanticOpKind.HAS_FIELD,
+                    new KindPayload.HasFieldPayload(receiver, null, key), entrySpan,
+                    RuntimeDescriptor.Boolean.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE);
+                BlockId rejected = allocateBlock();
+                OpId branch = emitUserNullOp(SemanticOpKind.BRANCH,
+                    new KindPayload.BranchPayload(ControlSelector.IF, duplicate, rejected, null),
+                    entrySpan, FailurePolicyId.NO_DEAL_FAILURE);
+                pushBlockParent(branch);
+                pushBlock(rejected);
+                try {
+                    ValueId error = emitDuplicateRecordError(entrySpan);
+                    emitNullOp(SemanticOpKind.THROW, new KindPayload.ThrowPayload(error), entrySpan,
+                        FailurePolicyId.THROW_TRANSFER, SourceOriginKind.SYNTHETIC, currentParent());
+                    terminateBlock();
+                } finally { popBlock(); popBlockParent(); }
+                OpId chain = ids.nextOpId(module, nextOrdinal++, 0);
+                chainParents.push(chain);
+                List<OpId> children;
+                ValueId stored;
+                try {
+                    ValueId destination = emitBuiltinLoad(storage, table, entrySpan, null);
+                    // Fresh child producers retain the evaluated key/value without re-executing either expression.
+                    ValueId savedKey = saveRecordOperand(key, RuntimeDescriptor.String.INSTANCE, entrySpan);
+                    stored = saveRecordOperand(value, valueDescriptorOf(checkedType(property.value())), entrySpan);
+                    ValueId normalized = emitChainChildOp(SemanticOpKind.INDEX_NORMALIZE,
+                        new KindPayload.IndexNormalizePayload(IndexMode.TABLE_WRITE, savedKey, savedKey), entrySpan,
+                        RuntimeDescriptor.String.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE);
+                    OpId commit = emitNullOp(SemanticOpKind.INDEX_WRITE,
+                        new KindPayload.IndexWritePayload(destination, normalized, stored), entrySpan,
+                        FailurePolicyId.NO_DEAL_FAILURE, SourceOriginKind.SYNTHETIC, chain);
+                    children = List.of(producerOpId(destination), producerOpId(savedKey), producerOpId(stored),
+                        producerOpId(normalized), commit);
+                } finally { chainParents.pop(); }
+                emit(buildOp(chain, SemanticOpKind.ASSIGN,
+                    new KindPayload.AssignPayload(AssignTargetKind.TABLE_SLOT, children), stored,
+                    valueDescriptorOf(checkedType(property.value())), FailurePolicyId.NO_DEAL_FAILURE,
+                    new SourceOrigin(sourceId, toSourceSpan(entrySpan), SourceOriginKind.SYNTHETIC,
+                        ids.nextAnchorId(module, nextOrdinal++, 0), currentParent())));
+            }
+            return emitBuiltinLoad(storage, table, span, slot);
+        }
+
+        private ValueId saveRecordOperand(ValueId value, RuntimeDescriptor descriptor, Span span) {
+            BindingId saved = ids.nextBindingId(module, nextOrdinal++, 0);
+            emitUserNullOp(SemanticOpKind.BINDING_ALLOC,
+                new KindPayload.BindingAllocPayload(saved, currentBlock(), true, BindingCellKind.DIRECT, 0),
+                span, FailurePolicyId.NO_DEAL_FAILURE);
+            emitUserNullOp(SemanticOpKind.BINDING_INIT, new KindPayload.BindingInitPayload(saved, 0, value),
+                span, FailurePolicyId.NO_DEAL_FAILURE);
+            return emitBuiltinLoad(saved, descriptor, span, null);
+        }
+
+        private ValueId emitRecordKey(String text, Span span) {
+            return emitValueOp(SemanticOpKind.CONST,
+                new KindPayload.ConstPayload(new ScalarValue.String(text)), span,
+                RuntimeDescriptor.String.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE);
+        }
+
+        private ValueId emitDuplicateRecordError(Span span) {
+            var seed = registrationSeeds.registrationFor(ClassId.ERROR);
+            ValueId name = emitRecordKey("Error", span);
+            ValueId message = emitRecordKey("Duplicate Record key", span);
+            OpId owner = ids.nextOpId(module, nextOrdinal++, 0);
+            List<KindPayload.FieldBoundary> boundaries = new ArrayList<>();
+            List<SemanticOp> checks = new ArrayList<>();
+            for (var field : seed.layout().fields()) {
+                SemanticOp check = buildFieldBoundary(BoundaryKind.CLASS_LITERAL_FIELD, field.descriptor(),
+                    field.name().equals("name") ? name : message, span, owner);
+                checks.add(check);
+                boundaries.add(new KindPayload.FieldBoundary(field.name(), BoundaryKind.CLASS_LITERAL_FIELD, check.opId()));
+            }
+            ValueId result = ids.nextValueId(module, nextOrdinal++, 0);
+            emit(buildOp(owner, SemanticOpKind.CLASS_NEW,
+                new KindPayload.ClassNewPayload(ClassId.ERROR, seed.layout(), List.of(
+                    new KindPayload.ProvidedField("name", name), new KindPayload.ProvidedField("message", message)),
+                    seed.owner(), null, boundaries), result, new RuntimeDescriptor.Class(ClassId.ERROR),
+                FailurePolicyId.CLASS_CONSTRUCTION, new SourceOrigin(sourceId, toSourceSpan(span),
+                    SourceOriginKind.SYNTHETIC, ids.nextAnchorId(module, nextOrdinal++, 0), currentParent())));
+            for (SemanticOp check : checks) emit(check);
+            return result;
         }
 
         /** {@code ARRAY_LENGTH}/{@code MEMBER_READ} — the member-access dispatch. */

@@ -73,6 +73,86 @@ public final class Language16RuntimeTest {
             .filter(e -> e.key().equals("payload")).findFirst().orElseThrow().value();
     }
 
+    private static void computedRecordKeys() throws Exception {
+        String source = """
+            export function main():void {
+              let events:string="";
+              let key:(s:string)=>string=function(s:string):string{events=events+s;return s;};
+              let value:(s:string)=>number=function(s:string):number{events=events+s;return 1;};
+              let r:Record<string,unknown>={"content-type":0,[key("a")]:value("A"),[key("b")]:value("B")};
+              let a:number=r.a as number;let content:number=r["content-type"] as number;
+              if(events!=="aAbB" || a!==1 || content!==0){throw {name:"FAIL",message:"order"};}
+              let original:Record<string,unknown>=r;
+              let duplicate:string="a";
+              events="";
+              let caught:boolean=false;
+              try {r={[key("a")]:value("A"),[duplicate]:value("B"),[key("c")]:value("C")};}
+              catch(e){caught=e instanceof Error;}
+              if(!caught || events!=="aAB" || r!==original){throw {name:"FAIL",message:"duplicate rollback"};}
+              let f:()=>number=function():number{return 7;};
+              let functions:Record<string,unknown>={[key("fn")]:f};
+              let recovered:()=>number=functions.fn as ()=>number;
+              if(recovered!==f || recovered()!==7){throw {name:"FAIL",message:"identity"};}
+              let quoted:Record<string,unknown>={"content-type":1,"__proto__":2};
+              let quotedValue:number=quoted["__proto__"] as number;
+              if(quotedValue!==2 || !Object.hasOwn(quoted,"content-type")){throw {name:"FAIL",message:"quoted static"};}
+              let strange:Record<string,unknown>={"\\u0061":1,["nul\\0key"]:2,["\\ud800"]:3,["🌍"]:4,"__proto__":5};
+              let nul:number=strange["nul\\0key"] as number;
+              let lone:number=strange["\\ud800"] as number;
+              let proto:number=strange["__proto__"] as number;
+              if(nul!==2 || lone!==3 || proto!==5 || Object.keys(strange).length!==5){throw {name:"FAIL",message:"decoded keys"};}
+              let closure:()=>Record<string,unknown>=function():Record<string,unknown>{return {[duplicate="changed"]:1};};
+              let changed:Record<string,unknown>=closure();
+              if(duplicate!=="changed" || !Object.hasOwn(changed,"changed")){throw {name:"FAIL",message:"key capture"};}
+              let failure:Error={name:"KEY",message:"stop"};
+              let bad:()=>string=function():string{throw failure;};
+              events="";
+              caught=false;
+              try {r={[bad()]:value("X"),[key("z")]:value("Z")};}
+              catch(e){if(e instanceof Error){caught=e===failure;}}
+              if(!caught || events!=="" || r!==original){throw {name:"FAIL",message:"key abrupt"};}
+              caught=false;
+              try {r={[key("v")]:bad(),[key("z")]:value("Z")};}
+              catch(e){if(e instanceof Error){caught=e===failure;}}
+              if(!caught || events!=="v" || r!==original){throw {name:"FAIL",message:"value abrupt"};}
+              console.log("records-ok");
+            }
+            """;
+        Path root = Files.createTempDirectory("deal-record-keys-");
+        CompositionProductionTest.execute(source, "records-ok\n", "", root, null,
+            List.of(deal.codegen.Backend.JS,deal.codegen.Backend.LUAJIT,deal.codegen.Backend.JVM,deal.codegen.Backend.LLVM), Map.of());
+        var invocation = deal.semantic.CompilerProfileProvider.resolve(
+            deal.semantic.ReleaseConfiguration.CURRENT_RELEASE_STATE,
+            deal.semantic.ReleaseConfiguration.releaseCapabilityRegistry());
+        Path oracleSource = root.resolve("JS/src/oracle.deal");
+        Files.writeString(oracleSource, source.replace("export function main():void", "export function run():void")
+            .replace("console.log(\"records-ok\");", "") + "\nexport function main():void{}\n");
+        var compiler = new deal.module.CompilationOrchestrator(oracleSource, root.resolve("oracle"),
+            false, false, false, false, deal.codegen.Backend.JS, Map.of(), List.of(root.resolve("JS/src")), null, null, invocation);
+        if (!compiler.compile()) throw new AssertionError(compiler.diagnostics());
+        var project = Objects.requireNonNull(compiler.producedProject());
+        String text = deal.semantic.ir.SemanticIrValidator.toProjectText(project);
+        var parsed = deal.semantic.ir.ContractSnapshotCanonicalizer.parseProject(
+            (deal.semantic.ir.CanonicalJson.Obj)deal.semantic.ir.CanonicalJson.parse(text));
+        var modules = new LinkedHashMap<deal.semantic.ir.ModuleId,deal.semantic.ir.LoweredModuleUnit>();
+        parsed.modules().forEach(raw->{var unit=deal.semantic.ir.RawUnitMaterializer.materialize(raw);modules.put(unit.moduleId(),unit);});
+        var transported = new deal.semantic.ir.ExecutableLoweredProject(project.semanticProfile(),parsed.interfaceIndex(),
+            modules,project.entryModule(),parsed.classSeeds());
+        var facts = new deal.semantic.ir.SemanticIrValidator.ComparisonFacts(project.interfaceIndex().interfaceIndexDigest(),
+            project.semanticProfile(),invocation.capabilityRegistryHash());
+        for (var executable : List.of(project,transported)) {
+            var failure = deal.semantic.ir.SemanticIrValidator.validate(executable,facts);
+            if (failure.isPresent()) throw new AssertionError(failure);
+            var tables = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.StructuredBodyTable>();
+            var registries = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.ClassFactoryRegistry>();
+            executable.modules().forEach((id, unit) -> {tables.put(id, unit.bodyTable());registries.put(id, unit.classFactories());});
+            var result = deal.semantic.SemanticOracle.invokeSyncEntry(executable, tables, registries,
+                new deal.semantic.SemanticOracle.HostResponder(){}, executable.entryModule(), "run", List.of());
+            if (!(result.terminal() instanceof deal.semantic.SemanticRuntimeModel.Terminal.Success success)
+                    || !success.resultAtom().equals("undefined")) throw new AssertionError(result.comparisonReport());
+        }
+    }
+
     public static void main(String[] args) throws Exception {
         var invalid = deal.semantic.ir.BoundaryValueView.ofInvalidUnicode(deal.semantic.ir.UnicodeScalars.Defect.SURROGATE);
         var unknown = deal.semantic.ir.BoundaryExecutor.check(deal.semantic.ir.FailurePolicyId.TYPE_DESCRIPTOR,
@@ -91,6 +171,7 @@ public final class Language16RuntimeTest {
                 if (!expected.code.equals("E8001")) throw new AssertionError(expected);
             }
         }
+        computedRecordKeys();
         arraySliceMissingPositions();
         arraySearchMissingPositions();
         arrayJoinMissingPositions();

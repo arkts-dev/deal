@@ -846,6 +846,7 @@ public final class IrDumper implements Visitor<String> {
         }
         pushIndent();
         for (Property prop : node.properties()) {
+            if (prop.key() != null) sb.append(dispatchExpr(prop.key()));
             sb.append(dispatchExpr(prop.value()));
         }
         popIndent();

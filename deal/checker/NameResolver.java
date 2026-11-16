@@ -503,6 +503,7 @@ public final class NameResolver {
             }
             case ObjectLiteralExpr obj -> {
                 for (Property prop : obj.properties()) {
+                    if (prop.key() != null) walkExpression(prop.key());
                     walkExpression(prop.value());
                 }
             }

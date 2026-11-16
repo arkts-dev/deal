@@ -788,15 +788,15 @@ public class ContainerLoweringArmsTest {
     }
 
     // =========================================================================
-    // 4. TABLE_NEW arm — duplicate keys stay in source order
+    // 4. TABLE_NEW arm — entries stay in source order
     // =========================================================================
 
     static void testTableLiteralArm() {
-        System.out.println("-- TABLE_NEW arm: duplicate keys stay in source order --");
+        System.out.println("-- TABLE_NEW arm: entries stay in source order --");
 
         CheckedSlice slice = checkSlice("""
             function f(): null {
-              let t = {x: 1, y: "k", z: 2};
+              let t:Record<string,unknown> = {x: 1, y: "k", z: 2};
               return null;
             }
             """);
@@ -814,7 +814,7 @@ public class ContainerLoweringArmsTest {
         List<SemanticOp> ops = lowerer.ops();
 
         check(ops.size() == 4,
-            "{x: 1, y: \"k\", x: 2} produces three entry CONSTs + TABLE_NEW = 4 ops; got "
+            "{x: 1, y: \"k\", z: 2} produces three entry CONSTs + TABLE_NEW = 4 ops; got "
                 + ops.size());
         if (ops.size() != 4) {
             return;
@@ -2009,7 +2009,7 @@ public class ContainerLoweringArmsTest {
         CheckedSlice slice = checkSlice("""
             function f(a: number, b: number, c: number, v: number, i: number): null {
               let xs: number[] = [a, b, i, c, v];
-              let t = {x: 1, y: "k", z: 2};
+              let t:Record<string,unknown> = {x: 1, y: "k", z: 2};
               return null;
             }
             """);
@@ -2019,7 +2019,7 @@ public class ContainerLoweringArmsTest {
         ArrayLiteralExpr arrayLiteral = first(slice.program(), ArrayLiteralExpr.class);
         ObjectLiteralExpr tableLiteral = first(slice.program(), ObjectLiteralExpr.class);
         check(arrayLiteral != null && tableLiteral != null,
-            "the slice carries the side-effecting array literal and the duplicate-key table "
+            "the slice carries the side-effecting array literal and the source-ordered table "
                 + "literal");
         if (arrayLiteral == null || tableLiteral == null) {
             return;

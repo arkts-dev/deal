@@ -50,6 +50,8 @@ Array.filter/some/every share saved receiver/predicate evaluation and post-argum
 
 Array.from expands into existing validated binding, ARRAY_NEW, live FOR_EACH, indirect CALL and checked append-chain operations. Evaluate/admit source then mapper once; create shorter-arity adapters at mapper evaluation and validate the saved function signature even for empty input. Preserve normal parameter/return boundaries and fresh iteration cells; do not add backend snapshot/map algorithms or publish partial results after failure.
 
+Computed Record literals evaluate each key then value once in source order, building private storage through ordinary bindings, HAS_FIELD, branch/throw and TABLE_SLOT assignment chains. Duplicate keys throw a fresh builtin Error; no enclosing destination publishes partial storage. Capture/reference/assignment traversal includes keys. Static-only literals retain TABLE_NEW. Computed-key construction claims the Error class capability without backend syntax fallback.
+
 Object.hasOwn consumes its receiver and dynamic string key through operand admission in receiver/key order, tests presence without reading values, and never narrows fields. Error owns name/message presence independently of stored values.
 
 Error has required mutable name/message fields. Throw/catch/rethrow keeps one reference identity and current fields; first throw binds the current name as diagnostic code, independently preserved with original facts and linked causes on rethrow. Catch bindings obey ordinary lexical shadowing and fresh per-execution cells; closures retain the captured incarnation. A bare assignment target owns ASSIGNMENT, not an invented identifier read.

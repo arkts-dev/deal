@@ -621,6 +621,10 @@ public final class LoweringSupport {
                     scan.classConstruct = true;
                 }
                 for (Property property : objectLiteralExpr.properties()) {
+                    if (property.key() != null) {
+                        scan.classConstruct = true;
+                        walkExpression(property.key(), module, scan, checkerScope);
+                    }
                     walkExpression(property.value(), module, scan, checkerScope);
                 }
             }

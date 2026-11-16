@@ -1696,15 +1696,15 @@ public final class Parser {
         Token lbrace = advance();
         List<Property> properties = new ArrayList<>();
 
-        if (isPropertyName(peek())) {
+        if (isObjectKey(peek())) {
             Property first = parseProperty();
             if (first != null) properties.add(first);
 
             while (match(TokenType.COMMA)) {
                 if (peek().type() == TokenType.RBRACE) break;
-                if (!isPropertyName(peek())) {
+                if (!isObjectKey(peek())) {
                     error(DiagnosticCode.E1038,
-                        "Expected property name (identifier) in object literal", peek());
+                        "Expected object literal key", peek());
                     break;
                 }
                 Property prop = parseProperty();
@@ -1741,9 +1741,23 @@ public final class Parser {
         return null;
     }
 
+    private static boolean isObjectKey(Token token) {
+        return isPropertyName(token) || token.type() == TokenType.STRING_LITERAL
+            || token.type() == TokenType.LBRACKET;
+    }
+
     private Property parseProperty() {
         Token nameToken = advance();
-
+        ExpressionNode key = null;
+        String name = nameToken.lexeme();
+        if (nameToken.type() == TokenType.LBRACKET) {
+            key = parseExpression();
+            if (key == null) return null;
+            expect(TokenType.RBRACKET, DiagnosticCode.E1035, "Expected ']' after computed key");
+            name = null;
+        } else if (nameToken.type() == TokenType.STRING_LITERAL) {
+            name = unescapeString(name);
+        }
         if (!match(TokenType.COLON)) {
             error(DiagnosticCode.E1008, "Expected ':' after property name", peek());
             return null;
@@ -1753,7 +1767,7 @@ public final class Parser {
         if (value == null) return null;
 
         Span sp = combineTokenAndSpan(nameToken, value.span());
-        return new Property(sp, nameToken.lexeme(), value);
+        return new Property(sp, name, key, value);
     }
 
     // =======================================================================

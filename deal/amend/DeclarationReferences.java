@@ -87,7 +87,10 @@ final class DeclarationReferences {
             case InstanceofExpr n -> { expression(n.value(), scope); type(n.target()); }
             case IndexExpr n -> { expression(n.array(), scope); expression(n.index(), scope); }
             case ArrayLiteralExpr n -> n.elements().forEach(e -> expression(e, scope));
-            case ObjectLiteralExpr n -> n.properties().forEach(p -> expression(p.value(), scope));
+            case ObjectLiteralExpr n -> n.properties().forEach(p -> {
+                if (p.key() != null) expression(p.key(), scope);
+                expression(p.value(), scope);
+            });
             case FunctionExpr n -> function(n.params(), n.returnType(), n.body(), scope);
             case HasExpr n -> { expression(n.object(), scope); expression(n.key(), scope); }
             case AssignmentExpr n -> { expression(n.target(), scope); expression(n.value(), scope); }
