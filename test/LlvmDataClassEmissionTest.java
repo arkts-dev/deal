@@ -768,6 +768,14 @@ public final class LlvmDataClassEmissionTest {
               }
               if (seen !== 1) { report("D25", "states traversal"); }
 
+              for (let left of states) {
+                for (let right of states) {
+                  let expected = (left === null && right === null)
+                    || (left === undefined && right === undefined);
+                  if ((left === right) !== expected || (left !== right) === expected
+                      || left !== left || right !== right) { report("D-EQ", "pairwise nullish"); }
+                }
+              }
               let declared: null | undefined = undefined;
               if (!(declared === undefined)) { report("D26", "declared undefined"); }
               declared = null;

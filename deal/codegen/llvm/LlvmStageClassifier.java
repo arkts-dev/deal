@@ -1200,6 +1200,7 @@ public final class LlvmStageClassifier {
         if (inner instanceof RuntimeDescriptor.Number
                 || inner instanceof RuntimeDescriptor.Boolean
                 || inner instanceof RuntimeDescriptor.String
+                || inner instanceof RuntimeDescriptor.Undefined
                 || isReferenceType(inner)) {
             return Optional.empty();
         }

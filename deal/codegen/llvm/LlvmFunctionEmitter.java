@@ -1090,6 +1090,11 @@ final class LlvmFunctionEmitter {
         String rightRepresentation = stagedRepresentation(rightDescriptor);
         String leftOperand = loadRepresentation(left, leftDescriptor, op);
         String rightOperand = loadRepresentation(right, rightDescriptor, op);
+        // null|undefined has only the two singleton pointers, no base payload.
+        if (inner instanceof RuntimeDescriptor.Undefined) {
+            return emitTemporary(op, "icmp " + arm.predicate() + " i8* "
+                + leftOperand + ", " + rightOperand);
+        }
         String slot = newAlloca("i1", "nullisheq");
         if (leftRepresentation.equals(LlvmTypeMapper.REFERENCE_NULLISH)
                 && rightRepresentation.equals(LlvmTypeMapper.REFERENCE_NULLISH)) {

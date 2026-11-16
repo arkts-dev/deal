@@ -1,5 +1,7 @@
 # Native LLVM Code Generation
 
+Pairwise null|undefined equality compares the two runtime singleton pointers directly; it has no non-nullish base payload to unbox.
+
 Call-owned parameter cells execute before invocation, never as standalone post-call checks. Dynamic calls retain every declared parameter boundary before dispatch, including arguments discarded by arity adapters; live graph checks must precede callback effects.
 
 Array.from consumes only its expanded ordinary IR. FOR_EACH uses deal_array_present_element and descriptor admission before unboxing each live slot or publishing a fresh iteration cell; this applies equally to source loops and expanded builtins. Function input presentations classify missing carried signatures before checks, never dereference unadmitted metadata. Keep retained-host controls and O0/O2 stress/sanitized execution.
