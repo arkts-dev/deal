@@ -22,13 +22,14 @@ import java.util.Objects;
  *
  * <pre>
  * descriptor := primitive | error | class | array | nullable | function
- * primitive  := "null" | "undefined" | "unknown" | "void"
+ * primitive  := "null" | "undefined" | "unknown"
  *             | "boolean" | "number" | "string" | "record"
  * error      := "Error"
  * class      := "@" component ("/" component)+
  * array      := "[" descriptor "]"
  * nullable   := ("?" | "!" | "?!") descriptor | "null|undefined"
- * function   := "async"? "(" (descriptor ("," descriptor)*)? ")" "-&gt;" descriptor
+ * function   := "async"? "(" (descriptor ("," descriptor)*)? ")" "-&gt;" result
+ * result     := descriptor | "void"
  * </pre>
  *
  * <p>The builtin {@code Error} class is the spec's one nominal class with
@@ -63,7 +64,7 @@ import java.util.Objects;
  * rebuild {@code [D]}/{@code ?D}/{@code async? (...) -&gt; D}.  For every
  * accepted text, {@code render(parse(text))} is byte-identical to
  * {@code text}, and {@code parse(render(ast))} round-trips for every
- * atom.</p>
+ * data atom; use {@link #parseResult(String)} for a bare void result.</p>
  *
  * <h2>The per-compilation encode service</h2>
  *
@@ -243,8 +244,17 @@ public final class CanonicalRuntimeTypeDescriptor {
      *
      */
     public static DescriptorParseResult parse(String text) {
+        return parseComplete(text, false);
+    }
+
+    /** Parses a function-result descriptor, where bare void is also legal. */
+    public static DescriptorParseResult parseResult(String text) {
+        return parseComplete(text, true);
+    }
+
+    private static DescriptorParseResult parseComplete(String text, boolean resultPosition) {
         Parser parser = new Parser(text == null ? "" : text);
-        DescriptorParseResult result = parser.parseDescriptor();
+        DescriptorParseResult result = parser.parseDescriptor(resultPosition);
         if (result instanceof DescriptorSyntaxError) {
             return result;
         }
@@ -331,6 +341,10 @@ public final class CanonicalRuntimeTypeDescriptor {
          * produced.
          */
         private DescriptorParseResult parseDescriptor() {
+            return parseDescriptor(false);
+        }
+
+        private DescriptorParseResult parseDescriptor(boolean resultPosition) {
             if (pos >= cps.length) {
                 return unexpectedEnd();
             }
@@ -354,6 +368,9 @@ public final class CanonicalRuntimeTypeDescriptor {
             // Primitive keywords (disjoint, so order does not matter).
             for (String keyword : PRIMITIVE_KEYWORDS) {
                 if (matchKeyword(keyword)) {
+                    if (keyword.equals("void") && !resultPosition)
+                        return new DescriptorSyntaxError(pos, DescriptorSyntaxError.Kind.UNEXPECTED_CHARACTER,
+                            "void is only legal in a function result at scalar offset " + pos);
                     pos += keyword.length();
                     return new DescriptorAst.PrimitiveAtom(keyword);
                 }
@@ -531,7 +548,7 @@ public final class CanonicalRuntimeTypeDescriptor {
                         + " at scalar offset " + (pos + 1));
             }
             pos += 2; // consume '->'
-            DescriptorParseResult returnType = parseDescriptor();
+            DescriptorParseResult returnType = parseDescriptor(true);
             if (returnType instanceof DescriptorSyntaxError error) {
                 return error;
             }

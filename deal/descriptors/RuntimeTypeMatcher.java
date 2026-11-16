@@ -83,13 +83,15 @@ public final class RuntimeTypeMatcher {
      * descriptor per the pinned table.
      *
      * <p>The descriptor is parsed with T3's strict canonical grammar
-     * ({@link CanonicalRuntimeTypeDescriptor#parse(String)}); unparsable
+     * ({@link CanonicalRuntimeTypeDescriptor#parseResult(String)}), allowing
+     * bare void only for an outer function result; unparsable
      * text — including every legacy spelling — fails defensively with
      * E8001 {@code internal: cannot parse type descriptor: {text}}.</p>
      *
      */
     public Object check(String descriptor, Object value, RuntimeSourceLocation range) {
-        DescriptorParseResult parsed = CanonicalRuntimeTypeDescriptor.parse(descriptor);
+        // A boundary may be a function result; only this outer position admits void.
+        DescriptorParseResult parsed = CanonicalRuntimeTypeDescriptor.parseResult(descriptor);
         if (parsed instanceof DescriptorSyntaxError) {
             // Defensive pinned row: unparsable text (including legacy
             // spellings and a null descriptor) never reaches a value check.

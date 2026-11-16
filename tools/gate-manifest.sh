@@ -12,6 +12,7 @@ TEST_MAINS=(
   'node|=== Checking TypeScript Syntactic and Grammar Compatibility ===|node test/typescript/check-syntax.cjs'
   'node|=== Testing TypeScript Syntax Checker Failure Controls ===|node test/typescript/check-syntax.test.cjs'
   'fg|=== Running v1.6 Frontend Contracts ===|java -ea -cp build deal.test.Language16FrontendTest'
+  'fg|=== Running Type Legality and Flow Contracts ===|java -ea -cp build deal.test.TypeLegalityFlowTest'
   'fg|=== Running v1.6 Production Runtime Contracts ===|java -ea -cp build deal.test.Language16RuntimeTest'
   'fg|=== Running Nullish Coalescing Contracts ===|java -ea -cp build deal.test.NullishCoalescingTest'
   'fg|=== Running Optional Chaining Contracts ===|java -ea -cp build deal.test.OptionalChainingTest'

@@ -269,6 +269,12 @@ public final class NullNarrowing {
         }
     }
 
+    /** Restrict active facts without dropping balanced lexical shadow frames. */
+    public void retainRefinements(NullNarrowing allowed) {
+        narrowed.entrySet().removeIf(entry -> !Types.equals(entry.getValue(),
+            allowed.narrowed.get(entry.getKey())));
+    }
+
     public Set<String> narrowedVariableNames() {
         return new HashSet<>(narrowed.keySet());
     }

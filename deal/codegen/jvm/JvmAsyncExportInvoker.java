@@ -184,7 +184,7 @@ public class JvmAsyncExportInvoker {
         // parser is the JVM-side single authority, and the failure maps
         // to the runtime half's pinned host-failure reason — byte-equal
         // to LuaJIT's — with no process spawned.
-        DescriptorParseResult parsed = CanonicalRuntimeTypeDescriptor.parse(
+        DescriptorParseResult parsed = CanonicalRuntimeTypeDescriptor.parseResult(
             request.returnDescriptor());
         if (!(parsed instanceof DescriptorAst)) {
             return new Result.HostFailure(

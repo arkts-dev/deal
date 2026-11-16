@@ -42,7 +42,7 @@ public sealed interface Type
     /** T[] — array with an element type. */
     record Array(Type element) implements Type {
         public Array {
-            if (element == null) throw new IllegalArgumentException("element must not be null");
+            Types.requireDataType(element);
         }
     }
 
@@ -118,6 +118,8 @@ public sealed interface Type
         public Func {
             if (paramTypes == null) throw new IllegalArgumentException("paramTypes must not be null");
             if (returnType == null) throw new IllegalArgumentException("returnType must not be null");
+            paramTypes = List.copyOf(paramTypes);
+            paramTypes.forEach(Types::requireDataType);
         }
 
         /** Convenience constructor: sync function (isAsync = false). */

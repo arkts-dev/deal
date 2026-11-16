@@ -214,8 +214,12 @@ public class CanonicalRuntimeTypeDescriptorTest {
         System.out.println("-- primitive round trips --");
 
         String[] primitives = {
-            "null", "undefined", "unknown", "void", "boolean", "number", "string", "record"
+            "null", "undefined", "unknown", "boolean", "number", "string", "record"
         };
+        check(CanonicalRuntimeTypeDescriptor.parse("void") instanceof DescriptorSyntaxError,
+            "void is not a data descriptor");
+        check(CanonicalRuntimeTypeDescriptor.parseResult("void") instanceof DescriptorAst.PrimitiveAtom,
+            "void is a result descriptor");
         for (String primitive : primitives) {
             assertAtom(primitive, "primitive " + primitive);
             DescriptorAst atom = atomOf(primitive);

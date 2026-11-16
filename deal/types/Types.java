@@ -16,6 +16,12 @@ public final class Types {
 
     private Types() { /* utility class */ }
 
+    /** Data positions exclude result-only void. Error remains a recovery type. */
+    public static void requireDataType(Type type) {
+        if (type == null || type instanceof Type.Void)
+            throw new IllegalArgumentException("Data type required; void is result-only");
+    }
+
     // =========================================================================
     // Type canonicalization (rules 1–13 from the design)
     // =========================================================================

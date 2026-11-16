@@ -106,6 +106,10 @@ public final class TypeChecker {
     private final Set<ExpressionNode> narrowedReads = new HashSet<>();
     private final Map<InstanceofExpr, Type.Class> instanceofTargets = new HashMap<>();
 
+    /** Post-evaluation states: effects have already invalidated stale facts. */
+    private record ConditionFlow(NullNarrowing whenTrue, NullNarrowing whenFalse) {}
+    private final Map<ExpressionNode, ConditionFlow> conditionFlows = new IdentityHashMap<>();
+
     // -- Assignment tracking for the open try regions of the current
     //    function: one frame per open try block, holding the resolved
     //    bindings assigned inside that region. Entries are binding
@@ -906,18 +910,11 @@ public final class TypeChecker {
                 is.condition().span());
         }
 
-        NullNarrowing savedNarrowing = narrowing;
-        NullNarrowing thenNarrowing = narrowing.branch();
-        NullNarrowing elseNarrowing = narrowing.branch();
-
-        // Apply narrowing for then branch
-        narrowing = thenNarrowing;
+        // The condition's true/false states include short-circuit effects.
         narrowCondition(is.condition(), true);
         walkStatement(is.thenBlock());
-        thenNarrowing = narrowing;
+        NullNarrowing thenNarrowing = narrowing;
 
-        // Apply narrowing for else branch
-        narrowing = elseNarrowing;
         narrowCondition(is.condition(), false);
         if (is.elseBranch().isPresent()) {
             switch (is.elseBranch().get()) {
@@ -927,29 +924,28 @@ public final class TypeChecker {
                     walkStatement(right.value());
             }
         }
-        elseNarrowing = narrowing;
-
-        if (is.elseBranch().isEmpty()) {
-            // No else branch: the then arm's condition-derived positive
-            // refinements stay inside its block and are not adopted for
-            // the statements after the if (the spec's narrowing is
-            // block-scoped: `!== null` narrows in its block, `=== null`
-            // in the else block, and there is no post-if persistence).
-            // An invalidation inside the then arm (an assignment clearing
-            // an entry or an await's invalidateAll) must still survive the
-            // join: the incoming entries are retained only for the names
-            // neither path invalidated, and a snapshot only when the
-            // then path still holds it.
-            savedNarrowing.merge(thenNarrowing);
-            narrowing = savedNarrowing;
-        } else {
-            thenNarrowing.merge(elseNarrowing);
-            narrowing = thenNarrowing;
-        }
+        NullNarrowing elseNarrowing = narrowing;
+        boolean thenStops = ReturnAnalysis.cannotCompleteNormally(is.thenBlock());
+        boolean elseStops = is.elseBranch().isPresent() && switch (is.elseBranch().get()) {
+            case Either.Left<IfStatement, Block> left -> ReturnAnalysis.cannotCompleteNormally(left.value());
+            case Either.Right<IfStatement, Block> right -> ReturnAnalysis.cannotCompleteNormally(right.value());
+        };
+        if (thenStops && !elseStops) narrowing = elseNarrowing;
+        else if (elseStops && !thenStops) narrowing = thenNarrowing;
+        else narrowing = mergeFlows(thenNarrowing, elseNarrowing);
     }
 
     /** Apply nominal tests with the same branch polarity as nullish/typeof tests. */
     private void narrowCondition(ExpressionNode condition, boolean matching) {
+        ConditionFlow flow = conditionFlows.get(condition);
+        if (flow != null) {
+            narrowing = (matching ? flow.whenTrue() : flow.whenFalse()).branch();
+            return;
+        }
+        refineCondition(condition, matching);
+    }
+
+    private void refineCondition(ExpressionNode condition, boolean matching) {
         narrowing.onIfCondition(condition, matching, this::declaredTypeOf);
         while (condition instanceof UnaryExpr unary && unary.op() == UnaryOp.NOT) {
             condition = unary.expr();
@@ -967,6 +963,13 @@ public final class TypeChecker {
     // =======================================================================
 
     private void checkWhileStatement(WhileStatement ws) {
+        // The first guard consumes incoming refinements (and validates stale
+        // captured values). Only guard-derived facts enter the fresh body;
+        // unrelated incoming facts must not cross the loop back-edge.
+        NullNarrowing savedNarrowing = narrowing;
+        loopSavedNarrowing.push(savedNarrowing);
+        narrowing = narrowing.branch();
+        loopAssignments.push(newBindingAssignmentSet());
         // Conditions require boolean. Record reads remain unknown here,
         // just as in all other value positions; use explicit refinement or
         // a checked assertion before consuming one as a condition.
@@ -980,12 +983,10 @@ public final class TypeChecker {
                 ws.condition().span());
         }
 
-        NullNarrowing savedNarrowing = narrowing;
-        loopSavedNarrowing.push(savedNarrowing);
-        narrowing = new NullNarrowing();
         narrowCondition(ws.condition(), true);
+        NullNarrowing freshGuard = freshGuardFlow(ws.condition(), true, new NullNarrowing());
+        narrowing.retainRefinements(freshGuard);
         loopDepth++;
-        loopAssignments.push(newBindingAssignmentSet());
         walkStatement(ws.body());
         // The loop back-edge invalidates every binding assigned in the
         // body (v1.2 narrowing does not cross loop back-edges).
@@ -994,6 +995,29 @@ public final class TypeChecker {
         loopSavedNarrowing.pop();
         closeLoopAssignments(assigned, savedNarrowing);
         narrowing = savedNarrowing;
+    }
+
+    /** Guard-only facts, intersected with evaluated outcomes before body entry.
+     * This cannot resurrect assignment/await-invalidated facts, or carry an
+     * unrelated incoming refinement across a back-edge. */
+    private NullNarrowing freshGuardFlow(ExpressionNode condition, boolean matching, NullNarrowing entry) {
+        if (condition instanceof UnaryExpr unary && unary.op() == UnaryOp.NOT)
+            return freshGuardFlow(unary.expr(), !matching, entry);
+        if (condition instanceof BinaryExpr binary
+                && (binary.op() == BinaryOp.AND || binary.op() == BinaryOp.OR)) {
+            boolean and = binary.op() == BinaryOp.AND;
+            NullNarrowing selected = freshGuardFlow(binary.left(), and, entry.branch());
+            if (matching == and) return freshGuardFlow(binary.right(), matching, selected);
+            return mergeFlows(freshGuardFlow(binary.left(), !and, entry.branch()),
+                freshGuardFlow(binary.right(), matching, selected));
+        }
+        entry.onIfCondition(condition, matching, this::declaredTypeOf);
+        if (matching && condition instanceof InstanceofExpr test
+                && test.value() instanceof IdentifierExpr id) {
+            Type.Class target = instanceofTargets.get(test);
+            if (target != null) entry.narrow(id.name(), target);
+        }
+        return entry;
     }
 
     // =======================================================================
@@ -1117,8 +1141,16 @@ public final class TypeChecker {
         // that enclosing frame open and collects the assignment there.
         Set<Symbol> assigned = newBindingAssignmentSet();
         tryAssignments.push(assigned);
+        NullNarrowing tryEntry = narrowing.branch();
         walkStatement(ts.tryBlock());
         tryAssignments.pop();
+        NullNarrowing normalExit = narrowing;
+        // Catch may be entered before a successful guard on the normal path.
+        narrowing = mergeFlows(tryEntry, normalExit);
+        for (Symbol binding : assigned) {
+            if (resolveVisibleBinding(afterCatchScope, binding.name()) == binding)
+                narrowing.invalidate(binding.name());
+        }
 
         // The catch identifier declares a fresh `Error` binding in the catch
         // scope (docs/spec-v1.6.md §try / catch: the bound variable has
@@ -1142,6 +1174,9 @@ public final class TypeChecker {
         walkStatement(ts.catchBlock());
 
         narrowing.popShadowFrame();
+        boolean tryStops = ReturnAnalysis.cannotCompleteNormally(ts.tryBlock());
+        boolean catchStops = ReturnAnalysis.cannotCompleteNormally(ts.catchBlock());
+        if (!tryStops) narrowing = catchStops ? normalExit : mergeFlows(normalExit, narrowing);
 
         closeTryAssignments(assigned, afterCatchScope);
     }
@@ -1271,7 +1306,23 @@ public final class TypeChecker {
         boolean savedDirect = contextualReadPosition;
         contextualReadPosition = direct;
         try {
+            conditionFlows.remove(expr);
             Type t = computeExpressionType(expr);
+            if (t instanceof Type.Boolean && !conditionFlows.containsKey(expr)) {
+                NullNarrowing after = narrowing;
+                narrowing = after.branch();
+                refineCondition(expr, true);
+                NullNarrowing whenTrue = narrowing;
+                narrowing = after.branch();
+                refineCondition(expr, false);
+                conditionFlows.put(expr, new ConditionFlow(whenTrue, narrowing));
+                narrowing = after;
+                if (expr instanceof UnaryExpr unary && unary.op() == UnaryOp.NOT) {
+                    ConditionFlow operand = conditionFlows.get(unary.expr());
+                    if (operand != null) conditionFlows.put(expr,
+                        new ConditionFlow(operand.whenFalse(), operand.whenTrue()));
+                }
+            }
             typeMap.put(expr, t);
             // A class-typed expression the enclosing annotations did not
             // already attribute records the exact declaration its own bound
@@ -1495,8 +1546,52 @@ public final class TypeChecker {
     // Binary expression
     // =======================================================================
 
+    private NullNarrowing mergeFlows(NullNarrowing left, NullNarrowing right) {
+        NullNarrowing merged = left.branch();
+        merged.merge(right);
+        return merged;
+    }
+
+    private Type checkLogical(BinaryExpr bin) {
+        Type savedExpected = expectedType;
+        expectedType = null;
+        Type left;
+        Type right;
+        boolean and = bin.op() == BinaryOp.AND;
+        try {
+            left = checkExpression(bin.left());
+            NullNarrowing afterLeft = narrowing.branch();
+            narrowCondition(bin.left(), !and);
+            NullNarrowing skipped = narrowing;
+            narrowing = afterLeft;
+            narrowCondition(bin.left(), and);
+            right = checkExpression(bin.right());
+            NullNarrowing afterRight = narrowing.branch();
+            narrowCondition(bin.right(), true);
+            NullNarrowing rightTrue = narrowing;
+            narrowing = afterRight;
+            narrowCondition(bin.right(), false);
+            NullNarrowing rightFalse = narrowing;
+            ConditionFlow flow = and
+                ? new ConditionFlow(rightTrue, mergeFlows(skipped, rightFalse))
+                : new ConditionFlow(mergeFlows(skipped, rightTrue), rightFalse);
+            conditionFlows.put(bin, flow);
+            narrowing = mergeFlows(flow.whenTrue(), flow.whenFalse());
+        } finally { expectedType = savedExpected; }
+        if (left == Type.Error.INSTANCE || right == Type.Error.INSTANCE) return Type.Error.INSTANCE;
+        if (!(left instanceof Type.Boolean) || !(right instanceof Type.Boolean)) {
+            boolean badLeft = !(left instanceof Type.Boolean);
+            error(DiagnosticCode.E3007, (badLeft ? "Left" : "Right") + " operand of '"
+                + opSymbol(bin.op()) + "' must be boolean, got " + typeName(badLeft ? left : right),
+                (badLeft ? bin.left() : bin.right()).span());
+            return Type.Error.INSTANCE;
+        }
+        return Type.Boolean.INSTANCE;
+    }
+
     private Type checkBinary(BinaryExpr bin) {
         if (bin.op() == BinaryOp.COALESCE) return checkCoalesce(bin);
+        if (bin.op() == BinaryOp.AND || bin.op() == BinaryOp.OR) return checkLogical(bin);
         // Composite operands do not inherit the enclosing storage type.
         // Record reads remain unknown and must be extracted or refined
         // before an operator consumes a concrete value.
@@ -1521,28 +1616,28 @@ public final class TypeChecker {
             boolean equalTypes = Types.equals(leftType, rightType);
             boolean nullableVsNull = isNullableOf(leftType, rightType)
                 || isNullableOf(rightType, leftType);
-            if ((equalTypes && !(leftType instanceof Type.Void)) || nullableVsNull) {
-
+            // A refinement must not make an otherwise legal identity/nullish
+            // comparison illegal (including a repeated guard). When only
+            // the declared pair is eligible, these identifier reads consume
+            // their declared types, not a concrete narrowed projection.
+            Type leftDeclared = equalityDeclaredType(bin.left(), leftType);
+            Type rightDeclared = equalityDeclaredType(bin.right(), rightType);
+            boolean declaredComparison = Types.equals(leftDeclared, rightDeclared)
+                || isNullableOf(leftDeclared, rightDeclared) || isNullableOf(rightDeclared, leftDeclared);
+            if ((equalTypes && !(leftType instanceof Type.Void)) || nullableVsNull
+                    || (declaredComparison && !(leftDeclared instanceof Type.Void))) {
+                if (!equalTypes && !nullableVsNull && declaredComparison) {
+                    typeMap.put(bin.left(), leftDeclared);
+                    typeMap.put(bin.right(), rightDeclared);
+                    narrowedReads.remove(bin.left());
+                    narrowedReads.remove(bin.right());
+                }
                 return Type.Boolean.INSTANCE;
             }
             error(DiagnosticCode.E3006,
                 "Cannot compare " + typeName(leftType) + " with " + typeName(rightType),
                 bin.span());
             return Type.Error.INSTANCE;
-        }
-
-        if (op == BinaryOp.AND || op == BinaryOp.OR) {
-            if (!(leftType instanceof Type.Boolean)) {
-                error(DiagnosticCode.E3007, "Left operand of '" + opSymbol(op) + "' must be boolean, got "
-                    + typeName(leftType), bin.left().span());
-                return Type.Error.INSTANCE;
-            }
-            if (!(rightType instanceof Type.Boolean)) {
-                error(DiagnosticCode.E3007, "Right operand of '" + opSymbol(op) + "' must be boolean, got "
-                    + typeName(rightType), bin.right().span());
-                return Type.Error.INSTANCE;
-            }
-            return Type.Boolean.INSTANCE;
         }
 
         if (op == BinaryOp.LT || op == BinaryOp.LTE || op == BinaryOp.GT || op == BinaryOp.GTE) {
@@ -2297,7 +2392,12 @@ public final class TypeChecker {
         boolean mixed = false;
         for (ExpressionNode elem : elements) {
             Type elemType = checkExpression(elem);
-            if (elemType == Type.Error.INSTANCE) continue;
+            if (elemType instanceof Type.Void) {
+                error(DiagnosticCode.E3001, "Void results cannot be stored in arrays", elem.span());
+                mixed = true;
+                continue;
+            }
+            if (elemType == Type.Error.INSTANCE) { mixed = true; continue; }
             if (firstType == null) firstType = elemType;
             else if (!Types.equals(firstType, elemType)) {
                 mixed = true;
@@ -2626,7 +2726,16 @@ public final class TypeChecker {
         loopSavedNarrowing = new ArrayDeque<>();
         int savedLoopDepth = loopDepth;
         loopDepth = 0;
-        walkStatement(fe.body());
+        Type savedExpected = expectedType;
+        Symbol.ClassSymbol savedClassContext = contextualClassDecl;
+        expectedType = null;
+        contextualClassDecl = null;
+        try {
+            walkStatement(fe.body());
+        } finally {
+            expectedType = savedExpected;
+            contextualClassDecl = savedClassContext;
+        }
         if (fe.expressionBody() && returnType instanceof Type.Void
                 && fe.body().statements().getFirst() instanceof ExpressionStatement expression
                 && !(typeOf(expression.expr()) instanceof Type.Void)) {
@@ -3230,6 +3339,11 @@ public final class TypeChecker {
             case Symbol.ModuleSymbol ms -> Type.Table.INSTANCE;
             case Symbol.IntrinsicSymbol is -> is.type();
         };
+    }
+
+    private Type equalityDeclaredType(ExpressionNode expression, Type checked) {
+        return expression instanceof IdentifierExpr id && narrowedReads.contains(expression)
+            ? declaredTypeOf(id.name()) : checked;
     }
 
     private static boolean isNullableOf(Type maybeNullable, Type other) {
