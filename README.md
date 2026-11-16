@@ -8,12 +8,12 @@ Projects require `"languageVersion": "1.6"` and stdlib `"1.6"`.
 
 Semantics differ from TypeScript: nominal classes, runtime-checked `as`
 assertions and invariant arrays. DEAL uses
-binary64 `number`, safe `unknown`, `Record<string, unknown>` and independent
-null/undefined/presence semantics. Supply required fields explicitly.
+binary64 `number` with ECMAScript `%` remainder, safe `unknown`,
+`Record<string, unknown>` and independent null/undefined/presence semantics. Supply required fields explicitly.
 `Promise<R>` denotes async results, not promises. Use DEAL APIs.
 
 Removed source version directives, source `table`/`has`, C-style loops,
-remainder, C FFI, bytes, integer/conversion intrinsics and class field
+C FFI, bytes, integer/conversion intrinsics and class field
 initializers are not compatibility features.
 
 ## Native backend (Linux x86-64)
@@ -69,8 +69,8 @@ and executes the complete selection in `tools/gate-manifest.sh` with
 assertions enabled, including the TypeScript compiler's syntactic/grammar
 diagnostics and real JS/LuaJIT/JVM runtime records. `--jobs` bounds suites
 (default four); nested work/coverage stay serial.
-No alternate full-suite profile exists. The native corpus alone uses the exact
-LLVM-only omissions in [`test/llvm-known-skips.tsv`](test/llvm-known-skips.tsv):
+No alternate full-suite profile exists. The native corpus and composition suite
+use the exact LLVM-only omissions in [`test/llvm-known-skips.tsv`](test/llvm-known-skips.tsv):
 the list is currently empty because upstream native completion covers the former
 omissions. Any future skip is printed with its reason; case totals and requirement
 denominators remain visible and skipped work earns no execution credit. Unknown
