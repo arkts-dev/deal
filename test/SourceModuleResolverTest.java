@@ -67,6 +67,7 @@ public final class SourceModuleResolverTest {
             testClassifierMatrix();
             testClassifierDefensiveReports();
             testClassifierPurity();
+            testProviderContractDigestDomain();
             if (environmentClean) {
                 testResolutionMatrix();
                 testStdlibSurfaceRules();
