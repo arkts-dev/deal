@@ -2341,8 +2341,10 @@ public final class TypeChecker {
                 error(DiagnosticCode.E3001, "Void results cannot be stored in records", prop.value().span());
         }
         expectedType = savedExpected;
-        if (obj.properties().isEmpty() && expectedType == null) {
-            error(DiagnosticCode.E3002, "Cannot infer type of empty object literal", obj.span());
+        if (expectedType == null) {
+            error(DiagnosticCode.E3002, obj.properties().isEmpty()
+                ? "Cannot infer type of empty object literal"
+                : "Object literal requires contextual type", obj.span());
             return Type.Error.INSTANCE;
         }
         return Type.Table.INSTANCE;
@@ -3129,11 +3131,8 @@ public final class TypeChecker {
                 yield exprType;
             }
             case ObjectLiteralExpr obj -> {
-                if (obj.properties().isEmpty()) {
-                    error(DiagnosticCode.E3002, "Cannot infer type of empty object literal", init.span());
-                    yield null;
-                }
-                yield exprType;
+                error(DiagnosticCode.E3002, "Object literal requires contextual type", init.span());
+                yield null;
             }
             case CallExpr call -> exprType;
             case AssignmentExpr assignment -> exprType;

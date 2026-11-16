@@ -184,7 +184,7 @@ public class ControlFlowLoweringTest {
 
     private static SemanticLowerer.LoweringResult lower(CheckedSlice slice,
             Map<ConstructKind, List<SemanticOpKind>> coverage) {
-        return SemanticLowerer.lowerModule(moduleOf(slice), SemanticProfile.DEAL_V1_6_BINARY64,
+        return SemanticLowerer.lowerModuleFullProgram(moduleOf(slice), SemanticProfile.DEAL_V1_6_BINARY64,
             coverage, INTERFACE_HASH, REGISTRY_HASH, SemanticIdAllocator.over(List.of(MODULE)));
     }
 
@@ -448,7 +448,7 @@ public class ControlFlowLoweringTest {
     static void testIfBranchArm() {
         System.out.println("-- BRANCH(IF): condition, selected/alternate blocks --");
 
-        CheckedSlice slice = checkSlice("if ({flag: true}.flag as boolean) { \"a\"; } else { \"b\"; }");
+        CheckedSlice slice = checkSlice("let r:Record<string,unknown>={flag:true}; if (r.flag as boolean) { \"a\"; } else { \"b\"; }");
         if (slice == null) {
             return;
         }
@@ -583,7 +583,7 @@ public class ControlFlowLoweringTest {
         System.out.println("-- BRANCH(LOGICAL_AND/OR): right ops in selectedBlock only --");
 
         CheckedSlice slice = checkSlice(
-            "(({a: true}).a = false) && (({b: true}).b = false);");
+            "let a:Record<string,unknown>={a:true}; let b:Record<string,unknown>={b:true}; (a.a = false) && (b.b = false);");
         if (slice == null) {
             return;
         }
@@ -659,7 +659,7 @@ public class ControlFlowLoweringTest {
 
         // The OR row.
         CheckedSlice orSlice = checkSlice(
-            "(({a: false}).a = true) || (({b: false}).b = true);");
+            "let a:Record<string,unknown>={a:false}; let b:Record<string,unknown>={b:false}; (a.a = true) || (b.b = true);");
         if (orSlice != null) {
             SemanticLowerer.LoweringResult orResult = lowerDetected(orSlice);
             check(orResult != null && !orResult.hasErrors(),
@@ -681,8 +681,8 @@ public class ControlFlowLoweringTest {
         System.out.println("-- BRANCH(LOGICAL_*): chained nesting in source order --");
 
         CheckedSlice slice = checkSlice(
-            "(({a: true}).a = false) && (({b: true}).b = false)"
-                + " && (({c: true}).c = false);");
+            "let a:Record<string,unknown>={a:true}; let b:Record<string,unknown>={b:true}; let c:Record<string,unknown>={c:true};"
+                + " (a.a = false) && (b.b = false) && (c.c = false);");
         if (slice == null) {
             return;
         }
@@ -745,7 +745,7 @@ public class ControlFlowLoweringTest {
     static void testWhileArm() {
         System.out.println("-- LOOP(WHILE): condition block in initBlock, updateBlock null --");
 
-        CheckedSlice slice = checkSlice("while (({b: true}).b = false) {}");
+        CheckedSlice slice = checkSlice("let b:Record<string,unknown>={b:true}; while (b.b = false) {}");
         if (slice == null) {
             return;
         }
@@ -786,9 +786,9 @@ public class ControlFlowLoweringTest {
         List<OpId> initOps = table.blockOps().get(initBlock);
         check(initOps.contains(assigns.get(0).opId()),
             "the init block carries the condition chain's ASSIGN op");
-        check(initOps.size() == 5,
-            "the init block carries exactly the condition chain's five ops "
-                + "(CONST true, TABLE_NEW, CONST false, MEMBER_WRITE, ASSIGN); got "
+        check(initOps.size() == 4,
+            "the init block carries exactly the condition chain's four ops "
+                + "(BINDING_LOAD, CONST false, MEMBER_WRITE, ASSIGN); got "
                 + initOps.size());
         check(table.blockOps().get(bodyBlock).isEmpty(),
             "the empty body block is an empty block of the table");
@@ -808,7 +808,7 @@ public class ControlFlowLoweringTest {
             }
         }
         int loopIndex = ops.indexOf(loop);
-        check(loopIndex == 0, "the LOOP op precedes its child block ops in the unit list");
+        check(loopIndex < ops.indexOf(assigns.get(0)), "the LOOP op precedes its child block ops in the unit list");
         WhileStatement statement = first(slice.program(), WhileStatement.class);
         checkOrigin("LOOP(WHILE)", loop, statement.span(), SourceOriginKind.USER, null);
     }
@@ -2066,7 +2066,7 @@ public class ControlFlowLoweringTest {
         System.out.println("-- T2 composition: assignment chains inside a loop condition block --");
 
         // Table-index chain (receiver/key/RHS) as the while condition.
-        CheckedSlice slice = checkSlice("while (({k: true})[\"k\"] = false) {}");
+        CheckedSlice slice = checkSlice("let k:Record<string,unknown>={k:true}; while (k[\"k\"] = false) {}");
         if (slice == null) {
             return;
         }
@@ -2088,8 +2088,8 @@ public class ControlFlowLoweringTest {
                 + "commitOp); got " + chainPayload.childOps().size());
         if (chainPayload.childOps().size() == 5) {
             check(opById(ops, chainPayload.childOps().get(0)).kind()
-                    == SemanticOpKind.TABLE_NEW,
-                "child 0 is the containerOp (the receiver TABLE_NEW)");
+                    == SemanticOpKind.BINDING_LOAD,
+                "child 0 is the containerOp (the receiver BINDING_LOAD)");
             check(opById(ops, chainPayload.childOps().get(1)).kind()
                     == SemanticOpKind.CONST,
                 "child 1 is the keyOp (the literal string key)");
@@ -2109,9 +2109,9 @@ public class ControlFlowLoweringTest {
                 && loopPayload.condition().equals(assigns.get(0).result()),
             "the LOOP condition is the chain's committed value");
         List<OpId> initOps = result.table().blockOps().get(loopPayload.initBlock());
-        check(initOps.size() == 7,
-            "the condition block carries exactly the chain's seven ops — CONST(true) "
-                + "receiver entry, TABLE_NEW containerOp, CONST keyOp, CONST valueOp, "
+        check(initOps.size() == 6,
+            "the condition block carries exactly the chain's six ops — "
+                + "BINDING_LOAD containerOp, CONST keyOp, CONST valueOp, "
                 + "INDEX_NORMALIZE, INDEX_WRITE, ASSIGN; got " + initOps.size());
         for (OpId childId : chainPayload.childOps()) {
             check(initOps.contains(childId),
@@ -2236,7 +2236,7 @@ public class ControlFlowLoweringTest {
     static void testDeterminism() {
         System.out.println("-- Determinism: byte-identical repeated lowerings --");
 
-        CheckedSlice slice = checkSlice("while (({b: true}).b = false) {\n  if (({f: true}).f as boolean) { \"a\"; }\n  {  while (true) { { break; }  } }\n}\ntry {} catch (e) { throw e as Error; }\nfor (let x of [1, 2]) { continue; }\n");
+        CheckedSlice slice = checkSlice("let b:Record<string,unknown>={b:true}; let f:Record<string,unknown>={f:true}; while (b.b = false) {\n  if (f.f as boolean) { \"a\"; }\n  {  while (true) { { break; }  } }\n}\ntry {} catch (e) { throw e as Error; }\nfor (let x of [1, 2]) { continue; }\n");
         if (slice == null) {
             return;
         }

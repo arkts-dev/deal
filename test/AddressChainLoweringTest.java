@@ -1145,7 +1145,7 @@ public class AddressChainLoweringTest {
         // t[0] = 1: the checker rejects with E3018 at the index span before
         // any lowering; the write-context checkIndex gate fires identically
         // for the delete form.
-        CheckedSlice writeSlice = checkSlice("let t = {x: 1};\nt[0] = 1;\n");
+        CheckedSlice writeSlice = checkSlice("let t:Record<string,unknown> = {x: 1};\nt[0] = 1;\n");
         if (writeSlice != null) {
             check(writeSlice.checks().hasErrors()
                     && writeSlice.checks().diagnostics().stream()
@@ -1160,7 +1160,7 @@ public class AddressChainLoweringTest {
                     "the E3018 diagnostic is error severity at the index expression span");
             }
         }
-        CheckedSlice deleteSlice = checkSlice("let t = {x: 1};\ndelete t[0];\n");
+        CheckedSlice deleteSlice = checkSlice("let t:Record<string,unknown> = {x: 1};\ndelete t[0];\n");
         if (deleteSlice != null) {
             check(deleteSlice.checks().hasErrors()
                     && deleteSlice.checks().diagnostics().stream()
@@ -1170,7 +1170,7 @@ public class AddressChainLoweringTest {
 
         // t["k"] = 1 and delete t["k"]: checker-clean, and the assignment
         // arm lowers with the total string key (TableSlot {key: "k"}).
-        CheckedSlice stringKeySlice = checkSlice("let t = {x: 1};\nt[\"k\"] = 1;\n");
+        CheckedSlice stringKeySlice = checkSlice("let t:Record<string,unknown> = {x: 1};\nt[\"k\"] = 1;\n");
         if (stringKeySlice != null) {
             check(!stringKeySlice.checks().hasErrors(),
                 "t[\"k\"] = 1 checks cleanly (static string key)");
@@ -1209,7 +1209,7 @@ public class AddressChainLoweringTest {
                     "the string-keyed index assignment lowers to an ASSIGN TABLE_SLOT chain");
             }
         }
-        CheckedSlice stringKeyDeleteSlice = checkSlice("let t = {x: 1};\ndelete t[\"k\"];\n");
+        CheckedSlice stringKeyDeleteSlice = checkSlice("let t:Record<string,unknown> = {x: 1};\ndelete t[\"k\"];\n");
         if (stringKeyDeleteSlice != null) {
             check(!stringKeyDeleteSlice.checks().hasErrors(),
                 "delete t[\"k\"] checks cleanly (static string key)");
@@ -1409,12 +1409,16 @@ public class AddressChainLoweringTest {
             + "protocol, determinism --");
 
         CheckedSlice slice = checkSlice("""
-            delete {x: 1}.y;
-            delete {x: 1}["z"];
+            let first:Record<string,unknown> = {x: 1};
+            delete first.y;
+            let second:Record<string,unknown> = {x: 1};
+            delete second["z"];
             [1, 2].length;
             for (let k of "a") {
-              delete {x: 1}[k];
-              delete {x: 1}[k = "b"];
+              let third:Record<string,unknown> = {x: 1};
+              delete third[k];
+              let fourth:Record<string,unknown> = {x: 1};
+              delete fourth[k = "b"];
             }
             """);
         if (slice == null) {
@@ -1435,7 +1439,7 @@ public class AddressChainLoweringTest {
             ConstructKind.ASSIGNMENT, ConstructKind.ASSIGNMENT.mappedOpKinds(),
             ConstructKind.DELETE, ConstructKind.DELETE.mappedOpKinds());
 
-        SemanticLowerer.LoweringResult first = SemanticLowerer.lowerModule(moduleOf(slice),
+        SemanticLowerer.LoweringResult first = SemanticLowerer.lowerModuleFullProgram(moduleOf(slice),
             SemanticProfile.DEAL_V1_6_BINARY64, coverage, INTERFACE_HASH, REGISTRY_HASH,
             SemanticIdAllocator.over(List.of(MODULE)));
         check(first != null && !first.hasErrors() && first.unit() != null,
@@ -1483,9 +1487,14 @@ public class AddressChainLoweringTest {
                 && ((KindPayload.BoundaryPayload) op.payload()).kind()
                     == BoundaryKind.ARRAY_LITERAL_ELEMENT)
             .count();
-        check(boundaries == 3 && elementDeletes == 0 && variableAssignments == 1
+        long declarations = unit.ops().stream()
+            .filter(op -> op.kind() == SemanticOpKind.BOUNDARY
+                && ((KindPayload.BoundaryPayload) op.payload()).kind()
+                    == BoundaryKind.VARIABLE_DECLARATION)
+            .count();
+        check(boundaries == 7 && declarations == 4 && elementDeletes == 0 && variableAssignments == 1
                 && literalElements == 2,
-            "the corpus rejects array deletion elsewhere and carries no delete boundary, the "
+            "the corpus carries four contextual declarations, no delete boundary, the "
                 + "one VARIABLE_ASSIGNMENT boundary, and the two ARRAY_LITERAL_ELEMENT "
                 + "children of the [1, 2] receiver (got " + boundaries + " boundaries: "
                 + elementDeletes + " delete, " + variableAssignments + " variable, "
@@ -1517,7 +1526,7 @@ public class AddressChainLoweringTest {
         }
 
         // Determinism: a fresh lowering produces byte-identical dumps.
-        SemanticLowerer.LoweringResult second = SemanticLowerer.lowerModule(moduleOf(slice),
+        SemanticLowerer.LoweringResult second = SemanticLowerer.lowerModuleFullProgram(moduleOf(slice),
             SemanticProfile.DEAL_V1_6_BINARY64, coverage, INTERFACE_HASH, REGISTRY_HASH,
             SemanticIdAllocator.over(List.of(MODULE)));
         check(second != null && !second.hasErrors(),

@@ -45,7 +45,7 @@ export function main():void {
   if(value!==null){invalidate();try{result=true?value:0;}catch(e){caught=(e as Error).name==="E8001";}}
   check(caught,"stale branch");
   const original:Item={x:21};const alias=flag?original:original;alias.x=22;check(original.x===22,"identity");
-  const only=flag?{x:1}:{x:2};check((only.x as number)===2,"record branches");
+  const only:Record<string,unknown>=flag?{x:1}:{x:2};check((only.x as number)===2,"record branches");
   let once=0;const condition=():boolean=>{once=once+1;return true;};
   result=condition()?1:2;check(once===1 && result===1,"condition once");
   const badCondition=():boolean=>{throw {name:"CONDITION",message:"stop"};};caught=false;

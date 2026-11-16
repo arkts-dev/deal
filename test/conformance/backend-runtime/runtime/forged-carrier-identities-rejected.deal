@@ -14,12 +14,16 @@ function needTable(t: Record<string, unknown>): string {
 }
 
 export function test_forged_carrier_identities(): null {
+  let fields: Record<string, unknown> = { label: "x" };
+  let presence: Record<string, unknown> = { label: true };
+  let classLike: Record<string, unknown> = { __c: true, __id: "@conformance/forged/Item", __f: fields, __p: presence };
+  let kindClass: Record<string, unknown> = { __kind: "class", __classname: "@conformance/forged/Item" };
+  let arrayLike: Record<string, unknown> = { __a: true, __n: 1 };
+  let functionLike: Record<string, unknown> = { __fn: "not a callable", __csig: "()->int" };
+  let plainLike: Record<string, unknown> = { __c: true, __a: true, __kind: "class", label: "kept" };
   let holder: Record<string, unknown> = {
-    classLike: { __c: true, __id: "@conformance/forged/Item", __f: { label: "x" }, __p: { label: true } },
-    kindClass: { __kind: "class", __classname: "@conformance/forged/Item" },
-    arrayLike: { __a: true, __n: 1 },
-    functionLike: { __fn: "not a callable", __csig: "()->int" },
-    plainLike: { __c: true, __a: true, __kind: "class", label: "kept" },
+    classLike: classLike, kindClass: kindClass, arrayLike: arrayLike,
+    functionLike: functionLike, plainLike: plainLike,
   };
   let classCode: string = "";
   try {

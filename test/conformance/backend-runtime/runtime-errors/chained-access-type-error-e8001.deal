@@ -4,7 +4,7 @@
 // @features: runtime-errors, chained-access
 
 export function test_chained_access_type_error(): number {
-  let t: Record<string, unknown> = { inner: { value: "bad" } };
+  let nested: Record<string, unknown> = { value: "bad" }; let t: Record<string, unknown> = { inner: nested };
   let inner: Record<string, unknown> = t.inner as Record<string, unknown>;
   let result: number = inner.value as number;
   return result;

@@ -42,7 +42,8 @@ export function main(): void {
     returns = returns + 1;
     return 9;
   };
-  let config: Record<string, unknown> | null = {a: 1, inner: {b: 3}};
+  let inner: Record<string, unknown> = {b: 3};
+  let config: Record<string, unknown> | null = {a: 1, inner: inner};
   let noop: () => null = function(): null {
     return null;
   };

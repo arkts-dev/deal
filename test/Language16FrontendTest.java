@@ -481,6 +481,11 @@ public final class Language16FrontendTest {
         check("import * as from from \"std/math\"; function f():number{return from.floor(1.5);}", true);
         check("import * as as from \"std/math\"; function f():void{let value:unknown=as;}", false);
         check("function f():void {let r:Record<string,unknown>={};}", true);
+        for (String expression : List.of("{a:1}", "[{a:1}]", "[[{a:1}]]", "true?{a:1}:{a:2}")) {
+            check("function f():void {let r=" + expression + ";}", false);
+        }
+        check("function f():void {let r:unknown={a:1};let a:Record<string,unknown>[]=[{a:1}];}", true);
+        check("function f():void {let r:Record<string,unknown>={nested:{a:1}};}", false);
         check("function f():void {let r:Record<string,unknown>={};}\n// @jsonable\nexport class C{x:number;}", true);
         check("function f():void {let r:Record<string,unknown> = {a:1,a:2};}", false);
         check("class C{x:number;} function f():void {let c:C={x:1,x:2};}", false);
