@@ -144,6 +144,7 @@ public final class CorpusDiscovery {
         "Functions",
         "Variables",
         "Tables",
+        "Records",
         "Arrays",
         "Bytes",
         "Control flow",

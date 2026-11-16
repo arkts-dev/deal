@@ -2,6 +2,7 @@
 
 Maintain specification-indexed frontend/runtime cases with exact outcomes. CorpusConformanceTest owns discovery/preparation/invocation/verdicts; only artifact launch protocols differ. Bound subprocesses; reconcile backends/exports/completions. Reuse setup; isolate tasks/verdicts. Missing tools/invocations fail. Rejection isn't execution.
 
+- Recognize the current Records spec heading, including Literal keys and deletion; heading validation must not silently drop valid fixtures.
 - Select membership by declared intent, never compiler success. Keep companions explicit/focused; preserve denominators and independent consumers.
 - Reach return checks through captured locals without parameter checks; construct store destinations before corruption and inspect state after rejection. Pin exact nominal atoms, including same-named siblings and raw external import keys; never add dotted aliases to a project's externals. Distinguish ordinary/assertion projections; include valid controls per declaration.
 - Record reads are unknown. Extract/refine before concrete use, but never let an assertion mask a later parameter/element negative. Admit valid carriers before closure invalidation or fixture-only alias mutation.

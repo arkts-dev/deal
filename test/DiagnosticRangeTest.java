@@ -1904,6 +1904,21 @@ public class DiagnosticRangeTest {
         check(run.compiled() > 0,
             "the corpus carries compile-classified fixtures");
 
+        Path records = Files.createTempDirectory("records-heading-");
+        try {
+            writeScratchFixture(records, "records/keys.deal",
+                "// @spec: Records — Literal keys and deletion\n"
+                + "// @description: Quoted and computed Record keys\n"
+                + "// @expected: compile-ok\n"
+                + "// @features: records\n\n"
+                + "export function f(key:string):Record<string,unknown> {\n"
+                + "  return {\"content-type\":\"text/plain\",[key]:1};\n}\n");
+            FrontendGateRun discovered = frontendGateRun(records);
+            checkEq(1, discovered.compiled(), "Records heading retains frontend membership");
+            checkEq(List.of(), discovered.discoveryFailures(), "current Records heading classifies");
+            checkEq(List.of(), discovered.mismatches(), "Record literal fixture reaches its verdict");
+        } finally { deleteTree(records); }
+
         // The deliberate wrong-observation controls: an accepted-form
         // fixture mutated into a type error must lose its compile-ok
         // verdict, and a reject fixture mutated into an accepted form must
