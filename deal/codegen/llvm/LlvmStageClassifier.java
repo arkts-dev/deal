@@ -1342,21 +1342,15 @@ public final class LlvmStageClassifier {
     private static Optional<String> exportPublishReason(LoweredModuleUnit unit,
                                                         SemanticOp op,
                                                         KindPayload.ExportPublishPayload published) {
-        SemanticOp producer = producerOf(unit, published.value());
-        if (producer == null
-                || producer.kind() != SemanticOpKind.CLOSURE_NEW
-                || !(producer.payload() instanceof KindPayload.ClosureNewPayload closure)) {
+        LoweredFunction function = exportedFunction(unit, published.value());
+        if (function == null) {
             return Optional.of(reject(op, "EXPORT_PUBLISH of a value that is no"
                 + " closure of a lowered function"));
         }
-        Optional<String> captureReason = closureCaptureReason(unit, closure);
-        if (captureReason.isPresent()) {
-            return Optional.of(reject(op, "EXPORT_PUBLISH of " + captureReason.get()));
-        }
-        LoweredFunction function = unit.functions().get(closure.function());
-        if (function == null) {
-            return Optional.of(reject(op, "EXPORT_PUBLISH of a function outside"
-                + " the emitting unit"));
+        for (var capture : function.captures()) {
+            if (!cellBinding(unit, capture.binding(), capture.generation())) {
+                return Optional.of(reject(op, "EXPORT_PUBLISH of a non-cell capture"));
+            }
         }
         RuntimeDescriptor.Func signature = function.descriptor();
         if (!staticSignature(signature) && !signature.isAsync()) {
@@ -1366,6 +1360,29 @@ public final class LlvmStageClassifier {
                 + " boxed apply surface"));
         }
         return Optional.empty();
+    }
+
+    /** Resolve only recorded closure/group allocations, never source declarations. */
+    static LoweredFunction exportedFunction(LoweredModuleUnit unit, ValueId value) {
+        // Loads preserve function allocation identity and may precede the
+        // allocation in op order. Find the allocation, not the first load.
+        for (SemanticOp producer : unit.ops()) {
+            if (value.equals(producer.result())
+                    && producer.payload() instanceof KindPayload.ClosureNewPayload closure) {
+                return unit.functions().get(closure.function());
+            }
+        }
+        var binding = unit.functionBindings().get(
+            new deal.semantic.ir.FunctionAllocationIdentity(value.id()));
+        if (binding instanceof deal.semantic.ir.FunctionExecutionBinding.LoweredBody body) {
+            for (SemanticOp op : unit.ops()) {
+                if (op.payload() instanceof KindPayload.RecursiveGroupInitPayload group
+                        && group.functions().contains(body.functionId())) {
+                    return unit.functions().get(body.functionId());
+                }
+            }
+        }
+        return null;
     }
 
     private static Optional<String> representationReason(SemanticOp op,

@@ -1,6 +1,7 @@
 # Native LLVM Code Generation
 
 Pairwise null|undefined equality compares the two runtime singleton pointers directly; it has no non-nullish base payload to unbox.
+Export publication resolves both CLOSURE_NEW and registered RECURSIVE_GROUP_INIT members from validated IR. Group exports load the initialized member cell; export metadata must not silently omit a group allocation.
 
 Call-owned parameter cells execute before invocation, never as standalone post-call checks. Dynamic calls retain every declared parameter boundary before dispatch, including arguments discarded by arity adapters; live graph checks must precede callback effects.
 

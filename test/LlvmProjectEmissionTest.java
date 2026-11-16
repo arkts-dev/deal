@@ -136,6 +136,26 @@ public final class LlvmProjectEmissionTest {
             testNoExternalTool(scratch);
             testMissingRuntimeFailsClosed(scratch);
             testProductBuildAndRun(scratch, published);
+            CompositionProductionTest.execute("""
+                import * as lib from "./lib";
+                export function main():void {
+                  if (first() !== 7 || lib.even(10) !== true || lib.odd(9) !== true) {
+                    throw {name:"FAIL", message:"recursive exports"};
+                  }
+                  console.log("exports-ok");
+                }
+                export function first():number {return second();}
+                export function second():number {return 7;}
+                """, "exports-ok\n", "", scratch.resolve("recursive-exports"), null,
+                List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM),
+                Map.of("lib.deal", """
+                    export function even(n:number):boolean {
+                      if(n === 0) {return true;} return odd(n - 1);
+                    }
+                    export function odd(n:number):boolean {
+                      if(n === 0) {return false;} return even(n - 1);
+                    }
+                    """));
         } finally {
             deleteRecursively(scratch);
         }

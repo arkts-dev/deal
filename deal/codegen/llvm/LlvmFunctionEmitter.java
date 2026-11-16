@@ -2876,8 +2876,23 @@ final class LlvmFunctionEmitter {
         KindPayload.ExportPublishPayload payload =
             (KindPayload.ExportPublishPayload) op.payload();
         int index = session.exportIndex(payload.module(), payload.name());
-        String value = loadRepresentation(payload.value(),
-            descriptorOfValue(payload.value()), op);
+        LoweredFunction function = LlvmStageClassifier.exportedFunction(unit, payload.value());
+        BindingId binding = null;
+        for (SemanticOp candidate : unit.ops()) {
+            if (candidate.payload() instanceof KindPayload.RecursiveGroupInitPayload group) {
+                int member = group.functions().indexOf(function.functionId());
+                if (member >= 0) binding = group.bindings().get(member);
+            }
+        }
+        String value;
+        if (binding == null) {
+            value = loadRepresentation(payload.value(), function.descriptor(), op);
+        } else {
+            String cell = load(op, "i8*", bindingSlot(binding, 0, "i8*"));
+            session.referenceRuntimeEntry("deal_cell_read_data");
+            String datum = callRecord(op, LlvmTypeMapper.DATA, "deal_cell_read_data", "i8* " + cell);
+            value = datumToRepresentation(function.descriptor(), datum, op);
+        }
         String table = "@" + LlvmData.exportTable(session.moduleIndex(payload.module()));
         String entry = emitTemporary(op, "getelementptr ["
             + session.exportCount(payload.module()) + " x %struct.deal_export_entry], ["

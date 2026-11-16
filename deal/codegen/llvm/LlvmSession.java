@@ -797,16 +797,14 @@ final class LlvmSession extends EmitterSessionBase {
                 if (!(op.payload() instanceof KindPayload.ExportPublishPayload published)) {
                     continue;
                 }
-                SemanticOp producer = producerOf(published.value());
-                if (producer == null
-                        || !(producer.payload() instanceof KindPayload
-                            .ClosureNewPayload closure)) {
-                    continue;
+                LoweredFunction function = LlvmStageClassifier.exportedFunction(unit, published.value());
+                if (function == null) {
+                    throw new IllegalStateException("unadmitted export allocation " + published.value());
                 }
                 exports.add(new LlvmData.UnitExport(published.name(),
                     published.descriptor().canonicalSpecText(),
-                    closure.function().id(),
-                    closure.signature().isAsync()));
+                    function.functionId().id(),
+                    function.descriptor().isAsync()));
             }
             modules.add(new LlvmData.UnitModule(module.path(), exports));
         }
