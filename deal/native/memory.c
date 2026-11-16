@@ -529,7 +529,7 @@ void *deal_alloc(uint32_t layout, size_t size) {
     size_t total = deal_alloc_class_capacity[size_class];
     size_t capacity = total - sizeof(deal_object_header);
     /* The safepoint runs before this object exists, so a bounded marking or
-     * sweeping slice (or the whole collection under DEAL_GC_STRESS) completes
+     * sweeping slice (including under DEAL_GC_STRESS) completes
      * against the objects that exist already (M3, M7). */
     deal_safepoint();
     deal_object_header *header = deal_heap_take_free(size_class);
@@ -1544,8 +1544,10 @@ static void deal_memory_unpoison(void *payload, size_t capacity) {
  * The allocation and loop-back-edge safepoint (M3, M7): one marking slice of at
  * most DEAL_GC_MARK_BUDGET_REFERENCES reference visits (a resumed walk
  * included), the atomic-phase root rescan to its fixpoint when the gray set
- * empties, or one bounded sweeping slice; plus the `DEAL_GC_STRESS` full
- * collection. A re-entrant safepoint is impossible (the collector allocates only
+ * empties, or one bounded sweeping slice. Stress starts a cycle at every idle
+ * safepoint rather than waiting for allocation pressure, but uses the same
+ * slices: repeatedly collecting a growing live graph in full is quadratic.
+ * A re-entrant safepoint is impossible (the collector allocates only
  * platform storage), and one reached from inside a collection is a no-op rather
  * than a second cycle.
  */
@@ -1553,13 +1555,9 @@ void deal_safepoint(void) {
     if (deal_gc_in_collection != 0) {
         return;
     }
-    if (deal_gc_stress_enabled() != 0) {
-        deal_gc_collect_full();
-        return;
-    }
     switch (deal_gc_phase_value) {
     case DEAL_GC_IDLE:
-        if (deal_gc_trigger_reached() == 0) {
+        if (deal_gc_stress_enabled() == 0 && deal_gc_trigger_reached() == 0) {
             return;
         }
         deal_gc_start_cycle();

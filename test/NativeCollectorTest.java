@@ -54,7 +54,7 @@ import java.util.stream.Stream;
  *   <li>the internal growth policy: a cycle starts, advances by bounded slices
  *       and completes without an explicit collection call, so no
  *       non-collecting production mode survives; {@code DEAL_GC_STRESS=1}
- *       collects at every safepoint and changes collection timing only, because
+ *       advances bounded slices at every safepoint and changes timing only, because
  *       the same driver produces byte-identical output in both modes at both
  *       levels;</li>
  *   <li>the insertion barrier on a member deletion: while the collector is

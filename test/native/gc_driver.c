@@ -25,7 +25,7 @@
  *   - the internal growth policy that starts a cycle without an explicit call,
  *     driven by allocation volume and advanced by bounded slices, so a
  *     non-stress run completes a bounded number of cycles while the
- *     `DEAL_GC_STRESS=1` run collects at every safepoint;
+ *     `DEAL_GC_STRESS=1` run starts a cycle at every idle safepoint;
  *   - the allocation-time mark of M1, isolated: the growth trigger is filled
  *     exactly with dropped objects, an explicit safepoint starts the cycle and
  *     passes its atomic phase at once, and the node allocated next — while the
@@ -380,7 +380,7 @@ static void check_barrier_and_incremental_cycle(void) {
               "collection per allocation");
     } else {
         check(pressure.collections - before.collections > 2u,
-              "DEAL_GC_STRESS collects at every safepoint");
+              "DEAL_GC_STRESS starts cycles without waiting for pressure");
     }
 
     /* The containers are marked by now. The referents below are allocated while
@@ -527,10 +527,8 @@ static void check_barrier_shades_a_white_referent(void) {
     deal_data placeholder = deal_data_of_number(0.0);
     deal_container_table_write(table, key, &placeholder);
 
-    /* The three referents exist before the cycle starts. A stress run collects
-     * at every safepoint, so they stay rooted until after the stores there;
-     * the non-stress run clears their slots below, before the cycle's root
-     * rescan can see them. */
+    /* Keep every referent rooted during setup, then normalize the collector
+     * before testing the white-referent store in either schedule. */
     cell_referent = deal_alloc(TEST_LAYOUT_NODE, TEST_NODE_BYTES);
     node_set_mark(cell_referent, 71u);
     deal_root_frame_write(4u, cell_referent);
@@ -552,15 +550,14 @@ static void check_barrier_shades_a_white_referent(void) {
     top_up = (size_t)TEST_BARRIER_TRIGGER;
     check(accumulated < (uint64_t)top_up,
           "the pressure object alone crosses the collection trigger");
+    deal_gc_collect_full();
+    /* No root rescan can see these referents. Stress starts marking before the
+     * pressure allocation; normal starts at the explicit safepoint. The chain
+     * is longer than both slices, keeping the stores in the marking phase. */
+    deal_root_frame_write(4u, NULL);
+    deal_root_frame_write(5u, NULL);
+    deal_root_frame_write(6u, NULL);
     (void)deal_alloc(TEST_LAYOUT_BULK, top_up);
-
-    if (stress_mode == 0) {
-        /* From here the referents are named by these C locals only: the cycle
-         * the next safepoint starts cannot mark them from any root source. */
-        deal_root_frame_write(4u, NULL);
-        deal_root_frame_write(5u, NULL);
-        deal_root_frame_write(6u, NULL);
-    }
     /* Starts the incremental cycle (the trigger was reached), one bounded
      * marking slice, which pops and traces the three containers first. */
     deal_safepoint();
@@ -577,40 +574,20 @@ static void check_barrier_shades_a_white_referent(void) {
         deal_data_of_reference(DEAL_DATA_CLASS, table_referent);
     deal_container_table_write(table, key, &table_datum);
     deal_root_frame_write(7u, NULL);
-    if (stress_mode != 0) {
-        /* A stress safepoint completed a cycle instead of starting one, so the
-         * stores ran with the collector idle; the referents now hang off the
-         * containers only. */
-        deal_root_frame_write(4u, NULL);
-        deal_root_frame_write(5u, NULL);
-        deal_root_frame_write(6u, NULL);
-    }
     read_statistics(&stored);
 
     deal_gc_collect_full();
     read_statistics(&after);
 
-    /* The only object the cycle may reclaim is the dropped pressure object; a
-     * referent the barrier failed to shade is one more reclaimed object, one
-     * more swept object and one more reclaimed payload. */
-    if (stress_mode == 0) {
-        check(after.object_count + 1u == stored.object_count,
-              "the cycle reclaims exactly the dropped pressure object");
-        check(after.swept_objects == stored.swept_objects + 1u,
-              "the sweep reclaims exactly the dropped pressure object");
-        check(after.live_bytes + (uint64_t)top_up == stored.live_bytes,
-              "the cycle reclaims no stored referent's payload byte");
-        referents_live = after.object_count + 1u == stored.object_count;
-    } else {
-        check(after.object_count == stored.object_count,
-              "a stress run keeps every stored referent reachable through its "
-              "container");
-        check(after.swept_objects == stored.swept_objects,
-              "a stress run reclaims nothing after the stores");
-        check(after.live_bytes == stored.live_bytes,
-              "a stress run reclaims no stored referent's payload byte");
-        referents_live = after.object_count == stored.object_count;
-    }
+    /* The only object the cycle may reclaim is the dropped pressure object;
+     * stress also leaves the incremental sweep pending at the stores. */
+    check(after.object_count + 1u == stored.object_count,
+          "the cycle reclaims exactly the dropped pressure object");
+    check(after.swept_objects == stored.swept_objects + 1u,
+          "the sweep reclaims exactly the dropped pressure object");
+    check(after.live_bytes + (uint64_t)top_up == stored.live_bytes,
+          "the cycle reclaims no stored referent's payload byte");
+    referents_live = after.object_count + 1u == stored.object_count;
 
     check(deal_cell_read(cell) == cell_referent,
           "the cell keeps the referent stored while the container was marked");
@@ -787,11 +764,11 @@ static void check_record_deletion_barrier(void) {
      * failed to shade is one entry, one key and one value per member more, and
      * the whole prefix that hangs off it. */
     check(after.swept_objects == stored.swept_objects + 3u * TEST_DELETE_COUNT
-              + (stress_mode == 0 ? 1u : 0u),
+              + 1u,
           "the cycle reclaims exactly the deleted members and the dropped "
           "pressure object");
     survivors_live = after.swept_objects == stored.swept_objects
-        + 3u * TEST_DELETE_COUNT + (stress_mode == 0 ? 1u : 0u);
+        + 3u * TEST_DELETE_COUNT + 1u;
     check(after.object_count == 1u + 3u * TEST_DELETE_SURVIVORS,
           "the record and every surviving member survive the deletion cycle");
     check(deal_container_table_count(table) == TEST_DELETE_SURVIVORS,
@@ -1236,7 +1213,16 @@ static void check_registered_sources(void) {
               && node_mark(sourced) == 41u,
           "a registered root source keeps its referent alive");
 
-    if (stress_mode == 0) {
+    if (stress_mode != 0) {
+        driver_source_scans = 0u;
+        deal_safepoint();
+        deal_safepoint();
+        read_statistics(&after);
+        check(driver_source_scans == 2u,
+              "stress starts below the growth trigger and rescans roots");
+        check(after.collections == prior.collections + 2u,
+              "two stress safepoints mark then sweep one small cycle");
+    } else {
         /* Below the growth trigger no cycle runs, so an idle period must not
          * enumerate any source at all. */
         driver_source_scans = 0u;
@@ -1660,9 +1646,10 @@ static void check_bounded_marking_slices(void) {
     deal_gc_collect_full();
     check(wide_slice_total - empty_visits == (size_t)TEST_WIDE_SLOTS,
           "the empty wide graph traces every null slot");
-    /* Every stress allocation still traces all initialized live children.
-     * The measured cycle below retains the complete 20,000-reference graph. */
+    /* Stress must slice construction work as well as the measured cycle;
+     * neither path may repeatedly traverse the entire growing live graph. */
     ((test_wide *)wide)->count = 0u;
+    wide_slice_total = 0u;
     for (size_t index = 0; index < (size_t)TEST_WIDE_SLOTS; index += 1u) {
         void *child = deal_alloc(TEST_LAYOUT_NODE, TEST_NODE_BYTES);
         node_set_mark(child, (uint64_t)index + 1u);
@@ -1675,6 +1662,10 @@ static void check_bounded_marking_slices(void) {
     }
     check(((test_wide *)wide)->count == (size_t)TEST_WIDE_SLOTS,
           "the measured wide graph contains every initialized reference");
+    check(wide_slice_total <= (size_t)TEST_WIDE_SLOTS
+              * (size_t)DEAL_GC_MARK_BUDGET_REFERENCES,
+          "growing a live graph performs at most one reference budget per "
+          "allocation, including stress, never a full walk per allocation");
     /* Normalize: every object of the wide graph is marked now, so the cycle
      * observed below must trace the whole walk again from position 0. */
     deal_gc_collect_full();
@@ -1684,12 +1675,15 @@ static void check_bounded_marking_slices(void) {
     wide_slice_total = 0u;
     wide_slice_overruns = 0;
     while (completed == 0 && steps < (size_t)TEST_SAFEPOINT_DRAIN * 64u) {
+        wide_slice_visits = 0u;
         (void)deal_alloc(TEST_LAYOUT_BULK, TEST_BULK_BYTES);
+        if (wide_slice_visits > (size_t)DEAL_GC_MARK_BUDGET_REFERENCES) {
+            wide_slice_overruns += 1;
+        }
         wide_slice_visits = 0u;
         deal_safepoint();
         read_statistics(&after);
-        if (stress_mode == 0
-                && wide_slice_visits > (size_t)DEAL_GC_MARK_BUDGET_REFERENCES) {
+        if (wide_slice_visits > (size_t)DEAL_GC_MARK_BUDGET_REFERENCES) {
             wide_slice_overruns += 1;
         }
         if (after.collections > before.collections) {
@@ -1699,16 +1693,14 @@ static void check_bounded_marking_slices(void) {
     }
     check(completed != 0,
           "the wide object's cycle completes under incremental safepoints");
-    if (stress_mode == 0) {
-        check(wide_slice_overruns == 0,
-              "no safepoint visits more than the published reference budget");
-        check(wide_slice_total == (size_t)TEST_WIDE_SLOTS,
-              "the resumable walk visits every slot exactly once, so each slice "
-              "resumes where the last one stopped");
-        check(steps >= (size_t)TEST_WIDE_SLOTS
-                          / (size_t)DEAL_GC_MARK_BUDGET_REFERENCES,
-              "the wide object is traced across at least one slice per budget");
-    }
+    check(wide_slice_overruns == 0,
+          "no safepoint visits more than the published reference budget");
+    check(wide_slice_total == (size_t)TEST_WIDE_SLOTS,
+          "the resumable walk visits every slot exactly once, so each slice "
+          "resumes where the last one stopped");
+    check(steps >= (size_t)TEST_WIDE_SLOTS
+                      / (2u * (size_t)DEAL_GC_MARK_BUDGET_REFERENCES),
+          "the wide object needs one slice per budget (two per step)");
 
     deal_gc_collect_full();
     read_statistics(&after);
@@ -1812,6 +1804,9 @@ static void check_container_array_trace_is_sliced(void) {
               "reference budget instead of scanning the whole array in one");
     }
 
+    /* Allocations during an incremental cycle float until the next cycle;
+     * a full collection establishes the exact live-set assertion below. */
+    deal_gc_collect_full();
     size_t wrong = 0u;
     for (size_t index = 0; index < (size_t)TEST_ARRAY_SLOTS; index += 1u) {
         void *element =

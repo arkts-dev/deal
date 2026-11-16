@@ -48,6 +48,12 @@ suites print per-fixture results with the optimization level and a final
 pass/fail count; a missing required tool or artifact fails the run instead of
 skipping a case.
 
+For collector testing, `DEAL_GC_STRESS=1` starts a new collection whenever the
+collector is idle, without waiting for allocation pressure. Allocation and loop
+safepoints advance the same bounded mark/sweep slices as normal execution;
+stress does not perform a full live-heap traversal at every allocation. Explicit
+`deal_gc_collect_full` remains available to native collector tests.
+
 Executable examples are in [`test/conformance/backend-runtime/`](test/conformance/backend-runtime/),
 with a language guide in [`docs/learn-deal.ts`](docs/learn-deal.ts) and
 an executable [capability demo](docs/deal-capabilities.deal).

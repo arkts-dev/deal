@@ -94,10 +94,11 @@
  * collect exactly as one allocating payload bytes does. A program that keeps
  * allocating collects without an explicit call, and uncollected garbage can
  * never raise the bar that would reclaim it. `DEAL_GC_STRESS=1` (M7) performs
- * one full collection at every safepoint and changes timing only; a behavioral
- * difference under it is a defect. `deal_gc_collect_full` and
- * `deal_gc_statistics` are the only observation surface; the statistics keep
- * their payload accounting (`live_bytes` and `allocated_bytes` are payload
+ * one bounded marking or sweeping slice at every safepoint, starting a new
+ * cycle whenever idle without waiting for allocation pressure. Full collection
+ * remains explicit; stress changes timing only, not values or identities.
+ * `deal_gc_collect_full` and `deal_gc_statistics` are the only observation
+ * surface; the statistics keep their payload accounting (`live_bytes` and `allocated_bytes` are payload
  * bytes), while the growth policy counts the footprint.
  *
  * Sanitizer builds. The collector is compiled by the same pinned C11 flags in
@@ -282,9 +283,9 @@ const deal_layout *deal_layout_lookup(uint32_t layout);
  * layout's fixed payload size. An unknown layout or a short size is an
  * invariant fault. Exhaustion follows R10 before partial publication. The
  * allocation runs the safepoint first, so a bounded marking or sweeping slice
- * (or, under `DEAL_GC_STRESS`, one full collection) completes before this
- * object exists; the new object is marked while a cycle is in flight and is
- * therefore never reclaimed by that cycle.
+ * completes before this object exists, including under `DEAL_GC_STRESS`; the
+ * new object is marked while a cycle is in flight and is therefore never
+ * reclaimed by that cycle.
  */
 void *deal_alloc(uint32_t layout, size_t size);
 
@@ -344,9 +345,9 @@ void deal_store_barrier_data(void *container, const deal_data *value);
  * The allocation and loop-back-edge safepoint (M3, M7): one marking or sweeping
  * slice bounded by `DEAL_GC_MARK_BUDGET_REFERENCES` reference visits (a resumed
  * walk included), the atomic-phase root rescan to its fixpoint when the gray set
- * empties, and the `DEAL_GC_STRESS` full collection. Under stress it performs
- * one complete cycle to completion; otherwise it continues an in-flight cycle
- * and starts one when the collection trigger is reached. It changes collection
+ * empties. Stress uses the same bounded slices but starts a cycle whenever
+ * idle; normal execution waits for the growth trigger. Neither mode completes
+ * a full live-heap traversal at every allocation. It changes collection
  * timing only, so no observable value, diagnostic or identity depends on it.
  */
 void deal_safepoint(void);

@@ -1,3 +1,2 @@
 # Exact LLVM-only skips: kind<TAB>key<TAB>reason. No globs or common-lane exclusions.
 # Direct LlvmConformanceTest and CompositionProductionTest without arguments remain strict.
-composition	json-parse-deep	O0 GC-stress deep JSON exceeds the unchanged 300-second subprocess budget, including ASan/UBSan; LLVM composition temporarily omitted at user request. JS/LuaJIT/JVM remain executed.

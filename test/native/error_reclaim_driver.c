@@ -26,8 +26,8 @@
  * for a live record (the read-backs below are released storage).
  *
  * The acceptance is mode-uniform: every record created here is rooted until
- * the statement that drops it, so `DEAL_GC_STRESS=1` — which completes a cycle
- * at every safepoint — reclaims the same records and the fixture prints the
+ * the statement that drops it, so `DEAL_GC_STRESS=1` — which advances bounded
+ * slices at every safepoint — reclaims the same records and the fixture prints the
  * same single line in both modes.
  */
 #include "deal/native/entry.h"
