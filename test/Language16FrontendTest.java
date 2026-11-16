@@ -37,6 +37,13 @@ public final class Language16FrontendTest {
             throw new AssertionError(source + "\n" + diagnostics);
     }
     public static void main(String[] args) {
+        for (String fields : List.of("x:number;x:number;", "x?:number;x:number;", "x:number;x?:string;")) {
+            var duplicate = diagnostics("class C{" + fields + "}");
+            if (duplicate.size() != 1 || !duplicate.getFirst().code().equals("E2002")
+                    || !duplicate.getFirst().message().equals("Redeclaration of field 'x'"))
+                throw new AssertionError(duplicate);
+        }
+        check("class A{x:number;}class B{x:string;}", true);
         check("function f():Error{return {name:\"Custom\",message:\"m\"};}",true);
         check("function f():Error{return {message:\"m\",name:\"Custom\"};}",true);
         for(String fields:List.of("", "name:\"X\"", "message:\"m\"", "code:\"X\",message:\"m\"",

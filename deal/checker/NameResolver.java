@@ -331,8 +331,12 @@ public final class NameResolver {
         classDeclarationNodes.put(classSymbol, cd);
         root.define(name, classSymbol);
 
+        Set<String> fieldNames = new HashSet<>();
         for (ClassField cf : cd.fields()) {
             checkPropertyName(cf.name(), cf.span());
+            if (!fieldNames.add(cf.name())) {
+                error(DiagnosticCode.E2002, "Redeclaration of field '" + cf.name() + "'", cf.span());
+            }
         }
 
     }
