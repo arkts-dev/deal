@@ -1,5 +1,5 @@
-// @spec: Async/Await — await 42 does not crash TypeChecker
-// @description: Malformed await expression with non-call callee handled gracefully
+// @spec: Async/Await — Await expression
+// @description: Awaiting a numeric literal rejects in the parser with E1042
 // @expected: compile-error E1042
 // @features: async, await, error-recovery
 
