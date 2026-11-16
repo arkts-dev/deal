@@ -1,11 +1,11 @@
-// @spec: Tables — Identifier-only property names
-// @description: String-keyed object literal properties are rejected at parse time (E1038); property names must be identifiers.
-// @expected: compile-error E1038
-// @features: tables, diagnostics
+// @spec: Records — Literal keys and deletion
+// @description: Quoted and escaped keys construct a contextual Record.
+// @expected: compile-ok
+// @features: records, quoted-keys
 
-export function test_object_literal_string_key(): table {
-  let t: table = { "name": "Ada" };
+export function test_object_literal_string_key(): Record<string, unknown> {
+  let t: Record<string, unknown> = { "content-type": "text/plain", "na\u006de": "Ada" };
   return t;
 }
 
-export function main(): null { return null; }
+export function main(): void {}

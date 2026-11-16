@@ -1,12 +1,12 @@
-// @spec: Tables — Identifier-only property names
-// @description: Computed object literal property keys are rejected at parse time (E1038); property names must be identifiers.
-// @expected: compile-error E1038
-// @features: tables, diagnostics
+// @spec: Records — Literal keys and deletion
+// @description: Computed string keys construct a contextual Record.
+// @expected: compile-ok
+// @features: records, computed-keys
 
-export function test_object_literal_computed_key(): table {
+export function test_object_literal_computed_key(): Record<string, unknown> {
   let key: string = "name";
-  let t: table = { [key]: 1 };
+  let t: Record<string, unknown> = { [key]: 1 };
   return t;
 }
 
-export function main(): null { return null; }
+export function main(): void {}
