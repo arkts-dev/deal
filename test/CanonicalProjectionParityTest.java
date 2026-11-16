@@ -8764,11 +8764,11 @@ public class CanonicalProjectionParityTest {
         """;
 
     /**
-     * The admitted absent element control: the nullable element cell admits
+     * The explicit null element control: the nullable element cell admits
      * the language null element through its named null arm on every
      * consumer.
      */
-    private static final String ARRAY_LITERAL_MISSING_ELEMENT_SOURCE = """
+    private static final String ARRAY_LITERAL_NULL_ELEMENT_SOURCE = """
         function main(): void {
           let ys: (number | null)[] = [null];
           return;
@@ -8776,25 +8776,13 @@ public class CanonicalProjectionParityTest {
         """;
 
     /**
-     * The array-literal element cells (ISSUE-0806): the recorded
-     * {@code ARRAY_ELEMENT_DESCRIPTOR} policy of every
-     * {@code ARRAY_LITERAL_ELEMENT} child renders the canonical element
-     * arm — its one-based literal index, the element descriptor's
-     * canonical text as expected, the failing value's own reference-kind
-     * token as actual, and the boundary child's own lowerer-owned origin —
-     * identically on the oracle, the LuaJIT artifact, and the JVM
-     * artifact. The deleted-slot element, the nested literal's element and
-     * the second literal position are each driven through the three
-     * consumers, and the admitted element and the absent nullable element
-     * stay successes. Every seed reaches its runtime value through a
-     * specification-admitted shape (docs/spec-v1.6.md §Reading and writing
-     * fields): a table read nested in a literal is E3003 at the read, so
-     * the array carrier is a typed binding whose slot was deleted.
+     * Array-deletion seeds reject at admission, including nested and
+     * second-position literals. Admitted elements and explicit nullable
+     * elements execute successfully on the oracle, LuaJIT and JVM.
      */
     private static void testArrayLiteralElementCells() throws Exception {
-        System.out.println("-- the array-literal element cells: the recorded "
-            + "element policy, index, projections, and origin on the three "
-            + "consumers --");
+        System.out.println("-- array-literal cells: reject array deletion; "
+            + "execute admitted and nullable elements on three consumers --");
         Path workspace = Files.createTempDirectory("projection-array-literal");
         try {
             rejectArrayDeletion(ARRAY_LITERAL_WALK_ELEMENT_SOURCE);
@@ -8803,65 +8791,16 @@ public class CanonicalProjectionParityTest {
             driveArrayLiteralElementAdmission("the admitted element",
                 ARRAY_LITERAL_ADMITTED_ELEMENT_SOURCE,
                 workspace.resolve("admitted"));
-            driveArrayLiteralElementAdmission("the admitted absent nullable "
-                + "element", ARRAY_LITERAL_MISSING_ELEMENT_SOURCE,
-                workspace.resolve("admitted-missing"));
-            rejectArrayDeletion(ARRAY_LITERAL_WALK_ELEMENT_SOURCE);
+            driveArrayLiteralElementAdmission("the admitted explicit nullable "
+                + "element", ARRAY_LITERAL_NULL_ELEMENT_SOURCE,
+                workspace.resolve("admitted-null"));
         } finally {
             deleteRecursively(workspace);
         }
     }
 
     /**
-     * One array-literal element-cell seed through the three-consumer
-     * matrix: every consumer renders the identical complete tuple — the
-     * E8003 element arm's message with the literal's own one-based index,
-     * the element descriptor's canonical expected text, the value's own
-     * reference-kind actual token, and the boundary child's own origin.
-     */
-    private static void driveArrayLiteralElementFailure(String what, String source,
-            Path workspace, String originText, int oneBasedIndex, String expected,
-            String actual) throws Exception {
-        Seed seed = lowerSeed(source, what);
-        if (seed == null) {
-            return;
-        }
-        SemanticDifferentialHarness.Verdict verdict = SemanticDifferentialHarness.run(
-            seed.unit(), seed.table(), SemanticDifferentialHarness.Expectation.failure(
-                what, List.of(), "E8003", originText), workspace);
-        checkEq(3, verdict.runs().size(), what + ": the drive produced the three "
-            + "consumers: " + verdict.failures());
-        check(verdict.pass(), what + ": the three-consumer verdict passes: "
-            + verdict.failures() + "\n" + verdict.report());
-        for (SemanticRuntimeModel.ConsumerRun run : verdict.runs()) {
-            check(run.terminal()
-                    instanceof SemanticRuntimeModel.Terminal.DealFailure,
-                run.consumer() + " (" + what + "): the cell fails: "
-                    + run.terminal());
-            if (!(run.terminal()
-                    instanceof SemanticRuntimeModel.Terminal.DealFailure failure)) {
-                continue;
-            }
-            SemanticRuntimeModel.ErrorSnapshot error = failure.error();
-            System.out.println("   " + run.consumer() + ": " + error.code() + " | "
-                + error.message() + " | " + error.origin() + " | " + error.expected()
-                + " | " + error.actual());
-            checkEq("E8003", error.code(), run.consumer()
-                + ": the recorded element policy's code");
-            checkEq("array element " + oneBasedIndex + " type mismatch",
-                error.message(), run.consumer()
-                    + ": the element arm's own message with the literal index");
-            checkEq(originText, error.origin(), run.consumer()
-                + ": the boundary child's own lowerer-owned origin");
-            checkEq(expected, error.expected(), run.consumer()
-                + ": the element descriptor's canonical expected text");
-            checkEq(actual, error.actual(), run.consumer()
-                + ": the value's own reference-kind actual token");
-        }
-    }
-
-    /**
-     * The admitted deferred element through the same matrix: every consumer
+     * An admitted array literal through the same matrix: every consumer
      * passes the element cell, so the seed runs to success.
      */
     private static void driveArrayLiteralElementAdmission(String what, String source,
@@ -8882,55 +8821,6 @@ public class CanonicalProjectionParityTest {
                 run.consumer() + " (" + what + "): the admitted element passes "
                     + "the cell: " + run.terminal());
         }
-    }
-
-    /**
-     * The production artifacts of one array-literal element-cell seed: the
-     * real production chunk under luajit and the real production JVM class
-     * under {@code javac --release 25 -proc:none} plus {@code java} both
-     * terminate with the recorded element policy's E8003 code line and
-     * exit 1 — the element arm is the production path's projection, not a
-     * trace-only surface.
-     */
-    private static void driveArrayLiteralElementProduction(String what, String source,
-            Path workspace) throws Exception {
-        Seed seed = lowerSeed(source, what);
-        if (seed == null) {
-            return;
-        }
-        Files.createDirectories(workspace);
-        String chunk = LuaSemanticEmitter.emitProductionModule(seed.unit(),
-            seed.table(), true);
-        Files.writeString(workspace.resolve("main.lua"), chunk,
-            StandardCharsets.UTF_8);
-        BoundedProcess.BoundedResult luaRun = BoundedProcess.runCaptured(
-            List.of("luajit", "main.lua"), workspace, Map.of());
-        checkEq(1, luaRun.exitCode(), what + " (luajit production): the element "
-            + "failure exits 1: " + luaRun.stdout() + luaRun.stderr());
-        checkEq("DEAL_ERROR_CODE: E8003\n", luaRun.stdout(), what
-            + " (luajit production): the terminal publishes the recorded "
-            + "element policy's code line");
-        deal.codegen.jvm.JvmSemanticEmitter.EmissionResult emission =
-            deal.codegen.jvm.JvmSemanticEmitter.emitProductionModule(seed.unit(),
-                seed.table(), true, "ProjectionArrayLiteralDrive");
-        Path sourcePath = workspace.resolve(emission.className() + ".java");
-        Files.writeString(sourcePath, emission.source(), StandardCharsets.UTF_8);
-        Path classes = workspace.resolve("jvm-classes");
-        Files.createDirectories(classes);
-        String classpath = absoluteClasspath();
-        JvmCompilation.Result compile = JvmCompilation.compile(List.of("javac",
-            "--release", "25", "-proc:none", "-cp", classpath, "-d",
-            classes.toString(), sourcePath.toAbsolutePath().toString()), workspace);
-        checkEq(0, compile.exitCode(), what + " (jvm production): the emitted "
-            + "class compiles: " + compile.stdout() + compile.stderr());
-        BoundedProcess.BoundedResult jvmRun = BoundedProcess.runCaptured(
-            List.of("java", "-cp", classes + File.pathSeparator + classpath,
-                emission.className()), workspace, Map.of());
-        checkEq(1, jvmRun.exitCode(), what + " (jvm production): the element "
-            + "failure exits 1: " + jvmRun.stdout() + jvmRun.stderr());
-        checkEq("DEAL_ERROR_CODE: E8003\n", jvmRun.stdout(), what
-            + " (jvm production): the terminal publishes the recorded element "
-            + "policy's code line");
     }
 
     // =========================================================================
