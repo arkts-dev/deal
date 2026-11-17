@@ -430,20 +430,7 @@ public final class ClassOpsExecutor {
         LinkedHashMap<String, Value> checkedValues = new LinkedHashMap<>();
         OpFailure fieldFailure = applyFieldBoundaries(op, payload, layout, boundaries,
             providedValues, providedValueIds, boundaryOps, checkRunner, checkedValues);
-        LinkedHashMap<String, Value> instanceFields = new LinkedHashMap<>();
-        if (fieldFailure != null) {
-            return new Outcome.Failure<Value>(fieldFailure);
-        }
-        instanceFields.putAll(checkedValues);
-
-        List<FieldState> states = new ArrayList<>(layout.fields().size());
-        for (ClassLayout.FieldLayout fieldLayout : layout.fields()) {
-            Value value = instanceFields.get(fieldLayout.name());
-            states.add(value == null ? FieldState.Missing.INSTANCE
-                : new FieldState.Present(value));
-        }
-        return new Outcome.Success<Value>(
-            new Value.Class(payload.classId(), List.copyOf(states)));
+        return constructedClass(payload.classId(), layout, checkedValues, fieldFailure);
     }
 
     // =========================================================================
@@ -603,18 +590,7 @@ public final class ClassOpsExecutor {
             return new Outcome.Failure<Value>(fieldFailure);
         }
 
-        // Only provided values become present; omitted optionals stay absent.
-        List<FieldState> states = new ArrayList<>(layout.fields().size());
-        for (ClassLayout.FieldLayout fieldLayout : layout.fields()) {
-            Value provided = checkedValues.get(fieldLayout.name());
-            if (provided != null) {
-                states.add(new FieldState.Present(provided));
-                continue;
-            }
-            states.add(FieldState.Missing.INSTANCE);
-        }
-        return new Outcome.Success<Value>(
-            new Value.Class(payload.classId(), List.copyOf(states)));
+        return constructedClass(payload.classId(), layout, checkedValues, null);
     }
 
     public static Outcome<Value> executeClassFactory(
@@ -785,20 +761,22 @@ public final class ClassOpsExecutor {
         LinkedHashMap<String, Value> checkedValues = new LinkedHashMap<>();
         OpFailure fieldFailure = applyFieldBoundaries(op, payload, layout, boundaries,
             providedValues, providedValueIds, boundaryOps, checkRunner, checkedValues);
-        LinkedHashMap<String, Value> instanceFields = new LinkedHashMap<>();
+        return constructedClass(payload.classId(), layout, checkedValues, fieldFailure);
+    }
+
+    /** Publish only admitted fields, in declaration order, after all checks pass. */
+    private static Outcome<Value> constructedClass(ClassId classId, ClassLayout layout,
+            Map<String, Value> checkedValues, OpFailure fieldFailure) {
         if (fieldFailure != null) {
             return new Outcome.Failure<Value>(fieldFailure);
         }
-        instanceFields.putAll(checkedValues);
-
         List<FieldState> states = new ArrayList<>(layout.fields().size());
         for (ClassLayout.FieldLayout fieldLayout : layout.fields()) {
-            Value value = instanceFields.get(fieldLayout.name());
+            Value value = checkedValues.get(fieldLayout.name());
             states.add(value == null ? FieldState.Missing.INSTANCE
                 : new FieldState.Present(value));
         }
-        return new Outcome.Success<Value>(
-            new Value.Class(payload.classId(), List.copyOf(states)));
+        return new Outcome.Success<Value>(new Value.Class(classId, List.copyOf(states)));
     }
 
     // =========================================================================
