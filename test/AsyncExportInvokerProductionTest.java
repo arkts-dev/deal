@@ -931,6 +931,18 @@ public class AsyncExportInvokerProductionTest {
     private static void testValueSevenBothTargets() throws Exception {
         System.out.println("-- the pinned value-7 project through both invokers");
         for (String backend : List.of("luajit", "jvm")) {
+            checkNumberCompletion(backend, "catch-after-await", """
+                export function main():void{}
+                export async function run():Promise<number>{
+                  let x:string|null="yes";
+                  let mutate=async function():Promise<void>{x=null;throw {name:"X",message:"x"};};
+                  if(x!==null){
+                    try{await mutate();if(x===null){return 0;}}
+                    catch(e){if(x===null){return 7;}return 0;}
+                  }
+                  return 0;
+                }
+                """, "number", "7");
             checkNumberCompletion(backend, "typed-arrows", """
                 async function done(): Promise<void> {}
                 export function main(): void { return ; }

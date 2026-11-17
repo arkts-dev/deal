@@ -124,6 +124,9 @@ public final class TypeChecker {
     //    flow and the enclosing try region never records them. --
     private Deque<Set<Symbol>> tryAssignments = new ArrayDeque<>();
 
+    // Exceptional entry facts only lose validity; successful guards never update them.
+    private Deque<NullNarrowing> tryEntryFacts = new ArrayDeque<>();
+
     // -- Async/await tracking --
     private boolean insideAsyncFunction = false;
     private CallExpr directAwaitCallee = null;
@@ -260,10 +263,8 @@ public final class TypeChecker {
     }
 
     private void walkStatement(StatementNode stmt) {
-        // Block-local declarations restore outer narrowing when the block exits.
+        // Exiting a block discards only its declarations' identity-owned facts.
         boolean blockScope = stmt instanceof Block;
-        boolean shadowScope = blockScope;
-        if (shadowScope) narrowing.pushShadowFrame();
 
         // Check for scope change
         SymbolTable savedScope = currentScope;
@@ -299,7 +300,9 @@ public final class TypeChecker {
         currentScope = savedScope;
         nameResolver.setCurrentScope(savedScope);
 
-        if (shadowScope) narrowing.popShadowFrame();
+        if (blockScope && stmtScope != null) {
+            for (Symbol binding : stmtScope.symbols().values()) narrowing.invalidate(binding);
+        }
         if (blockScope) pendingScopes.pop();
     }
 
@@ -665,19 +668,6 @@ public final class TypeChecker {
             }
         }
 
-        // A block-local declaration shadows any outer binding of the same
-        // name: the outer binding's narrowing must not apply to the new
-        // symbol. The initializer above still resolved against the
-        // enclosing binding with its current refinement (the new
-        // declaration is not yet visible there), so the entry is cleared
-        // only now. It is remembered so the declaring block's exit
-        // restores it for the enclosing scope.
-        Type outerNarrowed = narrowing.getNarrowedType(vd.name());
-        if (outerNarrowed != null) {
-            narrowing.onAssignment(vd.name());
-            narrowing.recordShadowed(vd.name(), outerNarrowed);
-        }
-
         // A rejected initializer (an error-recovery type) or an
         // un-inferable declaration skips the assignment gate — but the
         // declaration still happened: the name becomes visible to the
@@ -730,14 +720,13 @@ public final class TypeChecker {
 
     /**
      * Declaration bookkeeping: a new binding neither inherits a
-     * same-named binding's narrowing (the shadowing branch above clears
-     * the entry) nor assigns an enclosing binding, so it is never
+     * same-named binding's narrowing nor assigns an enclosing binding, so it is never
      * recorded as a loop-body or try-block assignment — the revert of an
      * open loop or try statement is keyed by the resolved binding, and a
      * declaration is a different binding.
      */
     private void recordDeclaration(String varName) {
-        narrowing.onAssignment(varName);
+        narrowing.onAssignment(currentScope.resolveLocal(varName));
     }
 
     /**
@@ -752,14 +741,10 @@ public final class TypeChecker {
      * the enclosing binding.
      */
     private void recordAssignment(String varName) {
-        narrowing.onAssignment(varName);
-        if (loopAssignments.isEmpty() && tryAssignments.isEmpty()) {
-            return;
-        }
         Symbol binding = resolveVisibleBinding(varName);
-        if (binding == null) {
-            return;
-        }
+        if (binding == null) return;
+        narrowing.onAssignment(binding);
+        for (NullNarrowing entry : tryEntryFacts) entry.invalidate(binding);
         if (!loopAssignments.isEmpty()) {
             loopAssignments.peek().add(binding);
         }
@@ -816,6 +801,8 @@ public final class TypeChecker {
         loopAssignments = new ArrayDeque<>();
         Deque<Set<Symbol>> savedTryAssignments = tryAssignments;
         tryAssignments = new ArrayDeque<>();
+        Deque<NullNarrowing> savedTryEntryFacts = tryEntryFacts;
+        tryEntryFacts = new ArrayDeque<>();
         Deque<NullNarrowing> savedLoopSavedNarrowing = loopSavedNarrowing;
         loopSavedNarrowing = new ArrayDeque<>();
         int savedLoopDepth = loopDepth;
@@ -824,6 +811,7 @@ public final class TypeChecker {
         narrowing = savedNarrowing;
         loopAssignments = savedLoopAssignments;
         tryAssignments = savedTryAssignments;
+        tryEntryFacts = savedTryEntryFacts;
         loopSavedNarrowing = savedLoopSavedNarrowing;
         loopDepth = savedLoopDepth;
 
@@ -946,7 +934,7 @@ public final class TypeChecker {
     }
 
     private void refineCondition(ExpressionNode condition, boolean matching) {
-        narrowing.onIfCondition(condition, matching, this::declaredTypeOf);
+        narrowing.onIfCondition(condition, matching, this::resolveVisibleBinding, this::getDeclaredType);
         while (condition instanceof UnaryExpr unary && unary.op() == UnaryOp.NOT) {
             condition = unary.expr();
             matching = !matching;
@@ -954,7 +942,7 @@ public final class TypeChecker {
         if (matching && condition instanceof InstanceofExpr test
                 && test.value() instanceof IdentifierExpr id) {
             Type.Class target = instanceofTargets.get(test);
-            if (target != null) narrowing.narrow(id.name(), target);
+            if (target != null) narrowing.narrow(resolveVisibleBinding(id.name()), target);
         }
     }
 
@@ -1011,11 +999,11 @@ public final class TypeChecker {
             return mergeFlows(freshGuardFlow(binary.left(), !and, entry.branch()),
                 freshGuardFlow(binary.right(), matching, selected));
         }
-        entry.onIfCondition(condition, matching, this::declaredTypeOf);
+        entry.onIfCondition(condition, matching, this::resolveVisibleBinding, this::getDeclaredType);
         if (matching && condition instanceof InstanceofExpr test
                 && test.value() instanceof IdentifierExpr id) {
             Type.Class target = instanceofTargets.get(test);
-            if (target != null) entry.narrow(id.name(), target);
+            if (target != null) entry.narrow(resolveVisibleBinding(id.name()), target);
         }
         return entry;
     }
@@ -1046,7 +1034,7 @@ public final class TypeChecker {
         }
         for (Symbol binding : assigned) {
             if (resolveVisibleBinding(binding.name()) == binding) {
-                saved.invalidate(binding.name());
+                saved.invalidate(binding);
             }
         }
     }
@@ -1142,38 +1130,21 @@ public final class TypeChecker {
         Set<Symbol> assigned = newBindingAssignmentSet();
         tryAssignments.push(assigned);
         NullNarrowing tryEntry = narrowing.branch();
+        tryEntryFacts.push(tryEntry);
         walkStatement(ts.tryBlock());
+        tryEntryFacts.pop();
         tryAssignments.pop();
         NullNarrowing normalExit = narrowing;
-        // Catch may be entered before a successful guard on the normal path.
-        narrowing = mergeFlows(tryEntry, normalExit);
+        narrowing = tryEntry;
         for (Symbol binding : assigned) {
             if (resolveVisibleBinding(afterCatchScope, binding.name()) == binding)
-                narrowing.invalidate(binding.name());
+                narrowing.invalidate(binding);
         }
 
-        // The catch identifier declares a fresh `Error` binding in the catch
-        // scope (docs/spec-v1.6.md §try / catch: the bound variable has
-        // type Error), so a same-named enclosing binding's refinement is
-        // another binding's flow fact and never types the catch read: an
-        // `int`/`null` refinement must not reject a valid Error read, and a
-        // `string` refinement must not admit an unsound transfer. The
-        // enclosing entry is saved in the catch scope's shadow frame exactly
-        // like a block-local declaration's entry, so the catch scope's exit
-        // restores it — unless the language's own assignment rule removed
-        // it (the entry is saved after the try block, so a try-block
-        // assignment to that binding saves nothing) or an await's
-        // invalidation cleared the frame.
-        narrowing.pushShadowFrame();
-        Type outerRefinement = narrowing.getNarrowedType(ts.catchVar());
-        if (outerRefinement != null) {
-            narrowing.onAssignment(ts.catchVar());
-            narrowing.recordShadowed(ts.catchVar(), outerRefinement);
-        }
-
+        // A catch identifier owns independent facts; it never restores or
+        // replaces a same-spelled enclosing binding's refinement.
         walkStatement(ts.catchBlock());
-
-        narrowing.popShadowFrame();
+        if (catchScope != null) narrowing.invalidate(catchScope.resolveLocal(ts.catchVar()));
         boolean tryStops = ReturnAnalysis.cannotCompleteNormally(ts.tryBlock());
         boolean catchStops = ReturnAnalysis.cannotCompleteNormally(ts.catchBlock());
         if (!tryStops) narrowing = catchStops ? normalExit : mergeFlows(normalExit, narrowing);
@@ -1208,7 +1179,7 @@ public final class TypeChecker {
         }
         for (Symbol binding : assigned) {
             if (resolveVisibleBinding(afterCatchScope, binding.name()) == binding) {
-                narrowing.invalidate(binding.name());
+                narrowing.invalidate(binding);
             }
         }
     }
@@ -1477,6 +1448,7 @@ public final class TypeChecker {
      */
     private void invalidateAllNarrowing() {
         narrowing.invalidateAll();
+        for (NullNarrowing entry : tryEntryFacts) entry.invalidateAll();
         for (NullNarrowing saved : loopSavedNarrowing) {
             saved.invalidateAll();
         }
@@ -1517,7 +1489,7 @@ public final class TypeChecker {
             return Type.Error.INSTANCE;
         }
         Type declaredType = getDeclaredType(sym);
-        Type narrowedType = narrowing.getNarrowedType(id.name());
+        Type narrowedType = narrowing.getNarrowedType(sym);
         if (narrowedType != null && !Types.equals(declaredType, narrowedType)) {
             // The read is a refinement claim (declared T | null, read as
             // T): publish the fact the one lowering consumes at the
@@ -2722,6 +2694,8 @@ public final class TypeChecker {
         loopAssignments = new ArrayDeque<>();
         Deque<Set<Symbol>> savedTryAssignments = tryAssignments;
         tryAssignments = new ArrayDeque<>();
+        Deque<NullNarrowing> savedTryEntryFacts = tryEntryFacts;
+        tryEntryFacts = new ArrayDeque<>();
         Deque<NullNarrowing> savedLoopSavedNarrowing = loopSavedNarrowing;
         loopSavedNarrowing = new ArrayDeque<>();
         int savedLoopDepth = loopDepth;
@@ -2744,6 +2718,7 @@ public final class TypeChecker {
         narrowing = savedNarrowing;
         loopAssignments = savedLoopAssignments;
         tryAssignments = savedTryAssignments;
+        tryEntryFacts = savedTryEntryFacts;
         loopSavedNarrowing = savedLoopSavedNarrowing;
         loopDepth = savedLoopDepth;
 

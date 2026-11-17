@@ -148,8 +148,19 @@ public final class NullishCoalescingTest {
                 unit.loweringContextHash(),unit.requiredCapabilities(),unit.constructCoverage(),unit.classLayouts(),unit.functions(),
                 unit.moduleInit(),unit.exportPlan(),unit.functionBindings(),ops,body,unit.classFactories(),unit.classBindingFacts());
             var typed=SemanticIrValidator.validate(malformed,facts);
-            var raw=SemanticIrValidator.validate(RawUnitMaterializer.materialize(RawUnit.fromTyped(malformed)),facts);
             var text=SemanticIrValidator.validateText(SemanticIrValidator.toUnitText(malformed),facts);
+            if (defect.equals("void")) {
+                if (typed.isEmpty() || !typed.equals(text) || !typed.get().message().contains("R-ENUM"))
+                    throw new AssertionError("void operand positional rejection: " + typed + " / " + text);
+                try {
+                    RawUnitMaterializer.materialize(RawUnit.fromTyped(malformed));
+                    throw new AssertionError("void data operand materialized");
+                } catch (RawUnitMaterializer.Defect expected) {
+                    if (!expected.getMessage().contains("void outside a function result")) throw expected;
+                }
+                continue;
+            }
+            var raw=SemanticIrValidator.validate(RawUnitMaterializer.materialize(RawUnit.fromTyped(malformed)),facts);
             if(typed.isEmpty() || !typed.equals(raw) || !typed.equals(text))
                 throw new AssertionError(defect+": "+typed+" / "+raw+" / "+text);
         }

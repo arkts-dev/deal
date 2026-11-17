@@ -750,7 +750,7 @@ local CANONICAL_PRIMITIVES = {
 -- This is THE descriptor parser: the boundary path (check_type) and the
 -- wrapper/loader paths (from_lua_function, load_host) all parse through
 -- it, so the canonical grammar is the only accepted dialect.
-local function parse_descriptor(text)
+local function parse_descriptor(text, result_position)
   if type(text) ~= "string" then
     return nil
   end
@@ -862,7 +862,7 @@ local function parse_descriptor(text)
       return nil  -- the exact "->" arrow
     end
     pos = pos + 2  -- consume "->"
-    local ret = parse_descriptor()
+    local ret = parse_descriptor(true)
     if ret == nil then
       return nil
     end
@@ -920,7 +920,7 @@ local function parse_descriptor(text)
     end
   end
 
-  parse_descriptor = function()
+  parse_descriptor = function(allow_void)
     if pos > n then
       return nil
     end
@@ -976,6 +976,7 @@ local function parse_descriptor(text)
     for i = 1, #CANONICAL_PRIMITIVES do
       local kw = CANONICAL_PRIMITIVES[i]
       if string.sub(text, pos, pos + #kw - 1) == kw then
+        if kw == "void" and not allow_void then return nil end
         pos = pos + #kw
         return { kind = "primitive", name = kw, text = kw }
       end
@@ -1003,7 +1004,7 @@ local function parse_descriptor(text)
     return nil
   end
 
-  local ast = parse_descriptor()
+  local ast = parse_descriptor(result_position)
   if ast == nil then
     return nil
   end
@@ -1191,7 +1192,7 @@ end
 -- text the canonical grammar rejects — including every legacy dialect
 -- spelling ("T[]", "T|null", bare class names, "...T[]").
 function __rt.parse_canonical_descriptor(text)
-  return parse_descriptor(text)
+  return parse_descriptor(text, true)
 end
 
 --- The canonical type checker — the one runtime boundary matcher
@@ -1219,7 +1220,7 @@ function __rt.check_type(descriptor, v, file, line, column)
   if descriptor == nil then
     error(__rt._err("E8001", "internal: nil type descriptor", file, line, column, nil, nil))
   end
-  local parsed = parse_descriptor(descriptor)
+  local parsed = parse_descriptor(descriptor, true)
   if parsed == nil then
     error(__rt._err("E8001", "internal: cannot parse type descriptor: " .. tostring(descriptor), file, line, column, nil, nil))
   end
@@ -1770,7 +1771,7 @@ function __rt.invoke_async_export(exports, exportName, returnDescriptor)
         "exportName must be a string, got " .. type(exportName)))
   end
   if type(returnDescriptor) ~= "string"
-      or parse_descriptor(returnDescriptor) == nil then
+      or parse_descriptor(returnDescriptor, true) == nil then
     error(__rt._host_invocation_failure(
         "return descriptor is not a canonical descriptor: "
         .. tostring(returnDescriptor)))

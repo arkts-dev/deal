@@ -236,7 +236,7 @@ function $rawShapeKind($v) {
 // component scalar in the Java parser and the identity index.
 const $CANONICAL_WS = /[\t\n\v\f\r \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]/u;
 
-function $parse($descriptor) {
+function $parse($descriptor, $resultPosition = false) {
   if ($descriptor === $undefined || $descriptor === null || typeof $descriptor !== "string") {
     return null;
   }
@@ -250,7 +250,7 @@ function $parse($descriptor) {
     $i += $cp > 0xFFFF ? 2 : 1;
   }
   const $st = { $pos: 0 };
-  const $node = $parseOne($descriptor, $cps, $st);
+  const $node = $parseOne($descriptor, $cps, $st, $resultPosition);
   if ($node === null || $st.$pos !== $cps.length) {
     // Complete-input consumption is mandatory: any failure or any
     // trailing content (the legacy T[]/T|null spellings included) is
@@ -273,7 +273,7 @@ function $slice($d, $cps, $startScalar, $endScalar) {
 
 // One descriptor at the current scalar position; null on any failure.
 // No partial AST is ever produced.
-function $parseOne($d, $cps, $st) {
+function $parseOne($d, $cps, $st, $resultPosition = false) {
   if ($st.$pos >= $cps.length) return null;
   const $cp = $cps[$st.$pos].$cp;
   if ($cp === 0x5B) { // '['
@@ -297,6 +297,7 @@ function $parseOne($d, $cps, $st) {
   for (let $k = 0; $k < $keywords.length; $k++) {
     if ($matchKeyword($cps, $st.$pos, $keywords[$k])) {
       const $name = $keywords[$k];
+      if ($name === "void" && !$resultPosition) return null;
       $st.$pos += $name.length;
       return { $t: "primitive", $name: $name };
     }
@@ -384,7 +385,7 @@ function $parseFunction($d, $cps, $st, $isAsync) {
   if ($st.$pos + 1 >= $cps.length || $cps[$st.$pos + 1].$cp !== 0x3E) return null;
   $st.$pos += 2; // consume '->'
   const $retStart = $st.$pos;
-  const $ret = $parseOne($d, $cps, $st);
+  const $ret = $parseOne($d, $cps, $st, true);
   if ($ret === null) return null;
   // Async functions report $ret "null" so the declared return type R is
   // enforced at the await site, not by the wrapper
@@ -2135,7 +2136,7 @@ const $rt = {
           continue;
         }
         if (value === $MISSING) value = $undefined;
-        let parsed = $parse(current), acceptedNullish = false;
+        let parsed = $parse(current, true), acceptedNullish = false;
         while (parsed && parsed.$t === "nullable") {
           if (parsed.$null && (value === null || $jsonNullTables.has(value))
               || parsed.$undefined && value === $undefined) { acceptedNullish = true; break; }
@@ -2204,7 +2205,7 @@ const $rt = {
     if (descriptor === null) {
       $rt.fail("E8001", "internal: nil type descriptor", file, line, column);
     }
-    const $parsed = $parse(descriptor);
+    const $parsed = $parse(descriptor, true);
     if ($parsed === null) {
       $rt.fail("E8001", "internal: cannot parse type descriptor: " + String(descriptor), file, line, column);
     }

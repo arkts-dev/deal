@@ -3018,7 +3018,50 @@ public class SemanticIrValidatorTest {
     // Main
     // =========================================================================
 
+    private static void testDescriptorPositions() {
+        LoweredModuleUnit base = unit(List.of());
+        ClassId id = new ClassId("mod.a", "DescriptorPositions");
+        for (RuntimeDescriptor descriptor : List.of(INT, RuntimeDescriptor.Void.INSTANCE,
+                new RuntimeDescriptor.Array(new RuntimeDescriptor.Func(List.of(), RuntimeDescriptor.Void.INSTANCE)))) {
+            var layout = new ClassLayout(id, List.of(new ClassLayout.FieldLayout("value", descriptor, true, ConstructionProvider.LOCAL)));
+            var fixture = new LoweredModuleUnit(base.formatVersion(), base.semanticProfile(), base.moduleId(),
+                base.interfaceHash(), base.loweringContextHash(), base.requiredCapabilities(), base.constructCoverage(),
+                Map.of(id, layout), base.functions(), base.moduleInit(), base.exportPlan(), base.functionBindings(),
+                base.ops(), base.bodyTable(), base.classFactories(), base.classBindingFacts());
+            String text = SemanticIrValidator.toUnitText(fixture);
+            if (descriptor instanceof RuntimeDescriptor.Void) {
+                assertE6005(SemanticIrValidator.validate(fixture, FACTS), "R-ENUM", "void");
+                assertE6005(SemanticIrValidator.validateText(text, FACTS), "R-ENUM", "void");
+                try { deal.semantic.ir.RawUnitMaterializer.materialize(RawUnit.fromTyped(fixture)); fail("void field materialized"); }
+                catch (deal.semantic.ir.RawUnitMaterializer.Defect expected) { check(true, "void data materialization rejected"); }
+            } else {
+                assertUnitPass(fixture, FACTS, "legal field " + descriptor.canonicalSpecText());
+                checkEq(fixture, deal.semantic.ir.RawUnitMaterializer.materialize(RawUnit.fromTyped(fixture)), "legal field materialization");
+                for (String illegal : List.of("[void]", "(void)->number", "()->[void]")) {
+                    if (descriptor != INT) continue;
+                    String malformed = text.replace("\"descriptor\":\"number\"", "\"descriptor\":\"" + illegal + "\"");
+                    check(!malformed.equals(text), "field mutation reached");
+                    assertE6005(SemanticIrValidator.validateText(malformed, FACTS), "R-ENUM", illegal);
+                    try { deal.semantic.ir.RawUnitMaterializer.materialize(ContractSnapshotCanonicalizer.parseUnit(parseObj(malformed))); fail("illegal compound materialized " + illegal); }
+                    catch (deal.semantic.ir.RawUnitMaterializer.Defect | SemanticIrTextDecodeException expected) { check(true, "illegal compound data rejected"); }
+                }
+            }
+        }
+        LoweredModuleUnit completion = unit(List.of(boundary(BoundaryKind.FUNCTION_RETURN,
+            RuntimeDescriptor.Void.INSTANCE, FailurePolicyId.TYPE_DESCRIPTOR, null)));
+        // This isolated return has no invocation owner: positional admission succeeds,
+        // then the independent invocation-shape rule must still reject it.
+        assertE6005(SemanticIrValidator.validate(completion, FACTS), "R-BOUNDARY-TRIPLE", "outside any invocation");
+        assertE6005(SemanticIrValidator.validateText(SemanticIrValidator.toUnitText(completion), FACTS), "R-BOUNDARY-TRIPLE", "outside any invocation");
+        checkEq(completion, deal.semantic.ir.RawUnitMaterializer.materialize(RawUnit.fromTyped(completion)), "void return materialization");
+        LoweredModuleUnit storage = unit(List.of(boundary(BoundaryKind.VARIABLE_DECLARATION,
+            RuntimeDescriptor.Void.INSTANCE, FailurePolicyId.TYPE_DESCRIPTOR, null)));
+        assertE6005(SemanticIrValidator.validate(storage, FACTS), "R-ENUM", "void");
+        assertE6005(SemanticIrValidator.validateText(SemanticIrValidator.toUnitText(storage), FACTS), "R-ENUM", "void");
+    }
+
     public static void main(String[] args) {
+        testDescriptorPositions();
         System.out.println("=== Semantic IR Validator Test (ISSUE-0286) ===\n");
 
         testExceptionalAdmissions();

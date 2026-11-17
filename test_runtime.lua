@@ -48,6 +48,35 @@ local function assert_no_error(fn)
   end
 end
 
+test("descriptor void legality follows recursive positions and callable ingress", function()
+  local contexts = {"%s", "[%s]", "?%s", "!%s", "?!%s", "(%s)->number",
+    "async(%s)->void", "(string,%s)->void", "()->%s", "async()->%s"}
+  for _, context in ipairs(contexts) do
+    for _, bad in ipairs({"[void]", "(void)->void"}) do
+      local descriptor = string.format(context, bad)
+      assert(__rt.parse_canonical_descriptor(descriptor) == nil, descriptor)
+      assert_error(function() __rt.check_type(descriptor, {}) end, "E8001")
+    end
+    for _, good in ipairs({"[()->void]", "(()->void)->void"}) do
+      local descriptor = string.format(context, good)
+      assert(__rt.parse_canonical_descriptor(descriptor) ~= nil, descriptor)
+    end
+  end
+  assert(__rt.parse_canonical_descriptor("void") ~= nil)
+  __rt.check_type("void", __rt.__UNDEFINED)
+  for _, sig in ipairs({"(void)->number", "([void])->number", "()->[void]"}) do
+    local wrapper = __rt.function_(sig, function() return 1 end)
+    assert_error(function() __rt.check_type("unknown", wrapper) end, "E8001")
+  end
+  for _, sig in ipairs({"()->void", "async()->void", "([()->void])->void", "()->[()->void]"}) do
+    local wrapper = __rt.function_(sig, function() end)
+    assert(__rt.check_type("unknown", wrapper) == wrapper)
+    assert(__rt.check_type(sig, wrapper) == wrapper)
+  end
+  local values = {__rt.function_("()->void", function() end)}
+  assert(__rt.check_type("[()->void]", values) == values)
+end)
+
 -- ==================== Sentinel tests ====================
 
 test("__NULL is a table", function()

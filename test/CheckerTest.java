@@ -5671,6 +5671,7 @@ public class CheckerTest {
         System.out.println("-- NullNarrowing.invalidateAll() clears all entries --");
         deal.checker.NullNarrowing nn = new deal.checker.NullNarrowing();
 
+        var binding = new Symbol.VariableSymbol("x", deal.types.Types.nullable(Type.Number.INSTANCE), false);
         // Simulate some narrowing
         nn.onIfCondition(
             new BinaryExpr(
@@ -5681,22 +5682,17 @@ public class CheckerTest {
                     new LiteralValue.NullLiteral())
             ),
             true,
-            name -> {
-                if ("x".equals(name))
-                    return deal.types.Types.nullable(Type.Number.INSTANCE);
-                return Type.Error.INSTANCE;
-            }
+            name -> name.equals("x") ? binding : null,
+            symbol -> ((Symbol.VariableSymbol) symbol).type()
         );
-        check(nn.getNarrowedType("x") == Type.Number.INSTANCE,
+        check(nn.getNarrowedType(binding) == Type.Number.INSTANCE,
             "x should be narrowed to number (non-null)");
-        check(!nn.narrowedVariableNames().isEmpty(),
-            "narrowedVariableNames should be non-empty before invalidate");
+        check(!nn.isEmpty(), "facts should be non-empty before invalidate");
 
         nn.invalidateAll();
-        check(nn.getNarrowedType("x") == null,
+        check(nn.getNarrowedType(binding) == null,
             "x narrowing should be null after invalidateAll");
-        check(nn.narrowedVariableNames().isEmpty(),
-            "narrowedVariableNames should be empty after invalidateAll");
+        check(nn.isEmpty(), "facts should be empty after invalidateAll");
     }
 
     /**

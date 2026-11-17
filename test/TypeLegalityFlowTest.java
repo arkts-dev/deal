@@ -12,7 +12,7 @@ import java.util.*;
 
 /** Independent source contracts for legal data types and compositional flow. */
 public final class TypeLegalityFlowTest {
-    private static void check(String source, String code) {
+    static void check(String source, String code) {
         var lex = new Lexer(source, "flow.deal").tokenize();
         var parse = new Parser(lex.tokens(), "flow.deal").parse();
         var errors = new ArrayList<>(lex.diagnostics());
@@ -50,7 +50,39 @@ public final class TypeLegalityFlowTest {
         try { action.run(); } catch (IllegalArgumentException expected) { return; }
         throw new AssertionError("illegal data type constructed");
     }
+    private static void bindingOwnership() {
+        for (String inner : List.of(
+                "{let x:string|null=\"s\";if(x===null){return \"\";}}",
+                "{{let x:string|null=\"s\";if(x===null){return \"\";}}}",
+                "try{let x:string|null=\"s\";if(x===null){return \"\";}}catch(e){}",
+                "try{}catch(e){let x:string|null=\"s\";if(x===null){return \"\";}}")) {
+            check("function f(x:string|null):string{" + inner + "return x;}", "E5003");
+            check("function f(x:number):number{" + inner.replace("return \"\"", "return 0") + "return x;}", null);
+        }
+        check("function f(x:unknown):string{{let x:unknown=\"s\";if(typeof x!==\"string\"){return \"\";}}return x;}", "E5003");
+        check("function f(x:string|undefined):string{{let x:string|undefined=\"s\";if(x===undefined){return \"\";}}return x;}", "E5003");
+        check("class C{n:number;}function f(x:unknown):C{{let x:unknown=null;if(!(x instanceof C)){throw {name:\"X\",message:\"x\"};}}return x;}", "E5003");
+        check("function f(x:unknown):Error{try{throw {name:\"X\",message:\"x\"};}catch(x){if(!(x instanceof Error)){throw {name:\"X\",message:\"x\"};}}return x;}", "E5003");
+        check("function f(x:string|null):string{if(x!==null){{let x:string|null=null;if(x!==null){return \"\";}}return x;}return \"\";}", null);
+        check("async function tick():Promise<void>{}async function f(x:string|null):Promise<string>{if(x!==null){{let x:string|null=\"s\";await tick();if(x===null){return \"\";}}return x;}return \"\";}", "E5003");
+        // Symbol records may be value-equal; refinement ownership still uses identity.
+        var first = new Symbol.VariableSymbol("x", Type.Unknown.INSTANCE, false);
+        var second = new Symbol.VariableSymbol("x", Type.Unknown.INSTANCE, false);
+        var facts = new NullNarrowing();
+        facts.narrow(first, Type.String.INSTANCE);
+        facts.narrow(second, Type.Number.INSTANCE);
+        if (facts.getNarrowedType(first) != Type.String.INSTANCE) throw new AssertionError("identity ownership");
+        facts.onAssignment(second);
+        if (facts.getNarrowedType(first) != Type.String.INSTANCE || facts.getNarrowedType(second) != null)
+            throw new AssertionError("identity invalidation");
+        var sibling = new NullNarrowing();
+        sibling.narrow(second, Type.String.INSTANCE);
+        facts.merge(sibling);
+        if (!facts.isEmpty()) throw new AssertionError("identity join");
+    }
+
     public static void main(String[] args) throws Exception {
+        bindingOwnership();
         for (String expression : List.of("x!==null && x>0", "x===null || x>0", "!(x===null) && x>0"))
             check("function f(x:number|null):boolean{return " + expression + ";}", null);
         for (String condition : List.of("x!==null && x!==undefined", "!(x===null || x===undefined)"))
@@ -123,7 +155,10 @@ public final class TypeLegalityFlowTest {
             String source = "function positive(x:number|null):boolean{return x!==null && x>0;}"
                 + "function text(x:string|null|undefined):string{if(x===null || x===undefined){return \"empty\";}return x;}"
                 + "class C{n:number;}function value(x:unknown):number{if(x instanceof C && x.n>0){return x.n;}return 0;}"
+                + "function shadow(x:number):number{{let x:string|null=\"s\";if(x===null){return 0;}}return x;}"
+                + "function restored(x:string|null):string{if(x!==null){{let x:string|null=null;if(x!==null){return \"bad\";}}return x;}return \"empty\";}"
                 + "export function main():void{"
+                + "if(shadow(7)!==7||restored(\"yes\")!==\"yes\"||restored(null)!==\"empty\"){throw {name:\"FAIL\",message:\"binding ownership\"};}"
                 + "if(!positive(2)||positive(null)||positive(-1)||text(null)!==\"empty\"||text(undefined)!==\"empty\"||text(\"yes\")!==\"yes\"){throw {name:\"FAIL\",message:\"flow\"};}"
                 + "let c:C={n:7};if(value(c)!==7||value(null)!==0){throw {name:\"FAIL\",message:\"nominal\"};}"
                 + "let calls=0;let fs:(()=>void)[]=[():void=>{calls=calls+1;}];fs[0]();"

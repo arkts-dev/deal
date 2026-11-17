@@ -37,6 +37,25 @@ function rejects(text, target, code = "E8001", needle) {
   equal(prior.n, 7, "failed assignment preserves fields");
   return caught;
 }
+test("descriptor void legality follows recursive positions and callable ingress", () => {
+  const contexts = [x=>x, x=>`[${x}]`, x=>`?${x}`, x=>`!${x}`, x=>`?!${x}`,
+    x=>`(${x})->number`, x=>`async(${x})->void`, x=>`(string,${x})->void`, x=>`()->${x}`, x=>`async()->${x}`];
+  for (const context of contexts) for (const bad of ["[void]", "(void)->void"])
+    error(() => rt.checkType(context(bad), [], ...LOC), "E8001");
+  for (const sig of ["(void)->number", "([void])->number", "()->[void]"]) {
+    const wrapper = {$kind:"function", $sig:sig, $f:()=>1};
+    error(() => rt.checkType("unknown", wrapper, ...LOC), "E8001");
+  }
+  equal(rt.checkType("void", undefined, ...LOC), undefined, "void completion");
+  for (const sig of ["()->void", "async()->void", "([()->void])->void", "()->[()->void]"]) {
+    const wrapper = {$kind:"function", $sig:sig, $f:()=>undefined};
+    equal(rt.checkType("unknown", wrapper, ...LOC), wrapper, "legal callable " + sig);
+    equal(rt.checkType(sig, wrapper, ...LOC), wrapper, "legal signature " + sig);
+  }
+  const values = [{$kind:"function", $sig:"()->void", $f:()=>undefined}];
+  equal(rt.checkType("[()->void]", values, ...LOC), values, "void-result function array");
+});
+
 const user = () => schema("@m/User", [field("name", "string"), field("age", "number")]);
 
 test("contextual parsing tags a fresh exact nominal instance", () => {

@@ -33,6 +33,7 @@ public class CanonicalRuntimeTypeDescriptorTest {
     public static void main(String[] args) {
         System.out.println("=== Running Canonical Runtime Type Descriptor Tests (ISSUE-0310/0311/0314) ===");
 
+        testPositionalVoid();
         testRetiredBuiltinDescriptor();
         testPrimitiveRoundTrips();
         testValidShapeCorpus();
@@ -66,6 +67,45 @@ public class CanonicalRuntimeTypeDescriptorTest {
         System.out.println("Passed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
             System.exit(1);
+        }
+    }
+
+    private static void testPositionalVoid() {
+        List<String> contexts = List.of("%s", "[%s]", "?%s", "!%s", "?!%s",
+            "(%s)->number", "async(%s)->void", "(string,%s)->void", "()->%s", "async()->%s");
+        for (String context : contexts) {
+            for (String illegal : List.of("[void]", "(void)->void")) {
+                String text = context.formatted(illegal);
+                check(CanonicalRuntimeTypeDescriptor.parseResult(text) instanceof DescriptorSyntaxError,
+                    "canonical rejects positional void " + text);
+                try {
+                    RuntimeDescriptor.parseResultText(text);
+                    fail("IR positional void", text);
+                } catch (SemanticIrTextDecodeException expected) {
+                    check(true, "IR rejects " + text);
+                }
+            }
+            for (String legal : List.of("[()->void]", "(()->void)->void")) {
+                String text = context.formatted(legal);
+                check(CanonicalRuntimeTypeDescriptor.parse(text) instanceof DescriptorAst, "legal canonical " + text);
+                check(RuntimeDescriptor.parseCanonicalText(text).canonicalSpecText().equals(text), "legal IR " + text);
+            }
+        }
+        check(RuntimeDescriptor.parseResultText("void") == RuntimeDescriptor.Void.INSTANCE, "IR void completion");
+        for (Runnable illegal : List.<Runnable>of(
+                () -> RuntimeDescriptor.parseCanonicalText("void"),
+                () -> new RuntimeDescriptor.Array(RuntimeDescriptor.Void.INSTANCE),
+                () -> new RuntimeDescriptor.Func(List.of(RuntimeDescriptor.Void.INSTANCE), RuntimeDescriptor.Number.INSTANCE))) {
+            try { illegal.run(); fail("IR construction", "illegal data admitted"); }
+            catch (IllegalArgumentException | SemanticIrTextDecodeException expected) { check(true, "IR data guard"); }
+        }
+        var runtime = new deal.codegen.jvm.JvmRuntime.FunctionValue(ignored -> null, "()->void");
+        check(deal.codegen.jvm.JvmRuntime.validateData(runtime, false) == runtime, "JVM legal callable ingress");
+        for (String text : List.of("(void)->number", "([void])->number", "()->[void]")) {
+            var malformed = new deal.codegen.jvm.JvmRuntime.FunctionValue(ignored -> 1, text);
+            check(!deal.codegen.jvm.JvmRuntime.validFunction(malformed), "JVM malformed signature " + text);
+            try { deal.codegen.jvm.JvmRuntime.validateData(malformed, false); fail("JVM ingress", text); }
+            catch (deal.codegen.jvm.JvmRuntime.DealError expected) { check(true, "JVM ingress rejected " + text); }
         }
     }
 

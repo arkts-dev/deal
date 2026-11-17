@@ -210,7 +210,7 @@ public final class FailureProjections {
      *
      */
     public static BoundaryFailure kindFailure(String descriptorText, String actualToken) {
-        RuntimeDescriptor descriptor = RuntimeDescriptor.parseCanonicalText(descriptorText);
+        RuntimeDescriptor descriptor = RuntimeDescriptor.parseResultText(descriptorText);
         return FailureContractRegistry.render(FailureArmId.TYPED_BOUNDARY_KIND,
             Map.of("kind", kindText(descriptor)), kindToken(descriptor), actualToken, null);
     }

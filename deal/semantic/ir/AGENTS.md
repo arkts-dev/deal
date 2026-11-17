@@ -4,6 +4,8 @@ Define backend-neutral execution. Exclude AST/checker objects; preserve determin
 
 ## Admission
 
+Descriptor legality is positional at parsing, compound construction and admission/materialization: void is result/completion-only, never a field, array element or function parameter. Functions returning void remain legal data, including array elements. Distinguish data and result parser entry points and preserve legal void boundary/completion checks.
+
 Typed/text surfaces share complete raw facts and composed admission. Validate registry identity, body membership, module/init/export links, captures, binding registrations and construction with identical first failures. RawUnitMaterializer inverts fromTyped without authority; undecodable recognized positions reject.
 
 Standalone units reject unavailable project-provider links. Project admission validates framing, module keys, profiles, index coverage, provider classification, implementation closure and dependency order. Run each production owner once over owned companions in established order. Resolve class factories/fields/JSON through recorded exact providers; ambiguous shared identities fail closed, never select siblings.

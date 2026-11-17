@@ -1024,7 +1024,7 @@ declared.add(arm(FailureArmId.ARRAY_ELEMENT_KIND,
      */
     private static boolean isDescriptorSpelling(String value) {
         try {
-            RuntimeDescriptor.parseCanonicalText(value);
+            RuntimeDescriptor.parseResultText(value);
             return true;
         } catch (RuntimeException decodeFailure) {
             return isDialectDescriptorText(value);
@@ -1248,7 +1248,7 @@ declared.add(arm(FailureArmId.ARRAY_ELEMENT_KIND,
         String kindText;
         try {
             kindText = FailureProjections.kindText(
-                RuntimeDescriptor.parseCanonicalText(descriptorText));
+                RuntimeDescriptor.parseResultText(descriptorText));
         } catch (RuntimeException canonicalDecodeFailure) {
             if (!isDialectDescriptorText(descriptorText)
                     && !KIND_ONLY_SPELLINGS.contains(descriptorText)) {

@@ -380,7 +380,7 @@ public final class RawUnitMaterializer {
                 return internal;
             }
         }
-        return descriptor(text, where);
+        return RuntimeDescriptor.parseResultText(text);
     }
 
     // =========================================================================
@@ -443,7 +443,7 @@ public final class RawUnitMaterializer {
                 optionalString(p, "key"), optionalValueId(p, "dynamicKey", where));
             case BOUNDARY -> new KindPayload.BoundaryPayload(
                 enumAt(p, "kind", BoundaryKind.class, where),
-                descriptorAt(p, "descriptor", where), valueIdAt(p, "input", where),
+                boundaryDescriptor(p, where), valueIdAt(p, "input", where),
                 realization(p, "realization", where));
             case BINDING_ALLOC -> new KindPayload.BindingAllocPayload(
                 bindingIdAt(p, "binding", where),
@@ -928,15 +928,24 @@ public final class RawUnitMaterializer {
         return ContractSnapshotCanonicalizer.parseToken(objectAt(payload, key, where));
     }
 
+    private static RuntimeDescriptor boundaryDescriptor(CanonicalJson.Obj payload, String where) {
+        String text = stringAt(payload, "descriptor", where);
+        return RuntimeDescriptor.permitsVoid(enumAt(payload, "kind", BoundaryKind.class, where))
+            ? RuntimeDescriptor.parseResultText(text) : descriptor(text, where);
+    }
+
     private static RuntimeDescriptor descriptorAt(CanonicalJson.Obj payload, String key,
                                                   String where) {
-        return descriptor(stringAt(payload, key, where), where + " " + key);
+        String text = stringAt(payload, key, where);
+        return key.equals("completionDescriptor") ? RuntimeDescriptor.parseResultText(text)
+            : descriptor(text, where + " " + key);
     }
 
     private static RuntimeDescriptor optionalDescriptor(CanonicalJson.Obj payload, String key,
                                                         String where) {
         String text = optionalString(payload, key);
-        return text == null ? null : descriptor(text, where + " " + key);
+        return text == null ? null : key.equals("completionDescriptor")
+            ? RuntimeDescriptor.parseResultText(text) : descriptor(text, where + " " + key);
     }
 
     private static RuntimeDescriptor.Func funcSignatureAt(CanonicalJson.Obj payload, String key,

@@ -1644,7 +1644,7 @@ public final class SemanticIrValidator {
                         origin(R_ENUM, "open value \"" + field.constructionProvider()
                             + "\" in a closed ConstructionProvider position"));
                 }
-                if (parseDescriptorQuiet(field.descriptor()) == null) {
+                if (parseDataDescriptorQuiet(field.descriptor()) == null) {
                     return fail(unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
                         origin(R_ENUM, "open value \"" + field.descriptor()
                             + "\" in a closed descriptor position"));
@@ -1652,14 +1652,14 @@ public final class SemanticIrValidator {
             }
         }
         for (RawUnit.RawFunction function : unit.functions()) {
-            if (parseDescriptorQuiet(function.descriptor()) == null) {
+            if (parseDataDescriptorQuiet(function.descriptor()) == null) {
                 return fail(unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
                     origin(R_ENUM, "open value \"" + function.descriptor()
                         + "\" in a closed descriptor position"));
             }
         }
         for (RawUnit.RawExportEntry entry : unit.exportPlan()) {
-            if (parseDescriptorQuiet(entry.descriptor()) == null) {
+            if (parseDataDescriptorQuiet(entry.descriptor()) == null) {
                 return fail(unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
                     origin(R_ENUM, "open value \"" + entry.descriptor()
                         + "\" in a closed descriptor position"));
@@ -1711,7 +1711,7 @@ public final class SemanticIrValidator {
                 origin(R_ENUM, "open value \"" + binding.executionOwner()
                     + "\" in a closed ExternalExecutionOwner position"));
         }
-        if (binding.descriptor() != null && parseDescriptorQuiet(binding.descriptor()) == null) {
+        if (binding.descriptor() != null && parseDataDescriptorQuiet(binding.descriptor()) == null) {
             return fail(unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
                 origin(R_ENUM, "open value \"" + binding.descriptor()
                     + "\" in a closed descriptor position"));
@@ -1782,7 +1782,7 @@ public final class SemanticIrValidator {
         }
         // Operand descriptor texts.
         for (String operandType : op.operandTypes()) {
-            if (parseDescriptorQuiet(operandType) == null) {
+            if (parseDataDescriptorQuiet(operandType) == null) {
                 return fail(op, unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
                     origin(R_ENUM, "open value \"" + operandType
                         + "\" in a closed descriptor position"));
@@ -2427,7 +2427,11 @@ public final class SemanticIrValidator {
     private static Optional<CompilerDiagnostic> checkSlotDescriptor(RawOp op, RawUnit unit,
                                                                     ComparisonFacts facts,
                                                                     String position, String raw) {
-        if (raw != null && parseDescriptorQuiet(raw) == null) {
+        BoundaryKind boundaryKind = enumByName(BoundaryKind.class, optionalString(op.payload(), "kind"));
+        boolean resultPosition = position.equals("completionDescriptor")
+            || (position.equals("descriptor") && op.kind().equals("BOUNDARY")
+                && boundaryKind != null && RuntimeDescriptor.permitsVoid(boundaryKind));
+        if (raw != null && (resultPosition ? parseDescriptorQuiet(raw) : parseDataDescriptorQuiet(raw)) == null) {
             return fail(op, unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
                 origin(R_ENUM, "open value \"" + raw + "\" in a closed " + position
                     + " position"));
@@ -4901,12 +4905,18 @@ public final class SemanticIrValidator {
         }
     }
 
+    private static RuntimeDescriptor parseDataDescriptorQuiet(String text) {
+        if (text == null) return null;
+        try { return RuntimeDescriptor.parseCanonicalText(text); }
+        catch (SemanticIrTextDecodeException e) { return null; }
+    }
+
     private static RuntimeDescriptor parseDescriptorQuiet(String text) {
         if (text == null) {
             return null;
         }
         try {
-            return RuntimeDescriptor.parseCanonicalText(text);
+            return RuntimeDescriptor.parseResultText(text);
         } catch (SemanticIrTextDecodeException e) {
             return null;
         }

@@ -35,9 +35,18 @@ public sealed interface RuntimeDescriptor extends OpResultType
      *
      */
     static RuntimeDescriptor parseCanonicalText(java.lang.String text) {
+        return parseComplete(text, false);
+    }
+
+    /** Parses a function result; only this outer position additionally permits void. */
+    static RuntimeDescriptor parseResultText(java.lang.String text) {
+        return parseComplete(text, true);
+    }
+
+    private static RuntimeDescriptor parseComplete(java.lang.String text, boolean resultPosition) {
         Objects.requireNonNull(text, "text must not be null");
         int[] pos = {0};
-        RuntimeDescriptor descriptor = parseAt(text, pos, false);
+        RuntimeDescriptor descriptor = parseAt(text, pos, resultPosition);
         if (pos[0] != text.length()) {
             throw new SemanticIrTextDecodeException(
                 "not a canonical descriptor text (trailing content at offset " + pos[0]
@@ -47,7 +56,7 @@ public sealed interface RuntimeDescriptor extends OpResultType
     }
 
     /** Recursive-descent decoder over the canonical descriptor grammar. */
-    private static RuntimeDescriptor parseAt(java.lang.String text, int[] pos, boolean inNulled) {
+    private static RuntimeDescriptor parseAt(java.lang.String text, int[] pos, boolean resultPosition) {
         if (pos[0] >= text.length()) {
             throw new SemanticIrTextDecodeException(
                 "not a canonical descriptor text (unexpected end): \"" + text + "\"");
@@ -71,7 +80,7 @@ public sealed interface RuntimeDescriptor extends OpResultType
                 admitsUndefined = true;
                 pos[0]++;
             }
-            RuntimeDescriptor inner = parseAt(text, pos, true);
+            RuntimeDescriptor inner = parseAt(text, pos, false);
             try {
                 return new Nullable(inner, admitsNull, admitsUndefined);
             } catch (IllegalArgumentException e) {
@@ -140,6 +149,9 @@ public sealed interface RuntimeDescriptor extends OpResultType
                 int end = pos[0] + fixed[i].length();
                 if (end == text.length() || text.charAt(end) == ')'
                         || text.charAt(end) == ']' || text.charAt(end) == ',') {
+                    if (mapped[i] instanceof Void && !resultPosition) {
+                        throw new SemanticIrTextDecodeException("void outside a function result: " + text);
+                    }
                     pos[0] = end;
                     return mapped[i];
                 }
@@ -176,7 +188,7 @@ public sealed interface RuntimeDescriptor extends OpResultType
         expect(text, pos, ')');
         expect(text, pos, '-');
         expect(text, pos, '>');
-        RuntimeDescriptor returnType = parseAt(text, pos, false);
+        RuntimeDescriptor returnType = parseAt(text, pos, true);
         return new Func(params, returnType, isAsync);
     }
 
@@ -200,6 +212,22 @@ public sealed interface RuntimeDescriptor extends OpResultType
                     + pos[0] + "): \"" + text + "\"");
         }
         pos[0]++;
+    }
+
+    /** Return/completion boundaries may check void; storage/parameter boundaries may not. */
+    static boolean permitsVoid(BoundaryKind kind) {
+        return switch (kind) {
+            case FUNCTION_RETURN, ASYNC_COMPLETION, HOST_TO_DEAL, DEAL_TO_HOST,
+                 STDLIB_RETURN, EXTERNAL_RETURN -> true;
+            default -> false;
+        };
+    }
+
+    /** Validates a data slot. Compound constructors enforce child positions recursively. */
+    static RuntimeDescriptor requireData(RuntimeDescriptor descriptor) {
+        Objects.requireNonNull(descriptor, "descriptor must not be null");
+        if (descriptor instanceof Void) throw new IllegalArgumentException("void outside a function result");
+        return descriptor;
     }
 
     /** The {@code null} descriptor; canonical text {@code "null"}. */
@@ -323,7 +351,7 @@ public sealed interface RuntimeDescriptor extends OpResultType
     record Array(RuntimeDescriptor element) implements RuntimeDescriptor {
 
         public Array {
-            Objects.requireNonNull(element, "element must not be null");
+            requireData(element);
         }
 
         @Override
@@ -370,6 +398,7 @@ public sealed interface RuntimeDescriptor extends OpResultType
 
         public Func(List<RuntimeDescriptor> paramTypes, RuntimeDescriptor returnType, boolean isAsync) {
             this.paramTypes = List.copyOf(paramTypes);
+            this.paramTypes.forEach(RuntimeDescriptor::requireData);
             this.returnType = Objects.requireNonNull(returnType, "returnType must not be null");
             this.isAsync = isAsync;
         }

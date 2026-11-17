@@ -344,6 +344,19 @@ public final class CatchNarrowingIsolationProductionTest {
 
     private static List<Rejection> rejections() {
         return List.of(
+            new Rejection("await then same-type guard cannot justify catch",
+                """
+                async function probe(x:string|null):Promise<string>{
+                  let mutate=async function():Promise<void>{x=null;throw {name:"X",message:"x"};};
+                  if(x!==null){
+                    try{await mutate();if(x===null){return "";}}
+                    catch(e){return x;}
+                    return x;
+                  }
+                  return "";
+                }
+                export function main():void{}
+                """, "E5003", 5, 21, 1, "Return type mismatch: expected string, got string | null"),
             new Rejection("string-refined catch binding transferred to string",
                 """
                 export function main(): void {
@@ -453,6 +466,28 @@ public final class CatchNarrowingIsolationProductionTest {
                 """, "E3001", 9, 29, 1, "Cannot assign number | null to number"));
     }
 
+    private static void testExceptionalEntries(Path root) throws Exception {
+        String prelude = "async function tick():Promise<void>{}async function yes():Promise<boolean>{return true;}";
+        for (String effect : List.of("await tick();", "if(b){await tick();}", "b && await yes();",
+                "while(b){await tick();break;}", "try{await tick();}catch(inner){}",
+                "try{throw {name:\"X\",message:\"x\"};}catch(inner){await tick();}")) {
+            String source = prelude + "async function f(x:string|null,b:boolean):Promise<string>{if(x!==null){try{"
+                + effect + "if(x===null){return \"\";}}catch(e){return x;}return x;}return \"\";}";
+            TypeLegalityFlowTest.check(source, "E5003");
+        }
+        // Checking (not invoking) nested functions must not invalidate an outer try.
+        for (String nested : List.of("let nested=async function():Promise<void>{await tick();};",
+                "let nested=async ():Promise<void>=>{await tick();};"))
+            TypeLegalityFlowTest.check(prelude + "function f(x:string|null):string{if(x!==null){try{"
+                + nested + "}catch(e){return x;}return x;}return \"\";}", null);
+        String source = "function f(x:string|null):string{if(x!==null){try{"
+            + "let nested=async function():Promise<void>{await tick();};"
+            + "throw {name:\"X\",message:\"x\"};}catch(e){return x;}}return \"empty\";}"
+            + prelude + "export function main():void{if(f(\"yes\")!==\"yes\"||f(null)!==\"empty\"){throw {name:\"FAIL\",message:\"catch\"};}}";
+        CompositionProductionTest.execute(source, "", root, null,
+            List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
+    }
+
     private static void testRejections(Path root) throws Exception {
         System.out.println("-- the rejected forms on every declared backend --");
         for (Rejection rejection : rejections()) {
@@ -512,6 +547,7 @@ public final class CatchNarrowingIsolationProductionTest {
                 testJs(root.resolve("js"), expected.get("js"));
             }
             testRejections(root.resolve("rejections"));
+            testExceptionalEntries(root.resolve("exceptional-entries"));
         } finally {
             deleteRecursively(root);
         }
