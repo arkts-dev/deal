@@ -13703,19 +13703,6 @@ public final class SemanticLowerer {
         }
 
 
-        private ValueId emitSyntheticValueOp(SemanticOpKind kind, KindPayload payload,
-                                             Span span, RuntimeDescriptor resultType,
-                                             FailurePolicyId policy) {
-            ValueId value = ids.nextValueId(module, nextOrdinal++, 0);
-            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
-            OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
-            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(span),
-                SourceOriginKind.SYNTHETIC, anchor, null);
-            emit(buildOp(opId, kind, payload, value, resultType, List.of(), List.of(),
-                policy, origin));
-            return value;
-        }
-
         /** Emits one value-producing USER op without operands and returns its value id. */
         private ValueId emitValueOp(SemanticOpKind kind, KindPayload payload, Span span,
                                     RuntimeDescriptor resultType, FailurePolicyId policy) {
@@ -13761,25 +13748,6 @@ public final class SemanticLowerer {
             SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(span),
                 SourceOriginKind.USER, anchor, currentParent());
             emit(buildOp(opId, kind, payload, value, resultType, operands, operandTypes,
-                policy, origin));
-            return value;
-        }
-
-        /**
-         * Emits one value-producing op of the given origin kind publishing
-         * the given result slot ({@code null} allocates one) — the
-         * test-less FOR condition {@code CONST true} production (a
-         * {@code SYNTHETIC} op, the for-statement span).
-         */
-        private ValueId emitValueOpWith(SemanticOpKind kind, KindPayload payload, Span span,
-                                        RuntimeDescriptor resultType, FailurePolicyId policy,
-                                        ValueId slot, SourceOriginKind originKind) {
-            ValueId value = slot != null ? slot : ids.nextValueId(module, nextOrdinal++, 0);
-            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
-            OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
-            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(span), originKind,
-                anchor, currentParent());
-            emit(buildOp(opId, kind, payload, value, resultType, List.of(), List.of(),
                 policy, origin));
             return value;
         }

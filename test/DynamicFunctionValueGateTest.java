@@ -414,18 +414,6 @@ public class DynamicFunctionValueGateTest {
         return copy(unit, unit.functionBindings(), ops);
     }
 
-    private static StructuredBodyTable withTableOp(StructuredBodyTable table, SemanticOp op,
-            BlockId block) {
-        Map<BlockId, List<OpId>> blockOps = new LinkedHashMap<>();
-        for (Map.Entry<BlockId, List<OpId>> entry : table.blockOps().entrySet()) {
-            blockOps.put(entry.getKey(), new ArrayList<>(entry.getValue()));
-        }
-        blockOps.computeIfAbsent(block, k -> new ArrayList<>()).add(op.opId());
-        Map<OpId, BlockId> inverse = new LinkedHashMap<>(table.opBlocks());
-        inverse.put(op.opId(), block);
-        return new StructuredBodyTable(blockOps, inverse);
-    }
-
     /** The synthetic single-block unit of the clause-level drives. */
     private static LoweredModuleUnit syntheticUnit(
             Map<FunctionAllocationIdentity, FunctionExecutionBinding> registry,

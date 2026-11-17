@@ -639,18 +639,6 @@ public class BindingsValidationTest {
             null, null, FailurePolicyId.NO_DEAL_FAILURE, null);
     }
 
-    private static SemanticOp loadOp(BindingId binding, long generation) {
-        return op(SemanticOpKind.BINDING_LOAD,
-            new KindPayload.BindingLoadPayload(binding, generation),
-            nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null);
-    }
-
-    private static SemanticOp functionLoadOp(BindingId binding, long generation) {
-        return op(SemanticOpKind.BINDING_LOAD,
-            new KindPayload.BindingLoadPayload(binding, generation),
-            nextValue(), SIG0, FailurePolicyId.NO_DEAL_FAILURE, null);
-    }
-
     private static SemanticOp storeOp(BindingId binding, long generation, ValueId value) {
         return op(SemanticOpKind.BINDING_STORE,
             new KindPayload.BindingStorePayload(binding, generation, value),

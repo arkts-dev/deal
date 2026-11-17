@@ -535,17 +535,6 @@ final class LlvmSession extends EmitterSessionBase {
         return false;
     }
 
-    /** Whether one binding is written by a {@code BINDING_STORE} anywhere. */
-    boolean reassigned(LoweredModuleUnit unit, BindingId binding) {
-        for (SemanticOp op : unit.ops()) {
-            if (op.payload() instanceof KindPayload.BindingStorePayload store
-                    && store.binding().equals(binding)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     /** Whether one binding is one unit's import alias. */
     boolean isImportAlias(LoweredModuleUnit unit, BindingId binding) {
         return unit.classBindingFacts().importAliases().contains(binding);

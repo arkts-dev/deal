@@ -6797,21 +6797,6 @@ private void emitStdlib(SemanticOp op) {
         }
 
         /**
-         * The literal origin triplet of a construction's call site: the
-         * literal's own file, line, and column, so the pinned E8007 the
-         * deployed construction entry raises names the literal origin (a
-         * span-less op projects the retained {@code "-", 0, 0} triplet).
-         */
-        private String classLiteralOriginArgs(SemanticOp op) {
-            SourceSpan span = op.origin().span();
-            if (span == null) {
-                return "\"-\", 0, 0";
-            }
-            return luaString(op.origin().sourceId()) + ", "
-                + span.startLine() + ", " + span.startColumn();
-        }
-
-        /**
          * The literal origin triplet of a load's call site: the import
          * statement's own file, line, and column, so every E8011 the
          * loader raises names the import origin.

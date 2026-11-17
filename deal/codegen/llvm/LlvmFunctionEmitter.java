@@ -3413,22 +3413,6 @@ final class LlvmFunctionEmitter {
         storeResult(op, LlvmTypeMapper.FN_POINTER, carrier);
     }
 
-    /**
-     * A fresh heap cell holding {@code undefined} for a recursive-group member
-     * before its function value is published.
-     */
-    private String emitUndefinedCell(SemanticOp op) {
-        session.referenceRuntimeEntry("deal_cell_alloc_data");
-        session.referenceRuntimeEntry("deal_data_of_undefined");
-        String undefined = callRecord(op, LlvmTypeMapper.DATA,
-            "deal_data_of_undefined", "");
-        String datumSlot = newAlloca(LlvmTypeMapper.DATA, "celldatum");
-        emit("store " + LlvmTypeMapper.DATA + " " + undefined + ", "
-            + LlvmTypeMapper.DATA + "* " + datumSlot);
-        return emitTemporary(op, "call i8* @deal_cell_alloc_data("
-            + LlvmTypeMapper.DATA + "* " + datumSlot + ", i32 0)");
-    }
-
     /** The emitted name of one adapter's boxed apply thunk. */
     static String adapterThunkName(OpId opId) {
         return "A" + opId.id();

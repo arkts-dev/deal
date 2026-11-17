@@ -1000,13 +1000,6 @@ public class ClassConstructionValidatorTest {
         return unitWithOps(unit, ops);
     }
 
-    /** One op re-origined (the contract snapshot excludes source coordinates). */
-    private static SemanticOp withOrigin(SemanticOp op, SourceOrigin origin) {
-        return new SemanticOp(op.opId(), op.kind(), origin, op.result(), op.resultType(),
-            op.operands(), op.operandTypes(), op.payload(), op.failurePolicy(),
-            op.contract());
-    }
-
     /** The table with one op moved into the given membership block. */
     private static StructuredBodyTable tableWithOpBlock(StructuredBodyTable table,
                                                         OpId opId, BlockId block) {
@@ -1029,23 +1022,6 @@ public class ClassConstructionValidatorTest {
         Map<BlockId, List<OpId>> blockOps = new LinkedHashMap<>(moved.blockOps());
         blockOps.putIfAbsent(added, List.of());
         return new StructuredBodyTable(blockOps, moved.opBlocks());
-    }
-
-    /** One directly seeded produced op with its wired contract digest. */
-    private static SemanticOp seedOp(SemanticOpKind kind, OpId opId, SourceOrigin origin,
-                                     ValueId result, RuntimeDescriptor resultType,
-                                     KindPayload payload) {
-        ClosedSelector selector = payload instanceof KindPayload.SelectorCarrying carrying
-            ? carrying.selector() : null;
-        OperationContractSnapshot provisional = new OperationContractSnapshot(
-            OperationContractSnapshot.VERSION, kind, resultType, List.of(), selector,
-            payload, FailurePolicyId.NO_DEAL_FAILURE, List.of(), "placeholder");
-        String digest = ContractSnapshotCanonicalizer.digest(provisional);
-        return new SemanticOp(opId, kind, origin, result, resultType, List.of(), List.of(),
-            payload, FailurePolicyId.NO_DEAL_FAILURE,
-            new OperationContractSnapshot(OperationContractSnapshot.VERSION, kind,
-                resultType, List.of(), selector, payload, FailurePolicyId.NO_DEAL_FAILURE,
-                List.of(), digest));
     }
 
     // =========================================================================

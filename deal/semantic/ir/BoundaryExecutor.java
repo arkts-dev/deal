@@ -374,15 +374,6 @@ public final class BoundaryExecutor {
         return new BoundaryOutcome.Pass(view);
     }
 
-    /** The named-parameter values of one two-parameter arm render. */
-    private static Map<String, String> parametersOf(String key1, String value1,
-                                                    String key2, String value2) {
-        Map<String, String> parameters = new LinkedHashMap<>();
-        parameters.put(key1, value1);
-        parameters.put(key2, value2);
-        return parameters;
-    }
-
     // =========================================================================
     // The descriptor-kind core: classification only, projected per policy
     // =========================================================================

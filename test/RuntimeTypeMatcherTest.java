@@ -71,17 +71,6 @@ public class RuntimeTypeMatcherTest {
         @Override public String functionDescriptorText(Object value) {
             return value instanceof FnValue f ? f.descriptor : null;
         }
-        private String kindOf(Object value) {
-            if (value == null || value == NULL_VALUE) return "null";
-            if (value instanceof Boolean) return "boolean";
-            if (value instanceof Double) return "number";
-            if (value instanceof String) return "string";
-            if (value instanceof ClassValue c) return c.tag;
-            if (value instanceof FnValue) return "function";
-            if (value instanceof ArrayValue) return "array";
-            if (value instanceof TableValue) return "table";
-            return "unknown";
-        }
     }
 
     /**

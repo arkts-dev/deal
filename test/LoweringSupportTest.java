@@ -1727,16 +1727,6 @@ public class LoweringSupportTest {
         }
     }
 
-    private static int countOccurrences(String text, String needle) {
-        int count = 0;
-        int index = 0;
-        while ((index = text.indexOf(needle, index)) >= 0) {
-            count++;
-            index += needle.length();
-        }
-        return count;
-    }
-
     // =========================================================================
     // Main
     // =========================================================================

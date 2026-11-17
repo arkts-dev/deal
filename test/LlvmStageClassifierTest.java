@@ -434,15 +434,6 @@ public final class LlvmStageClassifierTest {
             StandardCharsets.UTF_8);
     }
 
-    private static void writeProject(Path root, String source) throws IOException {
-        Files.createDirectories(root.resolve("src"));
-        Files.writeString(root.resolve("deal.json"),
-            "{\"languageVersion\": \"1.6\", \"moduleRoots\": [\"src\"],"
-                + " \"backend\": \"llvm\"}", StandardCharsets.UTF_8);
-        Files.writeString(root.resolve("src/main.deal"), source,
-            StandardCharsets.UTF_8);
-    }
-
     private static void deleteRecursively(Path root) throws IOException {
         if (!Files.exists(root)) {
             return;

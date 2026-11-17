@@ -4082,16 +4082,6 @@ public class HostModuleLoadEmissionTest {
         return -1;
     }
 
-    /** The first line containing the given text. */
-    private static int indexOfLineContaining(List<String> lines, String needle) {
-        for (int i = 0; i < lines.size(); i++) {
-            if (lines.get(i).contains(needle)) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
     // =========================================================================
     // 2d. The host async completion crossing (ISSUE-0853)
     // =========================================================================
