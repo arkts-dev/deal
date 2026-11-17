@@ -1455,33 +1455,6 @@ public final class JvmSemanticEmitter {
             return false;
         }
 
-        /**
-         * The {@link LoweredFunction} record of one function id across the
-         * session's closure: a non-entry module's function body resolves
-         * against its own module's function registry, never the entry
-         * unit's (a cross-module call site's capture list is the callee's
-         * own).
-         */
-        private LoweredFunction functionOf(FunctionId functionId) {
-            for (LoweredModuleUnit moduleUnit : units.values()) {
-                LoweredFunction function = moduleUnit.functions().get(functionId);
-                if (function != null) {
-                    return function;
-                }
-            }
-            return unit.functions().get(functionId);
-        }
-
-        /** The membership table of the unit owning one lowered function. */
-        private StructuredBodyTable tableOfFunction(LoweredFunction function) {
-            for (LoweredModuleUnit moduleUnit : units.values()) {
-                if (moduleUnit.functions().containsKey(function.functionId())) {
-                    return tables.get(moduleUnit.moduleId());
-                }
-            }
-            return table;
-        }
-
         private String indent(int level) {
             return "  ".repeat(level);
         }
@@ -2966,20 +2939,6 @@ public final class JvmSemanticEmitter {
         }
 
         /**
-         * Whether one {@code RECURSIVE_GROUP_INIT} op is module-level: the
-         * op is a member of its own module's init block (a nested group's
-         * op is a member of the declaring function's block).
-         */
-        private boolean isModuleLevelGroup(SemanticOp op) {
-            if (op.kind() != SemanticOpKind.RECURSIVE_GROUP_INIT) {
-                return false;
-            }
-            LoweredModuleUnit owner = units.get(op.opId().module());
-            return owner != null
-                && owner.moduleInit().initBlock().equals(opBlock.get(op.opId()));
-        }
-
-        /**
          * The module-init-top group cells (B4): every module-level
          * recursive group's member cell is created before any module-init
          * op executes, so an earlier declaration's closure captures the
@@ -3073,21 +3032,6 @@ public final class JvmSemanticEmitter {
             for (SemanticOp producer : chainOperands.get(unitOwning(child).moduleId()).operandProducersOf(child)) {
                 emitOp(producer, indent);
             }
-        }
-
-        /**
-         * The lowered unit that owns one op (the chain-operand completion's
-         * membership authority): a chain inside a non-entry module's
-         * factory resolves its operand producers against that module's own
-         * ops, never against the session's entry unit — a cross-module
-         * closure body's chain (the returned-closure drive) would otherwise
-         * lose its operand producers (their value identities live in the
-         * owning module) and execute with unset slots.
-         */
-        private LoweredModuleUnit unitOwning(SemanticOp op) {
-            ModuleId owner = opModule.get(op.opId());
-            LoweredModuleUnit owning = owner == null ? null : units.get(owner);
-            return owning == null ? unit : owning;
         }
 
         /**

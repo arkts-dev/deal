@@ -512,6 +512,50 @@ public abstract class EmitterSessionBase {
             : rejectedOp(read, message);
     }
 
+    /**
+     * The lowered function in its owning unit's registry across the closure.
+     * Cross-module captures belong to the callee, never the entry unit.
+     */
+    protected final LoweredFunction functionOf(FunctionId functionId) {
+        for (LoweredModuleUnit moduleUnit : units.values()) {
+            LoweredFunction function = moduleUnit.functions().get(functionId);
+            if (function != null) {
+                return function;
+            }
+        }
+        return unit.functions().get(functionId);
+    }
+
+    /** The membership table of the unit owning one lowered function. */
+    protected final StructuredBodyTable tableOfFunction(LoweredFunction function) {
+        for (LoweredModuleUnit moduleUnit : units.values()) {
+            if (moduleUnit.functions().containsKey(function.functionId())) {
+                return tables.get(moduleUnit.moduleId());
+            }
+        }
+        return table;
+    }
+
+    /**
+     * A non-entry closure body's chain must resolve operand producers in its
+     * owning module, never in the entry unit where their slots would be unset.
+     */
+    protected final LoweredModuleUnit unitOwning(SemanticOp op) {
+        ModuleId owner = opModule.get(op.opId());
+        LoweredModuleUnit owning = owner == null ? null : units.get(owner);
+        return owning == null ? unit : owning;
+    }
+
+    /** A recursive group is module-level only in its own unit's init block. */
+    protected final boolean isModuleLevelGroup(SemanticOp op) {
+        if (op.kind() != SemanticOpKind.RECURSIVE_GROUP_INIT) {
+            return false;
+        }
+        LoweredModuleUnit owner = units.get(op.opId().module());
+        return owner != null
+            && owner.moduleInit().initBlock().equals(opBlock.get(op.opId()));
+    }
+
     /** Resolve an allocation identity across the project-global unit closure. */
     protected final FunctionExecutionBinding executionBindingOfIdentity(ValueId identity) {
         for (LoweredModuleUnit moduleUnit : units.values()) {
