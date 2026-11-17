@@ -2364,28 +2364,8 @@ public final class JvmSemanticEmitter {
                 (KindPayload.BoundaryPayload) boundary.payload();
             emitBoundaryStartAtom(boundary, "JvmRuntime.rawAtom(" + inputExpr + ", "
                 + javaString(staticKind(payload.descriptor())) + ")", indent);
-            out.append(indent(indent)).append("Object ").append(checkedName)
-                .append(";\n");
-            out.append(indent(indent)).append("try {\n");
-            out.append(indent(indent + 1)).append(checkedName)
-                .append(" = ")
-                .append(bcheckArgs(payload.descriptor(), inputExpr))
-                .append(";\n");
-            out.append(indent(indent)).append("} catch (JvmRuntime.DealError __fbe) {\n");
-            out.append(indent(indent + 1))
-                .append("JvmRuntime.DealError __fbre = new JvmRuntime.DealError("
-                    + "__fbe.code, __fbe.msg, ")
-                .append(javaString(originOf(boundary)))
-                .append(", __fbe.expected, __fbe.actual, __fbe.frames, null);\n");
-            if (trace) {
-                emitFailureEvent(boundary.opId(), "BOUNDARY", boundary,
-                    "JvmRuntime.errtext(__fbre)", indent + 1);
-                emitFailureEvent(owner.opId(), owner.kind().name(), owner,
-                    "JvmRuntime.errtext(__fbre)", indent + 1);
-            }
-            out.append(indent(indent + 1)).append("throw __fbre;\n");
-            out.append(indent(indent)).append("}\n");
-            emitBoundarySuccess(boundary, checkedName, payload.descriptor(), indent);
+            emitBoundaryCheck(owner, boundary, inputExpr, checkedName,
+                "__fbe", "__fbre", indent);
         }
 
         private void emitMemberWrite(SemanticOp op, int indent) {
@@ -5285,6 +5265,16 @@ public final class JvmSemanticEmitter {
             KindPayload.BoundaryPayload boundaryPayload =
                 (KindPayload.BoundaryPayload) boundary.payload();
             emitBoundaryStart(boundary, inputExpr, boundaryPayload.descriptor(), indent);
+            emitBoundaryCheck(op, boundary, inputExpr, checkedName, caughtName,
+                rejectionName, indent);
+        }
+
+        private void emitBoundaryCheck(SemanticOp op, SemanticOp boundary,
+                                       String inputExpr, String checkedName,
+                                       String caughtName, String rejectionName,
+                                       int indent) {
+            KindPayload.BoundaryPayload boundaryPayload =
+                (KindPayload.BoundaryPayload) boundary.payload();
             out.append(indent(indent)).append("Object ").append(checkedName).append(";\n");
             out.append(indent(indent)).append("try {\n");
             out.append(indent(indent + 1)).append(checkedName).append(" = ")
