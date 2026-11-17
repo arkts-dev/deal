@@ -1601,9 +1601,6 @@ public class CanonicalRuntimeTypeDescriptorTest {
         if (type == Type.Number.INSTANCE) {
             return "number";
         }
-        if (type == Type.Number.INSTANCE) {
-            return "number";
-        }
         if (type == Type.String.INSTANCE) {
             return "string";
         }

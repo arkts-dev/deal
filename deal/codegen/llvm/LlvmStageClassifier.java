@@ -952,11 +952,6 @@ public final class LlvmStageClassifier {
             // origin, which is exactly the untyped-operand case below (R4).
             actual = RuntimeDescriptor.Unknown.INSTANCE;
         }
-        if (declared instanceof RuntimeDescriptor.Void) {
-            // A result-only `void` completion projects to `undefined` through
-            // the result protocol (C4/R4), so it names no data representation.
-            return Optional.empty();
-        }
         if (LlvmTypeMapper.convertible(declared, actual)) {
             if (!LlvmTypeMapper.isStagedRepresentation(declared)) {
                 return Optional.of(reject(op, "BOUNDARY " + boundary.kind()
