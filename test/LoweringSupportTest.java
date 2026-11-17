@@ -268,21 +268,6 @@ public class LoweringSupportTest {
                 SemanticCapability.FOUNDATION_VALUES, SemanticCapability.MODULES));
     }
 
-    /** The I3 signed32 claim: exactly FOUNDATION_VALUES + SIGNED_INT32, nothing else. */
-    private static boolean claimsNumeric(SemanticRequirementManifest manifest) {
-        return manifest != null
-            && manifest.capabilities().equals(EnumSet.of(
-                SemanticCapability.FOUNDATION_VALUES));
-    }
-
-    private static boolean claimsNumericAndModules(
-            SemanticRequirementManifest manifest) {
-        return manifest != null
-            && manifest.capabilities().equals(EnumSet.of(
-                SemanticCapability.FOUNDATION_VALUES,
-                SemanticCapability.MODULES));
-    }
-
     // =========================================================================
     // 1. The K7 cataloged call and the retired access trigger
     // =========================================================================
@@ -649,11 +634,10 @@ public class LoweringSupportTest {
                 "an identically-named alias bound to another module does not trigger: the "
                     + "join matches the resolved ModuleSymbol name against the module's "
                     + "ImportDeclaration records, and the resolved target is not std/time");
-            check(claimsNumericAndModules(manifestOf(other, "other")),
+            check(claimsFoundationAndModules(manifestOf(other, "other")),
                 "the other module exporting nowMillis claims FOUNDATION_VALUES + "
-                    + "SIGNED_INT32 + MODULES (its return 0 number literal is CONST(Int) "
-                    + "— the I3 derivation row claims at the construct kind, never the "
-                    + "magnitude; the imported-by arm adds MODULES) "
+                    + "MODULES (its number literal adds no separate capability; "
+                    + "the imported-by arm adds MODULES) "
                     + "and never the removed routing marker");
         } finally {
             deleteRecursively(tmp);
@@ -803,7 +787,7 @@ public class LoweringSupportTest {
                     + "retained-caller ABI facts stay SHADOW in this slice): "
                     + manifestOf(importer, "lib").capabilities());
             // An import-free single-module project with exports claims
-            // nothing beyond FOUNDATION_VALUES (+SIGNED_INT32): export
+            // nothing beyond FOUNDATION_VALUES: export
             // declarations and the entry delegation never claim MODULES.
             RequirementManifestResult single = compileAndCompute(tmp.resolve("single"),
                 Map.of("main.deal", """
@@ -817,9 +801,9 @@ public class LoweringSupportTest {
             if (single == null) {
                 return;
             }
-            check(claimsNumeric(manifestOf(single, "main")),
+            check(claimsOnlyFoundation(manifestOf(single, "main")),
                 "the import-free single-module project claims exactly "
-                    + "FOUNDATION_VALUES + SIGNED_INT32 (exports and the entry "
+                    + "FOUNDATION_VALUES (exports and the entry "
                     + "delegation never claim MODULES): "
                     + manifestOf(single, "main").capabilities());
 
@@ -846,12 +830,11 @@ public class LoweringSupportTest {
     }
 
     // =========================================================================
-    // 6b. I3 capability derivation rows: SIGNED_INT32 at the construct
-    //     kind, never the magnitude
+    // 6b. Number literals and operators add no separate capability
     // =========================================================================
 
     static void testNumberLiteralClaims() throws Exception {
-        System.out.println("-- I3 claims: number literals claim SIGNED_INT32, number literals do not --");
+        System.out.println("-- number literals claim only FOUNDATION_VALUES, regardless of magnitude --");
 
         Path tmp = Files.createTempDirectory("deal-manifest-i3-literals");
         try {
@@ -882,23 +865,19 @@ public class LoweringSupportTest {
             if (small == null || max == null || numberLiteral == null) {
                 return;
             }
-            check(claimsNumeric(manifestOf(small, "main")),
-                "a module with the small literal 1 claims SIGNED_INT32 — the claim "
-                    + "attaches to CONST(Int), never the magnitude");
-            check(claimsNumeric(manifestOf(max, "main")),
-                "a module with the literal 2147483647 claims SIGNED_INT32 exactly "
-                    + "like the small literal — small literals waive nothing");
+            check(claimsOnlyFoundation(manifestOf(small, "main")),
+                "a module with the small literal 1 claims exactly FOUNDATION_VALUES");
+            check(claimsOnlyFoundation(manifestOf(max, "main")),
+                "a module with the literal 2147483647 claims exactly FOUNDATION_VALUES");
             check(claimsOnlyFoundation(manifestOf(numberLiteral, "main")),
-                "a module with only a number literal claims exactly FOUNDATION_VALUES "
-                    + "(CONST(Number) never claims SIGNED_INT32)");
+                "a module with a fractional literal claims exactly FOUNDATION_VALUES");
         } finally {
             deleteRecursively(tmp);
         }
     }
 
     static void testNumberUnaryBinaryClaims() throws Exception {
-        System.out.println("-- I3 claims: UNARY(INT32_NEG)/BINARY(INT32_*) claim; "
-            + "number/boolean rows do not --");
+        System.out.println("-- number and boolean operators claim only FOUNDATION_VALUES --");
 
         Path tmp = Files.createTempDirectory("deal-manifest-i3-unary-binary");
         try {
@@ -946,20 +925,16 @@ public class LoweringSupportTest {
                     || addNumber == null) {
                 return;
             }
-            check(claimsNumeric(manifestOf(neg, "main")),
-                "unary negation over an number operand claims SIGNED_INT32 "
-                    + "(UNARY(INT32_NEG))");
+            check(claimsOnlyFoundation(manifestOf(neg, "main")),
+                "number negation claims exactly FOUNDATION_VALUES");
             check(claimsOnlyFoundation(manifestOf(not, "main")),
-                "boolean negation claims exactly FOUNDATION_VALUES (BOOL_NOT never "
-                    + "claims SIGNED_INT32)");
-            check(claimsNumeric(manifestOf(add, "main")),
-                "number addition claims SIGNED_INT32 (BINARY(INT32_ADD))");
-            check(claimsNumeric(manifestOf(eq, "main")),
-                "number comparison claims SIGNED_INT32 (BINARY(INT32_EQ) — the "
-                    + "BINARY(INT32_*) row covers comparison selectors too)");
+                "boolean negation claims exactly FOUNDATION_VALUES");
+            check(claimsOnlyFoundation(manifestOf(add, "main")),
+                "number addition claims exactly FOUNDATION_VALUES");
+            check(claimsOnlyFoundation(manifestOf(eq, "main")),
+                "number comparison claims exactly FOUNDATION_VALUES");
             check(claimsOnlyFoundation(manifestOf(addNumber, "main")),
-                "number addition claims exactly FOUNDATION_VALUES (NUMBER_ADD never "
-                    + "claims SIGNED_INT32)");
+                "number addition claims exactly FOUNDATION_VALUES");
         } finally {
             deleteRecursively(tmp);
         }
@@ -1568,9 +1543,9 @@ public class LoweringSupportTest {
                     }
                     """), "main.deal");
             if (called != null) {
-                check(claimsNumeric(manifestOf(called, "main")),
+                check(claimsOnlyFoundation(manifestOf(called, "main")),
                     "the called non-exported declaration claims exactly "
-                        + "FOUNDATION_VALUES + SIGNED_INT32 (one call site, no CALLS "
+                        + "FOUNDATION_VALUES (one call site, no CALLS "
                         + "claim): " + manifestOf(called, "main").capabilities());
             }
 
@@ -1587,9 +1562,9 @@ public class LoweringSupportTest {
                     }
                     """), "main.deal");
             if (calledMainFirst != null) {
-                check(claimsNumeric(manifestOf(calledMainFirst, "main")),
+                check(claimsOnlyFoundation(manifestOf(calledMainFirst, "main")),
                     "the main-first called non-exported declaration claims exactly "
-                        + "FOUNDATION_VALUES + SIGNED_INT32 (declaration-order-"
+                        + "FOUNDATION_VALUES (declaration-order-"
                         + "independent call accounting, one call site, no CALLS "
                         + "claim): " + manifestOf(calledMainFirst, "main")
                             .capabilities());
