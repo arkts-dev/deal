@@ -1226,16 +1226,7 @@ public final class ClassOpsExecutor {
             SemanticOp child = requireBoundaryChild(boundaryOps, entry.boundaryOpId(), op,
                 entry.kind());
             KindPayload.BoundaryPayload boundaryPayload =
-                (KindPayload.BoundaryPayload) child.payload();
-            if (!boundaryPayload.descriptor().equals(fieldLayout.descriptor())) {
-                throw new Defect("CLASS_NEW " + op.opId() + " field boundary "
-                    + child.opId() + " carries descriptor "
-                    + boundaryPayload.descriptor().canonicalSpecText()
-                    + ": the pinned child descriptor is the field's declared descriptor "
-                    + fieldLayout.descriptor().canonicalSpecText() + " — a mismatch is a "
-                    + "producer defect, never executed");
-            }
-            requireDescriptorKindPolicy(child, boundaryPayload.descriptor());
+                requireFieldBoundaryDescriptor(op, child, fieldLayout);
             Value input;
             if (entry.kind() == BoundaryKind.CLASS_LITERAL_FIELD) {
                 Value provided = providedValues.get(entry.field());
@@ -1314,16 +1305,7 @@ public final class ClassOpsExecutor {
             SemanticOp child = requireBoundaryChild(boundaryOps, entry.boundaryOpId(), op,
                 entry.kind());
             KindPayload.BoundaryPayload boundaryPayload =
-                (KindPayload.BoundaryPayload) child.payload();
-            if (!boundaryPayload.descriptor().equals(fieldLayout.descriptor())) {
-                throw new Defect("CLASS_NEW " + op.opId() + " field boundary "
-                    + child.opId() + " carries descriptor "
-                    + boundaryPayload.descriptor().canonicalSpecText()
-                    + ": the pinned child descriptor is the field's declared descriptor "
-                    + fieldLayout.descriptor().canonicalSpecText() + " — a mismatch is a "
-                    + "producer defect, never executed");
-            }
-            requireDescriptorKindPolicy(child, boundaryPayload.descriptor());
+                requireFieldBoundaryDescriptor(op, child, fieldLayout);
             if (!boundaryPayload.input().equals(providedId)) {
                 throw new Defect("CLASS_NEW " + op.opId() + " field boundary "
                     + child.opId() + " carries input " + boundaryPayload.input()
@@ -1342,6 +1324,21 @@ public final class ClassOpsExecutor {
             return new OpFailure(fail.failure(), op.origin());
         }
         return null;
+    }
+
+    private static KindPayload.BoundaryPayload requireFieldBoundaryDescriptor(
+            SemanticOp op, SemanticOp child, ClassLayout.FieldLayout fieldLayout) {
+        KindPayload.BoundaryPayload payload = (KindPayload.BoundaryPayload) child.payload();
+        if (!payload.descriptor().equals(fieldLayout.descriptor())) {
+            throw new Defect("CLASS_NEW " + op.opId() + " field boundary "
+                + child.opId() + " carries descriptor "
+                + payload.descriptor().canonicalSpecText()
+                + ": the pinned child descriptor is the field's declared descriptor "
+                + fieldLayout.descriptor().canonicalSpecText() + " — a mismatch is a "
+                + "producer defect, never executed");
+        }
+        requireDescriptorKindPolicy(child, payload.descriptor());
+        return payload;
     }
 
     private static void requireOp(SemanticOp op, SemanticOpKind kind, FailurePolicyId policy) {
