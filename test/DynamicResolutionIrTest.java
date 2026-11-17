@@ -138,10 +138,7 @@ public class DynamicResolutionIrTest {
 
     private static SemanticOp boundaryWith(OpId id, BoundaryKind kind, RuntimeDescriptor descriptor,
             FailurePolicyId policy, OpId parent) {
-        return opWith(id, SemanticOpKind.BOUNDARY,
-            new KindPayload.BoundaryPayload(kind, descriptor, nextValue(),
-                new BoundaryRealization.RuntimeValidation("check")),
-            null, null, policy, parent);
+        return boundaryWithInput(id, kind, descriptor, policy, parent, nextValue());
     }
 
     private static SemanticOp boundaryWithInput(OpId id, BoundaryKind kind,
