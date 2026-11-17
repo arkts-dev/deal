@@ -475,25 +475,7 @@ final class JvmHostAbiEmission {
     }
 
     private static String javaString(String text) {
-        StringBuilder sb = new StringBuilder("\"");
-        for (int i = 0; i < text.length(); i++) {
-            char c = text.charAt(i);
-            switch (c) {
-                case '"' -> sb.append("\\\"");
-                case '\\' -> sb.append("\\\\");
-                case '\n' -> sb.append("\\n");
-                case '\t' -> sb.append("\\t");
-                case '\r' -> sb.append("\\r");
-                default -> {
-                    if (c < 0x20 || c > 0x7e) {
-                        sb.append(String.format("\\u%04x", (int) c));
-                    } else {
-                        sb.append(c);
-                    }
-                }
-            }
-        }
-        return sb.append('"').toString();
+        return JvmNames.javaString(text);
     }
 
     /**

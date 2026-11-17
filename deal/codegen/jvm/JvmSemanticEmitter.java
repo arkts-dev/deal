@@ -531,27 +531,7 @@ public final class JvmSemanticEmitter {
         }
 
         static String javaString(String text) {
-            StringBuilder sb = new StringBuilder();
-            sb.append('"');
-            for (int i = 0; i < text.length(); i++) {
-                char c = text.charAt(i);
-                switch (c) {
-                    case '"' -> sb.append("\\\"");
-                    case '\\' -> sb.append("\\\\");
-                    case '\n' -> sb.append("\\n");
-                    case '\t' -> sb.append("\\t");
-                    case '\r' -> sb.append("\\r");
-                    default -> {
-                        if (c < 0x20 || c > 0x7e) {
-                            sb.append(String.format("\\u%04x", (int) c));
-                        } else {
-                            sb.append(c);
-                        }
-                    }
-                }
-            }
-            sb.append('"');
-            return sb.toString();
+            return JvmNames.javaString(text);
         }
 
         // -- emission ----------------------------------------------------------------

@@ -27,6 +27,29 @@ public final class JvmNames {
         // Static naming surface only; no instances.
     }
 
+    /** An ASCII Java string literal preserving every UTF-16 unit. */
+    public static String javaString(String text) {
+        StringBuilder out = new StringBuilder("\"");
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            switch (c) {
+                case '"' -> out.append("\\\"");
+                case '\\' -> out.append("\\\\");
+                case '\n' -> out.append("\\n");
+                case '\t' -> out.append("\\t");
+                case '\r' -> out.append("\\r");
+                default -> {
+                    if (c < 0x20 || c > 0x7e) {
+                        out.append(String.format("\\u%04x", (int) c));
+                    } else {
+                        out.append(c);
+                    }
+                }
+            }
+        }
+        return out.append('"').toString();
+    }
+
     /** The argument name of the async-export host entry. */
     public static final String ASYNC_EXPORT_HOST_ARG = "$asyncExportHost";
 

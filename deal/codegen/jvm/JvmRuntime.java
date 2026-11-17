@@ -657,26 +657,7 @@ public final class JvmRuntime {
         if (s == null) {
             return "";
         }
-        StringBuilder out = new StringBuilder();
-        for (int i = 0; i < s.length(); i++) {
-            char c = s.charAt(i);
-            switch (c) {
-                case '\\' -> out.append("\\\\");
-                case '\n' -> out.append("\\n");
-                case '\t' -> out.append("\\t");
-                case '\r' -> out.append("\\r");
-                case ';' -> out.append("\\u003b");
-                case '|' -> out.append("\\u007c");
-                default -> {
-                    if (c < 0x20 || c == 0x7f || Character.isSurrogate(c)) {
-                        out.append(String.format("\\u%04x", (int) c));
-                    } else {
-                        out.append(c);
-                    }
-                }
-            }
-        }
-        return out.toString();
+        return SemanticRuntimeModel.escapeString(s);
     }
 
     /** The closed atom encoding (first-observation allocation ids). */

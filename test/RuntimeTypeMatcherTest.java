@@ -265,6 +265,19 @@ public class RuntimeTypeMatcherTest {
     static void testStringRow() {
         System.out.println("-- string row --");
 
+        String transport = "\"\\\n\t\r;|\0\u007f\u00e9\ud800\udc00\udfff";
+        String traceText = "\"\\\\\\n\\t\\r\\u003b\\u007c\\u0000\\u007f"
+            + "\u00e9\\ud800\\udc00\\udfff";
+        check(deal.codegen.jvm.JvmRuntime.esc(transport).equals(traceText),
+            "JVM trace escaping retains delimiters and every surrogate unit");
+        check(deal.semantic.SemanticRuntimeModel.escapeString(transport).equals(traceText),
+            "semantic trace escaping retains its independent exact spelling");
+        check(deal.codegen.jvm.JvmRuntime.esc(null).equals(""),
+            "JVM trace null remains empty rather than entering the nonnull encoder");
+        check(deal.codegen.jvm.JvmNames.javaString(transport).equals(
+                "\"\\\"\\\\\\n\\t\\r;|\\u0000\\u007f\\u00e9\\ud800\\udc00\\udfff\""),
+            "Java literals use ASCII escapes, not the trace delimiter dialect");
+
         for (String valid : new String[] {"", "hello", "\uD800\uDC00",
                 "\uDBFF\uDFFF", "a\uD83D\uDE00z", "\uFFFD"}) {
             assertPass("string", valid, "scalar sequence matches");
