@@ -950,25 +950,11 @@ public class CorpusConformanceTest {
         }
 
         private String modulePathOf(Path file) {
-            String name = file.getFileName().toString();
-            if (name.endsWith(".d.deal")) {
-                return name.substring(0, name.length() - ".d.deal".length());
-            }
-            return name.substring(0, name.length() - ".deal".length());
+            return corpusStem(file);
         }
 
         private Path resolveRelativePath(String importPath) {
-            if (!importPath.startsWith("./") && !importPath.startsWith("../")) {
-                return null;
-            }
-            Path resolved = testFileDir.resolve(importPath).normalize();
-            if (Files.exists(resolved)) return resolved;
-            Path withExt = testFileDir.resolve(importPath + ".deal").normalize();
-            if (Files.exists(withExt)) return withExt;
-            Path withDeclExt = testFileDir.resolve(
-                importPath + ".d.deal").normalize();
-            if (Files.exists(withDeclExt)) return withDeclExt;
-            return null;
+            return resolveCompanionPath(importPath, testFileDir);
         }
     }
 
