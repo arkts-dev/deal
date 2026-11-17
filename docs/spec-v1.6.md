@@ -357,14 +357,15 @@ Constraints:
 
 ### Narrowing and checked assertions
 
-Only locals and parameters narrow. Null/undefined `===`/`!==` tests select or remove that member; unknown complements stay unknown. `!` swaps true/false refinements. Short-circuit `&&` checks its RHS under the left operand's true refinement; `||` under its false refinement. `if` and ternary branches receive the corresponding condition refinements. Continuation retains facts common to paths that reach it.
+Initialization and successful assignment replace local/parameter refinements with RHS types; declared write types stay fixed. Adapted functions retain target signatures.
 
-```ts
-let n: number | null | undefined = 1;
-if (n !== null) {
- if (n !== undefined) { let i: number = n; }
-}
-```
+Guards narrow bindings and `obj.field`: local/parameter receiver, declared class field. Exclude nested paths, computed accesses and optional chains. Narrowing `a.field` does not narrow `b.field`, even when `a === b`.
+
+- Null/undefined `===`/`!==` select/remove members; unknown complements stay unknown.
+- `!` swaps refinements.
+- `&&` checks RHS under the left operand's true refinement; `||` under its false refinement.
+- `if`/ternary branches receive condition refinements.
+- Continuations retain facts common to reaching paths.
 
 ```ts
 function use(value: string | null | undefined): void {
@@ -377,16 +378,18 @@ function use(value: string | null | undefined): void {
 class Profile { nick: string | null; }
 let p: Profile = { nick: "Ada" };
 if (p.nick !== null) {
- let nick: string = p.nick; // error: properties are not narrowed
+ let nick: string = p.nick; // OK: guarded property
 }
 ```
 
 Narrowing invalidation:
 
-- Direct assignment invalidates the binding's refinement.
-- Calls preserve refinements; indirect captured-binding mutation may cause subsequent runtime-check failure.
-- Narrowing cannot cross functions/back-edges. Each while-body entry, including after continue, receives fresh true-guard refinement; assignment/await invalidate normally, without body-to-guard propagation.
-- `await` invalidates all enclosing-function refinements.
+- Writes, deletions and calls clear all property facts.
+- Calls preserve binding refinements; captured mutation risks runtime-check failure.
+- Narrowing cannot cross functions/back-edges.
+- Each while-body entry, including after continue, receives fresh true-guard refinement; no body-to-guard propagation.
+- Apply invalidation in evaluation order.
+- `await` clears enclosing-function facts.
 
 `typeof x` returns `undefined`, `boolean`, `number`, `string`, `function`, or `object` (null/arrays/Records/classes/Errors). Direct tests `typeof x === "kind"` narrow unknown in the matching branch for the first four kinds; `!==` narrows the else branch. Other branches stay unknown; no object/function structural inference. `instanceof C` tests nominal tags (including Error) and narrows the true branch to C; other values yield false, never retagging records.
 
@@ -981,7 +984,7 @@ if (b) { }
 
 ### Conditional
 
-`condition ? a : b` evaluates only the selected branch. Branches receive contextual types; otherwise infer identical types or a permitted nullish union, rejecting incompatible branches.
+`condition ? a : b` evaluates only the selected branch. Branches receive contextual types; otherwise infer identical types, permitted nullish unions, or unknown if either branch is unknown and neither is void. Reject other combinations.
 
 ```ts
 let result = condition ? a : b;
