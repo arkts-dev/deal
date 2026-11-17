@@ -495,6 +495,42 @@ public class CanonicalJsonTest {
 
     }
 
+    static void testFieldAccessContracts() {
+        var explicitNull = CanonicalJson.nullValue();
+        var text = CanonicalJson.str("\u0000\ud800value");
+        var obj = CanonicalJson.obj(
+            CanonicalJson.e("present", explicitNull),
+            CanonicalJson.e("text", text));
+        check(ContractSnapshotCanonicalizer.payloadValue(obj, "missing") == null,
+            "optional lookup distinguishes an absent field");
+        check(ContractSnapshotCanonicalizer.payloadValue(obj, "present") == explicitNull,
+            "optional lookup preserves explicit null");
+        check(ContractSnapshotCanonicalizer.entryValue(obj, "present") == explicitNull,
+            "required lookup preserves explicit null");
+        check(ContractSnapshotCanonicalizer.requireString(obj, "text").equals(text.value()),
+            "string extraction preserves NUL and lone UTF-16 units");
+        check(ContractSnapshotCanonicalizer.requireStringOrNull(explicitNull, "present") == null,
+            "nullable string extraction accepts explicit null");
+        List<Runnable> invalid = List.of(
+            () -> ContractSnapshotCanonicalizer.entryValue(obj, "missing"),
+            () -> ContractSnapshotCanonicalizer.requireString(obj, "present"),
+            () -> ContractSnapshotCanonicalizer.requireInt(obj, "text"));
+        List<String> messages = List.of(
+            "missing field \"missing\"",
+            "the \"present\" field must be a string, got null",
+            "the \"text\" field must be a canonical signed32 integer, got string (\""
+                + text.value() + "\")");
+        for (int i = 0; i < invalid.size(); i++) {
+            try {
+                invalid.get(i).run();
+                fail("field accessor must reject: " + messages.get(i));
+            } catch (SemanticIrTextDecodeException ex) {
+                check(messages.get(i).equals(ex.getMessage()),
+                    "field accessor preserves exact failure: " + ex.getMessage());
+            }
+        }
+    }
+
     static void testDecodeFailures() {
         System.out.println("-- Decode failures are transport-level, never E6005 --");
 
@@ -947,6 +983,7 @@ public class CanonicalJsonTest {
         testCrossProcessDeterminism();
         testParserRoundTrips();
         testRawStringsSurvive();
+        testFieldAccessContracts();
         testDecodeFailures();
         testDigest();
         testLoweringContextHash();

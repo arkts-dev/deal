@@ -314,11 +314,7 @@ public final class ContractSnapshotCanonicalizer {
     }
 
     private static String expectString(CanonicalJson.Value value, String field) {
-        if (value instanceof CanonicalJson.Str s) {
-            return s.value();
-        }
-        throw new SemanticIrTextDecodeException(
-            "the \"" + field + "\" field must be a string, got " + jsonKindName(value));
+        return requireStringValue(value, field);
     }
 
     private static String expectStringOrNull(CanonicalJson.Value value, String field) {
@@ -2193,12 +2189,7 @@ public final class ContractSnapshotCanonicalizer {
 
     /** A field value of a leniently decoded object, or {@code null} when absent. */
     private static CanonicalJson.Value lenientValue(CanonicalJson.Obj obj, String key) {
-        for (CanonicalJson.Entry entry : obj.entries()) {
-            if (entry.key().equals(key)) {
-                return entry.value();
-            }
-        }
-        return null;
+        return payloadValue(obj, key);
     }
 
     /** A string field of a leniently decoded object, or {@code null}. */
@@ -2370,13 +2361,7 @@ public final class ContractSnapshotCanonicalizer {
 
     /** The signed32 integer value of a pinned key. */
     public static int requireInt(CanonicalJson.Obj obj, String key) {
-        CanonicalJson.Value value = entryValue(obj, key);
-        if (value instanceof CanonicalJson.Int i) {
-            return i.value();
-        }
-        throw new SemanticIrTextDecodeException(
-            "the \"" + key + "\" field must be a canonical signed32 integer, got "
-                + jsonKindName(value));
+        return expectInt(entryValue(obj, key), key);
     }
 
     /** The array value of a pinned key. */
