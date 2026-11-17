@@ -1590,17 +1590,8 @@ public final class JvmSemanticEmitter {
 
         private void emitBoundaryStart(SemanticOp boundary, String inputExpr,
                                        RuntimeDescriptor inputDescriptor, int indent) {
-            if (!trace) {
-                return;
-            }
-            out.append(indent(indent)).append("JvmRuntime.ev(MODULE, ")
-                .append(javaString(opKey(boundary.opId()))).append(", \"START\", ")
-                .append("\"BOUNDARY\", ")
-                .append(javaString(boundary.contract().canonicalDigest())).append(", ")
-                .append(javaString(parentKey(boundary.origin().parentOpId())))
-                .append(", List.of(JvmRuntime.atom(").append(inputExpr).append(", ")
-                .append(javaString(staticKind(inputDescriptor)))
-                .append(")), null, null);\n");
+            emitBoundaryStartAtom(boundary, "JvmRuntime.atom(" + inputExpr + ", "
+                + javaString(staticKind(inputDescriptor)) + ")", indent);
         }
 
         /**
@@ -2079,21 +2070,9 @@ public final class JvmSemanticEmitter {
                                                          String target, int indent) {
             KindPayload.BoundaryPayload boundaryPayload =
                 (KindPayload.BoundaryPayload) boundary.payload();
-            if (trace) {
-                // Custom boundary START: the input atom renders the
-                // actual value kind (the oracle's atomOf — a
-                // wrong-kind present value atomizes as its own kind).
-                out.append(indent(indent)).append("JvmRuntime.ev(MODULE, ")
-                    .append(javaString(opKey(boundary.opId())))
-                    .append(", \"START\", \"BOUNDARY\", ")
-                    .append(javaString(boundary.contract().canonicalDigest()))
-                    .append(", ")
-                    .append(javaString(parentKey(boundary.origin().parentOpId())))
-                    .append(", List.of(JvmRuntime.rawAtom(")
-                    .append(target).append(", ")
-                    .append(javaString(staticKind(boundaryPayload.descriptor())))
-                    .append(")), null, null);\n");
-            }
+            // Raw atoms preserve the actual kind of wrong-kind present values.
+            emitBoundaryStartAtom(boundary, "JvmRuntime.rawAtom(" + target + ", "
+                + javaString(staticKind(boundaryPayload.descriptor())) + ")", indent);
             out.append(indent(indent)).append("  Object __mr_")
                 .append(boundary.opId().id()).append(";\n");
             out.append(indent(indent)).append("  try {\n");
@@ -2215,15 +2194,8 @@ public final class JvmSemanticEmitter {
                 // Custom boundary START: the input atom renders the
                 // actual value kind (identical for a passing value,
                 // actual-kind for a wrong-kind present value).
-                out.append(indent(indent)).append("JvmRuntime.ev(MODULE, ")
-                    .append(javaString(opKey(boundary.opId())))
-                    .append(", \"START\", \"BOUNDARY\", ")
-                    .append(javaString(boundary.contract().canonicalDigest())).append(", ")
-                    .append(javaString(parentKey(boundary.origin().parentOpId())))
-                    .append(", List.of(JvmRuntime.rawAtom(").append(target)
-                    .append(", ")
-                    .append(javaString(staticKind(boundaryPayload.descriptor())))
-                    .append(")), null, null);\n");
+                emitBoundaryStartAtom(boundary, "JvmRuntime.rawAtom(" + target + ", "
+                    + javaString(staticKind(boundaryPayload.descriptor())) + ")", indent);
 
                 String checkedName = "__orb_" + boundary.opId().id();
                 String errorName = "__obe_" + boundary.opId().id();
@@ -2390,18 +2362,8 @@ public final class JvmSemanticEmitter {
                                             int indent) {
             KindPayload.BoundaryPayload payload =
                 (KindPayload.BoundaryPayload) boundary.payload();
-            if (trace) {
-                out.append(indent(indent)).append("JvmRuntime.ev(MODULE, ")
-                    .append(javaString(opKey(boundary.opId())))
-                    .append(", \"START\", \"BOUNDARY\", ")
-                    .append(javaString(boundary.contract().canonicalDigest()))
-                    .append(", ")
-                    .append(javaString(parentKey(boundary.origin().parentOpId())))
-                    .append(", List.of(JvmRuntime.rawAtom(").append(inputExpr)
-                    .append(", ")
-                    .append(javaString(staticKind(payload.descriptor())))
-                    .append(")), null, null);\n");
-            }
+            emitBoundaryStartAtom(boundary, "JvmRuntime.rawAtom(" + inputExpr + ", "
+                + javaString(staticKind(payload.descriptor())) + ")", indent);
             out.append(indent(indent)).append("Object ").append(checkedName)
                 .append(";\n");
             out.append(indent(indent)).append("try {\n");
