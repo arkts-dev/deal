@@ -512,6 +512,58 @@ public abstract class EmitterSessionBase {
             : rejectedOp(read, message);
     }
 
+    /** Resolve an allocation identity across the project-global unit closure. */
+    protected final FunctionExecutionBinding executionBindingOfIdentity(ValueId identity) {
+        for (LoweredModuleUnit moduleUnit : units.values()) {
+            FunctionExecutionBinding found = moduleUnit.functionBindings().get(
+                new FunctionAllocationIdentity(identity.id()));
+            if (found != null) {
+                return found;
+            }
+        }
+        return null;
+    }
+
+    protected final FunctionExecutionBinding callBinding(SemanticOp op,
+            KindPayload.CallPayload payload) {
+        FunctionExecutionBinding binding = switch (payload.callee()) {
+            case KindPayload.CallCallee.Static staticCallee -> staticCallee.binding();
+            case KindPayload.CallCallee.Indirect indirect ->
+                executionBindingOfIdentity(indirect.callee());
+            case KindPayload.CallCallee.Dynamic ignored -> null;
+        };
+        if (binding == null
+                && !(payload.callee() instanceof KindPayload.CallCallee.Dynamic)) {
+            throw rejectedOp(op, "CALL " + payload
+                + " resolves no FunctionExecutionBinding (producer defect)");
+        }
+        return binding;
+    }
+
+    /** The resolved CLASS_LITERAL_FIELD boundary child of one field entry. */
+    protected final SemanticOp requireClassNewFieldBoundary(SemanticOp op,
+            KindPayload.FieldBoundary entry) {
+        SemanticOp boundary = opsById.get(entry.boundaryOpId());
+        if (boundary == null) {
+            throw rejectedOp(op, "CLASS_NEW " + op.opId()
+                + " field boundary " + entry.boundaryOpId() + " does not "
+                + "resolve (producer defect)");
+        }
+        return boundary;
+    }
+
+    /** The nested source ASYNC_START parented to an adapter-over-async op. */
+    protected final SemanticOp nestedAsyncStartOf(SemanticOp outer) {
+        for (SemanticOp candidate : opsById.values()) {
+            if (candidate.kind() == SemanticOpKind.ASYNC_START
+                    && outer.opId().equals(candidate.origin().parentOpId())) {
+                return candidate;
+            }
+        }
+        throw rejectedOp(outer, "the adapter-over-async task has no nested "
+            + "source ASYNC_START (producer defect)");
+    }
+
     /** The STDLIB_PARAMETER children in one-based declared order. */
     protected final List<SemanticOp> stdlibParamBoundaries(SemanticOp op) {
         return SemanticEmitterShared.stdlibParamBoundaries(op, opsById.values());

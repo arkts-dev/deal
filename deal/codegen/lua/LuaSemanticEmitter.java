@@ -3711,42 +3711,6 @@ public final class LuaSemanticEmitter {
             out.append(pad).append("__svStack[#__svStack] = nil\n");
         }
 
-        /**
-         * The registered execution binding of one allocation identity. The
-         * project session's units share one identity space (every semantic
-         * id is globally unique within the closure), so the registration is
-         * resolved across the closure's units: an {@code Indirect} callee
-         * value of one unit may name an identity whose producing
-         * {@code CLOSURE_NEW} sits in a dependency module (the same
-         * resolution the semantic oracle's {@code bindingOf} performs).
-         */
-        private FunctionExecutionBinding bindingOfIdentity(ValueId identity) {
-            for (LoweredModuleUnit moduleUnit : units.values()) {
-                FunctionExecutionBinding found = moduleUnit.functionBindings().get(
-                    new FunctionAllocationIdentity(identity.id()));
-                if (found != null) {
-                    return found;
-                }
-            }
-            return null;
-        }
-
-        private FunctionExecutionBinding callBinding(SemanticOp op,
-                KindPayload.CallPayload payload) {
-            FunctionExecutionBinding binding = switch (payload.callee()) {
-                case KindPayload.CallCallee.Static staticCallee -> staticCallee.binding();
-                case KindPayload.CallCallee.Indirect indirect ->
-                    bindingOfIdentity(indirect.callee());
-                case KindPayload.CallCallee.Dynamic ignored -> null;
-            };
-            if (binding == null
-                    && !(payload.callee() instanceof KindPayload.CallCallee.Dynamic)) {
-                throw rejectedOp(op, "CALL " + payload
-                    + " resolves no FunctionExecutionBinding (producer defect)");
-            }
-            return binding;
-        }
-
         private void emitHostCall(SemanticOp op, KindPayload.CallPayload payload,
                 ModuleId hostModuleId, String exportName, boolean moduleEntry) {
             emitHostInvocation(op, payload,
@@ -4724,18 +4688,6 @@ private void emitStdlib(SemanticOp op) {
                     out.append("error(__eT, 0)\n");
                 }
             }
-        }
-
-        /** The resolved CLASS_LITERAL_FIELD boundary child of one field entry. */
-        private SemanticOp requireClassNewFieldBoundary(SemanticOp op,
-                                                        KindPayload.FieldBoundary entry) {
-            SemanticOp boundary = opsById.get(entry.boundaryOpId());
-            if (boundary == null) {
-                throw rejectedOp(op, "CLASS_NEW " + op.opId()
-                    + " field boundary " + entry.boundaryOpId() + " does not "
-                    + "resolve (producer defect)");
-            }
-            return boundary;
         }
 
         /**
@@ -5829,18 +5781,6 @@ private void emitStdlib(SemanticOp op) {
                 .append(", {}, ").append(atomExpr).append(", nil)\n");
         }
 
-        /** The nested source ASYNC_START parented to an adapter-over-async op. */
-        private SemanticOp nestedAsyncStartOf(SemanticOp outer) {
-            for (SemanticOp candidate : opsById.values()) {
-                if (candidate.kind() == SemanticOpKind.ASYNC_START
-                        && outer.opId().equals(candidate.origin().parentOpId())) {
-                    return candidate;
-                }
-            }
-            throw rejectedOp(outer, "the adapter-over-async task has no nested "
-                + "source ASYNC_START (producer defect)");
-        }
-
         /**
          * ASYNC_START (E4, D13 task creation): the parameter boundaries
          * (the complete xN set under RUN — zero under
@@ -5966,7 +5906,7 @@ private void emitStdlib(SemanticOp op) {
             FunctionExecutionBinding binding = switch (payload.callee()) {
                 case KindPayload.CallCallee.Static staticCallee -> staticCallee.binding();
                 case KindPayload.CallCallee.Indirect indirect -> {
-                    FunctionExecutionBinding resolved = bindingOfIdentity(indirect.callee());
+                    FunctionExecutionBinding resolved = executionBindingOfIdentity(indirect.callee());
                     if (resolved == null) {
                         throw rejectedOp(op, "ASYNC_START " + op.opId()
                             + " resolves the indirect callee identity " + indirect.callee()
