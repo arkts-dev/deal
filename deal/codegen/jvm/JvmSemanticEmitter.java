@@ -3114,36 +3114,9 @@ public final class JvmSemanticEmitter {
                 SemanticOp boundary = opsById.get(boundaryId);
                 KindPayload.BoundaryPayload boundaryPayload =
                     (KindPayload.BoundaryPayload) boundary.payload();
-                emitBoundaryStart(boundary, slot(boundaryPayload.input()),
-                    boundaryPayload.descriptor(), indent);
-                // The cell runs under the recorded call origin: a failing
-                // declared parameter reports the callee's parameter
-                // declaration (the pinned corpus span), and the boundary
-                // and the CALL each publish their own FAILURE terminal
-                // (the oracle's exact sequence).
                 String cell = "__pb_" + boundary.opId().id();
-                out.append(indent(indent)).append("Object ").append(cell)
-                    .append(";\n");
-                out.append(indent(indent)).append("try {\n");
-                out.append(indent(indent)).append("  ").append(cell).append(" = ")
-                    .append(bcheckArgs(boundaryPayload.descriptor(),
-                        slot(boundaryPayload.input())))
-                    .append(";\n");
-                out.append(indent(indent))
-                    .append("} catch (JvmRuntime.DealError __be) {\n");
-                out.append(indent(indent))
-                    .append("  JvmRuntime.DealError __bre = new JvmRuntime.DealError("
-                        + "__be.code, __be.msg, ")
-                    .append(javaString(originOf(boundary)))
-                    .append(", __be.expected, __be.actual, __be.frames, null);\n");
-                emitFailureEvent(boundary.opId(), "BOUNDARY", boundary,
-                    "JvmRuntime.errtext(__bre)", indent + 1);
-                emitFailureEvent(op.opId(), op.kind().name(), op,
-                    "JvmRuntime.errtext(__bre)", indent + 1);
-                out.append(indent(indent)).append("  throw __bre;\n");
-                out.append(indent(indent)).append("}\n");
-                emitBoundarySuccess(boundary, cell, boundaryPayload.descriptor(),
-                    indent);
+                emitBoundaryAdmission(op, boundary, slot(boundaryPayload.input()),
+                    cell, "__be", "__bre", indent);
                 // The admitted value is the one the callee observes: the
                 // boundary cell's result (the int cell's -0 normalization
                 // included) replaces the raw operand in its own slot,
@@ -4523,29 +4496,8 @@ public final class JvmSemanticEmitter {
                                                 String checkedName, int indent) {
             KindPayload.BoundaryPayload boundaryPayload =
                 (KindPayload.BoundaryPayload) boundary.payload();
-            String inputExpr = slot(boundaryPayload.input());
-            emitBoundaryStart(boundary, inputExpr, boundaryPayload.descriptor(), indent);
-            out.append(indent(indent)).append("Object ").append(checkedName)
-                .append(";\n");
-            out.append(indent(indent)).append("try {\n");
-            out.append(indent(indent)).append("  ").append(checkedName)
-                .append(" = ")
-                .append(bcheckArgs(boundaryPayload.descriptor(), inputExpr))
-                .append(";\n");
-            out.append(indent(indent)).append("} catch (JvmRuntime.DealError __be) {\n");
-            out.append(indent(indent))
-                .append("  JvmRuntime.DealError __bre = new JvmRuntime.DealError("
-                    + "__be.code, __be.msg, ")
-                .append(javaString(originOf(boundary)))
-                .append(", __be.expected, __be.actual, __be.frames, null);\n");
-            emitFailureEvent(boundary.opId(), "BOUNDARY", boundary,
-                "JvmRuntime.errtext(__bre)", indent + 1);
-            emitFailureEvent(op.opId(), op.kind().name(), op,
-                "JvmRuntime.errtext(__bre)", indent + 1);
-            out.append(indent(indent)).append("  throw __bre;\n");
-            out.append(indent(indent)).append("}\n");
-            emitBoundarySuccess(boundary, checkedName, boundaryPayload.descriptor(),
-                indent);
+            emitBoundaryAdmission(op, boundary, slot(boundaryPayload.input()),
+                checkedName, "__be", "__bre", indent);
         }
 
         private void emitClassNewBuiltinError(SemanticOp op,
