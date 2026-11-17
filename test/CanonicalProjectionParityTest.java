@@ -9533,6 +9533,26 @@ public class CanonicalProjectionParityTest {
         return out.toString();
     }
 
+    private static void testHarnessNumberKind() throws Exception {
+        var method = SemanticDifferentialHarness.class.getDeclaredMethod(
+            "staticKindOf", RuntimeDescriptor.class);
+        method.setAccessible(true);
+        String kind = (String) method.invoke(null, RuntimeDescriptor.Number.INSTANCE);
+        // Atomization recognizes Number before consulting kind, so pin the map
+        // itself as well: output-only checks would hide an obsolete kind token.
+        checkEq("number", kind, "harness canonical number kind");
+        checkEq("number", deal.codegen.SemanticEmitterShared.staticKind(
+            RuntimeDescriptor.Number.INSTANCE), "emitter canonical number kind");
+        double[] values = {1.5, -0.0, Double.NaN,
+            Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY};
+        String[] atoms = {"num:0x1.8p0", "num:-0x0.0p0", "num:nan",
+            "num:Infinity", "num:-Infinity"};
+        for (int i = 0; i < values.length; i++) {
+            checkEq(atoms[i], JvmRuntime.atom(values[i], kind),
+                "harness binary64 atom " + i);
+        }
+    }
+
     // =========================================================================
     // Main
     // =========================================================================
@@ -9541,6 +9561,7 @@ public class CanonicalProjectionParityTest {
         corpusSnapshot = null;
         armChunk = null;
         System.out.println("=== Canonical Projection Parity Tests (ISSUE-0705) ===");
+        testHarnessNumberKind();
         testNamedDivergences();
         testArmFamilies();
         testRuntimeOkIdentityControls();

@@ -1355,9 +1355,6 @@ public final class SemanticDifferentialHarness {
             return "bool";
         }
         if (descriptor instanceof RuntimeDescriptor.Number) {
-            return "int";
-        }
-        if (descriptor instanceof RuntimeDescriptor.Number) {
             return "number";
         }
         if (descriptor instanceof RuntimeDescriptor.String) {
