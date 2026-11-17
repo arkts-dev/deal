@@ -3186,19 +3186,7 @@ private void emitBindingLoad(SemanticOp op) {
 
         /** The single recorded STDLIB_RETURN cell of one call, or null. */
         private SemanticOp stdlibReturnBoundary(SemanticOp op) {
-            SemanticOp found = null;
-            for (SemanticOp candidate : opsById.values()) {
-                if (candidate.kind() != SemanticOpKind.BOUNDARY
-                        || !op.opId().equals(candidate.origin().parentOpId())
-                        || ((KindPayload.BoundaryPayload) candidate.payload())
-                            .kind() != BoundaryKind.STDLIB_RETURN) {
-                    continue;
-                }
-                if (found == null || candidate.opId().id() < found.opId().id()) {
-                    found = candidate;
-                }
-            }
-            return found;
+            return boundaryChildOfKind(op, BoundaryKind.STDLIB_RETURN);
         }
 
         /**
