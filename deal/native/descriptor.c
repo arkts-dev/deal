@@ -1365,6 +1365,22 @@ void deal_array_present_element(deal_array *array, size_t index, deal_check_inpu
     *out = deal_live_element(array, index);
 }
 
+static deal_error *deal_array_element_error(size_t one_based_index,
+        deal_descriptor *element, const deal_check_input *input,
+        const deal_origin *origin, deal_error *cause) {
+    char index_text[3u * sizeof(size_t) + 1u];
+    size_t end = sizeof(index_text) - 1u;
+    index_text[end] = '\0';
+    do {
+        index_text[--end] = (char)('0' + one_based_index % 10u);
+        one_based_index /= 10u;
+    } while (one_based_index != 0u);
+    deal_arm_parameter parameter = {"oneBasedIndex", &index_text[end]};
+    return deal_error_materialize(DEAL_ARM_ID_ARRAY_ELEMENT_KIND,
+        &parameter, 1u, deal_descriptor_text(element), deal_check_token(input),
+        origin, cause);
+}
+
 static deal_outcome deal_check_live_value_core(deal_descriptor *expected, deal_check_input input,
                                    uint32_t boundary_kind,
                                    const deal_check_context *context, int wrap_elements) {
@@ -1493,18 +1509,8 @@ static deal_outcome deal_check_live_value_core(deal_descriptor *expected, deal_c
     if (wrap_elements && outcome.error != NULL && item.element_index != 0u) {
         /* The outer checked array owns its first failing element; nested
          * arrays propagate the leaf cause without adding another wrapper. */
-        char index_text[3u * sizeof(size_t) + 1u];
-        size_t end = sizeof(index_text) - 1u;
-        index_text[end] = '\0';
-        size_t index = item.element_index;
-        do {
-            index_text[--end] = (char)('0' + index % 10u);
-            index /= 10u;
-        } while (index != 0u);
-        deal_arm_parameter parameter = {"oneBasedIndex", &index_text[end]};
-        outcome.error = deal_error_materialize(DEAL_ARM_ID_ARRAY_ELEMENT_KIND,
-            &parameter, 1u, deal_descriptor_text(item.element_descriptor),
-            deal_check_token(&item.element_input), context->origin, outcome.error);
+        outcome.error = deal_array_element_error(item.element_index,
+            item.element_descriptor, &item.element_input, context->origin, outcome.error);
     }
     deal_platform_release(walk.items);
     deal_platform_release(walk.seen);
@@ -1531,18 +1537,7 @@ deal_outcome_data deal_array_pop(deal_array *array, deal_descriptor *element,
     /* Pop owns the outer position even when the removed value is an array. */
     deal_outcome checked = deal_check_live_value_core(element, input, boundary, &context, 0);
     if (checked.error != NULL) {
-        char index_text[3u * sizeof(size_t) + 1u];
-        size_t end = sizeof(index_text) - 1u;
-        index_text[end] = '\0';
-        size_t index = count;
-        do {
-            index_text[--end] = (char)('0' + index % 10u);
-            index /= 10u;
-        } while (index != 0u);
-        deal_arm_parameter parameter = {"oneBasedIndex", &index_text[end]};
-        result.error = deal_error_materialize(DEAL_ARM_ID_ARRAY_ELEMENT_KIND,
-            &parameter, 1u, deal_descriptor_text(element), deal_check_token(&input),
-            origin, checked.error);
+        result.error = deal_array_element_error(count, element, &input, origin, checked.error);
         return result;
     }
     result.value = input.datum;
@@ -1570,14 +1565,7 @@ deal_outcome_data deal_array_splice(deal_array *array, double from, double delet
             ? DEAL_BOUNDARY_FUNCTION_SIGNATURE : DEAL_BOUNDARY_TYPE_DESCRIPTOR;
         deal_outcome checked = deal_check_live_value_core(element, input, boundary, &context, 0);
         if (checked.error != NULL) {
-            char index_text[3u * sizeof(size_t) + 1u];
-            size_t end = sizeof(index_text) - 1u;
-            index_text[end] = '\0';
-            size_t index = start + i + 1u;
-            do { index_text[--end] = (char)('0' + index % 10u); index /= 10u; } while (index != 0u);
-            deal_arm_parameter parameter = {"oneBasedIndex", &index_text[end]};
-            result.error = deal_error_materialize(DEAL_ARM_ID_ARRAY_ELEMENT_KIND,
-                &parameter, 1u, deal_descriptor_text(element), deal_check_token(&input), origin, checked.error);
+            result.error = deal_array_element_error(start + i + 1u, element, &input, origin, checked.error);
             deal_root_scope_pop();
             return result;
         }
@@ -1609,14 +1597,7 @@ deal_outcome_data deal_array_element_get(deal_array *array, double index, deal_d
         ? DEAL_BOUNDARY_FUNCTION_SIGNATURE : DEAL_BOUNDARY_TYPE_DESCRIPTOR;
     deal_outcome checked = deal_check_live_value_core(element, input, boundary, &context, 0);
     if (checked.error != NULL) {
-        char index_text[3u * sizeof(size_t) + 1u];
-        size_t end = sizeof(index_text) - 1u;
-        index_text[end] = '\0';
-        size_t one_based = position + 1u;
-        do { index_text[--end] = (char)('0' + one_based % 10u); one_based /= 10u; } while (one_based != 0u);
-        deal_arm_parameter parameter = {"oneBasedIndex", &index_text[end]};
-        result.error = deal_error_materialize(DEAL_ARM_ID_ARRAY_ELEMENT_KIND,
-            &parameter, 1u, deal_descriptor_text(element), deal_check_token(&input), origin, checked.error);
+        result.error = deal_array_element_error(position + 1u, element, &input, origin, checked.error);
     } else result.value = input.datum;
     deal_root_scope_pop();
     return result;
@@ -1637,14 +1618,7 @@ deal_outcome_data deal_array_join(deal_array *array, deal_string *separator, con
         context.origin = origin;
         deal_outcome checked = deal_check_live_value_core(element, input, DEAL_BOUNDARY_TYPE_DESCRIPTOR, &context, 0);
         if (checked.error != NULL) {
-            char index_text[3u * sizeof(size_t) + 1u];
-            size_t end = sizeof(index_text) - 1u;
-            index_text[end] = '\0';
-            size_t index = i + 1u;
-            do { index_text[--end] = (char)('0' + index % 10u); index /= 10u; } while (index != 0u);
-            deal_arm_parameter parameter = {"oneBasedIndex", &index_text[end]};
-            result.error = deal_error_materialize(DEAL_ARM_ID_ARRAY_ELEMENT_KIND,
-                &parameter, 1u, "string", deal_check_token(&input), origin, checked.error);
+            result.error = deal_array_element_error(i + 1u, element, &input, origin, checked.error);
             break;
         }
         deal_string *value = (deal_string *)input.datum.reference;
@@ -1689,14 +1663,7 @@ deal_outcome_data deal_array_search(deal_array *array, const deal_data *needle, 
             ? DEAL_BOUNDARY_FUNCTION_SIGNATURE : DEAL_BOUNDARY_TYPE_DESCRIPTOR;
         deal_outcome checked = deal_check_live_value_core(element, input, boundary, &context, 0);
         if (checked.error != NULL) {
-            char index_text[3u * sizeof(size_t) + 1u];
-            size_t end = sizeof(index_text) - 1u;
-            index_text[end] = '\0';
-            size_t index = i + 1u;
-            do { index_text[--end] = (char)('0' + index % 10u); index /= 10u; } while (index != 0u);
-            deal_arm_parameter parameter = {"oneBasedIndex", &index_text[end]};
-            result.error = deal_error_materialize(DEAL_ARM_ID_ARRAY_ELEMENT_KIND,
-                &parameter, 1u, deal_descriptor_text(element), deal_check_token(&input), origin, checked.error);
+            result.error = deal_array_element_error(i + 1u, element, &input, origin, checked.error);
             break;
         }
         if (deal_data_same(&input.datum, needle) || (includes && input.datum.tag == DEAL_DATA_NUMBER
@@ -1729,14 +1696,7 @@ deal_outcome_data deal_array_slice(deal_array *array, double from, double to,
             ? DEAL_BOUNDARY_FUNCTION_SIGNATURE : DEAL_BOUNDARY_TYPE_DESCRIPTOR;
         deal_outcome checked = deal_check_live_value_core(element, input, boundary, &context, 0);
         if (checked.error != NULL) {
-            char index_text[3u * sizeof(size_t) + 1u];
-            size_t end = sizeof(index_text) - 1u;
-            index_text[end] = '\0';
-            size_t index = start + i + 1u;
-            do { index_text[--end] = (char)('0' + index % 10u); index /= 10u; } while (index != 0u);
-            deal_arm_parameter parameter = {"oneBasedIndex", &index_text[end]};
-            result.error = deal_error_materialize(DEAL_ARM_ID_ARRAY_ELEMENT_KIND,
-                &parameter, 1u, deal_descriptor_text(element), deal_check_token(&input), origin, checked.error);
+            result.error = deal_array_element_error(start + i + 1u, element, &input, origin, checked.error);
             deal_root_scope_pop();
             return result;
         }
