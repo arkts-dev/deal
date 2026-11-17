@@ -765,12 +765,7 @@ final class LlvmFunctionEmitter {
             // runtime string (C3/R2, `llvm-native-codegen-cfg-ssa` C9): the
             // emitted constant carries the exact bytes and the entry copies
             // them, so no emitted value aliases read-only module data.
-            session.referenceRuntimeEntry("deal_text_new");
-            LlvmData.StringConstant constant = session.data.intern(text.value());
-            String built = emitTemporary(op, "call " + LlvmTypeMapper.STRING
-                + " @deal_text_new(" + session.data.operand(constant)
-                + ", i64 " + session.data.byteCount(constant) + ")");
-            storeResult(op, type, built);
+            storeResult(op, type, literalString(text.value(), op));
             return;
         }
         String literal = switch (payload.value()) {
