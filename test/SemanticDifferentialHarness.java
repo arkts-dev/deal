@@ -264,20 +264,8 @@ public final class SemanticDifferentialHarness {
             LoweredModuleUnit entry = project.modules().get(project.entryModule());
             Path script = workspace.resolve("project.lua");
             Files.writeString(script, lua, StandardCharsets.UTF_8);
-            BoundedProcess.BoundedResult captured = runCaptured(List.of("luajit",
-                script.toAbsolutePath().toString()), Map.of());
-            int exit = captured.exitCode();
-            List<String> stdoutLines = captured.stdout().lines().toList();
-            List<String> protocolLines = captured.stderr().lines().toList();
-            if (exit != 0) {
-                failures.add("shared LuaJIT project artifact exited " + exit + ": "
-                    + String.join(" / ", protocolLines));
-                return null;
-            }
-            SemanticRuntimeModel.ConsumerRun run =
-                decodeRun("shared-luajit", entry, protocolLines, failures);
-            crossCheckStdout(run, stdoutLines, "shared-luajit", failures);
-            return run;
+            return executeLuaArtifact(entry, script, failures,
+                "shared LuaJIT project artifact");
         } catch (IOException | InterruptedException exception) {
             if (exception instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
@@ -1441,20 +1429,7 @@ public final class SemanticDifferentialHarness {
             Path script = workspace.resolve(unit.moduleId().path().replace('/', '_')
                 + ".lua");
             Files.writeString(script, lua, StandardCharsets.UTF_8);
-            BoundedProcess.BoundedResult captured = runCaptured(List.of("luajit",
-                script.toAbsolutePath().toString()), Map.of());
-            int exit = captured.exitCode();
-            List<String> stdoutLines = captured.stdout().lines().toList();
-            List<String> protocolLines = captured.stderr().lines().toList();
-            if (exit != 0) {
-                failures.add("shared LuaJIT artifact exited " + exit + ": "
-                    + String.join(" / ", protocolLines));
-                return null;
-            }
-            SemanticRuntimeModel.ConsumerRun run =
-                decodeRun("shared-luajit", unit, protocolLines, failures);
-            crossCheckStdout(run, stdoutLines, "shared-luajit", failures);
-            return run;
+            return executeLuaArtifact(unit, script, failures, "shared LuaJIT artifact");
         } catch (IOException | InterruptedException exception) {
             if (exception instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
@@ -1462,6 +1437,26 @@ public final class SemanticDifferentialHarness {
             failures.add("shared LuaJIT infrastructure failure: " + exception.getMessage());
             return null;
         }
+    }
+
+    /** Execute the staged Lua artifact; module/project emission stays with its caller. */
+    private static SemanticRuntimeModel.ConsumerRun executeLuaArtifact(
+            LoweredModuleUnit unit, Path script, List<String> failures, String artifactLabel)
+            throws IOException, InterruptedException {
+        BoundedProcess.BoundedResult captured = runCaptured(List.of("luajit",
+            script.toAbsolutePath().toString()), Map.of());
+        int exit = captured.exitCode();
+        List<String> stdoutLines = captured.stdout().lines().toList();
+        List<String> protocolLines = captured.stderr().lines().toList();
+        if (exit != 0) {
+            failures.add(artifactLabel + " exited " + exit + ": "
+                + String.join(" / ", protocolLines));
+            return null;
+        }
+        SemanticRuntimeModel.ConsumerRun run =
+            decodeRun("shared-luajit", unit, protocolLines, failures);
+        crossCheckStdout(run, stdoutLines, "shared-luajit", failures);
+        return run;
     }
 
     private static SemanticRuntimeModel.ConsumerRun runJvm(LoweredModuleUnit unit,
