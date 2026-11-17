@@ -2659,18 +2659,8 @@ case "NUMBER_ADD" -> {
 
     /** The stable parse defect classifications ({reason} texts). */
     private static final String REASON_UNEXPECTED_CHARACTER = "unexpected character";
-    private static final String REASON_UNTERMINATED_STRING = "unterminated string";
-    private static final String REASON_UNTERMINATED_OBJECT = "unterminated object";
-    private static final String REASON_UNTERMINATED_ARRAY = "unterminated array";
-    private static final String REASON_INVALID_ESCAPE = "invalid escape";
-    private static final String REASON_INVALID_NUMBER = "invalid number";
-    private static final String REASON_LEADING_ZERO = "leading zero";
-    private static final String REASON_MISSING_KEY = "missing key";
-    private static final String REASON_MISSING_COLON = "missing colon";
-    private static final String REASON_MISSING_COMMA = "missing comma";
     private static final String REASON_TRAILING_CONTENT = "trailing content";
     private static final String REASON_UNEXPECTED_END = "unexpected end of input";
-    private static final String REASON_DUPLICATE_KEY = "duplicate key";
 
     /** The internal parse failure: the defect class and its 1-based UTF-8 byte offset. */
     private static final class JsonParseFailure extends RuntimeException {
@@ -2687,21 +2677,8 @@ case "NUMBER_ADD" -> {
         }
     }
 
-    /**
-     * The RFC-8259 recursive-descent reader over the input's code points,
-     * tracking the 1-based UTF-8 byte offset of the current scan position:
-     * object order follows text, a member key whose decoded scalar text
-     * equals an earlier member key of the same object is a syntax defect
-     * ({@code duplicate key}) at the second key's opening quote, and the
-     * exact decimal classification ({@link JsonNumberClassifier}) makes a
-     * numeric lexeme a {@link Long} exactly when its mathematical value is
-     * integral and inside signed32 ({@code -0}/{@code -0.0} normalized to
-     * {@code 0}); every other numeric lexeme becomes a {@link Double}.
-     */
-    private static final class JsonReader extends JsonScan.CodePointCursor {
-
-        /** The sentinel a container open returns to the frame loop. */
-        private static final Object OPENED = new Object();
+    /** Native carriers over the shared stack-safe grammar, with binary64 number conversion. */
+    private static final class JsonReader extends JsonScan.ContainerReader<Object, Table, Array> {
 
         JsonReader(int[] codePoints) {
             super(codePoints);
@@ -2712,74 +2689,30 @@ case "NUMBER_ADD" -> {
             return new JsonParseFailure(reason, offsetOfCurrent());
         }
 
-        /**
-         * One open container of the stack-safe parser. The frame's
-         * {@code state} drives its member loop and {@code pendingKey}
-         * carries the object member awaiting its value.
-         */
-        private static final class Frame {
-
-            static final int OBJECT_FIRST = 0;
-            static final int OBJECT_KEY = 1;
-            static final int VALUE = 2;
-            static final int OBJECT_AFTER = 3;
-            static final int ARRAY_FIRST = 4;
-            static final int ARRAY_AFTER = 5;
-
-            final boolean array;
-            final Table table;
-            final Array elements;
-            final java.util.Set<String> decodedKeys;
-            String pendingKey;
-            int state;
-
-            private Frame(boolean array, Table table, Array elements,
-                          java.util.Set<String> decodedKeys, int state) {
-                this.array = array;
-                this.table = table;
-                this.elements = elements;
-                this.decodedKeys = decodedKeys;
-                this.state = state;
-            }
-
-            static Frame object() {
-                return new Frame(false, new Table(), null, new java.util.HashSet<>(),
-                    OBJECT_FIRST);
-            }
-
-            static Frame array() {
-                Array array = new Array(0);
-                // The decoded-array provenance mark is produced by JSON
-                // parsing; a nested
-                // decoded array carries it too.
-                array.decodedArray = true;
-                array.elementDescriptor = "unknown";
-                return new Frame(true, null, array, null, ARRAY_FIRST);
-            }
+        @Override protected Table newObject() { return new Table(); }
+        @Override protected Array newArray() {
+            Array array = new Array(0);
+            array.decodedArray = true;
+            array.elementDescriptor = "unknown";
+            return array;
+        }
+        @Override protected void put(Table table, String key, Object value) { table.write(key, value); }
+        @Override protected void append(Array array, Object value) {
+            array.elements.add(value);
+            array.length++;
+        }
+        @Override protected Object finishObject(Table table) { return table; }
+        @Override protected Object finishArray(Array array) { return array; }
+        @Override protected JsonParseFailure failureAt(String reason, long offset) {
+            return new JsonParseFailure(reason, offset);
         }
 
-        /**
-         * Parses one value at the cursor: a scalar returns directly, a
-         * container pushes its frame on {@code stack} and returns
-         * {@code null}. The frame loop of {@link #parseValue()} then
-         * drives the open container.
-         */
-        private Object parseValueAtCursor(java.util.Deque<Frame> stack) {
+        @Override protected Object parseScalar() {
             if (atEnd()) {
                 throw failure(REASON_UNEXPECTED_END);
             }
             int c = peek();
             switch (c) {
-                case '{' -> {
-                    advance(); // '{'
-                    stack.push(Frame.object());
-                    return OPENED;
-                }
-                case '[' -> {
-                    advance(); // '['
-                    stack.push(Frame.array());
-                    return OPENED;
-                }
                 case '"' -> {
                     return parseString();
                 }
@@ -2797,146 +2730,6 @@ case "NUMBER_ADD" -> {
                         return parseNumber();
                     }
                     throw failure(REASON_UNEXPECTED_CHARACTER);
-                }
-            }
-        }
-
-        /**
-         * The stack-safe parse of one value: an explicit frame stack
-         * replaces the recursive descent, so a finite nested document
-         * has no stack bound. Every transition, defect class, and
-         * 1-based UTF-8 byte offset is the recursive reader's.
-         */
-        Object parseValue() {
-            java.util.Deque<Frame> stack = new java.util.ArrayDeque<>();
-            Object completed = null;
-            boolean haveValue = false;
-            while (true) {
-                if (haveValue) {
-                    if (stack.isEmpty()) {
-                        return completed;
-                    }
-                    Frame parent = stack.peek();
-                    if (parent.array) {
-                        parent.elements.elements.add(completed);
-                        parent.elements.length++;
-                        parent.state = Frame.ARRAY_AFTER;
-                    } else {
-                        parent.table.write(parent.pendingKey, completed);
-                        parent.state = Frame.OBJECT_AFTER;
-                    }
-                    completed = null;
-                    haveValue = false;
-                    continue;
-                }
-                if (stack.isEmpty()) {
-                    Object parsed = parseValueAtCursor(stack);
-                    if (parsed == OPENED) {
-                        continue;
-                    }
-                    completed = parsed;
-                    haveValue = true;
-                    continue;
-                }
-                Frame frame = stack.peek();
-                switch (frame.state) {
-                    case Frame.OBJECT_FIRST -> {
-                        skipWs();
-                        if (!atEnd() && peek() == '}') {
-                            advance();
-                            completed = frame.table;
-                            stack.pop();
-                            haveValue = true;
-                        } else {
-                            frame.state = Frame.OBJECT_KEY;
-                        }
-                    }
-                    case Frame.OBJECT_KEY -> {
-                        skipWs();
-                        if (atEnd()) {
-                            throw failure(REASON_UNEXPECTED_END);
-                        }
-                        if (peek() != '"') {
-                            throw failure(REASON_MISSING_KEY);
-                        }
-                        // The duplicate-key defect's position is the
-                        // second key's opening quote (one-based UTF-8
-                        // byte offset); decoded equality makes an
-                        // escaped spelling of the same key a duplicate
-                        // too.
-                        long keyOffset = offsetOfCurrent();
-                        String key = parseString();
-                        if (!frame.decodedKeys.add(key)) {
-                            throw new JsonParseFailure(REASON_DUPLICATE_KEY, keyOffset);
-                        }
-                        skipWs();
-                        if (atEnd() || peek() != ':') {
-                            throw failure(REASON_MISSING_COLON);
-                        }
-                        advance(); // ':'
-                        frame.pendingKey = key;
-                        frame.state = Frame.VALUE;
-                    }
-                    case Frame.VALUE -> {
-                        skipWs();
-                        if (atEnd()) {
-                            throw failure(REASON_UNEXPECTED_END);
-                        }
-                        Object parsed = parseValueAtCursor(stack);
-                        if (parsed != OPENED) {
-                            completed = parsed;
-                            haveValue = true;
-                        }
-                    }
-                    case Frame.OBJECT_AFTER -> {
-                        skipWs();
-                        if (atEnd()) {
-                            throw failure(REASON_UNTERMINATED_OBJECT);
-                        }
-                        int c = peek();
-                        if (c == ',') {
-                            advance();
-                            frame.state = Frame.OBJECT_KEY;
-                        } else if (c == '}') {
-                            advance();
-                            completed = frame.table;
-                            stack.pop();
-                            haveValue = true;
-                        } else {
-                            throw failure(REASON_MISSING_COMMA);
-                        }
-                    }
-                    case Frame.ARRAY_FIRST -> {
-                        skipWs();
-                        if (!atEnd() && peek() == ']') {
-                            advance();
-                            completed = frame.elements;
-                            stack.pop();
-                            haveValue = true;
-                        } else {
-                            frame.state = Frame.VALUE;
-                        }
-                    }
-                    case Frame.ARRAY_AFTER -> {
-                        skipWs();
-                        if (atEnd()) {
-                            throw failure(REASON_UNTERMINATED_ARRAY);
-                        }
-                        int c = peek();
-                        if (c == ',') {
-                            advance();
-                            frame.state = Frame.VALUE;
-                        } else if (c == ']') {
-                            advance();
-                            completed = frame.elements;
-                            stack.pop();
-                            haveValue = true;
-                        } else {
-                            throw failure(REASON_MISSING_COMMA);
-                        }
-                    }
-                    default -> throw new IllegalStateException(
-                        "unknown JSON reader frame state " + frame.state);
                 }
             }
         }

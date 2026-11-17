@@ -5,7 +5,8 @@ package deal.semantic.ir;
  * ({@code SharedStdlibSemantics}, {@code JvmRuntime},
  * {@code CanonicalJson}, the LuaJIT async-export invoker): the cursor
  * operations, the whitespace/literal/string/hex-escape scans, and the
- * number-token scan. The exact decimal classification of one scanned
+ * number-token scan, plus the stack-safe container grammar used by the
+ * semantic and JVM readers. The exact decimal classification of one scanned
  * token is {@link JsonNumberClassifier}'s one algorithm. Value production
  * stays in each parser's own reader; the hooks build the parser's own
  * failure type.
@@ -238,6 +239,144 @@ public final class JsonScan {
         /** The UTF-8 byte length of one Unicode scalar value. */
         private static int utf8Length(int codePoint) {
             return codePoint < 0x80 ? 1 : codePoint < 0x800 ? 2 : codePoint < 0x10000 ? 3 : 4;
+        }
+    }
+
+    /** Stack-safe container grammar; readers retain scalar conversion and native storage. */
+    public abstract static class ContainerReader<V, T, A> extends CodePointCursor {
+        protected ContainerReader(int[] codePoints) { super(codePoints); }
+
+        protected abstract T newObject();
+        protected abstract A newArray();
+        protected abstract void put(T object, String key, V value);
+        protected abstract void append(A array, V value);
+        protected abstract V finishObject(T object);
+        protected abstract V finishArray(A array);
+        protected abstract V parseScalar();
+        protected abstract RuntimeException failureAt(String reason, long byteOffset);
+
+        private static final int OBJECT_FIRST = 0, OBJECT_KEY = 1, VALUE = 2,
+            OBJECT_AFTER = 3, ARRAY_FIRST = 4, ARRAY_AFTER = 5;
+
+        private static final class Frame<T, A> {
+            final T object;
+            final A array;
+            final java.util.Set<String> keys;
+            String key;
+            int state;
+
+            Frame(T object, A array, int state) {
+                this.object = object;
+                this.array = array;
+                this.state = state;
+                keys = object == null ? null : new java.util.HashSet<>();
+            }
+        }
+
+        public final V parseValue() {
+            java.util.Deque<Frame<T, A>> stack = new java.util.ArrayDeque<>();
+            V completed = null;
+            boolean haveValue = false;
+            while (true) {
+                if (haveValue) {
+                    if (stack.isEmpty()) return completed;
+                    Frame<T, A> parent = stack.peek();
+                    if (parent.object == null) {
+                        append(parent.array, completed);
+                        parent.state = ARRAY_AFTER;
+                    } else {
+                        put(parent.object, parent.key, completed);
+                        parent.state = OBJECT_AFTER;
+                    }
+                    completed = null;
+                    haveValue = false;
+                    continue;
+                }
+                if (stack.isEmpty() || stack.peek().state == VALUE) {
+                    skipWs();
+                    if (atEnd()) throw failure(REASON_UNEXPECTED_END);
+                    switch (peek()) {
+                        case '{' -> {
+                            advance();
+                            stack.push(new Frame<>(newObject(), null, OBJECT_FIRST));
+                        }
+                        case '[' -> {
+                            advance();
+                            stack.push(new Frame<>(null, newArray(), ARRAY_FIRST));
+                        }
+                        default -> {
+                            completed = parseScalar();
+                            haveValue = true;
+                        }
+                    }
+                    continue;
+                }
+                Frame<T, A> frame = stack.peek();
+                skipWs();
+                switch (frame.state) {
+                    case OBJECT_FIRST -> {
+                        if (!atEnd() && peek() == '}') {
+                            advance();
+                            completed = finishObject(frame.object);
+                            stack.pop();
+                            haveValue = true;
+                        } else {
+                            frame.state = OBJECT_KEY;
+                        }
+                    }
+                    case OBJECT_KEY -> {
+                        if (atEnd()) throw failure(REASON_UNEXPECTED_END);
+                        if (peek() != '"') throw failure("missing key");
+                        long offset = offsetOfCurrent();
+                        String key = parseString();
+                        if (!frame.keys.add(key)) throw failureAt("duplicate key", offset);
+                        skipWs();
+                        if (atEnd() || peek() != ':') throw failure("missing colon");
+                        advance();
+                        frame.key = key;
+                        frame.state = VALUE;
+                    }
+                    case OBJECT_AFTER -> {
+                        if (atEnd()) throw failure("unterminated object");
+                        if (peek() == ',') {
+                            advance();
+                            frame.state = OBJECT_KEY;
+                        } else if (peek() == '}') {
+                            advance();
+                            completed = finishObject(frame.object);
+                            stack.pop();
+                            haveValue = true;
+                        } else {
+                            throw failure("missing comma");
+                        }
+                    }
+                    case ARRAY_FIRST -> {
+                        if (!atEnd() && peek() == ']') {
+                            advance();
+                            completed = finishArray(frame.array);
+                            stack.pop();
+                            haveValue = true;
+                        } else {
+                            frame.state = VALUE;
+                        }
+                    }
+                    case ARRAY_AFTER -> {
+                        if (atEnd()) throw failure("unterminated array");
+                        if (peek() == ',') {
+                            advance();
+                            frame.state = VALUE;
+                        } else if (peek() == ']') {
+                            advance();
+                            completed = finishArray(frame.array);
+                            stack.pop();
+                            haveValue = true;
+                        } else {
+                            throw failure("missing comma");
+                        }
+                    }
+                    default -> throw new IllegalStateException("unknown JSON reader frame state " + frame.state);
+                }
+            }
         }
     }
 

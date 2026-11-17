@@ -27,7 +27,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Deque;
-import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -1300,7 +1299,8 @@ public final class SharedStdlibSemantics {
      * The RFC-8259 recursive-descent reader over the input's code points,
      * tracking the 1-based UTF-8 byte offset of the current scan position.
      */
-    private static final class JsonReader extends JsonScan.CodePointCursor {
+    private static final class JsonReader
+            extends JsonScan.ContainerReader<Value, SemanticTable<Value>, List<Value>> {
 
         JsonReader(int[] codePoints) {
             super(codePoints);
@@ -1311,68 +1311,22 @@ public final class SharedStdlibSemantics {
             return new JsonParseFailure(reason, offsetOfCurrent());
         }
 
-        /**
-         * One open container of the stack-safe parser. The frame's
-         * {@code state} drives its member loop and {@code pendingKey}
-         * carries the object member awaiting its value.
-         */
-        private static final class Frame {
-
-            static final int OBJECT_FIRST = 0;
-            static final int OBJECT_KEY = 1;
-            static final int VALUE = 2;
-            static final int OBJECT_AFTER = 3;
-            static final int ARRAY_FIRST = 4;
-            static final int ARRAY_AFTER = 5;
-
-            final boolean array;
-            final SemanticTable<Value> table;
-            final List<Value> elements;
-            final Set<String> decodedKeys;
-            String pendingKey;
-            int state;
-
-            private Frame(boolean array, SemanticTable<Value> table,
-                          List<Value> elements, Set<String> decodedKeys, int state) {
-                this.array = array;
-                this.table = table;
-                this.elements = elements;
-                this.decodedKeys = decodedKeys;
-                this.state = state;
-            }
-
-            static Frame object() {
-                return new Frame(false, new SemanticTable<>(), null, new HashSet<>(),
-                    OBJECT_FIRST);
-            }
-
-            static Frame array() {
-                return new Frame(true, null, new ArrayList<>(), null, ARRAY_FIRST);
-            }
+        @Override protected SemanticTable<Value> newObject() { return new SemanticTable<>(); }
+        @Override protected List<Value> newArray() { return new ArrayList<>(); }
+        @Override protected void put(SemanticTable<Value> table, String key, Value value) { table.put(key, value); }
+        @Override protected void append(List<Value> array, Value value) { array.add(value); }
+        @Override protected Value finishObject(SemanticTable<Value> table) { return new Value.Table(table); }
+        @Override protected Value finishArray(List<Value> array) { return Value.array(array); }
+        @Override protected JsonParseFailure failureAt(String reason, long offset) {
+            return new JsonParseFailure(reason, offset);
         }
 
-        /**
-         * Parses one value at the cursor: a scalar returns directly, a
-         * container pushes its frame on {@code stack} and returns
-         * {@code null}. The frame loop of {@link #parseValue()} then
-         * drives the open container.
-         */
-        private Value parseValueAtCursor(Deque<Frame> stack) {
+        @Override protected Value parseScalar() {
             if (atEnd()) {
                 throw failure(REASON_UNEXPECTED_END);
             }
             int c = peek();
             switch (c) {
-                case '{' -> {
-                    advance(); // '{'
-                    stack.push(Frame.object());
-                    return null;
-                }
-                case '[' -> {
-                    advance(); // '['
-                    stack.push(Frame.array());
-                    return null;
-                }
                 case '"' -> {
                     return Value.string(parseString());
                 }
@@ -1390,130 +1344,6 @@ public final class SharedStdlibSemantics {
                         return parseNumber();
                     }
                     throw failure(REASON_UNEXPECTED_CHARACTER);
-                }
-            }
-        }
-
-        /**
-         * The stack-safe parse of one value: an explicit frame stack
-         * replaces the recursive descent, so a finite nested document
-         * has no stack bound. Every transition, defect class, and
-         * 1-based UTF-8 byte offset is the recursive reader's.
-         */
-        Value parseValue() {
-            Deque<Frame> stack = new ArrayDeque<>();
-            Value completed = null;
-            while (true) {
-                if (completed != null) {
-                    if (stack.isEmpty()) {
-                        return completed;
-                    }
-                    Frame parent = stack.peek();
-                    if (parent.array) {
-                        parent.elements.add(completed);
-                        parent.state = Frame.ARRAY_AFTER;
-                    } else {
-                        parent.table.put(parent.pendingKey, completed);
-                        parent.state = Frame.OBJECT_AFTER;
-                    }
-                    completed = null;
-                    continue;
-                }
-                if (stack.isEmpty()) {
-                    completed = parseValueAtCursor(stack);
-                    continue;
-                }
-                Frame frame = stack.peek();
-                switch (frame.state) {
-                    case Frame.OBJECT_FIRST -> {
-                        skipWs();
-                        if (!atEnd() && peek() == '}') {
-                            advance();
-                            completed = new Value.Table(frame.table);
-                            stack.pop();
-                        } else {
-                            frame.state = Frame.OBJECT_KEY;
-                        }
-                    }
-                    case Frame.OBJECT_KEY -> {
-                        skipWs();
-                        if (atEnd()) {
-                            throw failure(REASON_UNEXPECTED_END);
-                        }
-                        if (peek() != '"') {
-                            throw failure(REASON_MISSING_KEY);
-                        }
-                        // The duplicate-key defect's position is the
-                        // second key's opening quote (one-based UTF-8
-                        // byte offset); decoded equality makes an
-                        // escaped spelling of the same key a duplicate
-                        // too.
-                        long keyOffset = offsetOfCurrent();
-                        String key = parseString();
-                        if (!frame.decodedKeys.add(key)) {
-                            throw new JsonParseFailure(REASON_DUPLICATE_KEY, keyOffset);
-                        }
-                        skipWs();
-                        if (atEnd() || peek() != ':') {
-                            throw failure(REASON_MISSING_COLON);
-                        }
-                        advance(); // ':'
-                        frame.pendingKey = key;
-                        frame.state = Frame.VALUE;
-                    }
-                    case Frame.VALUE -> {
-                        skipWs();
-                        if (atEnd()) {
-                            throw failure(REASON_UNEXPECTED_END);
-                        }
-                        completed = parseValueAtCursor(stack);
-                    }
-                    case Frame.OBJECT_AFTER -> {
-                        skipWs();
-                        if (atEnd()) {
-                            throw failure(REASON_UNTERMINATED_OBJECT);
-                        }
-                        int c = peek();
-                        if (c == ',') {
-                            advance();
-                            frame.state = Frame.OBJECT_KEY;
-                        } else if (c == '}') {
-                            advance();
-                            completed = new Value.Table(frame.table);
-                            stack.pop();
-                        } else {
-                            throw failure(REASON_MISSING_COMMA);
-                        }
-                    }
-                    case Frame.ARRAY_FIRST -> {
-                        skipWs();
-                        if (!atEnd() && peek() == ']') {
-                            advance();
-                            completed = Value.array(frame.elements);
-                            stack.pop();
-                        } else {
-                            frame.state = Frame.VALUE;
-                        }
-                    }
-                    case Frame.ARRAY_AFTER -> {
-                        skipWs();
-                        if (atEnd()) {
-                            throw failure(REASON_UNTERMINATED_ARRAY);
-                        }
-                        int c = peek();
-                        if (c == ',') {
-                            advance();
-                            frame.state = Frame.VALUE;
-                        } else if (c == ']') {
-                            advance();
-                            completed = Value.array(frame.elements);
-                            stack.pop();
-                        } else {
-                            throw failure(REASON_MISSING_COMMA);
-                        }
-                    }
-                    default -> throw new Defect("unknown JSON reader frame state "
-                        + frame.state);
                 }
             }
         }

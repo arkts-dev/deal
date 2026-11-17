@@ -462,6 +462,19 @@ public class SharedStdlibSemanticsTest {
             null, null,
             Map.of("oneBasedByteOffset", Long.toString(oneBasedByteOffset), "reason", reason),
             origin(), note);
+        try {
+            parseJvmJson(json);
+            check(false, "JVM rejects syntax: " + note);
+        } catch (deal.codegen.jvm.JvmRuntime.DealError error) {
+            check(error.code.equals("E8001") && error.msg.equals(
+                    "JSON parse error at position " + oneBasedByteOffset + ": " + reason),
+                "JVM exact parse reason and byte offset: " + note);
+        }
+    }
+
+    private static Object parseJvmJson(String text) {
+        return deal.codegen.jvm.JvmRuntime.stdlib("STDLIB_CALL", "JSON_PARSE",
+            "json-reader-test", "digest", null, "json-reader-test", new Object[] { text });
     }
 
     static void testJsonParseValues() {
@@ -974,6 +987,29 @@ public class SharedStdlibSemanticsTest {
         check(SharedStdlibSemantics.jsonParse(origin(), valid(deepArrayText.toString()))
                 instanceof Outcome.Success<Value>,
             "a " + depth + "-deep array text parses on the default stack");
+
+        // The JVM's real null scalar must not be mistaken for an opened container.
+        Object jvmValue = parseJvmJson("[null,{\"k\":[null,-0.0]},null]");
+        var jvmArray = (deal.codegen.jvm.JvmRuntime.Array) jvmValue;
+        var nested = (deal.codegen.jvm.JvmRuntime.Array)
+            ((deal.codegen.jvm.JvmRuntime.Table) jvmArray.elements.get(1)).read("k");
+        check(jvmArray.length == 3 && jvmArray.elements.get(0) == null
+                && jvmArray.elements.get(2) == null && nested.elements.get(0) == null,
+            "JVM null scalars publish into arrays and nested objects");
+        check(jvmArray.decodedArray && nested.decodedArray
+                && "unknown".equals(nested.elementDescriptor)
+                && Double.doubleToRawLongBits((Double) nested.elements.get(1)) == Long.MIN_VALUE,
+            "JVM parsed arrays retain provenance, descriptor and negative zero");
+        Object jvmDeep = parseJvmJson("[".repeat(depth) + "null" + "]".repeat(depth));
+        for (int i = 0; i < depth; i++) {
+            var array = (deal.codegen.jvm.JvmRuntime.Array) jvmDeep;
+            if (array.length != 1 || !array.decodedArray) {
+                check(false, "JVM deep array retains one element and parsed provenance");
+                break;
+            }
+            jvmDeep = array.elements.get(0);
+        }
+        check(jvmDeep == null, "JVM 20000-deep array reaches its actual null leaf");
 
         // The first declaration-order failure retains its carrier and origin at depth.
         SemanticTable<Value> failing = new SemanticTable<>();
