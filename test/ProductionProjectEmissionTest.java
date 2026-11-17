@@ -4452,10 +4452,59 @@ public class ProductionProjectEmissionTest {
     // Main
     // =========================================================================
 
+    private static void testJava21Compilation() throws Exception {
+        Path classes = Files.createTempDirectory("compiler-java21-");
+        try {
+            List<String> args = new ArrayList<>(List.of("--release", "21", "-proc:none",
+                "-d", classes.toString()));
+            try (var sources = Files.walk(Path.of("deal"))) {
+                sources.filter(path -> path.toString().endsWith(".java")).sorted()
+                    .forEach(path -> args.add(path.toString()));
+            }
+            check(javax.tools.ToolProvider.getSystemJavaCompiler().run(null, null, null,
+                args.toArray(String[]::new)) == 0, "all production sources compile for Java 21");
+        } finally { deleteRecursively(classes); }
+    }
+
+    private static void testCompilationTiming() throws Exception {
+        List<String> expected = List.of("parse", "signatures", "typecheck", "checked-project",
+            "requirements", "construction-plans", "dependency-plan", "lowering",
+            "codegen-total", "stage-ir");
+        List<String> outerPhases = new ArrayList<>();
+        List<String> innerPhases = new ArrayList<>();
+        try (var outer = deal.module.CompilationTiming.observe((phase, nanos) -> {
+            check(nanos >= 0, "phase duration is nonnegative");
+            outerPhases.add(phase);
+        })) {
+            try (Fixture ignored = twoModuleFixture(APP_SOURCE)) {}
+            check(outerPhases.equals(expected), "actual compilation records ordered neutral phases");
+            try (var inner = deal.module.CompilationTiming.observe((phase, nanos) -> {
+                innerPhases.add(phase);
+                throw new IllegalStateException("observer failure");
+            }); Fixture ignored = twoModuleFixture(APP_SOURCE)) {}
+            check(innerPhases.equals(expected), "observer failures do not interrupt compilation");
+            check(outerPhases.equals(expected), "nested observation isolates the outer observer");
+            java.util.concurrent.CompletableFuture.runAsync(() -> {
+                try (Fixture ignored = twoModuleFixture(APP_SOURCE)) {}
+                catch (Exception failure) { throw new RuntimeException(failure); }
+            }).join();
+            check(outerPhases.equals(expected), "observation does not leak to another thread");
+            try (Fixture ignored = twoModuleFixture(APP_SOURCE)) {}
+            List<String> twice = new ArrayList<>(expected);
+            twice.addAll(expected);
+            check(outerPhases.equals(twice), "closing nested scope restores the outer observer");
+        }
+        int recorded = outerPhases.size();
+        try (Fixture ignored = twoModuleFixture(APP_SOURCE)) {}
+        check(outerPhases.size() == recorded, "closing observation removes the observer");
+    }
+
     public static void main(String[] args) throws Exception {
         System.out.println("=== Production Project Emission Tests (ISSUE-0642) ===\n");
         ToolchainPreflight.require("node", "--version",
             "the real JS artifact drives");
+        testJava21Compilation();
+        testCompilationTiming();
         try (Fixture fixture = twoModuleFixture(APP_SOURCE);
                 Fixture js = jsFixture();
                 Fixture failing = corruptedSignatureFixture();

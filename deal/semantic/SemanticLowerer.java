@@ -5926,8 +5926,11 @@ public final class SemanticLowerer {
                 // partition (class defaults are per-construction R4
                 // references, not body references — B4's graph covers
                 // name references in function-declaration bodies).
-                case ClassDeclaration _, BreakStatement _, ContinueStatement _,
-                     ImportDeclaration _, ExportDeclaration _ -> { }
+                case ClassDeclaration ignored -> { }
+                case BreakStatement ignored -> { }
+                case ContinueStatement ignored -> { }
+                case ImportDeclaration ignored -> { }
+                case ExportDeclaration ignored -> { }
                 default -> { /* no further statement kinds */ }
             }
         }
@@ -6070,7 +6073,9 @@ public final class SemanticLowerer {
 
                     }
                 }
-                case BreakStatement _, ContinueStatement _, ImportDeclaration _ -> { }
+                case BreakStatement ignored -> { }
+                case ContinueStatement ignored -> { }
+                case ImportDeclaration ignored -> { }
             }
         }
 

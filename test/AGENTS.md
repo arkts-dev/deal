@@ -1,5 +1,7 @@
 # Tests
 
+ProductionProjectEmissionTest compiles all production sources with --release 21 and checks real shared-phase timing order, nonnegative durations, nested/thread isolation and observer failure containment. PublicationStagerTest retains atomic replacement and stale-tree recovery coverage independently of nonce spelling.
+
 TypeLegalityFlowTest pins short-circuit and terminating-guard acceptance, binding-identity ownership across shadowing/scope exits, assignment/await/function/loop/catch invalidation, inferred void-data frontend rejection on every production target and legal void-result function arrays. CatchNarrowingIsolationProductionTest rejects await followed by a same-type successful-path guard at catch entry; AsyncExportInvokerProductionTest actually invokes repaired catch re-guards after mutation/throw. Descriptor/runtime/IR tests distinguish recursive data/result positions, malformed callable ingress and bare-void data slots from legal completion checks. Execute admitted controls on JS/LuaJIT/JVM and LLVM O0/O2 normal/stress; compilation is not execution evidence.
 
 Native stress uses bounded mark/sweep slices and starts whenever idle, without the normal growth trigger. Keep the normal/stress and plain/sanitized matrices, explicit full-collection safety controls, and reference-counted scaling regressions; never substitute longer timeouts or reduced deep-JSON workloads for collector progress.

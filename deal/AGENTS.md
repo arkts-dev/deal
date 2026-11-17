@@ -1,6 +1,6 @@
 # Compiler
 
-Own compiler phases, runtimes and CLI integration. Preserve deterministic diagnostics and transactional publication. Lower checked facts into validated semantic IR; every backend renders that IR without AST fallback.
+Own compiler phases, runtimes and CLI integration. Production Java sources must compile with --release 21 for embedded packaging; release/test tooling remains Java 25. Preserve deterministic diagnostics and transactional publication. Lower checked facts into validated semantic IR; every backend renders that IR without AST fallback.
 
 - Use private carrier metadata; user string keys cannot forge runtime identities. Normalize documented host shapes at ingress. String length/order/slicing use UTF-16 units; iteration combines pairs and retains lone units. Keep no obsolete scalar-index substring helpers.
 - Preserve binary64 values, signed zero, NaN and infinities. Integral positions validate before access, never truncate. Render diagnostic numbers through the shared hexadecimal formatter; `int` and `number` are ordinary identifiers.

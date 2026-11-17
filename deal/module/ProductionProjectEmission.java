@@ -209,10 +209,14 @@ public final class ProductionProjectEmission {
         // (3) The one project lowering over the compile's declared inputs.
         // A failure returns the lowering's first E6005 and stages nothing;
         // no retry and no fallback exist.
-        SemanticLowerer.ProjectLoweringResult lowering = SemanticLowerer.lowerProject(
-            invocation, checkedProject, interfaceIndex, requirementManifests,
-            declarationSurface, declarationModuleIdentities,
-            builtinError, callbackExports);
+        long loweringStarted = System.nanoTime();
+        SemanticLowerer.ProjectLoweringResult lowering;
+        try {
+            lowering = SemanticLowerer.lowerProject(
+                invocation, checkedProject, interfaceIndex, requirementManifests,
+                declarationSurface, declarationModuleIdentities,
+                builtinError, callbackExports);
+        } finally { CompilationTiming.record("lowering", loweringStarted); }
         if (lowering.hasErrors()) {
             return new Result(Outcome.FAILED, lowering.diagnostics(), null, null);
         }

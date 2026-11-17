@@ -90,6 +90,17 @@ java -ea -cp build:build/test-classes deal.test.LlvmConformanceTest
 JS production suites have no skip path: a run that omits a supported lane is
 a failure, never a pass.
 
+Production compiler sources also compile with `javac --release 21` for embedded
+packaging; the test/release toolchain remains Java 25. This does not establish
+Android device compatibility or change the generated JVM target.
+
+Embedded callers can scope `deal.module.CompilationTiming.observe((phase, nanos)
+-> ...)` with try-with-resources around compilation. Durations use a monotonic
+clock, on the calling thread; nested scopes restore the previous observer and
+observer `RuntimeException`s do not fail compilation. `codegen-total` includes
+`lowering`; these are overlapping measurements, not additive totals. No timing
+values enter generated artifacts, and publication is outside these phase timings.
+
 ## Distribution
 
 Build the packaged compiler with its matched runtime and standard library:
