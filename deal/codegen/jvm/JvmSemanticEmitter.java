@@ -5900,22 +5900,13 @@ public final class JvmSemanticEmitter {
 
         // -- async (E4, D13) ----------------------------------------------------------
 
-        /** The canonical referent token identity (alias chains resolve transitively). */
-        private long canonicalReferent(AsyncTokenId token) {
-            AsyncTokenId current = token;
-            while (current instanceof AsyncTokenId.Alias alias) {
-                current = alias.referent();
-            }
-            return current.tokenId();
-        }
-
         /** The canonical token atom of an ASYNC_START/EXTERNAL_ENTRY SUCCESS. */
         private String tokenAtom(AsyncTokenId token) {
             return switch (token) {
                 case AsyncTokenId.Canonical canonical -> "tok:" + canonical.tokenId()
                     + ":" + canonical.owner().name();
                 case AsyncTokenId.Alias alias -> "alias:" + alias.tokenId() + "->"
-                    + canonicalReferent(alias.referent());
+                    + alias.canonical().tokenId();
             };
         }
 
@@ -6345,7 +6336,7 @@ public final class JvmSemanticEmitter {
          */
         private void emitAwait(SemanticOp op, int indent) {
             KindPayload.AwaitPayload payload = (KindPayload.AwaitPayload) op.payload();
-            long canonicalId = canonicalReferent(payload.token());
+            long canonicalId = payload.token().canonical().tokenId();
             boolean externalLink = payload.token() instanceof AsyncTokenId.Alias alias
                 && alias.linkKind() == AsyncLinkKind.EXTERNAL_LINK;
             // The activation's own task instance is taken after the drain:

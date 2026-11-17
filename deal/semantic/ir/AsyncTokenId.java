@@ -24,6 +24,19 @@ public sealed interface AsyncTokenId extends SemanticId, SemanticValue
     long tokenId();
 
     /**
+     * The canonical token behind this identity, preserving the original token
+     * and its owner. This is a structural query over acyclic alias chains, not
+     * a lookup of any activation's runtime task or completion state.
+     */
+    default Canonical canonical() {
+        AsyncTokenId current = this;
+        while (current instanceof Alias alias) {
+            current = alias.referent();
+        }
+        return (Canonical) current;
+    }
+
+    /**
      * A canonical token: created exactly once by its owner op and owned by
      * that op's execution context.
      *

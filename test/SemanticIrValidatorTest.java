@@ -3014,6 +3014,26 @@ public class SemanticIrValidatorTest {
         assertProfileText(projectText, projectFacts(index), "project");
     }
 
+    private static void testCanonicalTokenQuery() {
+        for (AsyncTokenOwner owner : AsyncTokenOwner.values()) {
+            AsyncTokenId.Canonical canonical = new AsyncTokenId.Canonical(37, owner);
+            check(canonical.canonical() == canonical,
+                "canonical query preserves original token and owner " + owner);
+            for (deal.semantic.ir.AsyncLinkKind kind : deal.semantic.ir.AsyncLinkKind.values()) {
+                AsyncTokenId token = new AsyncTokenId.Alias(41, canonical, kind);
+                check(token.canonical() == canonical,
+                    "one alias preserves canonical identity for " + kind);
+                for (int depth = 0; depth < 10_000; depth++) {
+                    token = new AsyncTokenId.Alias(42 + depth, token, kind);
+                }
+                check(token.canonical() == canonical,
+                    "deep alias traversal is iterative and retains owner " + owner + "/" + kind);
+                checkEq(37L, token.canonical().tokenId(),
+                    "query returns referent id rather than alias id");
+            }
+        }
+    }
+
     // =========================================================================
     // Main
     // =========================================================================
@@ -3064,6 +3084,7 @@ public class SemanticIrValidatorTest {
         testDescriptorPositions();
         System.out.println("=== Semantic IR Validator Test (ISSUE-0286) ===\n");
 
+        testCanonicalTokenQuery();
         testExceptionalAdmissions();
         testSelectorPolicies();
         testConstructCoverage();

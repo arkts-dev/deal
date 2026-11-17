@@ -3739,7 +3739,7 @@ final class LlvmFunctionEmitter {
         branchOnFailure(op, error, "asyncstart");
         String operation = emitTemporary(op,
             "extractvalue %struct.deal_outcome_reference " + started + ", 1");
-        emit("store i8* " + operation + ", i8** " + tokenSlot(canonical(token), "i8*"));
+        emit("store i8* " + operation + ", i8** " + tokenSlot(token.canonical(), "i8*"));
     }
 
     /**
@@ -3810,7 +3810,7 @@ final class LlvmFunctionEmitter {
         SemanticOp boundary = unitOp(payload.completionBoundaryOpId());
         recordOrigin(boundary);
         String operation = load(op, "i8*",
-            tokenSlot(canonical(payload.token()), "i8*"));
+            tokenSlot(payload.token().canonical(), "i8*"));
         session.referenceRuntimeEntry("deal_async_await");
         String completed = callRecord(op, "%struct.deal_outcome_data",
             "deal_async_await", "i8* " + operation
@@ -3828,15 +3828,6 @@ final class LlvmFunctionEmitter {
             "extractvalue %struct.deal_outcome_data " + completed + ", 1");
         storeResult(op, representation.get(),
             datumToRepresentation(payload.completionDescriptor(), datum, op));
-    }
-
-    /** The canonical token behind one (possibly aliasing) token identity. */
-    private static AsyncTokenId canonical(AsyncTokenId token) {
-        AsyncTokenId current = token;
-        while (current instanceof AsyncTokenId.Alias alias) {
-            current = alias.referent();
-        }
-        return current;
     }
 
     /** The SSA slot holding one asynchronous operation handle. */

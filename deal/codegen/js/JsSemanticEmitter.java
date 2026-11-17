@@ -521,9 +521,9 @@ public final class JsSemanticEmitter {
                         // resolves to this start.
                         if (token instanceof AsyncTokenId.Alias alias
                                 && !canonicalTokenOwner.containsKey(
-                                    canonicalToken(alias).tokenId())) {
+                                    alias.canonical().tokenId())) {
                             startByTokenId.putIfAbsent(
-                                canonicalToken(alias).tokenId(), op.opId());
+                                alias.canonical().tokenId(), op.opId());
                         }
                     }
                 }
@@ -624,15 +624,6 @@ public final class JsSemanticEmitter {
                     + " resolves through no unique factory registration: "
                     + conflict.getMessage());
             }
-        }
-
-        /** The canonical token one token identity resolves to (alias chains). */
-        private static AsyncTokenId.Canonical canonicalToken(AsyncTokenId token) {
-            AsyncTokenId current = token;
-            while (current instanceof AsyncTokenId.Alias alias) {
-                current = alias.referent();
-            }
-            return (AsyncTokenId.Canonical) current;
         }
 
         /**

@@ -198,7 +198,7 @@ public final class ChainOperandCompletion {
             // AWAIT's token is not an operand. Its publishing start and arguments
             // nevertheless complete at the RHS position, after receiver and key.
             SemanticOp start = child.payload() instanceof KindPayload.AwaitPayload await
-                ? starts.get(canonicalToken(await.token()).tokenId()) : null;
+                ? starts.get(await.token().canonical().tokenId()) : null;
             if (start != null && !structuralOwned.contains(start.opId())) {
                 closure.add(start);
                 for (ValueId operand : start.operands()) {
@@ -244,11 +244,5 @@ public final class ChainOperandCompletion {
             return values;
         }
         return op.operands();
-    }
-
-    private static AsyncTokenId.Canonical canonicalToken(AsyncTokenId token) {
-        AsyncTokenId current = token;
-        while (current instanceof AsyncTokenId.Alias alias) current = alias.referent();
-        return (AsyncTokenId.Canonical) current;
     }
 }
