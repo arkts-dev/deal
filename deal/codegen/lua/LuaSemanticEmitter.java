@@ -3517,35 +3517,7 @@ public final class LuaSemanticEmitter {
          * invocation leaves it in place and only the outermost clears it.
          */
         private String emitInvocationStateSave(FunctionId callee, OpId invocation) {
-            List<String> keys = bodyStateKeys(callee);
-            if (keys.isEmpty()) {
-                return null;
-            }
-            long functionId = callee.id();
-            out.append("__svStack[#__svStack + 1] = {__bodyActive[")
-                .append(functionId).append("]}\n");
-            // The frame's slots are filled in bounded chunks: one
-            // multi-assignment carrying every key of a large body would
-            // exceed LuaJIT's per-statement variable-name and
-            // expression-complexity limits (the bytes corpus' allocation
-            // and closure fixtures carry hundreds of slots per body).
-            for (int start = 0; start < keys.size(); start += STATE_CHUNK) {
-                int end = Math.min(start + STATE_CHUNK, keys.size());
-                StringBuilder targets = new StringBuilder();
-                StringBuilder values = new StringBuilder();
-                for (int i = start; i < end; i++) {
-                    if (i > start) {
-                        targets.append(", ");
-                        values.append(", ");
-                    }
-                    targets.append("__svStack[#__svStack][").append(i + 2)
-                        .append("]");
-                    values.append(keys.get(i));
-                }
-                out.append(targets).append(" = ").append(values).append("\n");
-            }
-            out.append("__bodyActive[").append(functionId).append("] = true\n");
-            return "__svStack[#__svStack]";
+            return emitInvocationStateSave(callee, invocation, "");
         }
 
         /**
@@ -3554,34 +3526,14 @@ public final class LuaSemanticEmitter {
          * the enclosing invocation's state whichever route started it.
          */
         private void emitInvocationStateRestore(FunctionId callee, String frame) {
-            if (frame == null) {
-                return;
-            }
-            List<String> keys = bodyStateKeys(callee);
-            for (int start = 0; start < keys.size(); start += STATE_CHUNK) {
-                int end = Math.min(start + STATE_CHUNK, keys.size());
-                StringBuilder targets = new StringBuilder();
-                StringBuilder values = new StringBuilder();
-                for (int i = start; i < end; i++) {
-                    if (i > start) {
-                        targets.append(", ");
-                        values.append(", ");
-                    }
-                    targets.append(keys.get(i));
-                    values.append(frame).append("[").append(i + 2).append("]");
-                }
-                out.append(targets).append(" = ").append(values).append("\n");
-            }
-            out.append("__bodyActive[").append(callee.id()).append("] = ")
-                .append(frame).append("[1]\n");
-            out.append("__svStack[#__svStack] = nil\n");
+            emitInvocationStateRestore(callee, frame, "");
         }
 
         /**
-         * The async body-task invocation's private-state save. The frame it
-         * pushes is restored <em>unconditionally</em> by {@link
-         * #emitAsyncInvocationStateRestore}, exactly like the synchronous
-         * arm's: the task's body executes at the enclosing invocation's
+         * The synchronous or async body-task invocation's private-state save.
+         * The frame it pushes is restored <em>unconditionally</em> by {@link
+         * #emitInvocationStateRestore(FunctionId, String, String)}, in both
+         * arms. An async task's body executes at the enclosing invocation's
          * drain, and that enclosing invocation may have been started by a
          * callee this arm cannot name at compile time (a dynamic-dispatch
          * body task) or by an entry of another unit, so the active marker
@@ -3590,8 +3542,8 @@ public final class LuaSemanticEmitter {
          * is still maintained, so a re-entrant invocation leaves it in place
          * and only the outermost clears it.
          */
-        private String emitAsyncInvocationStateSave(FunctionId callee, OpId invocation,
-                                                    String pad) {
+        private String emitInvocationStateSave(FunctionId callee, OpId invocation,
+                                               String pad) {
             List<String> keys = bodyStateKeys(callee);
             if (keys.isEmpty()) {
                 return null;
@@ -3627,10 +3579,10 @@ public final class LuaSemanticEmitter {
 
         /**
          * The matching unconditional restore and pop, on every success and
-         * failure path of the async body task.
+         * failure path of the synchronous or async body task.
          */
-        private void emitAsyncInvocationStateRestore(FunctionId callee, String frame,
-                                                     String pad) {
+        private void emitInvocationStateRestore(FunctionId callee, String frame,
+                                                String pad) {
             if (frame == null) {
                 return;
             }
@@ -5873,7 +5825,7 @@ private void emitStdlib(SemanticOp op) {
                     // while the enclosing invocation is still live, so the
                     // callee body's private slots are saved before the body
                     // runs and restored on the success and failure paths.
-                    String savedState = emitAsyncInvocationStateSave(body.functionId(),
+                    String savedState = emitInvocationStateSave(body.functionId(),
                         op.opId(), "  ");
                     out.append("  local __okA, __resA = pcall(");
                     if (payload.callee()
@@ -5892,7 +5844,7 @@ private void emitStdlib(SemanticOp op) {
                     out.append(", unpack(S.__sa").append(op.opId().id())
                         .append(", 1, S.__sa").append(op.opId().id())
                         .append(".__argn))\n");
-                    emitAsyncInvocationStateRestore(body.functionId(), savedState, "  ");
+                    emitInvocationStateRestore(body.functionId(), savedState, "  ");
                     out.append("  if not __okA then error(__resA, 0) end\n");
                     out.append("  return __resA\n");
                     out.append("end), S.__sa").append(op.opId().id()).append(")\n");
