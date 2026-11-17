@@ -1116,7 +1116,7 @@ public class CanonicalProjectionParityTest {
                         // element list is mutable like the oracle's own
                         // arrays so a DEAL element write commits in place and
                         // is observed through the sibling alias.
-                        case "sharedNestedStringArray" -> {
+                        case "sharedNestedStringArray", "nativeSharedNestedStringArray" -> {
                             SemanticOracle.Value inner =
                                 new SemanticOracle.Value.ArrayValue(
                                     new java.util.ArrayList<>(List.of(
@@ -1170,18 +1170,6 @@ public class CanonicalProjectionParityTest {
                                     RuntimeDescriptor.String.INSTANCE, false)),
                                 RuntimeDescriptor.parseCanonicalText("[string]"),
                                 false));
-                        case "nativeSharedNestedStringArray" -> {
-                            SemanticOracle.Value inner =
-                                new SemanticOracle.Value.ArrayValue(
-                                    new java.util.ArrayList<>(List.of(
-                                        new SemanticOracle.Value.StrValue("ok"))),
-                                    RuntimeDescriptor.String.INSTANCE, false);
-                            yield new SyncOutcome.Returned(
-                                new SemanticOracle.Value.ArrayValue(
-                                    new java.util.ArrayList<>(List.of(inner, inner)),
-                                    RuntimeDescriptor.parseCanonicalText("[string]"),
-                                    false));
-                        }
                         // The differing-depth carrier reuse: one declared
                         // string[][][][] value shares an inner array (c)
                         // between two positions with different descriptor
