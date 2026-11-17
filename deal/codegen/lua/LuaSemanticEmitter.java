@@ -1674,12 +1674,8 @@ public final class LuaSemanticEmitter {
 
         private void emitBoundaryStart(SemanticOp boundary, String inputExpr,
                                        RuntimeDescriptor inputDescriptor) {
-            out.append("__ev(").append(luaString(opKey(boundary.opId())))
-                .append(", \"START\", \"BOUNDARY\", ")
-                .append(luaString(boundary.contract().canonicalDigest())).append(", ")
-                .append(luaString(parentKey(boundary.origin().parentOpId())))
-                .append(", {__atom(").append(luaString(staticKind(inputDescriptor)))
-                .append(", ").append(inputExpr).append(")}, nil, nil)\n");
+            emitBoundaryStartAtom(boundary, "__atom(" + luaString(staticKind(inputDescriptor))
+                + ", " + inputExpr + ")");
         }
 
         private void emitBoundarySuccess(SemanticOp boundary, String valueExpr,
@@ -2173,13 +2169,8 @@ public final class LuaSemanticEmitter {
         private void emitBoundaryCheckStartAtom(SemanticOp boundary, String target) {
             KindPayload.BoundaryPayload boundaryPayload =
                 (KindPayload.BoundaryPayload) boundary.payload();
-            out.append("__ev(").append(luaString(opKey(boundary.opId())))
-                .append(", \"START\", \"BOUNDARY\", ")
-                .append(luaString(boundary.contract().canonicalDigest())).append(", ")
-                .append(luaString(parentKey(boundary.origin().parentOpId())))
-                .append(", {__rawArgAtom(")
-                .append(luaString(staticKind(boundaryPayload.descriptor())))
-                .append(", ").append(target).append(")}, nil, nil)\n");
+            emitBoundaryStartAtom(boundary, "__rawArgAtom("
+                + luaString(staticKind(boundaryPayload.descriptor())) + ", " + target + ")");
         }
 
         /**
@@ -2199,15 +2190,7 @@ public final class LuaSemanticEmitter {
                     : "pcall(__bcheck, "
                         + bcheckArgs(boundaryPayload.descriptor(), target) + ")")
                 .append("\n");
-            out.append("if not __okB then\n");
-            out.append("  __chkB.o = ").append(luaString(originOf(boundary)))
-                .append("\n");
-            emitFailureEvent(boundary.opId(), "BOUNDARY", boundary,
-                "__errtext(__chkB)");
-            emitFailureEvent(op.opId(), op.kind().name(), op,
-                "__errtext(__chkB)");
-            out.append("  error(__chkB, 0)\n");
-            out.append("end\n");
+            emitBoundaryRejection(op, boundary, "__chkB");
             out.append(target).append(" = __chkB\n");
         }
 
@@ -2567,24 +2550,9 @@ public final class LuaSemanticEmitter {
                                             String inputExpr) {
             KindPayload.BoundaryPayload payload =
                 (KindPayload.BoundaryPayload) boundary.payload();
-            out.append("__ev(").append(luaString(opKey(boundary.opId())))
-                .append(", \"START\", \"BOUNDARY\", ")
-                .append(luaString(boundary.contract().canonicalDigest())).append(", ")
-                .append(luaString(parentKey(boundary.origin().parentOpId())))
-                .append(", {__rawAtom(")
-                .append(luaString(staticKind(payload.descriptor()))).append(", ")
-                .append(inputExpr).append(")}, nil, nil)\n");
-            out.append("__okB, __chkB = pcall(__bcheck, ")
-                .append(bcheckArgs(payload.descriptor(), inputExpr)).append(")\n");
-            out.append("if not __okB then\n");
-            out.append("  __chkB.o = ").append(luaString(originOf(boundary)))
-                .append("\n");
-            emitFailureEvent(boundary.opId(), "BOUNDARY", boundary,
-                "__errtext(__chkB)");
-            emitFailureEvent(owner.opId(), owner.kind().name(), owner,
-                "__errtext(__chkB)");
-            out.append("  error(__chkB, 0)\n");
-            out.append("end\n");
+            emitBoundaryStartAtom(boundary, "__rawAtom("
+                + luaString(staticKind(payload.descriptor())) + ", " + inputExpr + ")");
+            emitBoundaryAdmission(owner, boundary, inputExpr, "__chkB");
             emitBoundarySuccess(boundary, "__chkB", payload.descriptor());
         }
 
@@ -3300,18 +3268,7 @@ public final class LuaSemanticEmitter {
                 // declaration (the pinned corpus span), and the boundary
                 // and the CALL each publish their own FAILURE terminal
                 // (the oracle's exact sequence).
-                out.append("__okB, __chk = pcall(__bcheck, ")
-                    .append(bcheckArgs(boundaryPayload.descriptor(),
-                        slot(boundaryPayload.input())))
-                    .append(")\n");
-                out.append("if not __okB then\n");
-                out.append("  __chk.o = ").append(luaString(originOf(boundary)))
-                    .append("\n");
-                emitFailureEvent(boundary.opId(), "BOUNDARY", boundary,
-                    "__errtext(__chk)");
-                emitFailureEvent(op.opId(), op.kind().name(), op, "__errtext(__chk)");
-                out.append("  error(__chk, 0)\n");
-                out.append("end\n");
+                emitBoundaryAdmission(op, boundary, slot(boundaryPayload.input()), "__chk");
                 emitBoundarySuccess(boundary, "__chk", boundaryPayload.descriptor());
                 // The admitted value is the one the callee observes: the
                 // boundary cell's result (the int cell's -0 normalization
@@ -4540,18 +4497,7 @@ private void emitStdlib(SemanticOp op) {
                     (KindPayload.BoundaryPayload) boundary.payload();
                 String inputExpr = slot(boundaryPayload.input());
                 emitBoundaryStart(boundary, inputExpr, boundaryPayload.descriptor());
-                out.append("__okB, __chkB = pcall(__bcheck, ")
-                    .append(bcheckArgs(boundaryPayload.descriptor(), inputExpr))
-                    .append(")\n");
-                out.append("if not __okB then\n");
-                out.append("  __chkB.o = ")
-                    .append(luaString(originOf(boundary))).append("\n");
-                emitFailureEvent(boundary.opId(), "BOUNDARY", boundary,
-                    "__errtext(__chkB)");
-                emitFailureEvent(op.opId(), op.kind().name(), op,
-                    "__errtext(__chkB)");
-                out.append("  error(__chkB, 0)\n");
-                out.append("end\n");
+                emitBoundaryAdmission(op, boundary, inputExpr, "__chkB");
                 emitBoundarySuccess(boundary, "__chkB", boundaryPayload.descriptor());
                 out.append("__instT[__dealCarrierKeys.f][").append(luaString(entry.field()))
                     .append("] = (__chkB == nil) and __NULL or __chkB\n");
@@ -4597,9 +4543,20 @@ private void emitStdlib(SemanticOp op) {
                 (KindPayload.BoundaryPayload) boundary.payload();
             String inputExpr = slot(boundaryPayload.input());
             emitBoundaryStart(boundary, inputExpr, boundaryPayload.descriptor());
+            emitBoundaryAdmission(op, boundary, inputExpr, checked);
+            emitBoundarySuccess(boundary, checked, boundaryPayload.descriptor());
+        }
+
+        /** Check into an existing scratch slot; START, deferral and publication stay with callers. */
+        private void emitBoundaryAdmission(SemanticOp op, SemanticOp boundary,
+                                           String inputExpr, String checked) {
+            KindPayload.BoundaryPayload payload = (KindPayload.BoundaryPayload) boundary.payload();
             out.append("__okB, ").append(checked).append(" = pcall(__bcheck, ")
-                .append(bcheckArgs(boundaryPayload.descriptor(), inputExpr))
-                .append(")\n");
+                .append(bcheckArgs(payload.descriptor(), inputExpr)).append(")\n");
+            emitBoundaryRejection(op, boundary, checked);
+        }
+
+        private void emitBoundaryRejection(SemanticOp op, SemanticOp boundary, String checked) {
             out.append("if not __okB then\n");
             out.append("  ").append(checked).append(".o = ")
                 .append(luaString(originOf(boundary))).append("\n");
@@ -4609,7 +4566,6 @@ private void emitStdlib(SemanticOp op) {
                 "__errtext(" + checked + ")");
             out.append("  error(").append(checked).append(", 0)\n");
             out.append("end\n");
-            emitBoundarySuccess(boundary, checked, boundaryPayload.descriptor());
         }
 
         private void emitClassNewBuiltinError(SemanticOp op,
@@ -5186,17 +5142,7 @@ private void emitStdlib(SemanticOp op) {
             // boundary and the RETURN op emit their FAILURE terminals, and the
             // identical error propagates (the semantic oracle's
             // runBoundaryChild + the owning-op FAILURE).
-            out.append("__okB, __chkB = pcall(__bcheck, ")
-                .append(bcheckArgs(boundaryPayload.descriptor(), "__rvT"))
-                .append(")\n");
-            out.append("if not __okB then\n");
-            out.append("  __chkB.o = ").append(luaString(originOf(boundary)))
-                .append("\n");
-            emitFailureEvent(boundary.opId(), "BOUNDARY", boundary,
-                "__errtext(__chkB)");
-            emitFailureEvent(op.opId(), op.kind().name(), op, "__errtext(__chkB)");
-            out.append("  error(__chkB, 0)\n");
-            out.append("end\n");
+            emitBoundaryAdmission(op, boundary, "__rvT", "__chkB");
             out.append("__rvcT = __chkB\n");
             emitBoundarySuccess(boundary, "__rvcT", boundaryPayload.descriptor());
             emitPlainSuccess(op);
