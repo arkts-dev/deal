@@ -199,6 +199,17 @@ public class CheckerTest {
                 "nested JSON schema route distinguishes array schema elements from invented runtime indices");
         assertNoErrors(checkProgram("class Leaf{bad:number;} class Root{items:Leaf[];} let result:Root=JSON.parse(\"{}\");"),
                 "an explicitly selected decodable annotation repairs the schema");
+        for (var example : Map.of(
+                "async function f():Promise<number>{return 1;} f();", "call.async-requires-await",
+                "async function f():Promise<number>{return 1;} f?.();", "call.async-optional-chain",
+                "function f():number{return 1;} async function g():Promise<number>{return await f();}", "await.non-async-call",
+                "async function f():Promise<number>{return 1;} function g():number{return await f();}", "await.outside-async").entrySet()) {
+            check(checkProgram(example.getKey()).result().diagnostics().stream()
+                            .anyMatch(d -> d.facts().reason().equals(example.getValue())),
+                    "async diagnostics distinguish failed rule: " + example.getValue());
+        }
+        assertNoErrors(checkProgram("async function f():Promise<number>{return 1;} async function g():Promise<number>{return await f();}"),
+                "intended asynchronous caller with direct await repairs the async call");
         String badCall = "function f(value:number):void{} f(\"bad\");";
         var callFailure = checkProgram(badCall).result().diagnostics().stream()
                 .filter(d -> d.code().equals("E5001")).findFirst().orElseThrow();

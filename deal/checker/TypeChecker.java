@@ -1467,9 +1467,11 @@ public final class TypeChecker {
     private Type checkAwaitExpression(AwaitExpression await) {
         // E3012: await is only allowed inside an async function
         if (!insideAsyncFunction) {
-            error(DiagnosticCode.E3012,
-                "'await' is only allowed inside an async function",
-                await.span());
+            diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E3012,
+                "'await' is only allowed inside an async function", await.span()).withFacts(
+                        new deal.diagnostics.DiagnosticFacts("await.outside-async", "await",
+                                "async function body", "synchronous function body",
+                                List.of("Choose whether the enclosing API should be asynchronous; changing its result contract affects callers."))));
         }
 
         // Suppress E3014 for the direct callee of await: the directAwaitCallee
@@ -1507,9 +1509,10 @@ public final class TypeChecker {
         }
 
         if (calleeFuncType != Type.Error.INSTANCE) {
-            error(DiagnosticCode.E3013,
-                "'await' must be applied to an async function call",
-                await.callee().span());
+            diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E3013,
+                "'await' must be applied to an async function call", await.callee().span()).withFacts(
+                        new deal.diagnostics.DiagnosticFacts("await.non-async-call", "await",
+                                "direct async function call", typeName(calleeFuncType), List.of())));
         }
         invalidateAllNarrowing();
         return Type.Error.INSTANCE;
@@ -1829,7 +1832,10 @@ public final class TypeChecker {
             diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E2001,
                     "Undeclared identifier '" + id.name() + "'", id.span())
                     .withMissingSymbol("FUNCTION", id.name(), id.span().file(),
-                            List.of("arity=" + call.args().size())));
+                            List.of("arity=" + call.args().size()))
+                    .withFacts(new deal.diagnostics.DiagnosticFacts("name.unresolved-call", "call",
+                            "visible callable binding", id.name(),
+                            List.of("Check spelling, lexical scope, and intended imports; no callable declaration is inferred."))));
             for (ExpressionNode arg : call.args()) checkExpression(arg);
             return Type.Error.INSTANCE;
         }
@@ -1839,7 +1845,10 @@ public final class TypeChecker {
         try { calleeType = checkExpression(call.callee()); }
         finally { directBuiltinCall = savedBuiltinCall; }
         if (optionalCallee(call.callee()) && calleeType instanceof Type.Func f && f.isAsync()) {
-            error(DiagnosticCode.E3014, "Async calls are not permitted in optional chains", call.span());
+            diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E3014,
+                    "Async calls are not permitted in optional chains", call.span()).withFacts(
+                            callFacts("call.async-optional-chain", call, f, -1,
+                                    "non-optional direct async call", typeName(f))));
             for (ExpressionNode arg : call.args()) checkExpression(arg);
             return Type.Error.INSTANCE;
         }
@@ -1921,9 +1930,10 @@ public final class TypeChecker {
         // so intrinsics handle their own async logic if ever needed)
         if (calleeType instanceof Type.Func funcType && funcType.isAsync()
                 && call != directAwaitCallee) {
-            error(DiagnosticCode.E3014,
-                "Direct call to async function requires 'await'",
-                call.span());
+            diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E3014,
+                "Direct call to async function requires 'await'", call.span()).withFacts(
+                        callFacts("call.async-requires-await", call, funcType, -1,
+                                "awaited direct async call", typeName(funcType))));
             return Type.Error.INSTANCE;
         }
 

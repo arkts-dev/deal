@@ -1695,6 +1695,10 @@ when known. Function-valued callees never invent declaration evidence. Argument
 type failures also label the parameter annotation with an ordered note. Return
 failures publish expected/actual types and distinguish an omitted value
 (`undefined`) from incompatible data without proposing placeholder returns.
+Async diagnostics distinguish await outside an async body, await of a non-async
+call, an unawaited async call, and an async call inside an optional chain using
+separate reason identifiers. Async call failures retain the same known call
+context; guidance does not silently change a caller's asynchronous API contract.
 Schema paths are root-to-leaf segments with `kind` (`FIELD` or `ARRAY_ELEMENT`)
 and `name` (the exact field name, or empty for an array schema element). They
 never invent a concrete runtime index. Empty strings or
