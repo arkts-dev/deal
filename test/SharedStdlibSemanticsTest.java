@@ -1476,6 +1476,7 @@ public class SharedStdlibSemanticsTest {
                 List.of(Value.string("abc"), Value.string("b"), new Value.Number(2)), new Value.Number(1)),
             seed(StdlibFunctionId.STRING_TO_LOWER_CASE, Value.string("ΟΣ"), Value.string("ος")),
             seed(StdlibFunctionId.STRING_TO_UPPER_CASE, Value.string("ß"), Value.string("SS")),
+            seed(StdlibFunctionId.STRING_TO_NUMBER, Value.string("42"), new Value.Number(42)),
             new Seed(StdlibFunctionId.STRING_SLICE,
                 List.of(Value.string("abc"), new Value.Number(-2), new Value.Number(3)), Value.string("bc")));
     }
@@ -1533,6 +1534,7 @@ public class SharedStdlibSemanticsTest {
                       let last: number = "abc".lastIndexOf("b",2);
                       let lower: string = "ΟΣ".toLowerCase();
                       let upper: string = "ß".toUpperCase();
+                      let converted: number = Number("42");
                       return null;
                     }
 
@@ -1560,8 +1562,8 @@ public class SharedStdlibSemanticsTest {
                     stdlibOps.add(op);
                 }
             }
-            check(stdlibOps.size() == 30,
-                "exactly one STDLIB_CALL per algorithm except contextual JSON_PARSE: 30 ops; got "
+            check(stdlibOps.size() == 31,
+                "exactly one STDLIB_CALL per algorithm except contextual JSON_PARSE: 31 ops; got "
                     + stdlibOps.size());
             EnumSet<StdlibFunctionId> produced = EnumSet.noneOf(StdlibFunctionId.class);
             for (SemanticOp op : stdlibOps) {
