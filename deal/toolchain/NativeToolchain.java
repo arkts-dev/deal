@@ -1,6 +1,8 @@
 package deal.toolchain;
 
 import java.io.File;
+import java.io.ByteArrayOutputStream;
+import deal.diagnostics.DiagnosticFacts;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -277,17 +279,17 @@ public final class NativeToolchain {
             // the fixed suffix (D4).
             clearStagingPath(partial, product);
             Observation observation = runTool(plan.command(),
-                plan.environment(), null);
+                plan.environment(), null, "native.link", partial, product);
             if (observation.exitCode() != 0) {
                 throw new NativeBuildException(
                     NativeBuildException.Kind.LINK_FAILED,
                     withoutStagingPath(firstDiagnostic(observation), partial,
-                        product));
+                        product), observation.tool());
             }
             if (!Files.isRegularFile(partial)) {
                 throw new NativeBuildException(
                     NativeBuildException.Kind.LINK_FAILED,
-                    "the toolchain produced no output");
+                    "the toolchain produced no output", observation.tool());
             }
             moveIntoPlace(partial, product);
             return new NativeBuildResult(product, plan.command(),
@@ -431,25 +433,25 @@ public final class NativeToolchain {
     private static void requireAcceptedMajor(Path compiler,
             Map<String, String> environment) throws NativeBuildException {
         Observation version = runTool(List.of(compiler.toString(),
-            "--version"), environment, null);
+            "--version"), environment, null, "native.version", null, null);
         if (version.exitCode() != 0) {
             throw new NativeBuildException(
                 NativeBuildException.Kind.TOOLCHAIN_UNVERSIONED,
-                "'" + compiler + " --version' exited " + version.exitCode());
+                "'" + compiler + " --version' exited " + version.exitCode(), version.tool());
         }
         int major = versionMajor(version.stdout());
         if (major < 0) {
             throw new NativeBuildException(
                 NativeBuildException.Kind.TOOLCHAIN_UNVERSIONED,
                 "'" + compiler + " --version' states no version major ("
-                    + firstLine(version.stdout()) + ")");
+                    + firstLine(version.stdout()) + ")", version.tool());
         }
         if (major < MINIMUM_MAJOR || major > MAXIMUM_MAJOR) {
             throw new NativeBuildException(
                 NativeBuildException.Kind.TOOLCHAIN_UNSUPPORTED,
                 "'" + compiler + "' states major " + major
                     + ", outside the accepted " + MINIMUM_MAJOR + "-"
-                    + MAXIMUM_MAJOR + " window");
+                    + MAXIMUM_MAJOR + " window", version.tool());
         }
     }
 
@@ -489,11 +491,11 @@ public final class NativeToolchain {
             Map<String, String> environment) throws NativeBuildException {
         Observation probe = runTool(List.of(compiler.toString(),
             "--target=" + TARGET_TRIPLE, "-x", "ir", "-c",
-            module.toString(), "-o", "/dev/null"), environment, null);
+            module.toString(), "-o", "/dev/null"), environment, null, "native.ir-probe", null, null);
         if (probe.exitCode() != 0) {
             throw new NativeBuildException(
                 NativeBuildException.Kind.IR_UNPARSABLE,
-                module.getFileName() + ": " + firstDiagnostic(probe));
+                module.getFileName() + ": " + firstDiagnostic(probe), probe.tool());
         }
     }
 
@@ -662,7 +664,7 @@ public final class NativeToolchain {
     // =========================================================================
 
     /** One finished child observation. */
-    record Observation(int exitCode, String stdout, String stderr) {
+    record Observation(int exitCode, String stdout, String stderr, DiagnosticFacts.ToolContext tool) {
 
         /** The first non-empty stderr line, or the exit status. */
         String firstDiagnostic() {
@@ -672,8 +674,8 @@ public final class NativeToolchain {
 
     /** Runs one tool with the request's environment overrides, bounded. */
     private static Observation runTool(List<String> command,
-            Map<String, String> environment, Path workingDirectory)
-            throws NativeBuildException {
+            Map<String, String> environment, Path workingDirectory, String operation,
+            Path partial, Path product) throws NativeBuildException {
         ProcessBuilder builder = new ProcessBuilder(command);
         if (workingDirectory != null) {
             builder.directory(workingDirectory.toFile());
@@ -685,10 +687,12 @@ public final class NativeToolchain {
         } catch (IOException failure) {
             throw new NativeBuildException(
                 NativeBuildException.Kind.TOOL_FAILURE,
-                "cannot start '" + command.get(0) + "': " + failure);
+                "cannot start '" + command.get(0) + "': " + failure,
+                new DiagnosticFacts.ToolContext(operation, command.get(0), null,
+                        DiagnosticFacts.ToolOutcome.START_FAILED, BUILD_DEADLINE_SECONDS, null, null));
         }
-        StringBuilder stdout = new StringBuilder();
-        StringBuilder stderr = new StringBuilder();
+        CapturedStream stdout = new CapturedStream();
+        CapturedStream stderr = new CapturedStream();
         Thread stdoutDrain = drainInto(process.getInputStream(), stdout);
         Thread stderrDrain = drainInto(process.getErrorStream(), stderr);
         boolean finished;
@@ -702,7 +706,8 @@ public final class NativeToolchain {
             Thread.currentThread().interrupt();
             throw new NativeBuildException(
                 NativeBuildException.Kind.TOOL_FAILURE,
-                "interrupted while waiting for '" + command.get(0) + "'");
+                "interrupted while waiting for '" + command.get(0) + "'",
+                toolContext(command, operation, null, DiagnosticFacts.ToolOutcome.INTERRUPTED, stdout, stderr, partial, product));
         }
         if (!finished) {
             process.destroyForcibly();
@@ -711,29 +716,52 @@ public final class NativeToolchain {
             throw new NativeBuildException(
                 NativeBuildException.Kind.TOOL_FAILURE,
                 "'" + command.get(0) + "' exceeded the "
-                    + BUILD_DEADLINE_SECONDS + " s build deadline");
+                    + BUILD_DEADLINE_SECONDS + " s build deadline",
+                toolContext(command, operation, null, DiagnosticFacts.ToolOutcome.TIMED_OUT, stdout, stderr, partial, product));
         }
         joinQuietly(stdoutDrain);
         joinQuietly(stderrDrain);
-        return new Observation(process.exitValue(), stdout.toString(),
-            stderr.toString());
+        return new Observation(process.exitValue(), stdout.text(), stderr.text(),
+                toolContext(command, operation, process.exitValue(), DiagnosticFacts.ToolOutcome.EXITED, stdout, stderr, partial, product));
     }
 
     /** Drains one child stream concurrently, retaining its capped prefix. */
-    private static Thread drainInto(InputStream stream, StringBuilder sink) {
+    private static DiagnosticFacts.ToolContext toolContext(List<String> command, String operation,
+            Integer exitCode, DiagnosticFacts.ToolOutcome outcome, CapturedStream stdout, CapturedStream stderr,
+            Path partial, Path product) {
+        return new DiagnosticFacts.ToolContext(operation, command.get(0), exitCode, outcome,
+                BUILD_DEADLINE_SECONDS, stdout.evidence(partial, product), stderr.evidence(partial, product));
+    }
+
+    /** Continue draining after retention fills; counts refer to raw observed bytes, not rendered text. */
+    private static final class CapturedStream {
+        private final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        private long byteCount;
+        synchronized void append(byte[] buffer, int count) {
+            int take = Math.min(count, STREAM_CAP_BYTES - bytes.size());
+            bytes.write(buffer, 0, take);
+            byteCount += count;
+        }
+        synchronized String text() { return bytes.toString(StandardCharsets.UTF_8); }
+        synchronized DiagnosticFacts.ToolOutput evidence(Path partial, Path product) {
+            byte[] retained = bytes.toByteArray();
+            int take = Math.min(retained.length, 8192);
+            // Do not split a multibyte code point at the exported prefix boundary.
+            if (take < retained.length)
+                while (take > 0 && (retained[take] & 0xc0) == 0x80) take--;
+            return new DiagnosticFacts.ToolOutput(withoutStagingPath(
+                    new String(retained, 0, take, StandardCharsets.UTF_8), partial, product),
+                    byteCount, take, byteCount > take);
+        }
+    }
+
+    private static Thread drainInto(InputStream stream, CapturedStream sink) {
         Thread drain = new Thread(() -> {
             byte[] buffer = new byte[8192];
-            int retained = 0;
             try (InputStream source = stream) {
                 int read;
                 while ((read = source.read(buffer)) >= 0) {
-                    if (retained >= STREAM_CAP_BYTES) {
-                        continue;
-                    }
-                    int take = Math.min(read, STREAM_CAP_BYTES - retained);
-                    sink.append(new String(buffer, 0, take,
-                        StandardCharsets.UTF_8));
-                    retained += take;
+                    sink.append(buffer, read);
                 }
             } catch (IOException ignored) {
                 // The child's stream ended abnormally; the exit status and

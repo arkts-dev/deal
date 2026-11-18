@@ -282,7 +282,7 @@ public final class DiagnosticStructuredOutput {
         sb.append(",\n");
         indent(sb, level + 1).append("\"cycle\": ");
         var cycle = facts.cycle();
-        if (cycle == null) sb.append("null\n");
+        if (cycle == null) sb.append("null");
         else {
             sb.append("{\n");
             indent(sb, level + 2).append("\"edges\": [");
@@ -301,9 +301,35 @@ public final class DiagnosticStructuredOutput {
             sb.append("],\n");
             indent(sb, level + 2).append("\"edgeCount\": ").append(cycle.edgeCount()).append(",\n");
             indent(sb, level + 2).append("\"truncated\": ").append(cycle.truncated()).append('\n');
+            indent(sb, level + 1).append('}');
+        }
+        sb.append(",\n");
+        indent(sb, level + 1).append("\"tool\": ");
+        var tool = facts.tool();
+        if (tool == null) sb.append("null\n");
+        else {
+            sb.append("{\n");
+            indent(sb, level + 2).append("\"operation\": ").append(jsonString(tool.operation())).append(",\n");
+            indent(sb, level + 2).append("\"executable\": ").append(jsonString(tool.executable())).append(",\n");
+            indent(sb, level + 2).append("\"exitCode\": ").append(tool.exitCode()).append(",\n");
+            indent(sb, level + 2).append("\"outcome\": ").append(jsonString(tool.outcome().name())).append(",\n");
+            indent(sb, level + 2).append("\"deadlineSeconds\": ").append(tool.deadlineSeconds()).append(",\n");
+            appendToolOutput(sb, tool.stdout(), level + 2, "stdout");
+            sb.append(",\n");
+            appendToolOutput(sb, tool.stderr(), level + 2, "stderr");
+            sb.append('\n');
             indent(sb, level + 1).append("}\n");
         }
         indent(sb, level).append('}');
+    }
+
+    private static void appendToolOutput(StringBuilder sb, DiagnosticFacts.ToolOutput output, int level, String name) {
+        indent(sb, level).append(jsonString(name)).append(": ");
+        if (output == null) { sb.append("null"); return; }
+        sb.append("{\"text\": ").append(jsonString(output.text()))
+                .append(", \"byteCount\": ").append(output.byteCount())
+                .append(", \"retainedByteCount\": ").append(output.retainedByteCount())
+                .append(", \"truncated\": ").append(output.truncated()).append('}');
     }
 
     private static void appendNullableRange(StringBuilder sb, DiagnosticRange range, int level, String name) {

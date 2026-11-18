@@ -176,6 +176,7 @@ public final class NativeToolchainTest {
             testDriverShape(scratch, published);
             testRegistryShapes(scratch, published);
             testPreflightRejections(scratch, published);
+            testBoundedToolEvidence(scratch, published);
             testProductLifetime(scratch, published);
             testStagingPathNeverDiagnosed(scratch, published);
             testPublicationIsReadOnly(scratch, published);
@@ -453,6 +454,55 @@ public final class NativeToolchainTest {
     // 4. The fail-closed preflight conditions
     // =========================================================================
 
+    private static void testBoundedToolEvidence(Path scratch, Path published) throws Exception {
+        Path directory = Files.createDirectories(scratch.resolve("large-tool-output"));
+        Path compiler = directory.resolve("clang");
+        String stdout = "x" + "😀".repeat(3000);
+        String chunk = "e".repeat(64);
+        writeWrapper(compiler, "clang", 0);
+        Files.writeString(compiler, "#!/bin/sh\nprintf '%s' '" + stdout + "'\n"
+                + "i=0\nwhile [ \"$i\" -lt 17000 ]; do printf '%s' '" + chunk
+                + "' >&2; i=$((i+1)); done\nexit 3\n", StandardCharsets.UTF_8);
+        var failure = expectFailure(new NativeBuildRequest(published, scratch.resolve("large-tool-product"),
+                2, List.of(), null), Map.of("PATH", directory.toString()));
+        var tool = failure.tool();
+        checkEq(NativeBuildException.Kind.TOOLCHAIN_UNVERSIONED, failure.kind(), "large probe keeps original rejection");
+        check(tool != null && tool.exitCode() == 3 && tool.outcome() == deal.diagnostics.DiagnosticFacts.ToolOutcome.EXITED,
+                "actual exit is retained without guessed signal");
+        check(tool != null && tool.executable().equals(compiler.toString()) && tool.deadlineSeconds() == 300,
+                "executable and unchanged process budget retained");
+        if (tool != null) {
+            checkEq(12001L, tool.stdout().byteCount(), "stdout byte count is not UTF-16 length");
+            checkEq(8189, tool.stdout().retainedByteCount(), "export boundary does not split four-byte scalar");
+            checkEq("x" + "😀".repeat(2047), tool.stdout().text(), "export decodes complete UTF-8 scalars once");
+            check(tool.stdout().truncated(), "stdout omission explicit");
+            checkEq(1088000L, tool.stderr().byteCount(), "drain counts bytes beyond internal retention cap");
+            checkEq(8192, tool.stderr().retainedByteCount(), "stderr export bounded independently");
+            check(tool.stderr().truncated() && tool.stderr().text().equals("e".repeat(8192)), "stderr prefix exact");
+            var facts = failure.facts();
+            checkEq("native.toolchain-unversioned", facts.reason(), "stable native subordinate reason");
+            var copies = facts.withCycle(null).withResolution(null).withExports(null).withConstruction(null)
+                    .withNames(null).withSyntax(null).withMismatch(null).withOperator(null).withCall(null);
+            checkEq(tool, copies.tool(), "tool survives all independent fact copies");
+            var diagnostic = new deal.diagnostics.CompilerDiagnostic("TOOL", "error", failure.diagnostic(),
+                    deal.diagnostics.DiagnosticRange.synthetic(""), List.of(), null).withFacts(copies);
+            String json = deal.diagnostics.DiagnosticStructuredOutput.toJson(List.of(diagnostic));
+            var decoded = deal.amend.CompilerProtocolJson.requireObject(deal.amend.CompilerProtocolJson.decode(json), "document");
+            var diagnostics = deal.amend.CompilerProtocolJson.requireArray(deal.amend.CompilerProtocolJson.field(decoded, "diagnostics"), "diagnostics");
+            var item = deal.amend.CompilerProtocolJson.requireObject(diagnostics.items().getFirst(), "diagnostic");
+            checkEq(deal.amend.CompilerProtocolJson.encode(copies), deal.semantic.ir.CanonicalJson.serializeText(
+                    deal.amend.CompilerProtocolJson.field(item, "facts")), "CLI/amendment tool evidence parity");
+        }
+        // A selected executable that cannot be started has no invented exit or stream output.
+        Files.writeString(compiler, "#!/nonexistent-deal-interpreter\n", StandardCharsets.UTF_8);
+        var startFailure = expectFailure(new NativeBuildRequest(published, scratch.resolve("failed-start-product"),
+                2, List.of(), null), Map.of("PATH", directory.toString()));
+        check(startFailure.tool() != null && startFailure.tool().outcome() == deal.diagnostics.DiagnosticFacts.ToolOutcome.START_FAILED
+                        && startFailure.tool().exitCode() == null && startFailure.tool().stdout() == null
+                        && startFailure.tool().stderr() == null,
+                "start failure distinguishes unavailable child status/output from empty output");
+    }
+
     private static void testPreflightRejections(Path scratch, Path published)
             throws Exception {
         System.out.println("-- every preflight condition fails closed --");
@@ -469,6 +519,9 @@ public final class NativeToolchainTest {
             "the absent-clang diagnostic carries its one prefix: "
                 + missing.diagnostic());
 
+        check(missing.tool() == null && missing.facts().tool() == null,
+            "missing compiler invents no executed child evidence");
+
         // (b) A major outside the accepted 14-16 window, on both sides.
         for (int major : List.of(13, 17)) {
             Path directory = Files.createDirectories(
@@ -481,6 +534,10 @@ public final class NativeToolchainTest {
             checkEq(NativeBuildException.Kind.TOOLCHAIN_UNSUPPORTED,
                 unsupported.kind(),
                 "clang major " + major + " is outside the accepted window");
+            check(unsupported.tool() != null && unsupported.tool().operation().equals("native.version")
+                    && unsupported.tool().exitCode() == 0
+                    && unsupported.tool().stdout().text().contains("clang version " + major),
+                "unsupported version retains actual successful probe output and status");
             check(unsupported.diagnostic().contains("major " + major),
                 "the version diagnostic names the observed major: "
                     + unsupported.diagnostic());
@@ -787,6 +844,10 @@ public final class NativeToolchainTest {
                 + outputFailure.detail());
         checkHidesStagingPath(outputFailure, outputProduct,
             "an output-file failure");
+        check(outputFailure.tool() != null && outputFailure.tool().operation().equals("native.link")
+                && outputFailure.tool().stderr().text().contains(outputProduct.toString())
+                && !outputFailure.tool().stderr().text().contains(".partial"),
+            "structured linker evidence names product, never staging artifact");
 
         // (b) The rename itself: the caller's product path is an existing
         //     directory, so the one same-directory rename cannot replace it.

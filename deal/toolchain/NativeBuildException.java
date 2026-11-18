@@ -1,6 +1,7 @@
 package deal.toolchain;
 
 import java.util.Objects;
+import deal.diagnostics.DiagnosticFacts;
 
 /**
  * The one native build failure ({@code llvm-native-backend-integration}
@@ -63,16 +64,22 @@ public final class NativeBuildException extends Exception {
 
     private final Kind kind;
     private final String detail;
+    private final DiagnosticFacts.ToolContext tool;
 
     /**
      * @param kind the named condition; non-null
      * @param detail the condition's own detail text; non-null and non-blank
      */
     public NativeBuildException(Kind kind, String detail) {
+        this(kind, detail, null);
+    }
+
+    public NativeBuildException(Kind kind, String detail, DiagnosticFacts.ToolContext tool) {
         super(Objects.requireNonNull(kind, "kind must not be null").prefix()
             + Objects.requireNonNull(detail, "detail must not be null"));
         this.kind = kind;
         this.detail = detail;
+        this.tool = tool;
         if (detail.isBlank()) {
             throw new IllegalArgumentException("a native build failure names its"
                 + " condition detail");
@@ -87,6 +94,14 @@ public final class NativeBuildException extends Exception {
     /** The condition's own detail text, without the kind's prefix. */
     public String detail() {
         return detail;
+    }
+
+    /** Observed child evidence, absent for conditions which never ran a child. */
+    public DiagnosticFacts.ToolContext tool() { return tool; }
+
+    public DiagnosticFacts facts() {
+        return new DiagnosticFacts("native." + kind.name().toLowerCase(java.util.Locale.ROOT).replace('_', '-'),
+                tool == null ? "native.build" : tool.operation(), "", "", java.util.List.of()).withTool(tool);
     }
 
     /** The one rendered diagnostic line of this failure. */
