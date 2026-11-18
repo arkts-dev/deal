@@ -5582,7 +5582,7 @@ public final class SemanticLowerer {
         private static List<Span> parameterTypeSpans(List<Parameter> parameters) {
             List<Span> spans = new ArrayList<>();
             for (Parameter parameter : parameters) {
-                spans.add(parameter.type() == null ? null : parameter.type().span());
+                spans.add(parameter.type() == null ? parameter.span() : parameter.type().span());
             }
             return spans;
         }

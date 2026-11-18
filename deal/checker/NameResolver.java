@@ -845,6 +845,7 @@ public final class NameResolver {
     }
 
     public Type resolveTypeNode(TypeNode tn) {
+        if (tn == null) return Type.Error.INSTANCE; // Contextual expression parameter; resolved by the checker.
         return switch (tn) {
             case NamedType nt -> {
                 if (nt.name().equals("void")) {

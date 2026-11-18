@@ -186,10 +186,29 @@ public final class TypeLegalityFlowTest {
         check(prefix + "let x=[[1],[]];}", "E3002");
     }
 
+    private static void contextualParameters() {
+        for (String body : List.of(
+                "let g:(x:number)=>number=(x):number=>x+1;",
+                "let g:(x:number)=>number=function(x):number{return x+1;};",
+                "let g:(x:number,y:string)=>number=(x):number=>x;",
+                "let g:((x:number)=>number)|null=(x):number=>x;",
+                "let ys=xs.map((x,i,a):number=>x+i+a.length);",
+                "let ys=xs.filter((x):boolean=>x>0);",
+                "let ys=xs.find((x):boolean=>x>0);",
+                "let ys=xs.some((x):boolean=>x>0);",
+                "let ys=Array.from(xs,(x,i):number=>x+i);",
+                "let g:(x:number)=>number=(x):number=>{let h=():number=>x;return h();};"))
+            check("function f(xs:number[]):void{" + body + "}", null);
+        check("function f():void{let g=(x):number=>1;}", "E3002");
+        check("function f():void{let g:(x:number)=>number=(x,y):number=>x;}", "E3002");
+        check("function f(xs:number[]):void{let g=xs.filter((x:string):boolean=>true);}", "E5001");
+    }
+
     public static void main(String[] args) throws Exception {
         bindingOwnership();
         coalescingLiteralContext();
         ternaryLiteralContext();
+        contextualParameters();
         boundedNarrowing();
         for (String expression : List.of("x!==null && x>0", "x===null || x>0", "!(x===null) && x>0"))
             check("function f(x:number|null):boolean{return " + expression + ";}", null);

@@ -311,6 +311,10 @@ public final class Parser {
                                                boolean allowExternal) {
         expect(TokenType.LPAREN, DiagnosticCode.E1009, lparenMessage);
         ParamListResult paramResult = parseParameterList();
+        if (allowExternal) for (Parameter parameter : paramResult.params()) {
+            if (parameter.type() == null) error(DiagnosticCode.E1008,
+                "Function declarations require parameter annotations", peek());
+        }
         expect(TokenType.RPAREN, DiagnosticCode.E1010, "Expected ')' after function parameters");
 
         if (!match(TokenType.COLON)) {
@@ -920,8 +924,7 @@ public final class Parser {
         if (nameToken == null) return null;
 
         if (!match(TokenType.COLON)) {
-            error(DiagnosticCode.E1008, "Expected ':' after parameter name", peek());
-            return null;
+            return new Parameter(spanBetween(nameToken, nameToken), nameToken.lexeme(), null);
         }
         TypeNode type = parseType();
         if (type == null) return null;
@@ -1594,9 +1597,10 @@ public final class Parser {
     /** A typed arrow head is distinguished without consuming grouped expressions. */
     private boolean looksLikeArrow(int start) {
         // A grouped consequent followed by ':' is not an arrow head.
-        // Nonempty arrow heads always start with an annotated parameter.
+        // Nonempty heads begin with a parameter, optionally annotated.
         if (start + 2 < tokens.size() && tokens.get(start + 1).type() != TokenType.RPAREN
-                && tokens.get(start + 2).type() != TokenType.COLON) return false;
+                && (tokens.get(start + 1).type() != TokenType.IDENTIFIER
+                    || !List.of(TokenType.COLON, TokenType.COMMA, TokenType.RPAREN).contains(tokens.get(start + 2).type()))) return false;
         int depth = 0;
         for (int index = start; index < tokens.size(); index++) {
             TokenType type = tokens.get(index).type();

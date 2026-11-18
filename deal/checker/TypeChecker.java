@@ -1988,7 +1988,10 @@ public final class TypeChecker {
         expectedType = null;
         contextualClassDecl = null;
         try {
-            for (ExpressionNode argument : call.args()) arguments.add(checkExpression(argument));
+            for (ExpressionNode argument : call.args()) {
+                expectedType = predicate;
+                arguments.add(checkExpression(argument));
+            }
         } finally {
             expectedType = savedExpected;
             contextualClassDecl = savedContext;
@@ -2003,7 +2006,10 @@ public final class TypeChecker {
         expectedType = null;
         contextualClassDecl = null;
         try {
-            for (ExpressionNode argument : call.args()) arguments.add(checkExpression(argument));
+            for (ExpressionNode argument : call.args()) {
+                expectedType = new Type.Func(List.of(source.element(), Type.Number.INSTANCE, source), Type.Unknown.INSTANCE);
+                arguments.add(checkExpression(argument));
+            }
         } finally {
             expectedType = savedExpected;
             contextualClassDecl = savedContext;
@@ -2032,7 +2038,11 @@ public final class TypeChecker {
         expectedType = null;
         contextualClassDecl = null;
         try {
-            for (ExpressionNode argument : call.args()) arguments.add(checkExpression(argument));
+            for (ExpressionNode argument : call.args()) {
+                expectedType = arguments.size() == 1 && arguments.getFirst() instanceof Type.Array source
+                    ? new Type.Func(List.of(source.element(), Type.Number.INSTANCE), Type.Unknown.INSTANCE) : null;
+                arguments.add(checkExpression(argument));
+            }
         } finally {
             expectedType = savedExpected;
             contextualClassDecl = savedContext;
@@ -2712,8 +2722,16 @@ public final class TypeChecker {
 
     private Type checkFunctionExpr(FunctionExpr fe) {
         List<Type> paramTypes = new ArrayList<>();
-        for (Parameter p : fe.params()) {
-            paramTypes.add(nameResolver.resolveTypeNode(p.type()));
+        Type target = expectedType instanceof Type.Nullable nullable ? nullable.inner() : expectedType;
+        Type.Func contextual = target instanceof Type.Func function ? function : null;
+        for (int i = 0; i < fe.params().size(); i++) {
+            Parameter p = fe.params().get(i);
+            if (p.type() != null) paramTypes.add(nameResolver.resolveTypeNode(p.type()));
+            else if (contextual != null && i < contextual.paramTypes().size()) paramTypes.add(contextual.paramTypes().get(i));
+            else {
+                error(DiagnosticCode.E3002, "Parameter '" + p.name() + "' requires a type annotation or contextual signature", p.span());
+                paramTypes.add(Type.Error.INSTANCE);
+            }
         }
         Type returnType = nameResolver.resolveResultTypeNode(fe.returnType());
         // The return annotation's own declared class symbol, resolved in
@@ -2732,6 +2750,15 @@ public final class TypeChecker {
         if (feScope != null) {
             currentScope = feScope;
             nameResolver.setCurrentScope(feScope);
+            for (int i = 0; i < fe.params().size(); i++) {
+                Parameter parameter = fe.params().get(i);
+                if (parameter.type() == null) {
+                    Type pt = paramTypes.get(i);
+                    Type leaf = innermostElementType(pt);
+                    Symbol.ClassSymbol provider = leaf instanceof Type.Class cls ? resolveClassSymbol(cls) : null;
+                    currentScope.defineReplace(parameter.name(), new Symbol.VariableSymbol(parameter.name(), pt, true, provider, null));
+                }
+            }
         } else {
             currentScope = currentScope.enterScope();
             nameResolver.setCurrentScope(currentScope);
@@ -2744,7 +2771,7 @@ public final class TypeChecker {
                     continue;
                 }
                 paramNames.add(p.name());
-                Type pt = nameResolver.resolveTypeNode(p.type());
+                Type pt = paramTypes.get(fe.params().indexOf(p));
                 currentScope.define(p.name(), new Symbol.VariableSymbol(p.name(), pt,
                     true, nameResolver.declaredClassSymbolOf(p.type()), p.type()));
             }

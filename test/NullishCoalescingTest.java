@@ -100,6 +100,12 @@ public final class NullishCoalescingTest {
             export function main():void {
               first(null,null);first({value:21},[{value:22}]);
               second(undefined);second({value:"existing"});
+              const nums=[1,2,3];
+              const mapped=nums.map((x,i,all):number=>x+i+all.length);check(mapped[2]===8);
+              const filtered=nums.filter((x):boolean=>x>1);check(filtered.length===2);
+              const copied=Array.from(nums,(x,i):number=>x+i);check(copied[2]===5);
+              const fn:(x:a.Item)=>number=(x):number=>x.value;check(fn({value:27})===27);
+              const nested:(x:number)=>number=(x):number=>{const inner=():number=>x;return inner();};check(nested(29)===29);
             }
             """;
         CompositionProductionTest.execute(source,"","",root,null,

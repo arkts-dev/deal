@@ -24,6 +24,8 @@ String is an unshadowable direct-call-only builtin with exactly one checked numb
 
 Template interpolations accept checked string or number values only; they grant no implicit contextual extraction from unknown or nullish values.
 
+Function/arrow expression parameters may omit annotations only when a positional contextual signature supplies their exact types; array mapper/predicate contexts derive from the receiver/source, never callback bodies. Declaration parameters and all results remain explicit. Resolve omitted parameter bindings before checking bodies and preserve exact providers and ordinary arity adaptation.
+
 Expression-bodied arrows check their expression against the declared result, including requiring a void expression for void-result arrows. Their blocks, captures, recursion and async checks otherwise follow ordinary function expressions.
 
 String receiver length is read-only and number-typed. Resolve receiver methods from the checked string type, not member spelling alone; require direct calls and exact declared argument types/arity. Substring and slice accept one or two number arguments; omitted end is distinct from an explicit undefined argument. Includes/startsWith/endsWith and indexOf/lastIndexOf take a string plus an optional number position; omitted position is not explicit undefined. ToLowerCase/toUpperCase take no arguments and return strings. IndexOf/lastIndexOf return numbers; includes/startsWith/endsWith return booleans without narrowing. Record/class function fields remain ordinary callable values.

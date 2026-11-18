@@ -20,6 +20,8 @@ Each HOST import read records its source occurrence's alias cell; never reconstr
 
 Function-valued variables assigned anywhere in their declaring body's nested traversal lack static allocation identity: reads materialize current values; calls/await use Dynamic dispatch. Declarations/imported exports are immutable; resolve signatures in their exact owner scope, excluding shadowing parameters. Declarations, recursion and fixed adapters retain recorded static callees. Classify runtime sources by recorded execution class, never spelling/descriptor. If conservative assignment analysis materializes a declared-name read as DynamicFunctionValue, its await invokes that evaluated carrier through dynamic dispatch just like its synchronous twin; sibling-scope spelling collisions must not produce a lowering rejection.
 
+Contextually typed expression parameters retain ordinary checked signatures and parameter boundaries; when the annotation is omitted, anchor the boundary at the parameter's source span.
+
 A direct function-expression initializer captures its own mutable let cell, including through its immediate VALUE adapter and declaration boundary; unrelated later writes never justify an earlier load. Every adapter captures its source function value once at the source evaluation point, including awaited completion. Preserve genuine closure bindings and recorded sync/async completion cells.
 
 Assignment evaluates and yields the original RHS once. Storage may receive an adapter without changing the expression's type/identity. All adapters capture VALUE; validators require a preceding source producer. Address-chain validation preserves RHS parent/type/order and original publication. Later loads or enclosing assignments cannot justify earlier captures.
