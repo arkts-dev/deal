@@ -105,6 +105,7 @@ public class DiagnosticRangeTest {
         testCheckerProducerRanges();
         testAwaitRefinementEvidence();
         testCycleEvidence();
+        testAssertionConstraintEvidence();
         testCatchVariableIdentifierRange();
         testProgramSpanAnchorsCombined();
         testV12CornerCaseScalarCoordinatePins();
@@ -1153,6 +1154,33 @@ public class DiagnosticRangeTest {
             check(checkerDiagnostics(prefix + "async function f(x:string|null):Promise<void>{" + body + "}",
                     "await.deal").isEmpty(), "guarded/repaired/nested-function positive: " + body);
         }
+    }
+
+    private static void testAssertionConstraintEvidence() {
+        for (String[] sample : new String[][] {
+                {"function f(x:number[]):void{let y=x as string[];}", "string[]", "ARRAY_ELEMENT"},
+                {"function f(x:(n:number)=>string):void{let y=x as (n:number)=>number;}", "(n:number)=>number", "FUNCTION_RESULT"}}) {
+            String source = "// 😀\r\n" + sample[0];
+            var diagnostic = checkerDiag(checkerDiagnostics(source, "assertion.deal"), "E3001");
+            check(diagnostic != null && diagnostic.facts().reason().equals("assertion.incompatible"),
+                    "assertion preserves rejection identity");
+            if (diagnostic == null) continue;
+            check(diagnostic.facts().mismatch() != null && diagnostic.facts().mismatch().path().size() == 1
+                            && diagnostic.facts().mismatch().path().getFirst().kind().name().equals(sample[2]),
+                    "assertion identifies first incompatible constraint");
+            var note = diagnostic.notes().stream().filter(n -> n.message().equals("Checked assertion target annotation"))
+                    .findFirst().orElse(null);
+            check(note != null && note.range().startScalarOffset() == source.indexOf(sample[1], source.indexOf(" as "))
+                            && note.range().scalarLength() == sample[1].length(),
+                    "assertion target has exact complete UTF-16 annotation range: " + note + " expected "
+                            + source.indexOf(sample[1], source.indexOf(" as ")) + ":" + sample[1].length());
+            check(diagnostic.facts().guidance().stream().anyMatch(text -> text.contains("does not perform a conversion")),
+                    "constraint evidence authorizes no conversion");
+        }
+        check(checkerDiagnostics("function f(x:unknown):void{let y=x as number[];}", "assertion.deal").isEmpty(),
+                "unknown checked extraction remains admitted");
+        check(checkerDiagnostics("function f(x:number[]):void{let y=x as number[];}", "assertion.deal").isEmpty(),
+                "explicitly selected compatible assertion rechecks");
     }
 
     private static void testCycleEvidence() {

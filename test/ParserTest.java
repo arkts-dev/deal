@@ -132,6 +132,16 @@ public class ParserTest {
 
     private static void testSubsetAndListRecoveryFacts() {
         testLineAndResultFacts();
+        for (String type : List.of("number[]", "number[][]", "number|null", "null|number",
+                "Record<string, unknown>", "(value:number[])=>number", "(value:number|null)=>Promise<number>")) {
+            String source = "// 😀\r\nlet value:" + type + " /* trailing */ = missing;";
+            var result = parse(source);
+            assertNoParseErrors(result, "type range control " + type);
+            var annotation = ((VariableDeclaration) result.program().statements().getFirst()).typeAnnotation().orElseThrow();
+            check(annotation.span().startScalarOffset() == source.indexOf(type)
+                            && annotation.span().endScalarOffset() == source.indexOf(type) + type.length(),
+                    "type annotation excludes next token and intervening comment: " + type);
+        }
         for (String[] sample : new String[][] {
                 {"for(let i=0;i<3;i=i+1){}", "E1013", "c-style-for", "for(let item of values){}", "#for-of"},
                 {"for(let item:number of values){}", "E1013", "for-of-annotation", "for(let item of values){}", "#for-of"},

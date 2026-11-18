@@ -3033,7 +3033,9 @@ public final class TypeChecker {
                             + ": void is not data; otherwise one type must be assignable to the other",
                     assertion.span()).withFacts(new deal.diagnostics.DiagnosticFacts(
                             "assertion.incompatible", "assertion", typeName(target), typeName(source),
-                            List.of("Use compatible types; a checked assertion does not perform a conversion."))));
+                            List.of("Use compatible types; a checked assertion does not perform a conversion."))
+                            .withMismatch(typeMismatch(target, source)))
+                    .withNote("Checked assertion target annotation", assertion.target().span().range()));
             return Type.Error.INSTANCE;
         }
         recordExactClassDecl(assertion, target, exactAnnotationClassSymbol(currentScope, assertion.target()));

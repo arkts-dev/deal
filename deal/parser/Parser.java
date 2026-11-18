@@ -686,7 +686,7 @@ public final class Parser {
             returnType = new NamedType(spanOf(previousOrCurrent()), "void");
         }
 
-        return new FunctionType(spanBetween(lparen, previousOrCurrent()),
+        return new FunctionType(spanBetween(lparen, previous()),
                 List.copyOf(params), returnType, result.isAsync());
     }
 
@@ -702,7 +702,7 @@ public final class Parser {
         TypeNode type = parseType();
         if (type == null) return null;
 
-        return new FunctionTypeParam(spanBetween(nameToken, previousOrCurrent()),
+        return new FunctionTypeParam(spanBetween(nameToken, previous()),
                 nameToken.lexeme(), type);
     }
 
@@ -733,7 +733,7 @@ public final class Parser {
             if (isPlainNullish(nullType) && match(TokenType.PIPE)) {
                 TypeNode inner = parseNullableType();
                 if (inner == null) return null;
-                return new NullableType(spanBetween(nullToken, previousOrCurrent()), inner,
+                return new NullableType(spanBetween(nullToken, previous()), inner,
                     nullToken.lexeme().equals("undefined"));
             }
             return parseNullableSuffix(nullType);
@@ -767,7 +767,7 @@ public final class Parser {
             if (peek().type() == TokenType.NULL || isUndefinedToken(peek())) {
                 Token member = advance();
                 inner = new NullableType(
-                        spanBetween(tokenSpanStart(inner), previousOrCurrent()),
+                        spanBetween(tokenSpanStart(inner), previous()),
                         inner, member.lexeme().equals("undefined"));
             } else {
                 subsetError(DiagnosticCode.E1030, "Expected 'null' after '|' in nullable type", peek(),
@@ -791,7 +791,7 @@ public final class Parser {
         while (match(TokenType.LBRACKET)) {
             Token opener = previous();
             expectCloser(TokenType.RBRACKET, DiagnosticCode.E1031, "Expected ']' in array type", opener);
-            type = new ArrayType(spanBetween(tokenSpanStart(type), previousOrCurrent()), type);
+            type = new ArrayType(spanBetween(tokenSpanStart(type), previous()), type);
         }
         return type;
     }
@@ -833,7 +833,7 @@ public final class Parser {
                 if (key == null || !key.lexeme().equals("string") || value == null || !value.lexeme().equals("unknown")) {
                     error(DiagnosticCode.E1032, "Only Record<string, unknown> is supported", first);
                 }
-                return new NamedType(spanBetween(first, previousOrCurrent()), "Record<string, unknown>");
+                return new NamedType(spanBetween(first, previous()), "Record<string, unknown>");
             }
 
             // Qualified type: exactly one '.' level (v1.4 Type grammar:
