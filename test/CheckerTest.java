@@ -6605,6 +6605,24 @@ public class CheckerTest {
                 && stable.get(1) == second,
             "D1 helper: stability for equal keys keeps input order");
 
+        var identical = new CompilerDiagnostic(first.code(), first.severity(), first.message(), first.range(),
+                first.notes(), first.diagnosticCode(), first.missingSymbols(), first.facts());
+        var changedFacts = first.withFacts(new deal.diagnostics.DiagnosticFacts("other.reason", "read", "", "", List.of()));
+        var changedSymbols = first.withMissingSymbol("VALUE", "missing", "", List.of());
+        var changedEnd = new CompilerDiagnostic(first.code(), first.severity(), first.message(),
+                new DiagnosticRange("f.deal", 1, 1, 1, 3, 7, 9, 2, RangeOrigin.SOURCE),
+                first.notes(), first.diagnosticCode(), first.missingSymbols(), first.facts());
+        var repeated = List.of(first, second, identical, changedFacts, changedSymbols, changedEnd, first);
+        var unique = DiagnosticOrder.canonical(repeated);
+        check(unique.equals(List.of(first, second, changedFacts, changedSymbols, changedEnd)),
+                "exact repeats collapse but same ordering keys with different notes/facts/symbols/ends remain");
+        check(unique.getFirst() == first && repeated.size() == 7,
+                "dedup retains first carrier identity and never mutates input");
+        var json = deal.amend.CompilerProtocolJson.requireObject(deal.amend.CompilerProtocolJson.decode(
+                deal.diagnostics.DiagnosticStructuredOutput.toJson(repeated)), "report");
+        var projected = (deal.semantic.ir.CanonicalJson.Arr) deal.amend.CompilerProtocolJson.field(json, "diagnostics");
+        check(projected.items().size() == 5, "direct structured reports also collapse exact repeats only");
+
         // Input-list non-mutation and the fresh-list contract.
         List<CompilerDiagnostic> input = new ArrayList<>(
             List.of(fileB, fileA, offHigh, offLow));

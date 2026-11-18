@@ -74,7 +74,7 @@ public final class DiagnosticStructuredOutput {
 
     public static String toJson(List<CompilerDiagnostic> diagnostics, List<OperationalDiagnostic> operations,
                                 CompilationOutcome outcome) {
-        List<CompilerDiagnostic> list = diagnostics == null ? List.of() : diagnostics;
+        List<CompilerDiagnostic> list = DiagnosticOrder.exactDistinct(diagnostics);
         List<OperationalDiagnostic> failures = List.copyOf(operations);
         StringBuilder sb = new StringBuilder();
         sb.append("{\n")

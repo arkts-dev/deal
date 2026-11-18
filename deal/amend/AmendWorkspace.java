@@ -1410,7 +1410,7 @@ public final class AmendWorkspace {
                 functionsByName,
                 classesByName,
                 index);
-        List<StructuredDiagnostic> diagnostics = rawDiagnostics.stream()
+        List<StructuredDiagnostic> diagnostics = deal.diagnostics.DiagnosticOrder.exactDistinct(rawDiagnostics).stream()
                 .map(value -> diagnostic(value, moduleId, functionsByName.values(), classesByName.values(), targets.values())
                         .withMissingSymbols(value.missingSymbols()))
                 .map(value -> value.withContextRequest(contextRequest(source, sourceDigest, moduleId, targets, value.ownerId())))

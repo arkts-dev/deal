@@ -2338,16 +2338,17 @@ public final class CompilationOrchestrator {
      * Delegates printing to the canonical formatter (D8) over the D1
      * canonical report order (deterministic-diagnostics): the stderr
      * diagnostic blocks appear in the canonical total order while the
-     * internal collection order is unchanged; the error/warning summary
-     * counts are computed over the internal list exactly as before.
+     * internal collection order is unchanged; only exact full-carrier repeats
+     * collapse. The error/warning summary counts the displayed diagnostics.
      */
     private void printDiagnostics() {
-        for (CompilerDiagnostic d : DiagnosticOrder.canonical(diagnostics)) {
+        List<CompilerDiagnostic> displayed = DiagnosticOrder.canonical(diagnostics);
+        for (CompilerDiagnostic d : displayed) {
             System.err.println(DiagnosticFormatter.format(d));
         }
-        long errorCount = diagnostics.stream()
+        long errorCount = displayed.stream()
             .filter(d -> "error".equals(d.severity())).count();
-        long warnCount = diagnostics.stream()
+        long warnCount = displayed.stream()
             .filter(d -> "warning".equals(d.severity())).count();
         System.err.println(errorCount + " error(s), " + warnCount + " warning(s)");
     }

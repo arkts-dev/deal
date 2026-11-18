@@ -15,8 +15,10 @@ import java.util.List;
  * offset ascending, then line/column, then diagnostic code, then message
  * text, then severity ascending ("error" before "warning"). The sort is
  * stable: diagnostics with equal keys keep their input relative order.
- * The internal collection order, phase gating, and counting paths are
- * unaffected — this helper is a pure function of one list, consumed at
+ * Only exact full-carrier repeats collapse, retaining the first occurrence;
+ * equal ordering keys with different ranges, notes or facts remain distinct.
+ * The internal collection order and phase gating are unaffected — this helper
+ * is a pure function of one list, consumed at
  * report time only by {@code printDiagnostics} and the
  * {@code --diagnostics-json} write path.</p>
  *
@@ -46,9 +48,15 @@ public final class DiagnosticOrder {
         if (diagnostics == null) {
             return List.of();
         }
-        List<CompilerDiagnostic> ordered = new ArrayList<>(diagnostics);
+        List<CompilerDiagnostic> ordered = new ArrayList<>(exactDistinct(diagnostics));
         ordered.sort(CANONICAL);
         return ordered;
+    }
+
+    /** First-occurrence order; equality includes full ranges, notes and producer facts. */
+    public static List<CompilerDiagnostic> exactDistinct(List<CompilerDiagnostic> diagnostics) {
+        if (diagnostics == null) return List.of();
+        return List.copyOf(new java.util.LinkedHashSet<>(diagnostics));
     }
 
     /**
