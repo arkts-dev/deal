@@ -2441,7 +2441,7 @@ public final class CompilationOrchestrator {
                             return new Symbol.ClassSymbol(cd.name(),
                                 cd.fields(), info.modulePath,
                                 new CanonicalClassIdentity(moduleIdentity,
-                                    cd.name()));
+                                    cd.name()), cd.span().range());
                         }
                     }
                     return null;
@@ -2490,7 +2490,7 @@ public final class CompilationOrchestrator {
                         return new Symbol.ClassSymbol(cd.name(),
                             cd.fields(), info.modulePath,
                             new CanonicalClassIdentity(identity,
-                                cd.name()));
+                                cd.name()), cd.span().range());
                     }
                 }
                 // The identity names the declaring file; a harness-shared

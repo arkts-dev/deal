@@ -5,6 +5,7 @@ import deal.ast.FunctionDeclaration;
 import deal.ast.Span;
 import deal.ast.TypeNode;
 import deal.identity.CanonicalClassIdentity;
+import deal.diagnostics.DiagnosticRange;
 import deal.types.Type;
 
 import java.util.List;
@@ -82,7 +83,13 @@ public sealed interface Symbol
      * cross-module routing only, never for descriptor text.
      */
     record ClassSymbol(String name, List<ClassField> fields, String modulePath,
-                       CanonicalClassIdentity identity) implements Symbol {}
+                       CanonicalClassIdentity identity, DiagnosticRange declarationRange) implements Symbol {
+        /** Synthetic/provider-only symbols have no declaration range to assert. */
+        public ClassSymbol(String name, List<ClassField> fields, String modulePath,
+                           CanonicalClassIdentity identity) {
+            this(name, fields, modulePath, identity, null);
+        }
+    }
 
     /**
      * A module imported via {@code import * as Name from "path"}.

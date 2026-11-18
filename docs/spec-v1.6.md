@@ -1705,6 +1705,12 @@ Async diagnostics distinguish await outside an async body, await of a non-async
 call, an unawaited async call, and an async call inside an optional chain using
 separate reason identifiers. Async call failures retain the same known call
 context; guidance does not silently change a caller's asynchronous API contract.
+E3019 nominal-crossing failures use reason `type.class-provider` and operation
+`assignment.nominal`, retaining expected/actual types and ordered labels
+`Expected class declaration` then `Actual class declaration` for the exact
+selected providers. Unavailable synthetic declaration ranges remain absent;
+field spans, same-spelled locals and first identity matches are not substitutes.
+No nominal retagging or structural conversion is implied.
 Assignment failures with an explicit binding type label its exact annotation;
 inferred bindings do not invent one. Class-literal failures distinguish missing,
 extra and incompatible fields using `construction.missing-field`,

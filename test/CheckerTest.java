@@ -184,6 +184,32 @@ public class CheckerTest {
                 "explicit imported field repair checks against provider");
         assertNoErrors(checkProgram(fields + "let c:C={value:1};"), "explicit intended field value repairs required/type failures");
         assertNoErrors(checkProgram("let value:number=1;value=2;"), "explicit intended number repairs binding assignment");
+        var crossingResolver = new StubModuleResolver();
+        String foreignClassSource = "// 😀\r\nexport class Item{}";
+        Symbol.ClassSymbol foreignClass = (Symbol.ClassSymbol) checkProgram(foreignClassSource, "foreign.deal")
+                .result().symbolTable().resolve("Item");
+        crossingResolver.registerClassSymbol("./foreign", foreignClass);
+        crossingResolver.register("./foreign", Map.of("Item", new Type.Class("Item", foreignClass.identity(), "./foreign")));
+        String crossingSource = "import * as P from \"./foreign\";class Item{}let own:Item={};let foreign:P.Item={};own=foreign;";
+        var crossingDiagnostic = checkProgramWithModule(crossingSource, crossingResolver).result().diagnostics().stream()
+                .filter(d -> d.code().equals("E3019")).findFirst().orElseThrow();
+        check(crossingDiagnostic.facts().reason().equals("type.class-provider")
+                        && crossingDiagnostic.notes().size() == 2
+                        && crossingDiagnostic.notes().get(0).message().equals("Expected class declaration")
+                        && crossingDiagnostic.notes().get(0).range().startScalarOffset() == crossingSource.indexOf("class Item")
+                        && crossingDiagnostic.notes().get(1).message().equals("Actual class declaration")
+                        && crossingDiagnostic.notes().get(1).range().file().equals("foreign.deal")
+                        && crossingDiagnostic.notes().get(1).range().startScalarOffset() == foreignClassSource.indexOf("class Item"),
+                "nominal crossing labels expected then actual exact declarations with provider UTF-16 ranges");
+        assertNoErrors(checkProgramWithModule(crossingSource.replace("own=foreign", "own=own"), crossingResolver),
+                "explicit intended-provider repair rechecks without retagging foreign value");
+        crossingResolver.registerClassSymbol("./foreign", new Symbol.ClassSymbol("Item", foreignClass.fields(),
+                foreignClass.modulePath(), foreignClass.identity()));
+        var syntheticCrossing = checkProgramWithModule(crossingSource, crossingResolver).result().diagnostics().stream()
+                .filter(d -> d.code().equals("E3019")).findFirst().orElseThrow();
+        check(syntheticCrossing.notes().size() == 1
+                        && syntheticCrossing.notes().getFirst().message().equals("Expected class declaration"),
+                "synthetic provider without declaration evidence does not invent an actual class location");
         var assignment = checkProgram("let f: (x:number)=>number = function(x:string):number{return 1;};")
                 .result().diagnostics().stream().filter(d -> d.code().equals("E3001")).findFirst().orElseThrow();
         check(assignment.facts().expected().equals("(number) => number")
@@ -2748,6 +2774,10 @@ public class CheckerTest {
                     "the direct same-name sibling assignment is the"
                         + " cross-declaration rejection on " + backend + ": "
                         + result.output());
+                check(result.output().contains("Expected class declaration")
+                                && result.output().contains("Actual class declaration")
+                                && result.output().contains("b.deal") && result.output().contains("a.deal"),
+                        "production imported crossing locates both defining declarations on " + backend);
                 check(!Files.exists(out),
                     "the rejected sibling assignment publishes no artifacts"
                         + " on " + backend);

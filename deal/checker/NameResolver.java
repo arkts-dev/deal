@@ -333,7 +333,7 @@ public final class NameResolver {
             }
         }
         Symbol.ClassSymbol classSymbol = new Symbol.ClassSymbol(name, cd.fields(),
-            modulePath, classIdentityFor(modulePath, name));
+            modulePath, classIdentityFor(modulePath, name), cd.span().range());
         classDeclarationNodes.put(classSymbol, cd);
         define(root, name, classSymbol, cd.span());
 
@@ -626,7 +626,7 @@ public final class NameResolver {
             // cross-declaration value assignment is rejected at the
             // assignment gate (E3019), never the declaration.
             Symbol.ClassSymbol classSymbol = new Symbol.ClassSymbol(name,
-                cd.fields(), modulePath, classIdentityFor(modulePath, name));
+                cd.fields(), modulePath, classIdentityFor(modulePath, name), cd.span().range());
             classDeclarationNodes.put(classSymbol, cd);
             define(currentScope, name, classSymbol, cd.span());
         }

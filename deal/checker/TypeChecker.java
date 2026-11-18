@@ -3325,10 +3325,9 @@ public final class TypeChecker {
             ? cls : null;
         String name = expectedClass == null
             ? typeName(expected) : expectedClass.name();
-        error(DiagnosticCode.E3019,
-            "Cannot assign class '" + name
-                + "' across its distinct declarations of the same-named class",
-            span);
+        reportClassCrossing(name, expected, actual,
+                expectedClass == null ? null : resolveClassSymbol(expectedClass),
+                nonNullClassType(actual) instanceof Type.Class cls ? resolveClassSymbol(cls) : null, span);
         return true;
     }
 
@@ -3352,11 +3351,22 @@ public final class TypeChecker {
             return;
         }
         if (targetDecl != null && valueDecl != null && targetDecl != valueDecl) {
-            error(DiagnosticCode.E3019,
-                "Cannot assign class '" + tc.name()
-                    + "' across its distinct declarations of the same-named class",
-                span);
+            reportClassCrossing(tc.name(), targetType, valueType, targetDecl, valueDecl, span);
         }
+    }
+
+    private void reportClassCrossing(String name, Type expected, Type actual,
+            Symbol.ClassSymbol expectedDeclaration, Symbol.ClassSymbol actualDeclaration, Span span) {
+        CompilerDiagnostic diagnostic = CompilerDiagnostic.error(DiagnosticCode.E3019,
+                "Cannot assign class '" + name + "' across its distinct declarations of the same-named class", span)
+                .withFacts(new deal.diagnostics.DiagnosticFacts("type.class-provider", "assignment.nominal",
+                        typeName(expected), typeName(actual), List.of(
+                                "Use a value from the intended class declaration; equal names or fields do not retag nominal values.")));
+        if (expectedDeclaration != null && expectedDeclaration.declarationRange() != null)
+            diagnostic = diagnostic.withNote("Expected class declaration", expectedDeclaration.declarationRange());
+        if (actualDeclaration != null && actualDeclaration.declarationRange() != null)
+            diagnostic = diagnostic.withNote("Actual class declaration", actualDeclaration.declarationRange());
+        diagnostics.add(diagnostic);
     }
 
     /** The innermost type under any nullable wrapper. */
