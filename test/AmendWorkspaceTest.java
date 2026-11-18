@@ -51,7 +51,76 @@ public final class AmendWorkspaceTest {
         smallestEditableBlockIsNotSemanticOwner();
         typedContextRequestsAreRevisionPinned();
         sourceAdaptersPreserveUtf16Geometry();
+        protocolRejectionsExplainRecoveryWithoutGrantingEdits();
         System.out.println("AmendWorkspaceTest: all tests passed");
+    }
+
+    private static void protocolRejectionsExplainRecoveryWithoutGrantingEdits() {
+        String source = "// 😀\r\nexport function run():number{return 1;}";
+        String module = "rejections.deal";
+        var inspection = AmendWorkspace.inspect(source, module);
+        var symbol = inspection.symbols().getFirst();
+        var body = inspection.nodes().stream().filter(n -> n.kind().equals("function-body")).findFirst().orElseThrow();
+        var edit = new AmendWorkspace.ReplaceFunctionBody(body.id(), "return 2;");
+        var precondition = new CompilerProtocol.ChangeSetPrecondition(inspection.sourceDigest(),
+                Map.of(body.id().value(), body.fingerprint()));
+        record Rejection(String code, String reason, CompilerProtocol.ChangeResult result) {}
+        var rejections = List.of(
+            new Rejection("CP1001", "amend.stale-base", AmendWorkspace.apply(source, module, "stale", List.of(edit))),
+            new Rejection("CP1003", "amend.unknown-target", AmendWorkspace.apply(source, module, inspection.sourceDigest(),
+                    List.of(new AmendWorkspace.ReplaceFunctionBody(new CompilerProtocol.SemanticId("invented"), "return 2;")))),
+            new Rejection("CP1004", "amend.missing-source", AmendWorkspace.apply(source, module, inspection.sourceDigest(),
+                    List.of(new AmendWorkspace.ReplaceFunctionBody(body.id(), null)))),
+            new Rejection("CP1005", "amend.target-kind", AmendWorkspace.apply(source, module, inspection.sourceDigest(),
+                    List.of(new AmendWorkspace.ReplaceFunctionBody(symbol.id(), "return 2;")))),
+            new Rejection("CP1006", "amend.overlapping-operations", AmendWorkspace.apply(source, module, inspection.sourceDigest(), List.of(edit, edit))),
+            new Rejection("CP1007", "amend.body-payload", AmendWorkspace.apply(source, module, inspection.sourceDigest(),
+                    List.of(new AmendWorkspace.ReplaceFunctionBody(body.id(), "function run():number{return 2;}")))),
+            new Rejection("CP1010", "amend.missing-fingerprint", AmendWorkspace.applyChecked(source, module,
+                    new CompilerProtocol.ChangeSetPrecondition(inspection.sourceDigest(), Map.of()), List.of(edit))),
+            new Rejection("CP1011", "amend.stale-fingerprint", AmendWorkspace.applyChecked(source, module,
+                    new CompilerProtocol.ChangeSetPrecondition(inspection.sourceDigest(), Map.of(body.id().value(), "stale")), List.of(edit))),
+            new Rejection("CP1012", "amend.declaration-identity", AmendWorkspace.apply(source, module, inspection.sourceDigest(),
+                    List.of(new AmendWorkspace.ReplaceDeclaration(symbol.id(), "export function renamed():number{return 2;}")))),
+            new Rejection("CP1013", "amend.declaration-count", AmendWorkspace.apply(source, module, inspection.sourceDigest(),
+                    List.of(new AmendWorkspace.AddDeclaration(inspection.moduleId(),
+                            "function a():void{} function b():void{}")))),
+            new Rejection("CP1030", "amend.capability-set", AmendWorkspace.apply(source, module, inspection.sourceDigest(),
+                    List.of(new AmendWorkspace.SetCapabilities(inspection.moduleId(), List.of("Invalid")))))
+        );
+        for (var rejection : rejections) {
+            var result = rejection.result();
+            var diagnostic = result.diagnostics().getFirst();
+            check(!result.accepted() && result.source().equals(source) && result.inspection().equals(inspection),
+                    rejection.code() + " leaves current source and inspection unchanged");
+            check(diagnostic.code().equals(rejection.code()) && diagnostic.facts().reason().equals(rejection.reason())
+                            && diagnostic.facts().operation().equals("amend.change") && !diagnostic.facts().guidance().isEmpty(),
+                    rejection.code() + " classifies its contract independently from unchanged prose");
+            check(diagnostic.contextRequest() != null
+                            && AmendWorkspace.queryContext(source, module, diagnostic.contextRequest()).accepted(),
+                    rejection.code() + " offers executable current revision reinspection");
+            String json = CompilerProtocolJson.encode(diagnostic);
+            check(json.contains(rejection.reason()) && json.equals(CompilerProtocolJson.encode(diagnostic.withFacts(diagnostic.facts()))),
+                    rejection.code() + " preserves guidance through copies and the sole protocol serializer");
+            var corrected = AmendWorkspace.applyChecked(source, module, precondition, List.of(edit));
+            check(corrected.accepted() && corrected.source().contains("return 2;")
+                            && AmendWorkspace.inspect(corrected.source(), module).diagnostics().isEmpty(),
+                    rejection.code() + " explicitly selected current-fingerprint repair rechecks");
+        }
+        for (var rejection : rejections.stream().filter(r -> List.of("CP1001", "CP1003", "CP1005", "CP1006", "CP1010", "CP1011")
+                .contains(r.code())).toList()) {
+            check(rejection.result().diagnostics().getFirst().repairScopes().isEmpty(),
+                    rejection.code() + " context read does not widen writable scope");
+        }
+        String invalid = source.replace("return 1;", "return missing;");
+        var invalidBase = AmendWorkspace.apply(invalid, module, AmendWorkspace.inspect(invalid, module).sourceDigest(), List.of(edit));
+        check(invalidBase.diagnostics().getFirst().facts().reason().equals("amend.invalid-base")
+                        && invalidBase.source().equals(invalid) && invalidBase.diagnostics().getFirst().repairScopes().isEmpty(),
+                "invalid base is not repaired by silently applying submitted operations");
+        var anchor = AmendWorkspace.inspectChange(source, module, inspection.sourceDigest(),
+                List.of(new CompilerProtocol.SemanticId("invented")), List.of());
+        check(anchor.diagnostics().getFirst().facts().reason().equals("amend.unknown-anchor")
+                        && anchor.allowedOperations().isEmpty(), "unknown change anchor grants no operations");
     }
 
     private static void sourceAdaptersPreserveUtf16Geometry() {

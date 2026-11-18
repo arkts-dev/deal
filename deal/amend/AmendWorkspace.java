@@ -1660,7 +1660,52 @@ public final class AmendWorkspace {
             CompilerProtocol.ContextRequest contextRequest) {
         return new StructuredDiagnostic(
                 code, "error", message, range, owner, expected, actual,
-                List.of(), scopes, contextRequest);
+                List.of(), scopes, contextRequest).withFacts(protocolFacts(code, expected, actual));
+    }
+
+    /** Classify the rejected protocol contract, never the text of its message. */
+    private static deal.diagnostics.DiagnosticFacts protocolFacts(String code, String expected, String actual) {
+        String reason = switch (code) {
+            case "CP1001" -> "amend.stale-base";
+            case "CP1002" -> "amend.invalid-base";
+            case "CP1003" -> "amend.unknown-target";
+            case "CP1004" -> "amend.missing-source";
+            case "CP1005" -> "amend.target-kind";
+            case "CP1006" -> "amend.overlapping-operations";
+            case "CP1007" -> "amend.body-payload";
+            case "CP1010" -> "amend.missing-fingerprint";
+            case "CP1011" -> "amend.stale-fingerprint";
+            case "CP1012" -> "amend.declaration-identity";
+            case "CP1013" -> "amend.declaration-count";
+            case "CP1020" -> "amend.unknown-anchor";
+            case "CP1030" -> "amend.capability-set";
+            default -> code;
+        };
+        String guidance = switch (code) {
+            case "CP1001", "CP1003", "CP1010", "CP1011", "CP1020" ->
+                "Inspect the current module and query the intended target again. Submit the current source digest and "
+                    + "the compiler-issued target identity and fingerprint; a context read does not authorize an edit.";
+            case "CP1002" ->
+                "Correct the base source diagnostics and inspect that revision before submitting a change; rejected operations were not applied.";
+            case "CP1004" ->
+                "Provide an explicitly chosen source payload matching the advertised operation; no implementation is inferred from the diagnostic.";
+            case "CP1005" ->
+                "Query the intended target and select an operation advertised for its kind; do not substitute a declaration identity for a body identity.";
+            case "CP1006" ->
+                "Choose one replacement for each overlapping region, or split the edits into separately inspected and checked revisions.";
+            case "CP1007" ->
+                "Supply only the intended statements inside the existing body, without a function declaration or outer braces; "
+                    + "use a separately advertised declaration replacement when changing a signature.";
+            case "CP1012" ->
+                "Supply exactly one complete declaration preserving the queried identity. A rename or additional declaration requires separately advertised operations.";
+            case "CP1013" ->
+                "Submit exactly one complete class or function declaration per addDeclaration operation, then recheck the assembled candidate.";
+            case "CP1030" ->
+                "Choose a unique set of lowercase dotted capability identifiers and recheck the transaction; no capability is inferred or granted by this diagnostic.";
+            default -> "";
+        };
+        return new deal.diagnostics.DiagnosticFacts(reason, "amend.change", expected, actual,
+                guidance.isEmpty() ? List.of() : List.of(guidance));
     }
 
     private static StructuredDiagnostic scopeDiagnostic(
