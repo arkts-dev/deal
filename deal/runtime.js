@@ -23,9 +23,9 @@
 // Infinity or undefined is confined to these captures;
 // generated code spells none of them bare (js-backend-architecture D2). Object and
 // String are not in the capture list and may be spelled bare inside this
-// trusted file. The native JSON object is not captured: the conforming
-// scanner and the canonical text encoder are the runtime's own (DEAL v1.6
-// exact JSON).
+// trusted file. Only terminal diagnostic quoting captures JSON.stringify;
+// language JSON scanning and canonical encoding remain the runtime's own
+// conforming algorithms (DEAL v1.6 exact JSON).
 const $process = process;
 const $console = console;
 const $Math = Math;
@@ -33,6 +33,11 @@ const $Map = Map;
 const $Array = Array;
 const $Infinity = Infinity;
 const $undefined = void 0;
+// Fixed at runtime load; never consult host state during diagnostic enrichment.
+const $runtimeDiagnostics = $process.env.DEAL_DIAGNOSTICS_JSON === "1";
+const $jsonQuote = JSON.stringify;
+const $ownDescriptor = Object.getOwnPropertyDescriptor;
+const $diagnosticErrors = new WeakSet();
 
 // ===== Error spine: the module-private $DEALError class =====
 // (js-backend-runtime-artifact D8) The single constructor path every
@@ -63,6 +68,7 @@ function $stackFrames($error) {
 class $DEALError extends Error {
   constructor($code, $message, $file, $line, $column, $expected, $actual) {
     super($message);
+    $diagnosticErrors.add(this);
     this.code = $code;
     this.$dealCode = $code;
     if ($file !== $undefined) this.file = $file;
@@ -1912,6 +1918,7 @@ const $rt = {
   errorValue: function $errorValue(code, message, file, line, column,
       expected, actual, frames, cause) {
     const $value = {};
+    $diagnosticErrors.add($value);
     $rt.setProp($value, "$kind", "class");
     $rt.setProp($value, "$classname", "Error");
     $rt.setProp($value, "name", code);
@@ -1952,10 +1959,45 @@ const $rt = {
   // reify, then write exactly the line "DEAL_ERROR_CODE: <code> <message>"
   // plus a trailing newline to the captured stderr and set the captured
   // exitCode to 1. All host-global access goes through the T1 captures.
-  reportUncaught: function $reportUncaught(e) {
+  reportUncaught: function $reportUncaught(e, diagnosticError) {
     const $err = $rt.reifyError(e);
     $process.stderr.write("DEAL_ERROR_CODE: " + ($err.code === $undefined ? $err.name : $err.code) + " " + $err.message + "\n");
+    if ($runtimeDiagnostics) $process.stderr.write("DEAL_RUNTIME_DIAGNOSTIC: " + $rt.runtimeDiagnostic(diagnosticError === $undefined ? $err : diagnosticError) + "\n");
     $process.exitCode = 1;
+  },
+
+  // Opt-in terminal projection of existing Error data only. Accessors and arbitrary
+  // host values are unavailable evidence, never invoked or stringified.
+  runtimeDiagnostic: function $runtimeDiagnostic(error) {
+    const own = (value, key) => {
+      const descriptor = $ownDescriptor(value, key);
+      return descriptor && Object.prototype.hasOwnProperty.call(descriptor, "value") ? descriptor.value : $undefined;
+    };
+    const seen = new Set();
+    const render = (value, depth) => {
+      if (value === null || typeof value !== "object" || !$diagnosticErrors.has(value) || seen.has(value)) return "null";
+      seen.add(value);
+      const fields = [];
+      for (const key of ["code", "message", "file", "expected", "actual", "frames"]) {
+        const text = own(value, key);
+        if (typeof text !== "string") continue;
+        const take = text.length > 8192 ? 8192 : text.length;
+        fields.push($jsonQuote(key) + ":" + $jsonQuote(text.slice(0, take)));
+        if (take < text.length) fields.push($jsonQuote(key + "Length") + ":" + text.length,
+          $jsonQuote(key + "Truncated") + ":true");
+      }
+      for (const key of ["line", "column"]) {
+        const number = own(value, key);
+        if (typeof number === "number" && Number.isFinite(number)) fields.push($jsonQuote(key) + ":" + number);
+      }
+      const cause = own(value, "cause");
+      if (cause !== null && typeof cause === "object") {
+        if (depth >= 7 || seen.has(cause) || !$diagnosticErrors.has(cause)) fields.push('"causeTruncated":true');
+        else fields.push('"cause":' + render(cause, depth + 1));
+      }
+      return "{" + fields.join(",") + "}";
+    };
+    return '{"version":2,"runtime":' + render(error, 0) + "}";
   },
 
   // ===== Primitive typed-boundary checks (js-backend-runtime-artifact D3) =====
@@ -3419,6 +3461,7 @@ const $rt = {
     if (v !== null && typeof v === "object" && v.$kind === "class"
         && v.$classname === "Error" && v.file === $undefined
         && v.line === $undefined && v.column === $undefined) {
+      $diagnosticErrors.add(v);
       if (v.code === $undefined) Object.defineProperty(v, "code",
         {value: v.name, writable: true, configurable: true});
       $rt.setProp(v, "file", file);

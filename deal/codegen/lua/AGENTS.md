@@ -1,5 +1,7 @@
 # LuaJIT Backend
 
+Opt-in uncaught runtime diagnostics project only raw existing error metadata fields, bounded to 8192 bytes without splitting UTF-8 sequences and eight cause levels; text omission carries byte counts and truncation. Never walk user data or use metatable hooks; preserve ordinary stdout/exit, frame order and captured causes.
+
 LuaSemanticEmitter renders validated IR, preserving ABI, evaluation order, host loading, async completion, errors and origins. Verify Oracle parity through luajit; never restore AST emission.
 
 ## Carriers and boundaries

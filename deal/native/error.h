@@ -330,4 +330,8 @@ void deal_error_set_cause(deal_error *error, deal_error *cause);
 char *deal_error_snapshot(const deal_error *error);
 void deal_error_snapshot_release(char *text);
 
+/* Opt-in version-2 terminal diagnostics: existing metadata only, bounded text,
+ * 32 innermost frames and eight cause levels. Release with snapshot_release. */
+char *deal_error_diagnostic(const deal_error *error);
+
 #endif /* DEAL_NATIVE_ERROR_H */

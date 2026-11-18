@@ -779,6 +779,50 @@ public final class JvmRuntime {
     }
 
     /** The nested error text form. */
+    /** Opt-in terminal metadata export reads only immutable failure transport, never host data. */
+    public static void reportRuntimeDiagnostic(DealError error) {
+        if (!"1".equals(System.getenv("DEAL_DIAGNOSTICS_JSON"))) return;
+        StringBuilder out = new StringBuilder("{\"version\":2,\"runtime\":");
+        java.util.Set<DealError> seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        appendRuntimeDiagnostic(out, error, seen, 0);
+        System.err.println("DEAL_RUNTIME_DIAGNOSTIC: " + out.append('}'));
+        System.err.flush();
+    }
+
+    private static void appendRuntimeDiagnostic(StringBuilder out, DealError error,
+            java.util.Set<DealError> seen, int depth) {
+        seen.add(error);
+        out.append('{');
+        appendRuntimeText(out, "code", error.code, false);
+        appendRuntimeText(out, "message", error.msg, true);
+        appendRuntimeText(out, "origin", error.origin, true);
+        appendRuntimeText(out, "expected", error.expected, true);
+        appendRuntimeText(out, "actual", error.actual, true);
+        appendRuntimeText(out, "frames", error.frames, true);
+        if (error.cause != null) {
+            if (depth >= 7 || seen.contains(error.cause)) out.append(",\"causeTruncated\":true");
+            else {
+                out.append(",\"cause\":");
+                appendRuntimeDiagnostic(out, error.cause, seen, depth + 1);
+            }
+        }
+        out.append('}');
+    }
+
+    private static void appendRuntimeText(StringBuilder out, String key, String value, boolean comma) {
+        if (value == null) return;
+        if (comma) out.append(',');
+        appendJsonString(out, key);
+        out.append(':');
+        int take = Math.min(value.length(), 8192);
+        appendJsonString(out, value.substring(0, take));
+        if (take < value.length()) {
+            out.append(','); appendJsonString(out, key + "Length");
+            out.append(':').append(value.length()).append(',');
+            appendJsonString(out, key + "Truncated"); out.append(":true");
+        }
+    }
+
     public static String errtext(Throwable e) {
         if (e instanceof DealError deal) {
             return deal.code + ";" + esc(deal.msg) + ";" + (deal.origin == null ? "-"

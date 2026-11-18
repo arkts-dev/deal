@@ -881,6 +881,94 @@ void deal_error_snapshot_release(char *text) {
     deal_platform_release(text);
 }
 
+/* Diagnostic export uses existing immutable platform-owned Error metadata only. */
+static void deal_diagnostic_text(deal_snapshot_buffer *buffer, const char *key,
+                                 const char *text, size_t length, int *first) {
+    size_t take = length < 8192u ? length : 8192u;
+    if (take < length) {
+        while (take > 0u && (((unsigned char)text[take] & 0xC0u) == 0x80u)) {
+            take -= 1u;
+        }
+    }
+    deal_snapshot_append_key(buffer, key, first);
+    deal_snapshot_append_string_span(buffer, text, take);
+    if (take < length) {
+        deal_snapshot_append(buffer, ",", 1u);
+        deal_snapshot_buffer name = {NULL, 0u, 0u};
+        deal_snapshot_append(&name, key, strlen(key));
+        deal_snapshot_append(&name, "ByteCount", 9u);
+        deal_snapshot_append_string_span(buffer, name.bytes, name.length);
+        deal_snapshot_append(buffer, ":", 1u);
+        deal_snapshot_append_integer(buffer, (int64_t)length);
+        name.length = strlen(key);
+        deal_snapshot_append(&name, "Truncated", 9u);
+        deal_snapshot_append(buffer, ",", 1u);
+        deal_snapshot_append_string_span(buffer, name.bytes, name.length);
+        deal_snapshot_append(buffer, ":true", 5u);
+        deal_platform_release(name.bytes);
+    }
+}
+
+static void deal_diagnostic_error(deal_snapshot_buffer *buffer, const deal_error *error,
+                                  unsigned int depth) {
+    int first = 1;
+    deal_snapshot_append(buffer, "{", 1u);
+    deal_diagnostic_text(buffer, "code", error->code, error->code_length, &first);
+    deal_diagnostic_text(buffer, "message", error->message, error->message_length, &first);
+    if (error->has_origin) {
+        deal_diagnostic_text(buffer, "file", error->source_file, strlen(error->source_file), &first);
+        deal_snapshot_append_key(buffer, "line", &first);
+        deal_snapshot_append_integer(buffer, error->line);
+        deal_snapshot_append_key(buffer, "column", &first);
+        deal_snapshot_append_integer(buffer, error->column);
+    }
+    if (error->expected != NULL) {
+        deal_diagnostic_text(buffer, "expected", error->expected, strlen(error->expected), &first);
+    }
+    if (error->actual != NULL) {
+        deal_diagnostic_text(buffer, "actual", error->actual, strlen(error->actual), &first);
+    }
+    deal_snapshot_append_key(buffer, "frameCount", &first);
+    deal_snapshot_append_integer(buffer, error->frame_count);
+    deal_snapshot_append_key(buffer, "frames", &first);
+    deal_snapshot_append(buffer, "[", 1u);
+    uint32_t count = error->frame_count < 32u ? error->frame_count : 32u;
+    for (uint32_t index = 0; index < count; index += 1u) {
+        if (index != 0u) deal_snapshot_append(buffer, ",", 1u);
+        int frame_first = 1;
+        deal_snapshot_append(buffer, "{", 1u);
+        deal_diagnostic_text(buffer, "label", error->frames[index], strlen(error->frames[index]), &frame_first);
+        deal_snapshot_append(buffer, "}", 1u);
+    }
+    deal_snapshot_append(buffer, "]", 1u);
+    if (count < error->frame_count) {
+        deal_snapshot_append_key(buffer, "framesTruncated", &first);
+        deal_snapshot_append(buffer, "true", 4u);
+    }
+    if (error->cause != NULL) {
+        if (depth >= 7u) {
+            deal_snapshot_append_key(buffer, "causeTruncated", &first);
+            deal_snapshot_append(buffer, "true", 4u);
+        } else {
+            deal_snapshot_append_key(buffer, "cause", &first);
+            deal_diagnostic_error(buffer, error->cause, depth + 1u);
+        }
+    }
+    deal_snapshot_append(buffer, "}", 1u);
+}
+
+char *deal_error_diagnostic(const deal_error *error) {
+    if (error == NULL) deal_platform_fault("error diagnostic: null error");
+    deal_snapshot_buffer buffer = {NULL, 0u, 0u};
+    static const char prefix[] = "{\"version\":2,\"runtime\":";
+    deal_snapshot_append(&buffer, prefix, sizeof prefix - 1u);
+    deal_diagnostic_error(&buffer, error, 0u);
+    deal_snapshot_append(&buffer, "}", 1u);
+    deal_snapshot_reserve(&buffer, 1u);
+    buffer.bytes[buffer.length] = 0;
+    return buffer.bytes;
+}
+
 /* =========================================================================
  * The arm materialization (R5)
  * ========================================================================= */

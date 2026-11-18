@@ -26,6 +26,15 @@ static int deal_terminal_error(deal_error *error) {
     deal_platform_write_stdout(snapshot, strlen(snapshot));
     deal_platform_write_stdout("\n", 1);
     deal_platform_flush_stdout();
+    const char *diagnostics = deal_platform_environment("DEAL_DIAGNOSTICS_JSON");
+    if (diagnostics != NULL && diagnostics[0] == '1' && diagnostics[1] == '\0') {
+        static const char prefix[] = "DEAL_RUNTIME_DIAGNOSTIC: ";
+        char *document = deal_error_diagnostic(error);
+        deal_platform_write_stderr(prefix, sizeof prefix - 1u);
+        deal_platform_write_stderr(document, strlen(document));
+        deal_platform_write_stderr("\n", 1u);
+        deal_error_snapshot_release(document);
+    }
     deal_platform_flush_stderr();
     deal_error_snapshot_release(snapshot);
     deal_platform_exit(1);

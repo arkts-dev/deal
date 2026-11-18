@@ -1255,6 +1255,10 @@ public final class LuaSemanticEmitter {
                 out.append("if not __mainOk then\n");
                 out.append("  if type(__mainErr) == \"table\" and __mainErr[__dealCarrierKeys.d] then\n");
                 out.append("    print(\"DEAL_ERROR_CODE: \"..__mainErr.code)\n");
+                out.append("    if os.getenv(\"DEAL_DIAGNOSTICS_JSON\") == \"1\" then\n");
+                out.append("      io.stderr:write(\"DEAL_RUNTIME_DIAGNOSTIC: \"..__dealRuntimeDiagnostic(__mainErr)..\"\\n\")\n");
+                out.append("      io.stderr:flush()\n");
+                out.append("    end\n");
                 out.append("  else\n");
                 out.append("    error(__mainErr, 0)\n");
                 out.append("  end\n");
@@ -10788,6 +10792,40 @@ end
 -- ambiguity.
 local function __jsonEscape(s)
   return string.char(34) .. require("deal.runtime").string_json_body(s) .. string.char(34)
+end
+-- Terminal-only metadata projection. Never invoke metatable accessors or walk user values.
+function __dealRuntimeDiagnostic(error)
+  local seen = {}
+  local function render(value, depth)
+    seen[value] = true
+    local parts = {}
+    for _, pair in ipairs({{"code", "code"}, {"message", "m"}, {"origin", "o"},
+                            {"expected", "e"}, {"actual", "a"}, {"frames", "f"}}) do
+      local text = rawget(value, pair[2])
+      if type(text) == "string" then
+        local take = math.min(#text, 8192)
+        if take < #text then
+          while take > 0 do
+            local byte = string.byte(text, take + 1)
+            if byte < 128 or byte >= 192 then break end
+            take = take - 1
+          end
+        end
+        parts[#parts + 1] = __jsonEscape(pair[1])..":"..__jsonEscape(string.sub(text, 1, take))
+        if take < #text then
+          parts[#parts + 1] = __jsonEscape(pair[1].."ByteCount")..":"..#text
+          parts[#parts + 1] = __jsonEscape(pair[1].."Truncated")..":true"
+        end
+      end
+    end
+    local cause = rawget(value, "cause")
+    if type(cause) == "table" then
+      if depth >= 7 or seen[cause] then parts[#parts + 1] = '"causeTruncated":true'
+      else parts[#parts + 1] = '"cause":'..render(cause, depth + 1) end
+    end
+    return "{"..table.concat(parts, ",").."}"
+  end
+  return '{"version":2,"runtime":'..render(error, 0).."}"
 end
 local function __subseqIndexOf(hay, needle, from)
   if #needle == 0 then

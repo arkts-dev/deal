@@ -3337,7 +3337,7 @@ private void emitBindingLoad(SemanticOp op) {
                             + " ? $rt.errorValue($err.code, $err.message + \""
                             + " at \" + $err.file + \":\" + $err.line + \":\" +"
                             + " $err.column, $err.file, $err.line,"
-                            + " $err.column) : $err);");
+                            + " $err.column) : $err, $err);");
                         indent--;
                         emit("}");
                         indent--;

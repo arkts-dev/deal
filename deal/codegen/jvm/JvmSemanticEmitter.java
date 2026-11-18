@@ -734,6 +734,7 @@ public final class JvmSemanticEmitter {
                 out.append("      }\n");
                 out.append("      System.out.println(\"DEAL_ERROR_CODE: \" + e.code);\n");
                 out.append("      System.out.flush();\n");
+                out.append("      JvmRuntime.reportRuntimeDiagnostic(e);\n");
                 out.append("      System.exit(1);\n");
                 out.append("      return;\n");
                 out.append("    }\n");
@@ -752,6 +753,7 @@ public final class JvmSemanticEmitter {
                 out.append("    } catch (JvmRuntime.DealError e) {\n");
                 out.append("      System.out.println(\"DEAL_ERROR_CODE: \" + e.code);\n");
                 out.append("      System.out.flush();\n");
+                out.append("      JvmRuntime.reportRuntimeDiagnostic(e);\n");
                 out.append("      System.exit(1);\n");
                 out.append("    }\n");
             }
