@@ -52,7 +52,52 @@ public final class AmendWorkspaceTest {
         typedContextRequestsAreRevisionPinned();
         sourceAdaptersPreserveUtf16Geometry();
         protocolRejectionsExplainRecoveryWithoutGrantingEdits();
+        amendmentGeometryPreservesLoneCarriageReturnsAndDirectiveUnits();
         System.out.println("AmendWorkspaceTest: all tests passed");
+    }
+
+    private static void amendmentGeometryPreservesLoneCarriageReturnsAndDirectiveUnits() {
+        for (String newline : List.of("\r", "\r\n", "\n")) {
+            String source = "// 😀" + newline + "export function first():number{" + newline + "return 1;" + newline + "}"
+                    + newline + "export function second():number{return 2;}";
+            var inspection = AmendWorkspace.inspect(source, "geometry.deal");
+            var first = inspection.symbols().stream().filter(s -> s.name().equals("first")).findFirst().orElseThrow();
+            var body = inspection.nodes().stream().filter(n -> n.ownerId().equals(first.id()) && n.kind().equals("function-body"))
+                    .findFirst().orElseThrow();
+            check(AmendWorkspace.querySymbol(source, "geometry.deal", first.id()).source().equals(
+                            "export function first():number{" + newline + "return 1;" + newline + "}"),
+                    "exact declaration query after CR/LF/CRLF prefix");
+            check(AmendWorkspace.queryNode(source, "geometry.deal", body.id()).source().equals(
+                            "{" + newline + "return 1;" + newline + "}"), "exact full body query uses producer UTF-16 geometry");
+            var changed = AmendWorkspace.applyChecked(source, "geometry.deal",
+                    new CompilerProtocol.ChangeSetPrecondition(inspection.sourceDigest(), Map.of(body.id().value(), body.fingerprint())),
+                    List.of(new AmendWorkspace.ReplaceFunctionBody(body.id(), "return 3;")));
+            check(changed.accepted() && changed.source().contains("return 3;")
+                            && changed.source().endsWith("export function second():number{return 2;}"),
+                    "body replacement after each line-break form preserves unrelated declaration and rechecks");
+            var replacement = AmendWorkspace.applyChecked(source, "geometry.deal",
+                    new CompilerProtocol.ChangeSetPrecondition(inspection.sourceDigest(), Map.of(first.id().value(), first.fingerprint())),
+                    List.of(new AmendWorkspace.ReplaceDeclaration(first.id(), "export function first():number{return 4;}")));
+            check(replacement.accepted() && replacement.source().endsWith("export function second():number{return 2;}")
+                            && AmendWorkspace.inspect(replacement.source(), "geometry.deal").diagnostics().isEmpty(),
+                    "declaration replacement ends at parsed body and preserves following export token");
+        }
+        String base = "export function existing():void{}";
+        var inspection = AmendWorkspace.inspect(base, "geometry.deal");
+        String payload = "// @consumer 😀\r\nexport function broken(value number):void{}";
+        var rejected = AmendWorkspace.apply(base, "geometry.deal", inspection.sourceDigest(),
+                List.of(new AmendWorkspace.AddDeclaration(inspection.moduleId(), payload)));
+        var diagnostic = rejected.diagnostics().stream().filter(d -> d.code().equals("E1008")).findFirst().orElseThrow();
+        check(!rejected.accepted() && rejected.source().equals(base) && diagnostic.operationIndex() == 0,
+                "malformed annotated declaration remains operation-local and leaves source unchanged");
+        check(diagnostic.range().startScalarOffset() == payload.indexOf("number")
+                        && diagnostic.range().startLine() == 2 && diagnostic.range().startColumn() == 30,
+                "hiding supplementary directive text preserves exact payload UTF-16 offsets and CRLF");
+        String fixed = payload.replace("value number", "value:number");
+        var accepted = AmendWorkspace.apply(base, "geometry.deal", inspection.sourceDigest(),
+                List.of(new AmendWorkspace.AddDeclaration(inspection.moduleId(), fixed)));
+        check(accepted.accepted() && AmendWorkspace.inspect(accepted.source(), "geometry.deal").diagnostics().isEmpty(),
+                "explicit punctuation repair of the same annotated payload rechecks assembled source");
     }
 
     private static void protocolRejectionsExplainRecoveryWithoutGrantingEdits() {

@@ -1844,9 +1844,10 @@ public final class AmendWorkspace {
     }
 
     private static Span declarationSpan(StatementNode statement, StatementNode declaration) {
-        if (!(statement instanceof ExportDeclaration)) return statement.span();
         Span outer = statement.span();
-        Span inner = declaration.span();
+        // Function declaration spans may include a following lookahead token.
+        // The parsed body (or external semicolon) owns the exact declaration end.
+        Span inner = declaration instanceof FunctionDeclaration function ? function.body().span() : declaration.span();
         return new Span(
                 outer.file(), outer.startLine(), outer.startColumn(),
                 inner.endLine(), inner.endColumn(),
@@ -1879,7 +1880,7 @@ public final class AmendWorkspace {
             String source, String modulePath, Operation operation, int operationIndex) {
         // Keep line coordinates while hiding framework annotations from the core parser.
         String parserSource = java.util.regex.Pattern.compile("(?m)^[ \\t]*//[ \\t]*@[^\\r\\n]*")
-                .matcher(source).replaceAll(match -> " ".repeat(match.group().codePointCount(0, match.group().length())));
+                .matcher(source).replaceAll(match -> " ".repeat(match.group().length()));
         LexResult lexed = new Lexer(parserSource, modulePath).tokenize();
         ParseResult parsed = new Parser(lexed.tokens(), modulePath).parse();
         List<CompilerDiagnostic> errors = new ArrayList<>(lexed.diagnostics());
@@ -2045,7 +2046,11 @@ public final class AmendWorkspace {
             List<Integer> offsets = new ArrayList<>();
             offsets.add(0);
             for (int index = 0; index < source.length(); index++) {
-                if (source.charAt(index) == '\n') offsets.add(index + 1);
+                char unit = source.charAt(index);
+                if (unit == '\r') {
+                    if (index + 1 < source.length() && source.charAt(index + 1) == '\n') index++;
+                    offsets.add(index + 1);
+                } else if (unit == '\n') offsets.add(index + 1);
             }
             lineOffsets = offsets.stream().mapToInt(Integer::intValue).toArray();
         }
