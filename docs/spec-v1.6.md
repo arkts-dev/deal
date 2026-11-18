@@ -1705,6 +1705,14 @@ Async diagnostics distinguish await outside an async body, await of a non-async
 call, an unawaited async call, and an async call inside an optional chain using
 separate reason identifiers. Async call failures retain the same known call
 context; guidance does not silently change a caller's asynchronous API contract.
+Void-result binding initialization, inferred array/Record storage, `typeof`,
+optional receivers and coalescing operands retain reason `void.data-use`, the
+specific data-use operation and expected `data value` versus actual `void`.
+When the rejected expression is a checked direct call or awaited direct call,
+its available call facts and exact `Void producer result annotation` identify
+the producer. Function-valued callees without declaration evidence leave those
+locations absent. This evidence neither makes void data nor infers dummy values
+or return-type changes; statement calls and functions returning void remain legal.
 Mutation failures distinguish `mutation.non-variable`,
 `mutation.const-reassignment`, `mutation.import-readonly`,
 `mutation.length-readonly`, `mutation.array-delete` and

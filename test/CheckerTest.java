@@ -234,6 +234,32 @@ public class CheckerTest {
                         && deletion.facts().operation().equals("delete")
                         && deletion.notes().getFirst().range().startScalarOffset() == requiredDelete.indexOf("value:number"),
                 "required-field delete locates the field imposing presence");
+        String[][] voidUses = {{"let value=f();", "binding.initialize"}, {"let values=[f()];", "array.element"},
+                {"let record:Record<string,unknown>={value:f()};", "record.field"},
+                {"let kind=typeof f();", "typeof"}, {"let value=f()??1;", "coalesce.operand"}};
+        for (String[] use : voidUses) {
+            String source = "// 😀\r\nfunction f():void{}" + use[0];
+            var voidUse = checkProgram(source).result().diagnostics().stream()
+                    .filter(d -> d.facts().reason().equals("void.data-use")).findFirst().orElseThrow();
+            check(voidUse.facts().operation().equals(use[1])
+                            && voidUse.facts().expected().equals("data value") && voidUse.facts().actual().equals("void")
+                            && voidUse.facts().call().signature().equals("() => void")
+                            && voidUse.notes().getFirst().range().startScalarOffset() == source.indexOf("void"),
+                    "void data use links checked result to exact producer annotation: " + use[0]);
+            assertNoErrors(checkProgram(source.replace("function f():void{}", "function f():number{return 7;}")),
+                    "explicit intended data-producing API repair rechecks: " + use[0]);
+        }
+        var awaitedVoid = checkProgram("async function f():Promise<void>{}async function g():Promise<void>{let x=await f();}")
+                .result().diagnostics().stream().filter(d -> d.facts().reason().equals("void.data-use"))
+                .findFirst().orElseThrow();
+        check(awaitedVoid.facts().call().signature().equals("async () => void") && awaitedVoid.notes().size() == 1,
+                "awaited void data use retains async producer evidence");
+        var valueVoid = checkProgram("let f=function():void{};let value=f();").result().diagnostics().stream()
+                .filter(d -> d.facts().reason().equals("void.data-use")).findFirst().orElseThrow();
+        check(valueVoid.facts().call().declarationRange() == null && valueVoid.notes().isEmpty(),
+                "void function-value use has no invented producer declaration");
+        assertNoErrors(checkProgram("function f():void{}f();let values=[function():void{}];"),
+                "statement use and stored void-returning functions remain legal");
         var arrayDelete = checkProgram("let xs:number[]=[1];delete xs[0];").result().diagnostics().stream()
                 .filter(d -> d.code().equals("E3017")).findFirst().orElseThrow();
         check(arrayDelete.facts().reason().equals("mutation.array-delete")
@@ -382,6 +408,13 @@ public class CheckerTest {
                 "imported call keeps exact provider declaration/parameter despite local name and duplicate aliases");
         assertNoErrors(checkProgramWithModule(consumer.replace("Second.f(\"bad\")", "Second.f(1)"),
                         "consumer.deal", exactProvider), "intended imported argument repair rechecks clean");
+        var importedVoid = checkProgramWithModule(consumer.replace("Second.f(\"bad\")", "let value=Second.f(1)"),
+                "consumer.deal", exactProvider).result().diagnostics().stream()
+                .filter(d -> d.facts().reason().equals("void.data-use")).findFirst().orElseThrow();
+        check(importedVoid.facts().call().declarationRange().equals(providerFunction.declaration().span().range())
+                        && importedVoid.notes().getFirst().range().file().equals("provider.deal")
+                        && importedVoid.notes().getFirst().range().startScalarOffset() == providerSource.indexOf("void"),
+                "void use retains selected imported result annotation despite same-spelled local function");
         var indirect = checkProgram("let f:(x:number)=>void=function(x:number):void{}; f(\"bad\");")
                 .result().diagnostics().stream().filter(d -> d.code().equals("E5001")).findFirst().orElseThrow();
         check(indirect.facts().call().callee().isEmpty() && indirect.facts().call().parameterRange() == null

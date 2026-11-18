@@ -646,7 +646,8 @@ public final class TypeChecker {
         }
         Type exprType = checkContextualReadPosition(vd.initializer());
         if (exprType instanceof Type.Void) {
-            error(DiagnosticCode.E3001, "Void results cannot initialize bindings", vd.initializer().span());
+            voidDataError(DiagnosticCode.E3001, "Void results cannot initialize bindings",
+                    vd.initializer().span(), vd.initializer(), "binding.initialize");
             exprType = Type.Error.INSTANCE;
         }
         expectedType = savedExpected;
@@ -1777,7 +1778,7 @@ public final class TypeChecker {
         return switch (un.op()) {
             case TYPEOF -> {
                 if (exprType instanceof Type.Void) {
-                    error(DiagnosticCode.E3007, "Void results are not data", un.span());
+                    voidDataError(DiagnosticCode.E3007, "Void results are not data", un.span(), un.expr(), "typeof");
                     yield Type.Error.INSTANCE;
                 }
                 yield Type.String.INSTANCE;
@@ -2537,7 +2538,8 @@ public final class TypeChecker {
         for (ExpressionNode elem : elements) {
             Type elemType = checkExpression(elem);
             if (elemType instanceof Type.Void) {
-                error(DiagnosticCode.E3001, "Void results cannot be stored in arrays", elem.span());
+                voidDataError(DiagnosticCode.E3001, "Void results cannot be stored in arrays",
+                        elem.span(), elem, "array.element");
                 mixed = true;
                 continue;
             }
@@ -2587,7 +2589,8 @@ public final class TypeChecker {
                     error(DiagnosticCode.E3018, "Record key must be string", prop.key().span());
             }
             if (checkExpression(prop.value()) instanceof Type.Void)
-                error(DiagnosticCode.E3001, "Void results cannot be stored in records", prop.value().span());
+                voidDataError(DiagnosticCode.E3001, "Void results cannot be stored in records",
+                        prop.value().span(), prop.value(), "record.field");
         }
         expectedType = savedExpected;
         if (expectedType == null) {
@@ -3033,7 +3036,7 @@ public final class TypeChecker {
         Type base = type instanceof Type.Nullable nullable ? nullable.inner() : type;
         recordExactClassDecl(guard, base, exactClassDecls.get(guard.value()));
         if (base instanceof Type.Void) {
-            error(DiagnosticCode.E3007, "Void results are not data", guard.span());
+            voidDataError(DiagnosticCode.E3007, "Void results are not data", guard.span(), guard.value(), "optional.receiver");
             return Type.Error.INSTANCE;
         }
         return base;
@@ -3073,8 +3076,8 @@ public final class TypeChecker {
         } finally { expectedType = context; contextualClassDecl = classContext; }
         if (left == Type.Error.INSTANCE || right == Type.Error.INSTANCE) return Type.Error.INSTANCE;
         if (left instanceof Type.Void || right instanceof Type.Void) {
-            error(DiagnosticCode.E3007, "Void results are not data",
-                left instanceof Type.Void ? binary.left().span() : binary.right().span());
+            ExpressionNode rejected = left instanceof Type.Void ? binary.left() : binary.right();
+            voidDataError(DiagnosticCode.E3007, "Void results are not data", rejected.span(), rejected, "coalesce.operand");
             return Type.Error.INSTANCE;
         }
         Type base = left instanceof Type.Nullable n ? n.inner() : left;
@@ -3295,6 +3298,25 @@ public final class TypeChecker {
     // =======================================================================
     // Assignment compatibility
     // =======================================================================
+
+    private void voidDataError(DiagnosticCode code, String message, Span span, ExpressionNode producer,
+                               String operation) {
+        var facts = new deal.diagnostics.DiagnosticFacts("void.data-use", operation, "data value", "void",
+                List.of("Use the void call as a statement, or choose an intended data-producing expression; no result value or return-type change is inferred."));
+        ExpressionNode value = producer;
+        if (value instanceof AwaitExpression awaited) value = awaited.callee();
+        if (value instanceof OptionalChainExpr chain) value = chain.expression();
+        FunctionDeclaration declaration = null;
+        if (value instanceof CallExpr call && typeMap.get(call.callee()) instanceof Type.Func signature) {
+            facts = facts.withCall(callFacts("void.data-use", call, signature, -1, "data value", "void").call());
+            Symbol.FunctionSymbol symbol = calleeDeclarationOf(call);
+            declaration = symbol == null ? null : symbol.declaration();
+        }
+        CompilerDiagnostic diagnostic = CompilerDiagnostic.error(code, message, span).withFacts(facts);
+        if (declaration != null)
+            diagnostic = diagnostic.withNote("Void producer result annotation", declaration.returnType().span().range());
+        diagnostics.add(diagnostic);
+    }
 
     private static deal.diagnostics.DiagnosticRange bindingDeclarationRange(Symbol binding) {
         if (binding instanceof Symbol.VariableSymbol variable) return variable.declarationRange();
