@@ -108,6 +108,7 @@ public class DiagnosticRangeTest {
         testAssertionConstraintEvidence();
         testRawRecordReadEvidence();
         testMissingReturnObligations();
+        testIntrinsicPreSignatureEvidence();
         testCatchVariableIdentifierRange();
         testProgramSpanAnchorsCombined();
         testV12CornerCaseScalarCoordinatePins();
@@ -1185,6 +1186,37 @@ public class DiagnosticRangeTest {
                 "record.deal"), "E3001");
         check(unrelated != null && unrelated.notes().stream().noneMatch(n -> n.message().contains("raw Record read")),
                 "unknown binding gets no invented Record origin");
+    }
+
+    private static void testIntrinsicPreSignatureEvidence() {
+        for (String[] sample : new String[][] {
+                {"let a=[1];let r=a.map();", "call.array-map.argument-count", "-1", "0", "Array.map"},
+                {"let a=[1];let r=a.map(1);", "call.array-map.mapper", "0", "1", "Array.map"},
+                {"let r=Array.from([1]);", "call.array-from.argument-count", "-1", "1", "Array.from"},
+                {"let r=Array.from(1,(n:number):number=>n);", "call.array-from.source", "0", "2", "Array.from"},
+                {"let r=Array.from([1],(n:number):void=>{});", "call.array-from.mapper", "1", "2", "Array.from"},
+                {"let r=Array.from([1],(n:string):number=>1);", "call.array-from.mapper-parameters", "1", "2", "Array.from"}}) {
+            String source = "// 😀\r\n" + sample[0];
+            var diagnostic = checkerDiagnostics(source, "intrinsic.deal").stream()
+                .filter(d -> d.facts().reason().equals(sample[1])).findFirst().orElse(null);
+            check(diagnostic != null, "intrinsic pre-signature rejection has producer reason: " + sample[1]);
+            if (diagnostic == null) continue;
+            var call = diagnostic.facts().call();
+            check(call != null && call.argumentIndex() == Integer.parseInt(sample[2])
+                    && call.actualCount() == Integer.parseInt(sample[3]) && call.callee().equals(sample[4])
+                    && call.declarationRange() == null && call.parameterRange() == null,
+                "intrinsic reports exact counts/argument without fabricated source declaration");
+            check(!diagnostic.facts().expected().isEmpty() && !diagnostic.facts().actual().isEmpty()
+                    && diagnostic.facts().guidance().getFirst().contains("explicitly"),
+                "intrinsic constraint guidance never invents a mapper result");
+            if (sample[1].endsWith("mapper-parameters"))
+                check(diagnostic.facts().mismatch() != null && !call.signature().isEmpty(),
+                    "selected concrete mapper signature retains incompatible component");
+            else check(call.signature().isEmpty(), "unavailable inferred signature stays absent");
+        }
+        for (String source : List.of("let a=[1];let r=a.map((n:number):number=>n+1);",
+                "let r=Array.from([1],(n:number):string=>\"chosen\");"))
+            check(checkerDiagnostics(source, "intrinsic.deal").isEmpty(), "explicit intended mapper repair rechecks");
     }
 
     private static void testMissingReturnObligations() {

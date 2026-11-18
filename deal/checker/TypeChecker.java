@@ -2100,13 +2100,16 @@ public final class TypeChecker {
             contextualClassDecl = savedContext;
         }
         if (arguments.size() != 1) {
-            error(DiagnosticCode.E3009, "Array.map requires exactly one argument", call.span());
+            intrinsicCallError(DiagnosticCode.E3009, "Array.map requires exactly one argument", call, -1,
+                "Array.map", "call.array-map.argument-count", "1", Integer.toString(arguments.size()), 1, "", "");
             return Type.Error.INSTANCE;
         }
         if (!(arguments.getFirst() instanceof Type.Func mapper) || mapper.isAsync()
                 || mapper.returnType() instanceof Type.Void) {
             if (arguments.getFirst() != Type.Error.INSTANCE)
-                error(DiagnosticCode.E5001, "Array.map requires a synchronous data-result mapper", call.args().getFirst().span());
+                intrinsicCallError(DiagnosticCode.E5001, "Array.map requires a synchronous data-result mapper", call, 0,
+                    "Array.map", "call.array-map.mapper", "synchronous function with non-void result",
+                    typeName(arguments.getFirst()), 1, "mapper", "");
             return Type.Error.INSTANCE;
         }
         Type.Func signature = new Type.Func(List.of(source.element(), Type.Number.INSTANCE, source), mapper.returnType());
@@ -2134,29 +2137,51 @@ public final class TypeChecker {
         }
         typeMap.put(member.object(), Type.Table.INSTANCE);
         if (arguments.size() != 2) {
-            error(DiagnosticCode.E3009, "Array.from requires exactly two arguments", call.span());
+            intrinsicCallError(DiagnosticCode.E3009, "Array.from requires exactly two arguments", call, -1,
+                "Array.from", "call.array-from.argument-count", "2", Integer.toString(arguments.size()), 2, "", "");
             typeMap.put(member, BuiltinCall.ARRAY_FROM.signature());
             return Type.Error.INSTANCE;
         }
         if (!(arguments.get(0) instanceof Type.Array source)) {
             if (arguments.get(0) != Type.Error.INSTANCE)
-                error(DiagnosticCode.E5001, "Array.from requires an array source", call.args().get(0).span());
+                intrinsicCallError(DiagnosticCode.E5001, "Array.from requires an array source", call, 0,
+                    "Array.from", "call.array-from.source", "array source", typeName(arguments.get(0)), 2, "source", "");
             return Type.Error.INSTANCE;
         }
         if (!(arguments.get(1) instanceof Type.Func mapper) || mapper.isAsync()
                 || mapper.returnType() instanceof Type.Void) {
             if (arguments.get(1) != Type.Error.INSTANCE)
-                error(DiagnosticCode.E5001, "Array.from requires a synchronous data-result mapper", call.args().get(1).span());
+                intrinsicCallError(DiagnosticCode.E5001, "Array.from requires a synchronous data-result mapper", call, 1,
+                    "Array.from", "call.array-from.mapper", "synchronous function with non-void result",
+                    typeName(arguments.get(1)), 2, "mapper", "");
             return Type.Error.INSTANCE;
         }
         Type.Func signature = new Type.Func(List.of(source.element(), Type.Number.INSTANCE), mapper.returnType());
         if (!isAssignable(signature, mapper)) {
-            error(DiagnosticCode.E5001, "Array.from mapper must accept the source element and number index", call.args().get(1).span());
+            intrinsicCallError(DiagnosticCode.E5001, "Array.from mapper must accept the source element and number index", call, 1,
+                "Array.from", "call.array-from.mapper-parameters", typeName(signature), typeName(mapper), 2, "mapper",
+                typeName(new Type.Func(List.of(source, signature), new Type.Array(mapper.returnType()))));
+            int last = diagnostics.size() - 1;
+            CompilerDiagnostic diagnostic = diagnostics.get(last);
+            diagnostics.set(last, diagnostic.withFacts(diagnostic.facts().withMismatch(typeMismatch(signature, mapper))));
             return Type.Error.INSTANCE;
         }
         Type.Array result = new Type.Array(mapper.returnType());
         typeMap.put(member, new Type.Func(List.of(source, signature), result));
         return result;
+    }
+
+    /** Intrinsic pre-signature rejection: retain only facts already selected by its producer. */
+    private void intrinsicCallError(DiagnosticCode code, String message, CallExpr call, int argument,
+            String operation, String reason, String expected, String actual, int expectedCount,
+            String parameterName, String signature) {
+        var facts = new deal.diagnostics.DiagnosticFacts(reason, operation, expected, actual, List.of(
+                "Choose the intended source and synchronous callback contract explicitly; no mapper result, conversion or enclosing result type is inferred."))
+            .withCall(new deal.diagnostics.DiagnosticFacts.CallContext(operation, signature, null, argument,
+                parameterName, expectedCount, call.args().size(), null));
+        CompilerDiagnostic diagnostic = CompilerDiagnostic.error(code, message,
+            argument < 0 ? call.span() : call.args().get(argument).span()).withFacts(facts);
+        diagnostics.add(diagnostic);
     }
 
     /**
