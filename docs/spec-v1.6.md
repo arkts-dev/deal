@@ -1704,7 +1704,21 @@ escape controls, quotes, backslashes and isolated surrogate units exactly once,
 without decoding source escape spellings. Absent syntax evidence is `null`.
 Syntax context carries no independent source range; the complete diagnostic
 range and ordered opener notes remain authoritative, including after template
-rebasing. These facts do not change parser progress, token admission or repair
+rebasing. Same-line grammar failures carry `syntax.line-terminator.` reasons
+`async-function`, `async-arrow`, `arrow`, `return-operand`, or `throw-operand`,
+operation `parse.line-terminator`, expected `same source line`, actual
+`line terminator`, and the exact preceding component note
+`Same-line restriction starts here`. A line break inside a comment counts;
+the diagnostic does not claim a specific break position absent a token there.
+Implementation marker/result-notation disagreement uses `syntax.result-notation`
+/ `parse.result`, with expected/actual `Promise<T> result notation` versus
+`ordinary result notation` in the observed direction. It offers intent-dependent
+sync/async alternatives, never an automatic caller/await/Promise rewrite.
+External async markers use `syntax.subset.external-async` separately.
+Rejected nullable suffix members use `syntax.subset.nullable-member`; facts
+truthfully require `null or undefined` while preserving the historical E1030
+message `Expected 'null' after '|' in nullable type`.
+These facts do not change parser progress, token admission or repair
 authorization.
 Assignment, ordinary call-argument, expression-return and supplied class-field
 type failures retain the first incompatible type constraint in `mismatch`:

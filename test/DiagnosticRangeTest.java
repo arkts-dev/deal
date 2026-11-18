@@ -3210,7 +3210,8 @@ public class DiagnosticRangeTest {
         }
 
         for (String syntax : List.of("function f(...values:number[]):void{}", "let values=[,2];",
-                "let value=1", "function f(x:):void{}")) {
+                "let value=1", "function f(x:):void{}", "function f():void{return/*\r\n*/1;}",
+                "async function f():void{}", "let value:number|string=1;")) {
             var lex = new deal.lexer.Lexer("// 😀\r\n" + syntax, "syntax.deal").tokenize();
             var diagnostics = new deal.parser.Parser(lex.tokens(), "syntax.deal").parse().diagnostics();
             for (var diagnostic : diagnostics) {

@@ -283,7 +283,7 @@ public final class Parser {
         boolean isAsync = match(TokenType.ASYNC);
         Token startToken = isAsync ? previous() : peek();
         if (isAsync && peek().line() != startToken.line()) {
-            error(DiagnosticCode.E1007, "No line terminator between async and function", peek());
+            lineTerminatorError("No line terminator between async and function", "async-function", startToken);
         }
         Token funcToken = advance();  // consumes FUNCTION
         Token nameToken = expect(TokenType.IDENTIFIER, DiagnosticCode.E1007, "Expected function name after 'function'");
@@ -295,10 +295,12 @@ public final class Parser {
 
         Span sp = spanBetween(startToken, previousOrCurrent());
         if (isAsync != suffix.isAsync() && !suffix.isExternal()) {
-            error(DiagnosticCode.E1011, "Async implementations require Promise result notation; sync implementations forbid it", startToken);
+            resultNotationError(startToken, isAsync);
         }
         if (isAsync && suffix.isExternal()) {
-            error(DiagnosticCode.E1011, "External declarations must omit async", startToken);
+            subsetError(DiagnosticCode.E1011, "External declarations must omit async", startToken,
+                    "external-async", "external declaration without async implementation marker",
+                    "External declarations express async results using Promise<T> without the async implementation marker.");
         }
         return new FunctionDeclaration(sp, nameToken.lexeme(),
                 suffix.params(), suffix.returnType(), suffix.body(), suffix.isAsync(),
@@ -400,7 +402,7 @@ public final class Parser {
         Optional<ExpressionNode> expr = Optional.empty();
         if (!isAtEnd() && canStartExpression(peek().type())) {
             if (peek().line() != retToken.line()) {
-                error(DiagnosticCode.E1007, "No line terminator between return and its operand", peek());
+                lineTerminatorError("No line terminator between return and its operand", "return-operand", retToken);
             }
             ExpressionNode parsed = parseExpression();
             if (parsed != null) expr = Optional.of(parsed);
@@ -597,7 +599,7 @@ public final class Parser {
     private StatementNode parseThrowStatement() {
         Token throwToken = advance();
         if (peek().line() != throwToken.line()) {
-            error(DiagnosticCode.E1007, "No line terminator between throw and its operand", peek());
+            lineTerminatorError("No line terminator between throw and its operand", "throw-operand", throwToken);
         }
 
         ExpressionNode expr = parseExpression();
@@ -762,7 +764,9 @@ public final class Parser {
                         spanBetween(tokenSpanStart(inner), previousOrCurrent()),
                         inner, member.lexeme().equals("undefined"));
             } else {
-                error(DiagnosticCode.E1030, "Expected 'null' after '|' in nullable type", peek());
+                subsetError(DiagnosticCode.E1030, "Expected 'null' after '|' in nullable type", peek(),
+                        "nullable-member", "null or undefined",
+                        "DEAL admits null or undefined as a nullable suffix, not arbitrary union members; choose the intended declared type.");
                 break;
             }
         }
@@ -1649,7 +1653,7 @@ public final class Parser {
         boolean async = match(TokenType.ASYNC);
         Token start = async ? previous() : peek();
         if (async && start.line() != peek().line()) {
-            error(DiagnosticCode.E1007, "No line terminator between async and (", peek());
+            lineTerminatorError("No line terminator between async and (", "async-arrow", start);
         }
         expect(TokenType.LPAREN, DiagnosticCode.E1009, "Expected '(' before arrow parameters");
         ParamListResult params = parseParameterList();
@@ -1658,11 +1662,11 @@ public final class Parser {
         ResultAnnotation result = parseResultAnnotation();
         if (result.type() == null) return null;
         if (peek().line() != previous().line()) {
-            error(DiagnosticCode.E1007, "No line terminator before =>", peek());
+            lineTerminatorError("No line terminator before =>", "arrow", previous());
         }
         expect(TokenType.ARROW, DiagnosticCode.E1012, "Expected '=>' after arrow result");
         if (async != result.isAsync()) {
-            error(DiagnosticCode.E1011, "Async implementations require Promise result notation; sync implementations forbid it", start);
+            resultNotationError(start, async);
         }
         boolean expressionBody = peek().type() != TokenType.LBRACE;
         Block body;
@@ -1686,7 +1690,7 @@ public final class Parser {
         boolean isAsync = match(TokenType.ASYNC);
         Token startToken = isAsync ? previous() : peek();
         if (isAsync && peek().line() != startToken.line()) {
-            error(DiagnosticCode.E1007, "No line terminator between async and function", peek());
+            lineTerminatorError("No line terminator between async and function", "async-function", startToken);
         }
         Token funcToken = advance();  // consumes FUNCTION
 
@@ -1695,7 +1699,7 @@ public final class Parser {
         if (suffix == null) { return null; }
 
         if (isAsync != suffix.isAsync()) {
-            error(DiagnosticCode.E1011, "Async implementations require Promise result notation; sync implementations forbid it", startToken);
+            resultNotationError(startToken, isAsync);
         }
         Span sp = spanBetween(startToken, previousOrCurrent());
         return new FunctionExpr(sp, suffix.params(), suffix.returnType(), suffix.body(),
@@ -1881,6 +1885,25 @@ public final class Parser {
         }
         expectedToken(code, message, type);
         return null;
+    }
+
+    private void lineTerminatorError(String message, String rule, Token left) {
+        diagnostics.add(fromTokenAnchor(DiagnosticCode.E1007, "error", message, peek())
+                .withFacts(new deal.diagnostics.DiagnosticFacts("syntax.line-terminator." + rule, "parse.line-terminator",
+                        "same source line", "line terminator", List.of(
+                                "Keep these grammar components on one source line, including through comments; do not replace or invent an operand."))
+                        .withSyntax(syntaxContext("line-terminator." + rule, peek(), List.of())))
+                .withNote("Same-line restriction starts here", left.range(file)));
+    }
+
+    private void resultNotationError(Token start, boolean async) {
+        diagnostics.add(fromTokenAnchor(DiagnosticCode.E1011, "error",
+                "Async implementations require Promise result notation; sync implementations forbid it", start)
+                .withFacts(new deal.diagnostics.DiagnosticFacts("syntax.result-notation", "parse.result",
+                        async ? "Promise<T> result notation" : "ordinary result notation",
+                        async ? "ordinary result notation" : "Promise<T> result notation", List.of(
+                                "Choose the intended sync or async implementation and make its marker, result notation and callers consistent; no automatic Promise or await rewrite is implied."))
+                        .withSyntax(syntaxContext("result-notation", start, List.of()))));
     }
 
     private static deal.diagnostics.DiagnosticFacts.SyntaxContext syntaxContext(

@@ -64,7 +64,66 @@ public class ParserTest {
                 "object literal rejection identifies its own opener");
     }
 
+    private static void testLineAndResultFacts() {
+        String prefix = "// 😀\r\n";
+        for (String[] sample : new String[][] {
+                {"async/*\r\n*/function f():Promise<void>{}", "async-function", "async"},
+                {"let f=async/*\r\n*/function():Promise<void>{};", "async-function", "async"},
+                {"let f=async/*\r\n*/():Promise<void>=>{};", "async-arrow", "async"},
+                {"let f=():number/*\r\n*/=>1;", "arrow", "number"},
+                {"function f():number{return/*\r\n*/1;}", "return-operand", "return"},
+                {"function f():void{throw/*\r\n*/{};}", "throw-operand", "throw"}}) {
+            String source = prefix + sample[0];
+            var diagnostic = parse(source).diagnostics().stream()
+                    .filter(d -> d.facts().reason().equals("syntax.line-terminator." + sample[1]))
+                    .findFirst().orElse(null);
+            check(diagnostic != null && diagnostic.code().equals("E1007")
+                            && diagnostic.facts().operation().equals("parse.line-terminator")
+                            && diagnostic.facts().expected().equals("same source line")
+                            && diagnostic.facts().actual().equals("line terminator")
+                            && diagnostic.notes().getFirst().range().startScalarOffset() == source.indexOf(sample[2])
+                            && diagnostic.notes().getFirst().message().equals("Same-line restriction starts here")
+                            && diagnostic.facts().syntax().context().equals("line-terminator." + sample[1]),
+                    "same-line failure retains exact preceding component and distinct producer rule: " + sample[1]);
+            assertNoParseErrors(parse(source.replace("/*\r\n*/", "/**/")), "chosen same-line repair " + sample[1]);
+        }
+        for (String[] sample : new String[][] {
+                {"async function f():void{}", "Promise<T> result notation", "async function f():Promise<void>{}"},
+                {"function f():Promise<void>{}", "ordinary result notation", "function f():void{}"},
+                {"let f=async function():void{};", "Promise<T> result notation", "let f=async function():Promise<void>{};"},
+                {"let f=function():Promise<void>{};", "ordinary result notation", "let f=function():void{};"},
+                {"let f=async ():void=>{};", "Promise<T> result notation", "let f=async ():Promise<void>=>{};"},
+                {"let f=():Promise<void>=>{};", "ordinary result notation", "let f=():void=>{};"}}) {
+            var diagnostic = diagOf(parse(prefix + sample[0]), "E1011");
+            check(diagnostic != null && diagnostic.facts().reason().equals("syntax.result-notation")
+                            && diagnostic.facts().expected().equals(sample[1])
+                            && !diagnostic.facts().actual().equals(sample[1]),
+                    "implementation/result disagreement describes checked sync/async direction");
+            assertNoParseErrors(parse(prefix + sample[2]), "chosen result-notation repair");
+        }
+        var external = diagOf(parse("async function f():Promise<void>;"), "E1011");
+        check(external != null && external.facts().reason().equals("syntax.subset.external-async"),
+                "external async declaration restriction does not claim an implementation result mismatch");
+        assertNoParseErrors(parse("function f():Promise<void>;"), "chosen external marker repair");
+        var union = diagOf(parse(prefix + "let value:number|string=1;"), "E1030");
+        check(union != null && union.facts().reason().equals("syntax.subset.nullable-member")
+                        && union.facts().expected().equals("null or undefined")
+                        && union.facts().syntax().lexeme().equals("string"),
+                "nullable suffix facts accurately admit both null and undefined despite stable historical prose");
+        assertNoParseErrors(parse(prefix + "let value:number|null=1;"), "chosen nullable suffix repair");
+        assertNoParseErrors(parse(prefix + "let value:number|undefined=1;"), "undefined suffix remains admitted");
+        String template = prefix + "let value=`😀${():number/*\r\n*/=>1}`;";
+        var embedded = parse(template).diagnostics().stream()
+                .filter(d -> d.facts().reason().equals("syntax.line-terminator.arrow")).findFirst().orElseThrow();
+        check(embedded.range().startScalarOffset() == template.indexOf("=>")
+                        && embedded.notes().getFirst().range().startScalarOffset() == template.indexOf("number")
+                        && embedded.facts().syntax().lexeme().equals("=>"),
+                "template line restriction rebases both component ranges without altering token evidence");
+        assertNoParseErrors(parse(template.replace("/*\r\n*/", "/**/")), "chosen embedded same-line repair");
+    }
+
     private static void testSubsetAndListRecoveryFacts() {
+        testLineAndResultFacts();
         String prefix = "// 😀\r\n";
         for (String[] spelling : new String[][] {{"\"next\"", "\"next\""},
                 {"\"a\\n\\\"b\"", "\"a\\n\\\"b\""},
