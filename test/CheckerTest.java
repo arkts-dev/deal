@@ -153,6 +153,52 @@ public class CheckerTest {
         check(context.facts().reason().equals("context.required")
                         && context.facts().guidance().get(0).contains("intended element type"),
                 "context rejection requests user intent, not a guessed type");
+        String duplicateFields = "class C{x:number;x:string;x:boolean;} class D{x:number;}";
+        var duplicates = checkProgram(duplicateFields).result().diagnostics().stream()
+                .filter(d -> d.code().equals("E2002")).toList();
+        check(duplicates.size() == 2 && duplicates.stream().allMatch(d ->
+                        d.facts().reason().equals("declaration.duplicate-field") && d.notes().size() == 1
+                        && d.notes().getFirst().range().startScalarOffset() == duplicateFields.indexOf("x:number")),
+                "independent repeated fields retain the first declaration, without crossing class scopes");
+        assertNoErrors(checkProgram("class C{x:number;} class D{x:string;}"), "choosing one field declaration repairs the duplicate");
+        String[] duplicateBindings = {
+                "let x:number=1;let x:number=2;",
+                "function f():void{} function f():void{}",
+                "class C{x:number;} class C{x:string;}",
+                "function f(x:number,x:string):void{}",
+                "function f():void{let x:number=1;let x:number=2;}",
+                "function f():void{function g():void{} function g():void{}}"
+        };
+        for (String source : duplicateBindings) {
+            var duplicate = checkProgram(source).result().diagnostics().stream()
+                    .filter(d -> d.code().equals("E2002")).findFirst().orElseThrow();
+            check(duplicate.notes().size() == 1
+                            && duplicate.notes().getFirst().range().startScalarOffset() < duplicate.range().startScalarOffset(),
+                    "duplicate binding carries exact previous declaration: " + source);
+        }
+        StubModuleResolver imports = new StubModuleResolver();
+        imports.register("./lib", Map.of("value", Type.Number.INSTANCE));
+        for (String source : List.of("class Foo{} import * as Foo from \"./lib\";",
+                "import * as Foo from \"./lib\"; class Foo{}")) {
+            var collision = checkProgramWithModule(source, imports).result().diagnostics().getFirst();
+            check(collision.notes().size() == 1
+                            && collision.notes().getFirst().range().startScalarOffset() != collision.range().startScalarOffset()
+                            && collision.facts().actual().equals("Foo"), "import collision identifies both responsible declarations");
+        }
+        assertNoErrors(checkProgramWithModule("import * as Lib from \"./lib\"; class Foo{}", imports),
+                "choosing a nonconflicting alias repairs import collision");
+        String nestedSchema = "class Leaf{bad:(x:number)=>null;} class Root{items:Leaf[];}"
+                + "let result:Root=JSON.parse(\"{}\");";
+        var schema = checkProgram(nestedSchema).result().diagnostics().stream()
+                .filter(d -> d.code().equals("E5001")).findFirst().orElseThrow();
+        check(schema.facts().path().equals(List.of(
+                        new deal.diagnostics.DiagnosticFacts.PathSegment(deal.diagnostics.DiagnosticFacts.PathKind.FIELD, "items"),
+                        new deal.diagnostics.DiagnosticFacts.PathSegment(deal.diagnostics.DiagnosticFacts.PathKind.ARRAY_ELEMENT, ""),
+                        new deal.diagnostics.DiagnosticFacts.PathSegment(deal.diagnostics.DiagnosticFacts.PathKind.FIELD, "bad")))
+                        && schema.notes().getFirst().range().startScalarOffset() == nestedSchema.indexOf("(x:number)=>null"),
+                "nested JSON schema route distinguishes array schema elements from invented runtime indices");
+        assertNoErrors(checkProgram("class Leaf{bad:number;} class Root{items:Leaf[];} let result:Root=JSON.parse(\"{}\");"),
+                "an explicitly selected decodable annotation repairs the schema");
         var add = checkProgram("let x = 1 + \"a\";").result().diagnostics().stream()
                 .filter(d -> d.code().equals("E3010")).findFirst().orElseThrow();
         check(add.facts().actual().equals("left: number; right: string")

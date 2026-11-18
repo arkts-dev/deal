@@ -31,7 +31,7 @@ import java.util.Objects;
  *         { "message": "...", "range": { ... } | null }
  *       ],
  *       "facts": { "reason": "...", "operation": "...", "expected": "...",
- *                  "actual": "...", "guidance": ["..."] },
+ *                  "actual": "...", "guidance": ["..."], "path": [] },
  *       "missingSymbols": [{ "kind": "VALUE", "name": "...", "namespace": "...",
  *                            "constraints": [] }]
  *     }
@@ -110,7 +110,15 @@ public final class DiagnosticStructuredOutput {
         indent(sb, level + 1).append("\"actual\": ").append(jsonString(facts.actual())).append(",\n");
         indent(sb, level + 1).append("\"guidance\": ");
         appendStrings(sb, facts.guidance());
-        sb.append('\n');
+        sb.append(",\n");
+        indent(sb, level + 1).append("\"path\": [");
+        for (int i = 0; i < facts.path().size(); i++) {
+            if (i > 0) sb.append(", ");
+            var segment = facts.path().get(i);
+            sb.append("{\"kind\": ").append(jsonString(segment.kind().name()))
+                    .append(", \"name\": ").append(jsonString(segment.name())).append('}');
+        }
+        sb.append("]\n");
         indent(sb, level).append('}');
     }
 

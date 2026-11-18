@@ -9,7 +9,24 @@ public record DiagnosticFacts(
         String operation,
         String expected,
         String actual,
-        List<String> guidance) {
+        List<String> guidance,
+        List<PathSegment> path) {
+    public enum PathKind { FIELD, ARRAY_ELEMENT }
+
+    /** Schema routes describe types, not a guessed runtime array index. */
+    public record PathSegment(PathKind kind, String name) {
+        public PathSegment {
+            Objects.requireNonNull(kind, "kind");
+            Objects.requireNonNull(name, "name");
+            if (kind == PathKind.ARRAY_ELEMENT && !name.isEmpty())
+                throw new IllegalArgumentException("Schema array elements have no concrete index");
+        }
+    }
+
+    public DiagnosticFacts(String reason, String operation, String expected, String actual, List<String> guidance) {
+        this(reason, operation, expected, actual, guidance, List.of());
+    }
+
     public static final DiagnosticFacts EMPTY = new DiagnosticFacts("", "", "", "", List.of());
 
     public DiagnosticFacts {
@@ -18,5 +35,6 @@ public record DiagnosticFacts(
         Objects.requireNonNull(expected, "expected");
         Objects.requireNonNull(actual, "actual");
         guidance = List.copyOf(guidance);
+        path = List.copyOf(path);
     }
 }

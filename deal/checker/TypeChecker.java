@@ -1950,34 +1950,61 @@ public final class TypeChecker {
         }
         if (checkFunctionCall(call, BuiltinCall.JSON_PARSE.signature(), arguments) == Type.Error.INSTANCE)
             return Type.Error.INSTANCE;
-        java.util.Deque<Type> pending = new java.util.ArrayDeque<>();
+        record SchemaWork(Type type, SchemaRoute route, Span declaration) {}
+        java.util.Deque<SchemaWork> pending = new java.util.ArrayDeque<>();
         // Host declarations may resolve to fresh symbol wrappers on every
         // lookup. Guard the exact nominal/provider pair, not wrapper
         // allocation identity (nor an identity-only/first-alias lookup).
         java.util.Set<Type.Class> visited = new java.util.HashSet<>();
-        pending.push(target);
+        pending.push(new SchemaWork(target, null, null));
         while (!pending.isEmpty()) {
-            Type type = pending.pop();
+            SchemaWork work = pending.pop();
+            Type type = work.type();
             if (type instanceof Type.Func || type instanceof Type.Void) {
-                error(DiagnosticCode.E5001, "JSON.parse target must not contain function or void types", call.span());
+                CompilerDiagnostic diagnostic = CompilerDiagnostic.error(DiagnosticCode.E5001,
+                        "JSON.parse target must not contain function or void types", call.span())
+                        .withFacts(new deal.diagnostics.DiagnosticFacts("json.schema.forbidden-type", "json.decode.schema",
+                                "a schema without function or void leaves", typeName(type),
+                                List.of("Choose the intended decodable schema; assertions do not provide a JSON.parse target."),
+                                schemaPath(work.route())));
+                if (work.declaration() != null)
+                    diagnostic = diagnostic.withNote("Offending schema annotation", work.declaration().range());
+                diagnostics.add(diagnostic);
                 return Type.Error.INSTANCE;
             }
-            if (type instanceof Type.Nullable nullable) pending.push(nullable.inner());
-            else if (type instanceof Type.Array array) pending.push(array.element());
+            if (type instanceof Type.Nullable nullable)
+                pending.push(new SchemaWork(nullable.inner(), work.route(), work.declaration()));
+            else if (type instanceof Type.Array array)
+                pending.push(new SchemaWork(array.element(), new SchemaRoute(work.route(),
+                        new deal.diagnostics.DiagnosticFacts.PathSegment(
+                                deal.diagnostics.DiagnosticFacts.PathKind.ARRAY_ELEMENT, "")), work.declaration()));
             else if (type instanceof Type.Class cls) {
                 Symbol.ClassSymbol symbol = declaration != null && declaration.identity().equals(cls.identity())
                     && providerAgrees(declaration, cls) ? declaration : resolveClassSymbol(cls);
                 if (symbol == null) {
-                    error(DiagnosticCode.E5001, "JSON.parse target has no exact class declaration", call.span());
+                    diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E5001,
+                            "JSON.parse target has no exact class declaration", call.span()).withFacts(
+                            new deal.diagnostics.DiagnosticFacts("json.schema.missing-declaration", "json.decode.schema",
+                                    "exact defining class declaration and provider", typeName(type), List.of(), schemaPath(work.route()))));
                     return Type.Error.INSTANCE;
                 }
                 if (visited.add(classTypeOf(symbol)))
                     for (ClassField field : symbol.fields())
-                        pending.push(resolveFieldTypeInClassModule(symbol, field.type()));
+                        pending.push(new SchemaWork(resolveFieldTypeInClassModule(symbol, field.type()),
+                                new SchemaRoute(work.route(), new deal.diagnostics.DiagnosticFacts.PathSegment(
+                                        deal.diagnostics.DiagnosticFacts.PathKind.FIELD, field.name())), field.type().span()));
             }
         }
         recordExactClassDecl(call, target, declaration);
         return target;
+    }
+
+    private record SchemaRoute(SchemaRoute parent, deal.diagnostics.DiagnosticFacts.PathSegment segment) {}
+
+    private static List<deal.diagnostics.DiagnosticFacts.PathSegment> schemaPath(SchemaRoute route) {
+        var result = new java.util.ArrayDeque<deal.diagnostics.DiagnosticFacts.PathSegment>();
+        for (SchemaRoute current = route; current != null; current = current.parent()) result.addFirst(current.segment());
+        return List.copyOf(result);
     }
 
     private Type checkArrayPredicate(CallExpr call, MemberAccessExpr member, Type.Array source) {

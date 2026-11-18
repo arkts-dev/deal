@@ -1204,6 +1204,12 @@ public class DiagnosticRangeTest {
         checkFormattedStructuredAgree(schemaError, "C4");
         check(schemaError.message().equals("JSON.parse target must not contain function or void types"),
             "C4: exact decoding restriction message");
+        check(schemaError.facts().path().equals(List.of(
+                    new deal.diagnostics.DiagnosticFacts.PathSegment(deal.diagnostics.DiagnosticFacts.PathKind.FIELD, "b"),
+                    new deal.diagnostics.DiagnosticFacts.PathSegment(deal.diagnostics.DiagnosticFacts.PathKind.FIELD, "callback")))
+                && schemaError.facts().actual().equals("(number) => null")
+                && schemaError.notes().getFirst().range().startScalarOffset() == src4.indexOf("(x:number)=>null"),
+            "C4: exact recursive schema route and offending annotation are producer-owned");
 
         // 5. An unresolved annotation still diagnoses in an unused recursive
         // class, after astral comment text and CRLF. No reflection-only cycle
@@ -3095,7 +3101,7 @@ public class DiagnosticRangeTest {
             + range.replace("\n", "\n      ") + ",\n      \"notes\": "
             + notes.replace("\n", "\n      ") + ",\n"
             + "      \"facts\": {\n        \"reason\": \"\",\n        \"operation\": \"\",\n"
-            + "        \"expected\": \"\",\n        \"actual\": \"\",\n        \"guidance\": []\n      },\n"
+            + "        \"expected\": \"\",\n        \"actual\": \"\",\n        \"guidance\": [],\n        \"path\": []\n      },\n"
             + "      \"missingSymbols\": []\n    }\n  ]\n}";
     }
 
@@ -3209,6 +3215,16 @@ public class DiagnosticRangeTest {
         var immutable = new deal.diagnostics.DiagnosticFacts("reason", "operation", "expected", "actual", guidance);
         guidance.clear();
         check(immutable.guidance().equals(List.of("keep")), "producer guidance is defensively copied");
+        var schemaPath = new java.util.ArrayList<>(List.of(
+                new deal.diagnostics.DiagnosticFacts.PathSegment(deal.diagnostics.DiagnosticFacts.PathKind.FIELD, "a\"\uD800"),
+                new deal.diagnostics.DiagnosticFacts.PathSegment(deal.diagnostics.DiagnosticFacts.PathKind.ARRAY_ELEMENT, "")));
+        var schemaFacts = new deal.diagnostics.DiagnosticFacts("schema", "decode", "number", "function", List.of(), schemaPath);
+        schemaPath.clear();
+        check(schemaFacts.path().size() == 2, "schema paths are defensively copied");
+        String schemaJson = DiagnosticStructuredOutput.toJson(List.of(escaped.withFacts(schemaFacts)));
+        check(schemaJson.contains("\"kind\": \"FIELD\", \"name\": \"a\\\"\\ud800\"")
+                        && schemaJson.contains("\"kind\": \"ARRAY_ELEMENT\", \"name\": \"\""),
+                "structured schema routes retain escaped exact field names and index-free array steps");
         CompilerDiagnostic withNote = rich.withNote("related", rich.range());
         check(withNote.facts().equals(facts) && withNote.missingSymbols().equals(rich.missingSymbols())
                         && rich.notes().size() + 1 == withNote.notes().size(), "adding notes retains facts without mutation");

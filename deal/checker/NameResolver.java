@@ -54,6 +54,9 @@ public final class NameResolver {
 
     private SymbolTable currentScope;
 
+    /** Declaration evidence uses exact symbol identity, never a spelling lookup across scopes. */
+    private final Map<Symbol, Span> declarationSpans = new IdentityHashMap<>();
+
     /** Maps scoped AST nodes to their symbol table scope. */
     private final Map<StatementNode, SymbolTable> scopeMap = new HashMap<>();
 
@@ -325,20 +328,25 @@ public final class NameResolver {
             if (shadowsImport(name, cd.span())) {
                 return;
             } else {
-                error(DiagnosticCode.E2002, "Redeclaration of '" + name + "'", cd.span());
+                redeclaration(name, cd.span(), root);
                 return;
             }
         }
         Symbol.ClassSymbol classSymbol = new Symbol.ClassSymbol(name, cd.fields(),
             modulePath, classIdentityFor(modulePath, name));
         classDeclarationNodes.put(classSymbol, cd);
-        root.define(name, classSymbol);
+        define(root, name, classSymbol, cd.span());
 
-        Set<String> fieldNames = new HashSet<>();
+        Map<String, ClassField> fieldsByName = new java.util.LinkedHashMap<>();
         for (ClassField cf : cd.fields()) {
             checkPropertyName(cf.name(), cf.span());
-            if (!fieldNames.add(cf.name())) {
-                error(DiagnosticCode.E2002, "Redeclaration of field '" + cf.name() + "'", cf.span());
+            ClassField previous = fieldsByName.putIfAbsent(cf.name(), cf);
+            if (previous != null) {
+                diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E2002,
+                        "Redeclaration of field '" + cf.name() + "'", cf.span())
+                        .withFacts(new deal.diagnostics.DiagnosticFacts("declaration.duplicate-field", "declare.field",
+                                "unique field name in " + cd.name(), cf.name(), List.of("Choose which declaration is intended.")))
+                        .withNote("Previous field declaration", previous.span().range()));
             }
         }
 
@@ -365,7 +373,7 @@ public final class NameResolver {
             if (shadowsImport(name, fd.span())) {
                 return;
             } else {
-                error(DiagnosticCode.E2002, "Redeclaration of '" + name + "'", fd.span());
+                redeclaration(name, fd.span(), root);
                 return;
             }
         }
@@ -377,8 +385,8 @@ public final class NameResolver {
         }
 
         Type.Func ft = new Type.Func(paramTypes, funcType, fd.isAsync());
-        root.define(name, new Symbol.FunctionSymbol(name, ft,
-            fd.params().stream().map(Parameter::type).toList(), modulePath));
+        define(root, name, new Symbol.FunctionSymbol(name, ft,
+            fd.params().stream().map(Parameter::type).toList(), modulePath), fd.span());
     }
 
     /**
@@ -405,16 +413,21 @@ public final class NameResolver {
                 // the declaration.  The real error is the import, not the
                 // declaration.  Emit E2006 and remove the import so the
                 // declaration can be used.
-                error(DiagnosticCode.E2006,
-                    "Import '" + name + "' shadows module-level declaration",
-                    ms.importSpan());
+                diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E2006,
+                        "Import '" + name + "' shadows module-level declaration", ms.importSpan())
+                        .withFacts(new deal.diagnostics.DiagnosticFacts("name.import-shadows-declaration", "import.bind",
+                                "distinct module-level binding", name, List.of("Choose a nonconflicting import alias.")))
+                        .withNote("Shadowed module-level declaration", declSpan.range()));
                 root.remove(name);
                 return false; // allow the declaration to be added below
             }
             // Declaration came after import → E2007
-            error(DiagnosticCode.E2007,
-                "Module-level declaration '" + name + "' shadows import",
-                declSpan);
+            CompilerDiagnostic diagnostic = CompilerDiagnostic.error(DiagnosticCode.E2007,
+                    "Module-level declaration '" + name + "' shadows import", declSpan)
+                    .withFacts(new deal.diagnostics.DiagnosticFacts("name.declaration-shadows-import", "declare.binding",
+                            "distinct module-level binding", name, List.of("Choose a nonconflicting declaration name or import alias.")));
+            if (ms.importSpan() != null) diagnostic = diagnostic.withNote("Shadowed import", ms.importSpan().range());
+            diagnostics.add(diagnostic);
             return true;
         }
         return false;
@@ -538,7 +551,7 @@ public final class NameResolver {
             if (currentScope == root && shadowsImport(name, vd.span())) {
                 return;
             } else {
-                error(DiagnosticCode.E2002, "Redeclaration of '" + name + "'", vd.span());
+                redeclaration(name, vd.span(), currentScope);
                 return;
             }
         }
@@ -546,13 +559,13 @@ public final class NameResolver {
             Type bindingType = type != null ? type : new Type.Func(
                 fe.params().stream().map(p -> resolveTypeNode(p.type())).toList(),
                 resolveResultTypeNode(fe.returnType()), fe.isAsync());
-            currentScope.define(name, new Symbol.VariableSymbol(name, bindingType, false,
-                declaredClass, vd.typeAnnotation().orElse(null), vd.isConst()));
+            define(currentScope, name, new Symbol.VariableSymbol(name, bindingType, false,
+                declaredClass, vd.typeAnnotation().orElse(null), vd.isConst()), vd.span());
             walkExpression(fe);
         } else {
             walkExpression(vd.initializer());
-            currentScope.define(name, new Symbol.VariableSymbol(name, type, false,
-                declaredClass, vd.typeAnnotation().orElse(null), vd.isConst()));
+            define(currentScope, name, new Symbol.VariableSymbol(name, type, false,
+                declaredClass, vd.typeAnnotation().orElse(null), vd.isConst()), vd.span());
         }
     }
 
@@ -616,7 +629,7 @@ public final class NameResolver {
             Symbol.ClassSymbol classSymbol = new Symbol.ClassSymbol(name,
                 cd.fields(), modulePath, classIdentityFor(modulePath, name));
             classDeclarationNodes.put(classSymbol, cd);
-            currentScope.define(name, classSymbol);
+            define(currentScope, name, classSymbol, cd.span());
         }
     }
 
@@ -647,7 +660,7 @@ public final class NameResolver {
         if (currentScope != root) {
             checkNoDollar(fd.name(), fd.span());
             if (currentScope.containsLocally(fd.name())) {
-                error(DiagnosticCode.E2002, "Redeclaration of '" + fd.name() + "'", fd.span());
+                redeclaration(fd.name(), fd.span(), currentScope);
             }
         }
         if (!currentScope.containsLocally(fd.name())) {
@@ -658,8 +671,8 @@ public final class NameResolver {
             }
 
             Type.Func ft = new Type.Func(paramTypes, funcType, fd.isAsync());
-            currentScope.define(fd.name(), new Symbol.FunctionSymbol(fd.name(), ft,
-                fd.params().stream().map(Parameter::type).toList(), modulePath));
+            define(currentScope, fd.name(), new Symbol.FunctionSymbol(fd.name(), ft,
+                fd.params().stream().map(Parameter::type).toList(), modulePath), fd.span());
         }
 
         SymbolTable saved = currentScope;
@@ -680,21 +693,25 @@ public final class NameResolver {
      * order, then the parameter symbol.
      */
     private void bindParameters(List<Parameter> params) {
-        Set<String> paramNames = new HashSet<>();
+        Map<String, Parameter> parametersByName = new java.util.LinkedHashMap<>();
         for (Parameter p : params) {
             String name = p.name();
 
             // Check for $ in parameter name (E2008)
             checkNoDollar(name, p.span());
 
-            if (paramNames.contains(name)) {
-                error(DiagnosticCode.E2002, "Duplicate parameter '" + name + "'", p.span());
+            Parameter previous = parametersByName.putIfAbsent(name, p);
+            if (previous != null) {
+                diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E2002,
+                        "Duplicate parameter '" + name + "'", p.span())
+                        .withFacts(new deal.diagnostics.DiagnosticFacts("declaration.duplicate-parameter", "declare.parameter",
+                                "unique parameter name", name, List.of("Choose distinct parameter names.")))
+                        .withNote("Previous parameter declaration", previous.span().range()));
                 continue;
             }
-            paramNames.add(name);
             Type paramType = resolveTypeNode(p.type());
-            currentScope.define(name, new Symbol.VariableSymbol(name, paramType,
-                true, declaredClassSymbolOf(p.type()), p.type()));
+            define(currentScope, name, new Symbol.VariableSymbol(name, paramType,
+                true, declaredClassSymbolOf(p.type()), p.type()), p.span());
         }
     }
 
@@ -1085,6 +1102,21 @@ public final class NameResolver {
     // =======================================================================
     // Helpers
     // =======================================================================
+
+    private void define(SymbolTable scope, String name, Symbol symbol, Span span) {
+        scope.define(name, symbol);
+        declarationSpans.put(symbol, span);
+    }
+
+    private void redeclaration(String name, Span span, SymbolTable scope) {
+        CompilerDiagnostic diagnostic = CompilerDiagnostic.error(DiagnosticCode.E2002,
+                "Redeclaration of '" + name + "'", span)
+                .withFacts(new deal.diagnostics.DiagnosticFacts("declaration.duplicate-binding", "declare.binding",
+                        "unique binding in this scope", name, List.of("Choose which declaration is intended; an inner scope may shadow an outer binding.")));
+        Span previous = declarationSpans.get(scope.resolve(name));
+        if (previous != null) diagnostic = diagnostic.withNote("Previous declaration", previous.range());
+        diagnostics.add(diagnostic);
+    }
 
     private void error(DiagnosticCode code, String message, Span span) {
         diagnostics.add(CompilerDiagnostic.error(code, message, span));
