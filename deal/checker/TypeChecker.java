@@ -2306,8 +2306,7 @@ public final class TypeChecker {
                 typeMap.put(mae.object(), Type.Table.INSTANCE);
                 return exportType;
             }
-            error(DiagnosticCode.E2004, "Export '" + mae.field() + "' not found in module '"
-                + id.name() + "'. Available: " + String.join(", ", ms.exports().keySet()), mae.span());
+            diagnostics.add(MissingExportDiagnostic.create(ms, mae.field(), "module.member", mae.span()));
             return Type.Error.INSTANCE;
         }
         Type objType = checkAddressOperand(mae.object());
@@ -2364,8 +2363,7 @@ public final class TypeChecker {
             if (sym instanceof Symbol.ModuleSymbol ms) {
                 Type exportType = ms.exports().get(field);
                 if (exportType != null) return exportType;
-                error(DiagnosticCode.E2004, "Export '" + field + "' not found in module '"
-                    + id.name() + "'. Available: " + String.join(", ", ms.exports().keySet()), mae.span());
+                diagnostics.add(MissingExportDiagnostic.create(ms, field, "module.member", mae.span()));
                 return Type.Error.INSTANCE;
             }
         }

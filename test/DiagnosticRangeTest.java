@@ -3101,7 +3101,7 @@ public class DiagnosticRangeTest {
             + range.replace("\n", "\n      ") + ",\n      \"notes\": "
             + notes.replace("\n", "\n      ") + ",\n"
             + "      \"facts\": {\n        \"reason\": \"\",\n        \"operation\": \"\",\n"
-            + "        \"expected\": \"\",\n        \"actual\": \"\",\n        \"guidance\": [],\n        \"path\": [],\n        \"call\": null,\n        \"operator\": null,\n        \"mismatch\": null,\n        \"syntax\": null,\n        \"names\": null,\n        \"construction\": null\n      },\n"
+            + "        \"expected\": \"\",\n        \"actual\": \"\",\n        \"guidance\": [],\n        \"path\": [],\n        \"call\": null,\n        \"operator\": null,\n        \"mismatch\": null,\n        \"syntax\": null,\n        \"names\": null,\n        \"construction\": null,\n        \"exports\": null\n      },\n"
             + "      \"missingSymbols\": []\n    }\n  ]\n}";
     }
 
@@ -3256,6 +3256,33 @@ public class DiagnosticRangeTest {
                     "presence/nominal producers retain complete facts/ranges/notes across CLI and amendment transports");
         }
 
+        for (String source : List.of("let result:number=Lib.missing;", "let result:Lib.Missing=7;",
+                "let text=`${Lib.missing}`;")) {
+            String text = "// 😀\r\nimport * as Lib from \"./lib\";" + source;
+            var modules = new StubModuleResolver();
+            modules.register("./lib", java.util.Map.of("value", deal.types.Type.Number.INSTANCE));
+            var lex = new Lexer(text, "exports.deal").tokenize();
+            var parse = new Parser(lex.tokens(), "exports.deal").parse();
+            var resolver = new NameResolver("exports.deal", modules);
+            var scope = resolver.resolve(parse.program());
+            var checked = TypeChecker.check("exports.deal", scope, resolver, parse.program());
+            var diagnostic = java.util.stream.Stream.concat(resolver.diagnostics().stream(), checked.diagnostics().stream())
+                    .filter(d -> d.code().equals("E2004")).findFirst().orElseThrow();
+            var inspection = deal.amend.AmendWorkspace.inspect(text, "exports.deal", modules).diagnostics().stream()
+                    .filter(d -> d.code().equals("E2004")).findFirst().orElseThrow();
+            var document = deal.amend.CompilerProtocolJson.requireObject(deal.amend.CompilerProtocolJson.decode(
+                    DiagnosticStructuredOutput.toJson(List.of(diagnostic))), "document");
+            var entries = deal.amend.CompilerProtocolJson.requireArray(
+                    deal.amend.CompilerProtocolJson.field(document, "diagnostics"), "diagnostics");
+            var entry = deal.amend.CompilerProtocolJson.requireObject(entries.items().getFirst(), "diagnostic");
+            check(inspection.facts().equals(diagnostic.facts()) && inspection.range().equals(diagnostic.range())
+                            && inspection.notes().equals(diagnostic.notes())
+                            && diagnostic.facts().exports().available().equals(List.of("value"))
+                            && deal.amend.CompilerProtocolJson.encode(inspection.facts()).equals(
+                                deal.semantic.ir.CanonicalJson.serializeText(deal.amend.CompilerProtocolJson.field(entry, "facts"))),
+                    "value/type/template export producers agree across transports with complete import geometry");
+        }
+
         for (String source : List.of("let count:number=7;let result:number=coun;",
                 "function count(x:number):number{return x;}let result=coun(7);")) {
             String text = "// 😀\r\n" + source;
@@ -3406,6 +3433,23 @@ public class DiagnosticRangeTest {
                 deal.diagnostics.DiagnosticFacts.TypeComponentKind.ARRAY_ELEMENT, 0); }
         catch (IllegalArgumentException expected) { invalidComponent = true; }
         check(invalidComponent, "type routes cannot claim a concrete array index");
+        var exportNames = new ArrayList<>(List.of("field\"\uD800😀", "nul\u0000"));
+        var exportContext = new deal.diagnostics.DiagnosticFacts.ExportContext("Alias", "missing", exportNames,
+                3, true, multi.range());
+        exportNames.clear();
+        operatorFacts = operatorFacts.withExports(exportContext);
+        check(exportContext.available().size() == 2
+                        && operatorFacts.withCall(null).withOperator(null).withMismatch(null).withSyntax(null)
+                                .withNames(null).withConstruction(null).exports().equals(exportContext)
+                        && operatorFacts.withExports(null).exports() == null
+                        && operatorFacts.withExports(null).construction().equals(construction),
+                "export surface is immutable and all independent contexts survive copies and clearing");
+        boolean invalidExports = false;
+        try { new deal.diagnostics.DiagnosticFacts.ExportContext("M", "x", List.of("a"), 1, true, null); }
+        catch (IllegalArgumentException expected) { invalidExports = true; }
+        check(invalidExports, "export truncation must match the exact available count");
+        check(new deal.diagnostics.DiagnosticFacts.ExportContext("M", "x", List.of(), 0, false, null).importRange() == null,
+                "unavailable import evidence remains null");
         String operatorJson = DiagnosticStructuredOutput.toJson(List.of(escaped.withFacts(operatorFacts)));
         var operatorDocument = deal.amend.CompilerProtocolJson.requireObject(
                 deal.amend.CompilerProtocolJson.decode(operatorJson), "document");

@@ -16,7 +16,20 @@ public record DiagnosticFacts(
         TypeMismatch mismatch,
         SyntaxContext syntax,
         NameContext names,
-        ConstructionContext construction) {
+        ConstructionContext construction,
+        ExportContext exports) {
+    /** Observed export names need not be suitable replacements for the rejected use. */
+    public record ExportContext(String alias, String requested, List<String> available,
+                                int availableCount, boolean truncated, DiagnosticRange importRange) {
+        public ExportContext {
+            Objects.requireNonNull(alias, "alias");
+            Objects.requireNonNull(requested, "requested");
+            available = List.copyOf(available);
+            if (availableCount < available.size() || truncated != (availableCount > available.size()))
+                throw new IllegalArgumentException("Invalid export count");
+        }
+    }
+
     /** Selected construction provider; null optionality means no selected declared field. */
     public record ConstructionContext(String className, String provider, DiagnosticRange declarationRange,
                                       String fieldName, Boolean optional, DiagnosticRange fieldRange,
@@ -158,28 +171,39 @@ public record DiagnosticFacts(
         this(reason, operation, expected, actual, guidance, path, call, operator, mismatch, syntax, names, null);
     }
 
+    public DiagnosticFacts(String reason, String operation, String expected, String actual,
+                           List<String> guidance, List<PathSegment> path, CallContext call,
+                           OperatorContext operator, TypeMismatch mismatch, SyntaxContext syntax,
+                           NameContext names, ConstructionContext construction) {
+        this(reason, operation, expected, actual, guidance, path, call, operator, mismatch, syntax, names, construction, null);
+    }
+
+    public DiagnosticFacts withExports(ExportContext context) {
+        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, mismatch, syntax, names, construction, context);
+    }
+
     public DiagnosticFacts withConstruction(ConstructionContext context) {
-        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, mismatch, syntax, names, context);
+        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, mismatch, syntax, names, context, exports);
     }
 
     public DiagnosticFacts withNames(NameContext context) {
-        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, mismatch, syntax, context, construction);
+        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, mismatch, syntax, context, construction, exports);
     }
 
     public DiagnosticFacts withCall(CallContext context) {
-        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, context, operator, mismatch, syntax, names, construction);
+        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, context, operator, mismatch, syntax, names, construction, exports);
     }
 
     public DiagnosticFacts withOperator(OperatorContext context) {
-        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, context, mismatch, syntax, names, construction);
+        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, context, mismatch, syntax, names, construction, exports);
     }
 
     public DiagnosticFacts withMismatch(TypeMismatch context) {
-        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, context, syntax, names, construction);
+        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, context, syntax, names, construction, exports);
     }
 
     public DiagnosticFacts withSyntax(SyntaxContext context) {
-        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, mismatch, context, names, construction);
+        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, mismatch, context, names, construction, exports);
     }
 
     public static final DiagnosticFacts EMPTY = new DiagnosticFacts("", "", "", "", List.of());

@@ -1688,7 +1688,17 @@ JSON scanner offsets, which are one-based UTF-8 byte positions.
 
 `facts` separates producer-owned `reason`, failed `operation`, `expected`,
 `actual`, ordered `guidance`, a typed `path`, nullable typed `call` context
-and nullable typed `operator`, `mismatch`, `syntax`, `names`, and `construction` contexts from explanatory message text.
+and nullable typed `operator`, `mismatch`, `syntax`, `names`, `construction`, and `exports` contexts from explanatory message text.
+Missing module exports retain E2004 messages and ranges with
+`module.export-missing`, operation `module.member` or `module.type`, the rejected
+name, and `exports`: `alias`, `requested`, ordered `available` names,
+`availableCount`, `truncated`, and nullable complete `importRange`. Names are the
+first 32 observed exports in Java String spelling order; the count covers the
+complete observed surface. Empty surfaces differ from unavailable (`null`)
+evidence. An available import is also labeled `Module imported here`. This is
+an inventory, not a compatibility claim, inferred import, new declaration or
+authorized replacement: explicitly chosen alternatives undergo normal checking.
+All independent contexts survive copies; rendering never parses `Available:`.
 Class-literal constraint failures retain `construction`: `className`, `provider`,
 nullable complete `declarationRange`, `fieldName`, nullable Boolean `optional`,
 nullable `fieldRange` and nullable `annotationRange`. The provider is the selected

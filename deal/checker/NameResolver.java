@@ -923,9 +923,7 @@ public final class NameResolver {
         }
         Type exportType = ms.exports().get(qt.typeName());
         if (exportType == null) {
-            error(DiagnosticCode.E2004, "Export '" + qt.typeName() + "' not found in module '"
-                + qt.moduleName() + "'. Available: "
-                + String.join(", ", ms.exports().keySet()), qt.span());
+            diagnostics.add(MissingExportDiagnostic.create(ms, qt.typeName(), "module.type", qt.span()));
             return Type.Error.INSTANCE;
         }
         return exportType;

@@ -1330,6 +1330,37 @@ public class CheckerTest {
             resolver
         );
         assertError(out, "E2004", "export not found in module");
+        var missing = out.result().diagnostics().stream().filter(d -> d.code().equals("E2004")).findFirst().orElseThrow();
+        check(missing.facts().reason().equals("module.export-missing")
+                        && missing.facts().operation().equals("module.member")
+                        && missing.facts().actual().equals("nonExistent")
+                        && missing.facts().exports().alias().equals("Lib")
+                        && missing.facts().exports().available().equals(List.of("existingExport"))
+                        && missing.facts().exports().availableCount() == 1
+                        && !missing.facts().exports().truncated()
+                        && missing.notes().getFirst().range().equals(missing.facts().exports().importRange()),
+                "missing export retains observed surface and exact import without guessing replacements");
+        assertNoErrors(checkProgramWithModule("import * as Lib from \"./lib\";let x:number=Lib.existingExport;", resolver),
+                "explicit existing export repair undergoes ordinary member checking");
+        var typeMissing = checkProgramWithModule("// 😀\r\nimport * as Alias from \"./lib\";let x:Alias.Missing=7;", resolver)
+                .result().diagnostics().stream().filter(d -> d.code().equals("E2004")).findFirst().orElseThrow();
+        check(typeMissing.facts().operation().equals("module.type")
+                        && typeMissing.facts().exports().requested().equals("Missing")
+                        && typeMissing.facts().exports().importRange().startScalarOffset() == "// 😀\r\n".length(),
+                "qualified type export lookup retains its own use operation and UTF-16 import location");
+        var many = new java.util.LinkedHashMap<String, Type>();
+        for (int i = 39; i >= 0; i--) many.put(String.format(java.util.Locale.ROOT, "field%02d", i), Type.Number.INSTANCE);
+        resolver.register("./many", many);
+        var bounded = checkProgramWithModule("import * as M from \"./many\";M.missing;", resolver).result().diagnostics()
+                .stream().filter(d -> d.code().equals("E2004")).findFirst().orElseThrow().facts().exports();
+        check(bounded.available().size() == 32 && bounded.availableCount() == 40 && bounded.truncated()
+                        && bounded.available().getFirst().equals("field00") && bounded.available().getLast().equals("field31"),
+                "observed export names are bounded in deterministic spelling order with exact count");
+        resolver.register("./empty", Map.of());
+        var empty = checkProgramWithModule("import * as E from \"./empty\";E.absent;", resolver).result().diagnostics()
+                .stream().filter(d -> d.code().equals("E2004")).findFirst().orElseThrow().facts().exports();
+        check(empty.available().isEmpty() && empty.availableCount() == 0 && !empty.truncated(),
+                "empty export surface is distinct from absent export evidence");
     }
 
     // =========================================================================

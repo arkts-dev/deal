@@ -46,6 +46,7 @@ public final class AmendWorkspaceTest {
         nameAlternativesRemainIntentDependent();
         presenceRepairRechecksCandidate();
         constructionRepairRechecksProvider();
+        exportRepairRequiresChosenDeclaration();
         actionabilityFactsAndRepairScope();
         smallestEditableBlockIsNotSemanticOwner();
         System.out.println("AmendWorkspaceTest: all tests passed");
@@ -221,6 +222,32 @@ public final class AmendWorkspaceTest {
                         + "export class Entry { text: string; }", "app.deal");
         check(repaired.diagnostics().stream().noneMatch(d -> d.severity().equals("error")),
                 "ordinary resolution resumes after syntax repair");
+    }
+
+    private static void exportRepairRequiresChosenDeclaration() {
+        String clean = "// 😀\r\nimport * as Lib from \"./lib\";export function run():number{return Lib.value;}";
+        var resolver = new StubModuleResolver();
+        resolver.register("./lib", Map.of("value", deal.types.Type.Number.INSTANCE));
+        var base = AmendWorkspace.inspect(clean, "exports.deal", resolver);
+        var run = base.symbols().stream().filter(s -> s.name().equals("run")).findFirst().orElseThrow();
+        var body = base.nodes().stream().filter(n -> n.kind().equals("function-body") && n.ownerId().equals(run.id()))
+                .findFirst().orElseThrow();
+        var change = AmendWorkspace.inspectChange(clean, "exports.deal", base.sourceDigest(), List.of(body.id()),
+                List.of(AmendWorkspace.REPLACE_FUNCTION_BODY));
+        var staged = AmendWorkspace.stageChange(clean, "exports.deal",
+                new CompilerProtocol.ChangeSetPrecondition(base.sourceDigest(), Map.of(body.id().value(), body.fingerprint())),
+                change, List.of(new AmendWorkspace.ReplaceFunctionBody(body.id(), "return Lib.absent;")),
+                resolver, AmendWorkspace.SourceAdapter.IDENTITY);
+        var missing = staged.diagnostics().stream().filter(d -> d.code().equals("E2004")).findFirst().orElseThrow();
+        check(!staged.accepted() && staged.source().equals(clean)
+                        && missing.facts().exports().requested().equals("absent")
+                        && missing.facts().exports().available().equals(List.of("value")),
+                "observed export alternatives never publish a staged candidate");
+        var repaired = AmendWorkspace.patchRepairWorkspace(clean, "exports.deal", staged.workspace(),
+                List.of(new CompilerProtocol.SlotPatch("R1", Map.of("body", "return Lib.value;"))),
+                resolver, AmendWorkspace.SourceAdapter.IDENTITY);
+        check(repaired.accepted() && AmendWorkspace.inspect(repaired.source(), "exports.deal", resolver).diagnostics().isEmpty(),
+                "explicit existing export rechecks before publication");
     }
 
     private static void constructionRepairRechecksProvider() {

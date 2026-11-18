@@ -232,7 +232,7 @@ public final class DiagnosticStructuredOutput {
         sb.append(",\n");
         indent(sb, level + 1).append("\"construction\": ");
         var construction = facts.construction();
-        if (construction == null) sb.append("null\n");
+        if (construction == null) sb.append("null");
         else {
             sb.append("{\n");
             indent(sb, level + 2).append("\"className\": ").append(jsonString(construction.className())).append(",\n");
@@ -244,6 +244,23 @@ public final class DiagnosticStructuredOutput {
             appendNullableRange(sb, construction.fieldRange(), level + 2, "fieldRange");
             sb.append(",\n");
             appendNullableRange(sb, construction.annotationRange(), level + 2, "annotationRange");
+            sb.append('\n');
+            indent(sb, level + 1).append('}');
+        }
+        sb.append(",\n");
+        indent(sb, level + 1).append("\"exports\": ");
+        var exports = facts.exports();
+        if (exports == null) sb.append("null\n");
+        else {
+            sb.append("{\n");
+            indent(sb, level + 2).append("\"alias\": ").append(jsonString(exports.alias())).append(",\n");
+            indent(sb, level + 2).append("\"requested\": ").append(jsonString(exports.requested())).append(",\n");
+            indent(sb, level + 2).append("\"available\": ");
+            appendStrings(sb, exports.available());
+            sb.append(",\n");
+            indent(sb, level + 2).append("\"availableCount\": ").append(exports.availableCount()).append(",\n");
+            indent(sb, level + 2).append("\"truncated\": ").append(exports.truncated()).append(",\n");
+            appendNullableRange(sb, exports.importRange(), level + 2, "importRange");
             sb.append('\n');
             indent(sb, level + 1).append("}\n");
         }
