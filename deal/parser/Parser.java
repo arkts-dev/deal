@@ -638,6 +638,12 @@ public final class Parser {
     }
 
     private TypeNode tryParseFunctionType() {
+        // An opening parenthesis cannot name a parameter. This is a grouped
+        // type, often a function result such as (()=>number). Do not let
+        // malformed-parameter recovery skip its inner delimiters and consume
+        // an enclosing arrow's => as though it belonged to this type.
+        if (pos + 1 < tokens.size() && tokens.get(pos + 1).type() == TokenType.LPAREN)
+            return null;
         int savedPos = pos;
         int diagSize = diagnostics.size();
 

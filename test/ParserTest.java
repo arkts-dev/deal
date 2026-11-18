@@ -36,6 +36,16 @@ public class ParserTest {
 
     private static void testDiagnosticActionability() {
         testSubsetAndListRecoveryFacts();
+        for (String source : List.of(
+                "let make=(value:number):(()=>number)=>():number=>value;",
+                "let make=(value:number):((n:number)=>number)=>(n:number):number=>value+n;",
+                "let make=function(value:number):((()=>number)){return ():number=>value;};",
+                "let f:((n:number)=>number)|null=(n:number):number=>n;",
+                "let fs:(()=>number)[]=[():number=>1];")) {
+            var grouped = parse("// 😀\r\n" + source);
+            assertNoParseErrors(grouped, "grouped function results must not invoke malformed-parameter recovery: " + source);
+            check(grouped.program().statements().size() == 1, "grouped function result keeps its declaration/body");
+        }
         String source = "// 🌍\r\nfunction f():void{if(true){";
         var unclosed = parse(source).diagnostics().stream().filter(d -> d.code().equals("E1006")).toList();
         check(unclosed.size() == 2 && unclosed.get(0).range().equals(unclosed.get(1).range())
