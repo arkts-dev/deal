@@ -3014,7 +3014,17 @@ public final class TypeChecker {
         Type source = checkExpression(test.value());
         Type target = nameResolver.resolveTypeNode(test.target());
         if (!(target instanceof Type.Class cls) || source instanceof Type.Void) {
-            error(DiagnosticCode.E3001, "instanceof requires a nominal class", test.span());
+            if (!(target instanceof Type.Class)) {
+                diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E3001,
+                        "instanceof requires a nominal class", test.span())
+                        .withFacts(new deal.diagnostics.DiagnosticFacts("test.nominal-target", "instanceof",
+                                "nominal class", typeName(target), List.of(
+                                        "Choose an existing nominal class target; instanceof tests identity, not structural shape or conversion.")))
+                        .withNote("Test target annotation", test.target().span().range()));
+            } else {
+                voidDataError(DiagnosticCode.E3001, "instanceof requires a nominal class",
+                        test.span(), test.value(), "instanceof");
+            }
             return Type.Error.INSTANCE;
         }
         instanceofTargets.put(test, cls);
@@ -3155,16 +3165,16 @@ public final class TypeChecker {
         Type objType = checkExpression(has.object());
         Type keyType = checkExpression(has.key());
         if (!(keyType instanceof Type.String)) {
-            error(DiagnosticCode.E4005, "Object.hasOwn key must be string", has.key().span());
+            presenceError("Object.hasOwn key must be string", has.key().span(), "presence.key-type",
+                    "string", typeName(keyType), null, null);
             return Type.Error.INSTANCE;
         }
         if (objType instanceof Type.Table) return Type.Boolean.INSTANCE;
         if (objType == Type.Error.INSTANCE) return Type.Error.INSTANCE;
 
         if (!(objType instanceof Type.Class cls)) {
-            error(DiagnosticCode.E4005,
-                "Object.hasOwn requires a Record or class instance, got " + typeName(objType),
-                has.span());
+            presenceError("Object.hasOwn requires a Record or class instance, got " + typeName(objType),
+                    has.span(), "presence.receiver", "Record or non-nullish class instance", typeName(objType), null, null);
             return Type.Error.INSTANCE;
         }
 
@@ -3177,22 +3187,36 @@ public final class TypeChecker {
             sym = resolveClassSymbol(cls);
         }
         if (sym == null) {
-            error(DiagnosticCode.E4005, "Class '" + cls.name() + "' not found", has.span());
+            presenceError("Class '" + cls.name() + "' not found", has.span(), "presence.missing-declaration",
+                    "available exact class declaration", typeName(cls), has.field(), null);
             return Type.Error.INSTANCE;
         }
 
         if (has.field() == null) {
-            error(DiagnosticCode.E4005, "Class presence tests require a literal declared-field name", has.key().span());
+            presenceError("Class presence tests require a literal declared-field name", has.key().span(),
+                    "presence.class-key", "literal declared-field name", typeName(keyType), null, sym);
             return Type.Error.INSTANCE;
         }
         ClassField field = IntrinsicResolvers.findField(sym.fields(), has.field());
         if (field == null) {
-            error(DiagnosticCode.E4005,
-                "Field '" + has.field() + "' not declared in class '" + cls.name() + "'",
-                has.span());
+            presenceError("Field '" + has.field() + "' not declared in class '" + cls.name() + "'",
+                    has.span(), "presence.undeclared-field", "declared field of " + typeName(cls), has.field(), has.field(), sym);
             return Type.Error.INSTANCE;
         }
         return Type.Boolean.INSTANCE;
+    }
+
+    private void presenceError(String message, Span span, String reason, String expected, String actual,
+            String field, Symbol.ClassSymbol declaration) {
+        var path = field == null ? List.<deal.diagnostics.DiagnosticFacts.PathSegment>of()
+                : List.of(new deal.diagnostics.DiagnosticFacts.PathSegment(
+                        deal.diagnostics.DiagnosticFacts.PathKind.FIELD, field));
+        var diagnostic = CompilerDiagnostic.error(DiagnosticCode.E4005, message, span)
+                .withFacts(new deal.diagnostics.DiagnosticFacts(reason, "Object.hasOwn", expected, actual, List.of(
+                        "Presence is distinct from null or undefined and does not narrow a field value; choose a supported receiver and string key, with a literal declared-field name for classes."), path));
+        if (declaration != null && declaration.declarationRange() != null)
+            diagnostic = diagnostic.withNote("Receiver class declaration", declaration.declarationRange());
+        diagnostics.add(diagnostic);
     }
 
     // =======================================================================

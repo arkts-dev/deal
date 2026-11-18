@@ -206,8 +206,87 @@ public class CheckerTest {
                 "incompatible expected value types are not suggested");
     }
 
+    private static void presenceDiagnosticActionability() {
+        String prefix = "// 😀\r\n";
+        for (String[] candidate : new String[][] {
+                {"let value:Record<string,unknown>={};Object.hasOwn(value,7);", "presence.key-type", "string", "number", "7", "let value:Record<string,unknown>={};Object.hasOwn(value,\"x\");"},
+                {"Object.hasOwn(7,\"x\");", "presence.receiver", "Record or non-nullish class instance", "number", "Object.hasOwn(7,\"x\")", "let value:Record<string,unknown>={};Object.hasOwn(value,\"x\");"},
+                {"class C{x?:number;}function run(value:C,key:string):void{Object.hasOwn(value,key);}", "presence.class-key", "literal declared-field name", "string", "key);", "class C{x?:number;}function run(value:C,key:string):void{Object.hasOwn(value,\"x\");}"},
+                {"class C{x?:number;}function run(value:C):void{Object.hasOwn(value,\"missing\");}", "presence.undeclared-field", "declared field of C", "missing", "Object.hasOwn(value,\"missing\")", "class C{x?:number;}function run(value:C):void{Object.hasOwn(value,\"x\");}"}}) {
+            String source = prefix + candidate[0];
+            var diagnostic = checkProgram(source).result().diagnostics().stream()
+                    .filter(d -> d.code().equals("E4005")).findFirst().orElseThrow();
+            var facts = diagnostic.facts();
+            check(facts.reason().equals(candidate[1]) && facts.operation().equals("Object.hasOwn")
+                            && facts.expected().equals(candidate[2]) && facts.actual().equals(candidate[3])
+                            && diagnostic.range().startScalarOffset() == source.indexOf(candidate[4])
+                            && facts.guidance().getFirst().contains("does not narrow"),
+                    "presence diagnostics distinguish checked key/receiver/field constraints with exact UTF-16 geometry: " + diagnostic);
+            boolean classEvidence = candidate[1].equals("presence.class-key") || candidate[1].equals("presence.undeclared-field");
+            check(diagnostic.notes().size() == (classEvidence ? 1 : 0)
+                            && (!classEvidence || diagnostic.notes().getFirst().range().startScalarOffset() == prefix.length()),
+                    "presence receiver evidence names only the selected available declaration");
+            check(facts.path().size() == (candidate[1].equals("presence.undeclared-field") ? 1 : 0)
+                            && (facts.path().isEmpty() || facts.path().getFirst().name().equals("missing")),
+                    "presence field paths do not invent a dynamic key name");
+            assertNoErrors(checkProgram(prefix + candidate[5]), "explicitly chosen presence repair rechecks");
+        }
+        for (String type : List.of("unknown", "null", "undefined", "number[]", "C|null")) {
+            var diagnostic = checkProgram("class C{x?:number;}function run(value:" + type
+                    + "):void{Object.hasOwn(value,\"x\");}").result().diagnostics().stream()
+                    .filter(d -> d.code().equals("E4005")).findFirst().orElseThrow();
+            check(diagnostic.facts().reason().equals("presence.receiver"), "presence rejects unsupported/nullish receiver: " + type);
+        }
+        var first = checkProgram("Object.hasOwn(7,false);").result().diagnostics().stream()
+                .filter(d -> d.code().equals("E4005")).toList();
+        check(first.size() == 1 && first.getFirst().facts().reason().equals("presence.key-type"),
+                "key rejection retains precedence over receiver rejection");
+        String providerSource = prefix + "export class C{x?:number;}";
+        var provider = (Symbol.ClassSymbol) checkProgram(providerSource, "provider.deal").result().symbolTable().resolve("C");
+        var resolver = new StubModuleResolver();
+        resolver.register("./provider", Map.of("C", new Type.Class("C", provider.identity(), provider.modulePath())));
+        resolver.registerClassSymbol("./provider", provider);
+        String consumer = "import * as P from \"./provider\";class C{missing?:number;}"
+                + "function run(value:P.C):void{Object.hasOwn(value,\"missing\");}";
+        var imported = checkProgramWithModule(consumer, resolver).result().diagnostics().stream()
+                .filter(d -> d.code().equals("E4005")).findFirst().orElseThrow();
+        check(imported.facts().reason().equals("presence.undeclared-field") && imported.notes().size() == 1
+                        && imported.notes().getFirst().range().equals(provider.declarationRange()),
+                "presence selects exact imported class despite a same-spelled local field");
+        resolver.registerClassSymbol("./provider", new Symbol.ClassSymbol("C", provider.fields(), provider.modulePath(), provider.identity()));
+        check(checkProgramWithModule(consumer, resolver).result().diagnostics().stream()
+                        .filter(d -> d.code().equals("E4005")).findFirst().orElseThrow().notes().isEmpty(),
+                "presence does not invent unavailable provider source evidence");
+        var missingResolver = new StubModuleResolver();
+        missingResolver.register("./provider", Map.of("C", new Type.Class("C", provider.identity(), provider.modulePath())));
+        var unavailable = checkProgramWithModule(consumer, missingResolver).result().diagnostics().stream()
+                .filter(d -> d.code().equals("E4005")).findFirst().orElseThrow();
+        check(unavailable.facts().reason().equals("presence.missing-declaration") && unavailable.notes().isEmpty()
+                        && unavailable.facts().path().getFirst().name().equals("missing"),
+                "unavailable exact declaration is separate from an observed undeclared field");
+        String nominal = prefix + "let value:unknown=7;let test=value instanceof number;";
+        var target = checkProgram(nominal).result().diagnostics().stream()
+                .filter(d -> d.facts().reason().equals("test.nominal-target")).findFirst().orElseThrow();
+        check(target.code().equals("E3001") && target.message().equals("instanceof requires a nominal class")
+                        && target.facts().operation().equals("instanceof") && target.facts().expected().equals("nominal class")
+                        && target.facts().actual().equals("number") && target.notes().size() == 1
+                        && target.notes().getFirst().range().startScalarOffset() == nominal.indexOf("number"),
+                "nominal test reports the rejected target annotation without structural substitution");
+        var voidTest = checkProgram("class C{}function produce():void{}let test=produce() instanceof C;")
+                .result().diagnostics().stream().filter(d -> d.facts().reason().equals("void.data-use")).findFirst().orElseThrow();
+        check(voidTest.facts().operation().equals("instanceof") && voidTest.facts().actual().equals("void")
+                        && voidTest.notes().getFirst().message().equals("Void producer result annotation"),
+                "void nominal operand retains checked producer evidence, not a false target mismatch");
+        assertNoErrors(checkProgram("class C{}let value:unknown=7;let test=value instanceof C;"), "chosen nominal target rechecks");
+        assertNoErrors(checkProgram("class C{x?:number|null;}function run(value:C):void{Object.hasOwn(value,\"x\");}"),
+                "presence accepts optional/nullable declarations without value narrowing");
+        check(hasErrors(checkProgram("class C{x?:number;}function run(value:C):void{if(Object.hasOwn(value,\"x\")){let n:number=value.x;}}")
+                        .result().diagnostics()), "presence evidence never grants an optional-value refinement");
+    }
+
     private static void diagnosticActionability() {
         nameAlternatives();
+        presenceDiagnosticActionability();
         for (String[] candidate : new String[][] {
                 {"let value:Record<string,unknown>={};let result=value.child.name;", "access.field-receiver", "field.read", "unknown", "let value:Record<string,unknown>={};let result=(value.child as Record<string,unknown>).name;"},
                 {"function run(value:Record<string,unknown>|null):void{let result=value.name;}", "access.field-receiver", "field.read", "Record<string, unknown> | null", "function run(value:Record<string,unknown>|null):void{let result=value?.name;}"},

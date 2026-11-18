@@ -1766,6 +1766,20 @@ checked extraction, supported binding narrowing, nullish receiver guards and
 optional skipped access without equating field presence with a value guard.
 Array key facts require `number`, while integrality and bounds remain runtime
 checks with no implicit truncation.
+E4005 presence failures retain operation `Object.hasOwn` and distinct reasons
+`presence.key-type`, `presence.receiver`, `presence.missing-declaration`,
+`presence.class-key`, and `presence.undeclared-field`. Facts identify the checked
+key/receiver type, literal-class-key requirement or exact rejected field name.
+Only known literal fields get FIELD paths; dynamic key values are not inferred.
+Available selected receiver class declarations carry `Receiver class declaration`
+notes, including exact imported providers; unavailable declarations never become
+claims that a field is undeclared. Key rejection still precedes receiver/field
+validation. Presence does not narrow values or equate absence with null/undefined.
+E3001 invalid `instanceof` targets carry `test.nominal-target` / `instanceof`,
+expected `nominal class`, checked target type and `Test target annotation`.
+A nominal target with a void operand instead retains `void.data-use` and known
+producer result annotations. Neither case infers a replacement class, structural
+match, conversion or value; ordinary checking and diagnostic order are unchanged.
 E1042 template escape rejections carry `syntax.invalid-template-escape` /
 `lex.template`, the admitted escape-spelling requirement, the exact raw rejected
 prefix, and `Template literal opened here` at that template's own backtick.

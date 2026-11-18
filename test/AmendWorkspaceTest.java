@@ -44,6 +44,7 @@ public final class AmendWorkspaceTest {
         syntaxRecoveryCannotAuthorizeMissingDependencies();
         malformedListsRemainStagedUntilRechecked();
         nameAlternativesRemainIntentDependent();
+        presenceRepairRechecksCandidate();
         actionabilityFactsAndRepairScope();
         smallestEditableBlockIsNotSemanticOwner();
         System.out.println("AmendWorkspaceTest: all tests passed");
@@ -219,6 +220,30 @@ public final class AmendWorkspaceTest {
                         + "export class Entry { text: string; }", "app.deal");
         check(repaired.diagnostics().stream().noneMatch(d -> d.severity().equals("error")),
                 "ordinary resolution resumes after syntax repair");
+    }
+
+    private static void presenceRepairRechecksCandidate() {
+        String clean = "// 😀\r\nclass C{x?:number;}\r\nexport function run(value:C):boolean{return Object.hasOwn(value,\"x\");}";
+        var base = AmendWorkspace.inspect(clean, "presence.deal");
+        var run = base.symbols().stream().filter(s -> s.name().equals("run")).findFirst().orElseThrow();
+        var body = base.nodes().stream().filter(n -> n.kind().equals("function-body") && n.ownerId().equals(run.id()))
+                .findFirst().orElseThrow();
+        var change = AmendWorkspace.inspectChange(clean, "presence.deal", base.sourceDigest(), List.of(body.id()),
+                List.of(AmendWorkspace.REPLACE_FUNCTION_BODY));
+        var staged = AmendWorkspace.stageChange(clean, "presence.deal",
+                new CompilerProtocol.ChangeSetPrecondition(base.sourceDigest(), Map.of(body.id().value(), body.fingerprint())),
+                change, List.of(new AmendWorkspace.ReplaceFunctionBody(body.id(), "return Object.hasOwn(value,42);")));
+        var rejected = staged.diagnostics().stream().filter(d -> d.code().equals("E4005")).findFirst().orElseThrow();
+        String candidate = clean.replace("return Object.hasOwn(value,\"x\");", "\n    return Object.hasOwn(value,42);\n  ");
+        check(!staged.accepted() && staged.source().equals(clean) && rejected.facts().reason().equals("presence.key-type")
+                        && rejected.range().startScalarOffset() == candidate.indexOf("42")
+                        && rejected.facts().equals(AmendWorkspace.inspect(candidate, "presence.deal").diagnostics().getFirst().facts()),
+                "presence rejection retains unpublished assembled-candidate key evidence");
+        var repaired = AmendWorkspace.patchRepairWorkspace(clean, "presence.deal", staged.workspace(),
+                List.of(new CompilerProtocol.SlotPatch("R1", Map.of("body", "return Object.hasOwn(value,\"x\");"))));
+        check(repaired.accepted() && repaired.source().contains("class C{x?:number;}")
+                        && AmendWorkspace.inspect(repaired.source(), "presence.deal").diagnostics().isEmpty(),
+                "explicit revision-pinned literal-key repair rechecks without rewriting class optionality");
     }
 
     private static void nameAlternativesRemainIntentDependent() {

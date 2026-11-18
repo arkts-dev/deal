@@ -3226,6 +3226,34 @@ public class DiagnosticRangeTest {
             }
         }
 
+        for (String source : List.of("Object.hasOwn(7,false);", "Object.hasOwn(null,\"x\");",
+                "class C{x?:number;}function f(c:C,k:string):void{Object.hasOwn(c,k);}",
+                "class C{x?:number;}function f(c:C):void{Object.hasOwn(c,\"absent\");}",
+                "let value:unknown=7;let test=value instanceof number;",
+                "class C{}function produce():void{}let test=produce() instanceof C;",
+                "let text=`${Object.hasOwn(7,\"x\")}`;")) {
+            String text = "// 😀\r\n" + source;
+            var lex = new Lexer(text, "presence.deal").tokenize();
+            var parse = new Parser(lex.tokens(), "presence.deal").parse();
+            var resolver = new NameResolver("presence.deal", new StubModuleResolver());
+            var scope = resolver.resolve(parse.program());
+            var diagnostics = TypeChecker.check("presence.deal", scope, resolver, parse.program()).diagnostics();
+            check(lex.diagnostics().isEmpty() && parse.diagnostics().isEmpty() && diagnostics.size() == 1,
+                    "presence/nominal transport probe reaches its unique semantic rejection: " + source);
+            var diagnostic = diagnostics.getFirst();
+            var inspection = deal.amend.AmendWorkspace.inspect(text, "presence.deal").diagnostics().getFirst();
+            var document = deal.amend.CompilerProtocolJson.requireObject(deal.amend.CompilerProtocolJson.decode(
+                    DiagnosticStructuredOutput.toJson(diagnostics)), "document");
+            var entries = deal.amend.CompilerProtocolJson.requireArray(
+                    deal.amend.CompilerProtocolJson.field(document, "diagnostics"), "diagnostics");
+            var entry = deal.amend.CompilerProtocolJson.requireObject(entries.items().getFirst(), "diagnostic");
+            check(inspection.facts().equals(diagnostic.facts()) && inspection.range().equals(diagnostic.range())
+                            && inspection.notes().equals(diagnostic.notes())
+                            && deal.amend.CompilerProtocolJson.encode(inspection.facts()).equals(
+                                deal.semantic.ir.CanonicalJson.serializeText(deal.amend.CompilerProtocolJson.field(entry, "facts"))),
+                    "presence/nominal producers retain complete facts/ranges/notes across CLI and amendment transports");
+        }
+
         for (String source : List.of("let count:number=7;let result:number=coun;",
                 "function count(x:number):number{return x;}let result=coun(7);")) {
             String text = "// 😀\r\n" + source;
