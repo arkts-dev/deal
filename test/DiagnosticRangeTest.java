@@ -1072,6 +1072,20 @@ public class DiagnosticRangeTest {
                         "await evidence survives canonical transport");
             }
         }
+        for (String use : List.of("let n:string=x;", "let n:string=\"\";n=x;", "consume(x);", "return x;")) {
+            String typedSource = prefix + "function consume(value:string):void{}"
+                    + "async function f(x:string|null):Promise<string>{if(x!==null){await tick();"
+                    + use + "}return \"\";}";
+            var typedDiagnostics = checkerDiagnostics(typedSource, "await.deal");
+            String code = use.startsWith("consume") ? "E5001" : use.startsWith("return") ? "E5003" : "E3001";
+            var typed = checkerDiag(typedDiagnostics, code);
+            check(typed != null, "typed consumption keeps original rejection: " + use);
+            check(typed != null && typed.notes().stream().anyMatch(n -> n.message().contains("invalidated by this await")
+                            && n.range().startScalarOffset() == typedSource.indexOf("await tick()")),
+                    "typed consumption retains exact prior await: " + use);
+            check(typed != null && typed.notes().stream().anyMatch(n -> n.message().contains("annotation")),
+                    "typed consumption keeps expected annotation: " + use);
+        }
         String arraySource = prefix + "async function f(xs:number[]|null):Promise<void>{"
                 + "if(xs!==null){await tick();let n=xs[0];}}";
         var array = checkerDiag(checkerDiagnostics(arraySource, "await.deal"), "E3007");

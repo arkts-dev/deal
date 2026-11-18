@@ -706,7 +706,10 @@ public final class TypeChecker {
                 }
             }
             if (targetType != null) {
+                int index = diagnostics.size();
                 checkAssignment(targetType, exprType, vd.initializer().span(), vd.typeAnnotation().orElse(null));
+                if (diagnostics.size() > index)
+                    diagnostics.set(index, withLostRefinement(diagnostics.get(index), vd.initializer()));
                 // Initialization assigns a value to the new binding: a
                 // value that names a different declaration of the same
                 // canonical class identity crosses the two runtime
@@ -889,13 +892,13 @@ public final class TypeChecker {
             if (currentReturnType instanceof Type.Void || !isAssignable(currentReturnType, exprType)) {
                 if (!reportClassProviderCrossing(currentReturnType, exprType,
                         rs.expr().get().span())) {
-                    diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E5003,
+                    diagnostics.add(withLostRefinement(CompilerDiagnostic.error(DiagnosticCode.E5003,
                         "Return type mismatch: expected " + typeName(currentReturnType)
                         + ", got " + typeName(exprType), rs.expr().get().span()).withFacts(
                                 new deal.diagnostics.DiagnosticFacts("return.incompatible", "return",
                                         typeName(currentReturnType), typeName(exprType), List.of())
                                         .withMismatch(typeMismatch(currentReturnType, exprType)))
-                                .withNote("Declared result annotation", currentReturnAnnotation.span().range()));
+                                .withNote("Declared result annotation", currentReturnAnnotation.span().range()), rs.expr().get()));
                 }
             }
         } else {
@@ -2273,7 +2276,7 @@ public final class TypeChecker {
                                 .withMismatch(typeMismatch(paramType, argType)));
                     var parameterRange = diagnostic.facts().call().parameterRange();
                     if (parameterRange != null) diagnostic = diagnostic.withNote("Expected parameter annotation", parameterRange);
-                    diagnostics.add(diagnostic);
+                    diagnostics.add(withLostRefinement(diagnostic, call.args().get(i)));
                 }
             }
         }
@@ -3354,7 +3357,9 @@ public final class TypeChecker {
                 TypeNode annotation = assign.target() instanceof IdentifierExpr id
                         && resolveVisibleBinding(id.name()) instanceof Symbol.VariableSymbol variable
                         ? variable.declaredType() : null;
+                int index = diagnostics.size();
                 reportAssignabilityError(declaredTarget, valueType, assign.span(), annotation);
+                diagnostics.set(index, withLostRefinement(diagnostics.get(index), assign.value()));
             }
         }
 
