@@ -50,7 +50,27 @@ public final class AmendWorkspaceTest {
         actionabilityFactsAndRepairScope();
         smallestEditableBlockIsNotSemanticOwner();
         typedContextRequestsAreRevisionPinned();
+        sourceAdaptersPreserveUtf16Geometry();
         System.out.println("AmendWorkspaceTest: all tests passed");
+    }
+
+    private static void sourceAdaptersPreserveUtf16Geometry() {
+        String source = "// 😀\r\nexport function f():number{let x:number=\"bad\";return 1;}";
+        var original = AmendWorkspace.inspect(source, "adapter.deal");
+        var adapted = AmendWorkspace.inspect(source, "adapter.deal", text -> text.replace("😀", "xx"));
+        check(original.equals(adapted), "equal UTF-16 geometry permits different scalar counts in inert comments");
+        var diagnostic = adapted.diagnostics().getFirst();
+        check(diagnostic.range().startScalarOffset() == source.indexOf("\"bad\"")
+                        && diagnostic.range().startLine() == 2,
+                "adapter facts use original UTF-16 offsets after CRLF/supplementary prefix");
+        for (String replacement : List.of(source.replace("😀", "x"),
+                source.replace("\r\n", " \n"), source.replace("\r\n", "\n\r"),
+                source.replace("\r\n", "\u2028\u2029"))) {
+            boolean rejected = false;
+            try { AmendWorkspace.inspect(source, "adapter.deal", ignored -> replacement); }
+            catch (IllegalArgumentException expected) { rejected = expected.getMessage().contains("UTF-16"); }
+            check(rejected, "shifted units or line terminators reject before issuing source identities");
+        }
     }
 
     private static void typedContextRequestsAreRevisionPinned() {

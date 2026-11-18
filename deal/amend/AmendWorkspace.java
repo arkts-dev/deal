@@ -1427,18 +1427,17 @@ public final class AmendWorkspace {
     }
 
     private static void requireSameGeometry(String source, String parserSource) {
-        String[] canonicalLines = source.split("\\n", -1);
-        String[] parserLines = parserSource.split("\\n", -1);
-        if (canonicalLines.length != parserLines.length) {
-            throw new IllegalArgumentException("Source adapter must preserve line count");
+        if (source.length() != parserSource.length())
+            throw new IllegalArgumentException("Source adapter must preserve UTF-16 source length");
+        for (int index = 0; index < source.length(); index++) {
+            char original = source.charAt(index), adapted = parserSource.charAt(index);
+            if (original != adapted && (isSourceLineBreak(original) || isSourceLineBreak(adapted)))
+                throw new IllegalArgumentException("Source adapter must preserve line terminators at UTF-16 offset " + index);
         }
-        for (int index = 0; index < canonicalLines.length; index++) {
-            if (canonicalLines[index].codePointCount(0, canonicalLines[index].length())
-                    != parserLines[index].codePointCount(0, parserLines[index].length())) {
-                throw new IllegalArgumentException(
-                        "Source adapter must preserve Unicode-scalar columns on line " + (index + 1));
-            }
-        }
+    }
+
+    private static boolean isSourceLineBreak(char unit) {
+        return unit == '\r' || unit == '\n' || unit == '\u2028' || unit == '\u2029';
     }
 
     private static void collectBlocks(
