@@ -1748,6 +1748,17 @@ checked extraction, supported binding narrowing, nullish receiver guards and
 optional skipped access without equating field presence with a value guard.
 Array key facts require `number`, while integrality and bounds remain runtime
 checks with no implicit truncation.
+E1042 template escape rejections carry `syntax.invalid-template-escape` /
+`lex.template`, the admitted escape-spelling requirement, the exact raw rejected
+prefix, and `Template literal opened here` at that template's own backtick.
+The primary prefix range is unchanged: it does not claim the location of a
+later malformed digit or a decoded value. Nested template evidence rebases with
+its own diagnostic, not the enclosing template's opener. Adjacent minus
+rejections carry `syntax.adjacent-minus` / `lex.operator`, expected
+`whitespace or comment between minus tokens`, actual `--`, and a secondary
+`Adjacent minus starts here` range on the second minus. The primary remains on
+the first minus. Separating two intended operators is an alternative, not a
+guessed decrement rewrite. Neither enrichment changes lexing or recovery.
 Lexer literal failures distinguish `syntax.unterminated-comment`,
 `syntax.unterminated-string`, `syntax.unterminated-string-escape`,
 `syntax.unterminated-template`, and `syntax.unterminated-interpolation`.

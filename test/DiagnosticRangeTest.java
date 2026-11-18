@@ -3194,7 +3194,7 @@ public class DiagnosticRangeTest {
                     + "\\" + "u0007bell\""),
             "JSON string escaping, got: " + escapedJson);
 
-        for (var lexical : new deal.lexer.Lexer("// 😀\r\n0b102;😀", "lex.deal").tokenize().diagnostics()) {
+        for (var lexical : new deal.lexer.Lexer("// 😀\r\n0b102;😀;1--2;`\\u{}`", "lex.deal").tokenize().diagnostics()) {
             String lexicalJson = DiagnosticStructuredOutput.toJson(List.of(lexical));
             var lexicalDocument = deal.amend.CompilerProtocolJson.requireObject(
                     deal.amend.CompilerProtocolJson.decode(lexicalJson), "document");
@@ -3203,7 +3203,7 @@ public class DiagnosticRangeTest {
             var lexicalItem = deal.amend.CompilerProtocolJson.requireObject(lexicalItems.items().getFirst(), "diagnostic");
             check(deal.amend.CompilerProtocolJson.encode(lexical.facts()).equals(deal.semantic.ir.CanonicalJson.serializeText(
                             deal.amend.CompilerProtocolJson.field(lexicalItem, "facts"))),
-                    "CLI and amendment retain identical producer numeric/character facts");
+                    "CLI and amendment retain identical producer numeric/character/template/operator facts");
             check(lexical.withMissingSymbol("VALUE", "later", "", List.of()).facts().equals(lexical.facts())
                             && lexical.withMissingSymbol("VALUE", "later", "", List.of()).notes().equals(lexical.notes()),
                     "lexical component evidence survives independent metadata copies");

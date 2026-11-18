@@ -540,7 +540,7 @@ public final class Lexer {
         int contentStart = pos;
 
         TemplateScanner.Scan scan = TemplateScanner.scan(source, contentStart);
-        reportTemplateTrailingBackslashes(scan);
+        reportTemplateTrailingBackslashes(scan, opener);
 
         switch (scan.status()) {
             case TERMINATED -> {
@@ -585,7 +585,7 @@ public final class Lexer {
      * as the scan left them. Violation ranges are recorded in source order,
      * and each range lies before the scan's stop index.</p>
      */
-    private void reportTemplateTrailingBackslashes(TemplateScanner.Scan scan) {
+    private void reportTemplateTrailingBackslashes(TemplateScanner.Scan scan, DiagnosticRange opener) {
         if (scan.violations().isEmpty()) {
             return;
         }
@@ -593,9 +593,13 @@ public final class Lexer {
         for (TemplateScanner.Violation violation : scan.violations()) {
             ScalarSourceCursor.Mark start = markAt(violation.start());
             ScalarSourceCursor.Mark end = markAt(violation.end());
-            error(DiagnosticCode.E1042,
-                templateTrailingBackslashMessage(violation.delimiter()),
-                rangeBetween(start, end));
+            diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E1042,
+                    templateTrailingBackslashMessage(violation.delimiter()), rangeBetween(start, end))
+                    .withFacts(new deal.diagnostics.DiagnosticFacts("syntax.invalid-template-escape", "lex.template",
+                            "admitted numeric, hexadecimal or Unicode escape spelling",
+                            source.substring(violation.start(), violation.end()), List.of(
+                                    "Inspect the escape component beginning here and choose its intended spelling; the range identifies the rejected prefix, not a decoded value or an inferred replacement.")))
+                    .withNote("Template literal opened here", opener));
         }
         resetCursor(entry);
     }
@@ -741,8 +745,12 @@ public final class Lexer {
             case '-' -> {
                 bump();
                 if (pos < source.length() && source.charAt(pos) == '-') {
-                    error(DiagnosticCode.E1042, "Adjacent '-' tokens require whitespace or a comment",
-                        tokenStartRange());
+                    diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E1042,
+                            "Adjacent '-' tokens require whitespace or a comment", tokenStartRange())
+                            .withFacts(new deal.diagnostics.DiagnosticFacts("syntax.adjacent-minus", "lex.operator",
+                                    "whitespace or comment between minus tokens", "--", List.of(
+                                            "If two minus operators are intended, separate them with whitespace or a comment; DEAL does not admit a decrement operator.")))
+                            .withNote("Adjacent minus starts here", currentComponentRange()));
                 }
                 yield makeToken(TokenType.MINUS, "-");
             }

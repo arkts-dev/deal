@@ -120,6 +120,14 @@ public class ParserTest {
                         && embedded.facts().syntax().lexeme().equals("=>"),
                 "template line restriction rebases both component ranges without altering token evidence");
         assertNoParseErrors(parse(template.replace("/*\r\n*/", "/**/")), "chosen embedded same-line repair");
+        String nested = prefix + "let value=`😀${`\\u{}`}`;";
+        var escape = diagOf(parse(nested), "E1042");
+        check(escape != null && escape.facts().reason().equals("syntax.invalid-template-escape")
+                        && escape.facts().actual().equals("\\u")
+                        && escape.range().startScalarOffset() == nested.indexOf("\\u")
+                        && escape.notes().getFirst().range().startScalarOffset() == nested.indexOf("`\\u"),
+                "nested template escape retains its own rebased opener and raw prefix");
+        assertNoParseErrors(parse(nested.replace("\\u{}", "\\u0041")), "chosen nested Unicode escape repair");
     }
 
     private static void testSubsetAndListRecoveryFacts() {
