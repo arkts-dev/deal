@@ -160,7 +160,7 @@ ExternalFunctionDeclaration ::= 'function' Identifier '(' ParameterList? ')' ':'
 
 ParameterList ::= Parameter (',' Parameter)* ','?
 
-Parameter ::= Identifier ':' Type
+Parameter ::= Identifier TypeAnnotation?
 
 ReturnType ::= Type | 'void' | 'Promise' '<' (Type | 'void') '>'
 
@@ -724,7 +724,7 @@ Function wrappers enforce [Typed boundaries](#typed-boundaries); imported host f
 
 ### Function expressions
 
-Function and arrow expressions follow function-declaration typing:
+Declarations require parameter annotations; function/arrow expressions may omit them only with unique positional contextual parameter types. Return annotations remain required:
 
 ```ts
 let f: (x: number) => number = function(x: number): number {
@@ -984,7 +984,11 @@ if (b) { }
 
 ### Conditional
 
-`condition ? a : b` evaluates only the selected branch. Branches receive contextual types; otherwise infer identical types, permitted nullish unions, or unknown if either branch is unknown and neither is void. Reject other combinations.
+`condition ? a : b` evaluates only the selected branch.
+
+- Branches receive contextual types; otherwise, either array/object literal arm receives the independently typed other's exact array/class/Record type.
+- Infer identical types, permitted nullish unions, or unknown if either branch is unknown and neither is void.
+- Reject other combinations.
 
 ```ts
 let result = condition ? a : b;
@@ -1292,6 +1296,8 @@ xs.find(predicate: (value: E, index: number, array: E[]) => boolean): E | undefi
 xs.findIndex(predicate: (value: E, index: number, array: E[]) => boolean): number
 xs.some(predicate: (value: E, index: number, array: E[]) => boolean): boolean
 xs.every(predicate: (value: E, index: number, array: E[]) => boolean): boolean
+xs.slice(): E[]
+xs.slice(start: number): E[]
 xs.slice(start: number, end: number): E[]
 ss.join(separator: string): string
 Array.from(xs: E[], mapper: (value: E, index: number) => R): R[]
@@ -1342,6 +1348,8 @@ s has type string; `length` is read-only. Follow corresponding [ECMAScript Strin
 `String(value: number): string` follows ECMAScript [Number::toString](https://262.ecma-international.org/16.0/#sec-numeric-types-number-tostring) with radix 10.
 
 #### Number
+
+`Number(text: string): number` follows ECMAScript [StringToNumber](https://262.ecma-international.org/16.0/#sec-stringtonumber).
 
 ```txt
 Number.isFinite(value: unknown): boolean
