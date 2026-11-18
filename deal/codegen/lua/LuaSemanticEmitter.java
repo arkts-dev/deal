@@ -897,6 +897,7 @@ public final class LuaSemanticEmitter {
             // console realization in both modes. Chunk-local (like __module),
             // so a second chunk of one process never changes this chunk's
             // mode.
+            out.append("local __runtimeDiagnostics = os.getenv(\"DEAL_DIAGNOSTICS_JSON\") == \"1\"\n");
             out.append("local __traceMode = ").append(trace ? "true" : "false")
                 .append("\n");
             out.append("local ").append(FACTORY_TABLE).append(" = {}\n");
@@ -1255,7 +1256,7 @@ public final class LuaSemanticEmitter {
                 out.append("if not __mainOk then\n");
                 out.append("  if type(__mainErr) == \"table\" and __mainErr[__dealCarrierKeys.d] then\n");
                 out.append("    print(\"DEAL_ERROR_CODE: \"..__mainErr.code)\n");
-                out.append("    if os.getenv(\"DEAL_DIAGNOSTICS_JSON\") == \"1\" then\n");
+                out.append("    if __runtimeDiagnostics then\n");
                 out.append("      io.stderr:write(\"DEAL_RUNTIME_DIAGNOSTIC: \"..__dealRuntimeDiagnostic(__mainErr)..\"\\n\")\n");
                 out.append("      io.stderr:flush()\n");
                 out.append("    end\n");

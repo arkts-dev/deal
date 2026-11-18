@@ -13,7 +13,7 @@
 #include <string.h>
 
 /* The two pinned terminal lines and the exit status of an uncaught Error. */
-static int deal_terminal_error(deal_error *error) {
+static int deal_terminal_error(deal_error *error, int diagnostics) {
     size_t code_length = 0;
     const char *code = deal_error_code_bytes(error, &code_length);
     static const char code_prefix[] = "DEAL_ERROR_CODE: ";
@@ -26,8 +26,7 @@ static int deal_terminal_error(deal_error *error) {
     deal_platform_write_stdout(snapshot, strlen(snapshot));
     deal_platform_write_stdout("\n", 1);
     deal_platform_flush_stdout();
-    const char *diagnostics = deal_platform_environment("DEAL_DIAGNOSTICS_JSON");
-    if (diagnostics != NULL && diagnostics[0] == '1' && diagnostics[1] == '\0') {
+    if (diagnostics) {
         static const char prefix[] = "DEAL_RUNTIME_DIAGNOSTIC: ";
         char *document = deal_error_diagnostic(error);
         deal_platform_write_stderr(prefix, sizeof prefix - 1u);
@@ -47,14 +46,17 @@ static int deal_entry_deferred(void) {
 }
 
 int deal_project_main(void) {
+    /* Snapshot opt-in before any module/user/host execution. */
+    const char *flag = deal_platform_environment("DEAL_DIAGNOSTICS_JSON");
+    int diagnostics = flag != NULL && flag[0] == '1' && flag[1] == '\0';
     deal_outcome started = deal_project_start();
     if (started.error != NULL) {
-        return deal_terminal_error(started.error);
+        return deal_terminal_error(started.error, diagnostics);
     }
     if (!deal_entry_deferred()) {
         deal_outcome invoked = deal_project_run_main();
         if (invoked.error != NULL) {
-            return deal_terminal_error(invoked.error);
+            return deal_terminal_error(invoked.error, diagnostics);
         }
     }
     deal_platform_flush_stdout();

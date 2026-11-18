@@ -25,6 +25,8 @@ import java.util.concurrent.Future;
 
 public final class JvmRuntime {
 
+    private static final boolean RUNTIME_DIAGNOSTICS = "1".equals(System.getenv("DEAL_DIAGNOSTICS_JSON"));
+
     private JvmRuntime() {
     }
 
@@ -781,7 +783,7 @@ public final class JvmRuntime {
     /** The nested error text form. */
     /** Opt-in terminal metadata export reads only immutable failure transport, never host data. */
     public static void reportRuntimeDiagnostic(DealError error) {
-        if (!"1".equals(System.getenv("DEAL_DIAGNOSTICS_JSON"))) return;
+        if (!RUNTIME_DIAGNOSTICS) return;
         StringBuilder out = new StringBuilder("{\"version\":2,\"runtime\":");
         java.util.Set<DealError> seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
         appendRuntimeDiagnostic(out, error, seen, 0);
