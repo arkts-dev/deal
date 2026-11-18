@@ -145,6 +145,28 @@ public final class CompilerProtocol {
         }
     }
 
+    public enum ContextKind { MODULE, SYMBOL, NODE }
+
+    /** Exact-revision read request; grants no edit or replacement choice. */
+    public record ContextRequest(RevisionRef revision, ContextKind kind, SemanticId targetId,
+                                 String targetFingerprint) {
+        public ContextRequest {
+            Objects.requireNonNull(revision, "revision");
+            Objects.requireNonNull(kind, "kind");
+            Objects.requireNonNull(targetId, "targetId");
+            Objects.requireNonNull(targetFingerprint, "targetFingerprint");
+        }
+    }
+
+    public record ContextResult(boolean accepted, RevisionRef revision, SemanticSlice slice,
+                                List<StructuredDiagnostic> diagnostics) {
+        public ContextResult {
+            Objects.requireNonNull(revision, "revision");
+            diagnostics = List.copyOf(diagnostics);
+            if (accepted != (slice != null)) throw new IllegalArgumentException("Context result has no accepted slice");
+        }
+    }
+
     public record StructuredDiagnostic(
             String code,
             String severity,
@@ -154,28 +176,33 @@ public final class CompilerProtocol {
             DiagnosticFacts facts,
             List<SemanticId> relatedIds,
             List<RepairScope> repairScopes,
-            String contextQuery,
+            ContextRequest contextRequest,
             List<deal.diagnostics.DiagnosticNote> notes,
             Integer operationIndex,
             List<deal.diagnostics.CompilerDiagnostic.MissingSymbol> missingSymbols) {
         public StructuredDiagnostic(String code, String severity, String message, DiagnosticRange range,
                                     SemanticId ownerId, String expected, String actual,
-                                    List<SemanticId> relatedIds, List<RepairScope> repairScopes, String contextQuery,
+                                    List<SemanticId> relatedIds, List<RepairScope> repairScopes, ContextRequest contextRequest,
                                     List<deal.diagnostics.DiagnosticNote> notes, Integer operationIndex) {
             this(code, severity, message, range, ownerId,
                     new DiagnosticFacts(code, "repair", expected, actual, List.of()), relatedIds, repairScopes,
-                    contextQuery, notes, operationIndex, List.of());
+                    contextRequest, notes, operationIndex, List.of());
         }
         public StructuredDiagnostic withMissingSymbols(List<deal.diagnostics.CompilerDiagnostic.MissingSymbol> facts) {
             return new StructuredDiagnostic(code, severity, message, range, ownerId, this.facts,
-                    relatedIds, repairScopes, contextQuery, notes, operationIndex, facts);
+                    relatedIds, repairScopes, contextRequest, notes, operationIndex, facts);
         }
         public StructuredDiagnostic(String code, String severity, String message, DiagnosticRange range,
                                     SemanticId ownerId, String expected, String actual,
-                                    List<SemanticId> relatedIds, List<RepairScope> repairScopes, String contextQuery,
+                                    List<SemanticId> relatedIds, List<RepairScope> repairScopes, ContextRequest contextRequest,
                                     List<deal.diagnostics.DiagnosticNote> notes) {
             this(code, severity, message, range, ownerId, expected, actual, relatedIds, repairScopes,
-                    contextQuery, notes, (Integer) null);
+                    contextRequest, notes, (Integer) null);
+        }
+
+        public StructuredDiagnostic withContextRequest(ContextRequest request) {
+            return new StructuredDiagnostic(code, severity, message, range, ownerId, facts,
+                    relatedIds, repairScopes, request, notes, operationIndex, missingSymbols);
         }
 
         public String expected() { return facts.expected(); }
@@ -183,19 +210,19 @@ public final class CompilerProtocol {
 
         public StructuredDiagnostic withFacts(DiagnosticFacts value) {
             return new StructuredDiagnostic(code, severity, message, range, ownerId, value,
-                    relatedIds, repairScopes, contextQuery, notes, operationIndex, missingSymbols);
+                    relatedIds, repairScopes, contextRequest, notes, operationIndex, missingSymbols);
         }
 
         /** Index in this response's ChangeSet only; never a persisted semantic identity. */
         public StructuredDiagnostic withOperationIndex(int index) {
             return new StructuredDiagnostic(code, severity, message, range, ownerId, facts,
-                    relatedIds, repairScopes, contextQuery, notes, index, missingSymbols);
+                    relatedIds, repairScopes, contextRequest, notes, index, missingSymbols);
         }
         public StructuredDiagnostic(String code, String severity, String message, DiagnosticRange range,
                                     SemanticId ownerId, String expected, String actual,
-                                    List<SemanticId> relatedIds, List<RepairScope> repairScopes, String contextQuery) {
+                                    List<SemanticId> relatedIds, List<RepairScope> repairScopes, ContextRequest contextRequest) {
             this(code, severity, message, range, ownerId, expected, actual, relatedIds, repairScopes,
-                    contextQuery, List.of(), null);
+                    contextRequest, List.of(), null);
         }
 
         public StructuredDiagnostic {

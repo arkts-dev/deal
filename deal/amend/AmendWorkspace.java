@@ -151,7 +151,7 @@ public final class AmendWorkspace {
             StructuredDiagnostic diagnostic = diagnostic(
                     "CP1001", "Stale source digest; inspect the current source before editing",
                     analysis.moduleId(), null, analysis.inspection().sourceDigest(), baseDigest,
-                    List.of(), "inspectCanonicalApp");
+                    List.of(), contextRequest(analysis, analysis.moduleId()));
             return new ChangeInspection(revision(analysis), digest(baseDigest + "\u0000stale"),
                     List.of(), List.of(diagnostic));
         }
@@ -163,7 +163,7 @@ public final class AmendWorkspace {
             if (target == null) {
                 StructuredDiagnostic diagnostic = diagnostic(
                         "CP1020", "Unknown change anchor", anchor, null,
-                        "target issued for " + baseDigest, "missing", List.of(), "inspectCanonicalApp");
+                        "target issued for " + baseDigest, "missing", List.of(), contextRequest(analysis, analysis.moduleId()));
                 return new ChangeInspection(revision(analysis), digest(baseDigest + "\u0000unknown"),
                         List.of(), List.of(diagnostic));
             }
@@ -197,6 +197,85 @@ public final class AmendWorkspace {
     public static Inspection inspect(
             String source, String modulePath, ModuleResolver resolver, SourceAdapter adapter) {
         return analyze(source, modulePath, resolver, adapter).inspection();
+    }
+
+    private static CompilerProtocol.ContextRequest contextRequest(Analysis analysis, SemanticId targetId) {
+        return contextRequest(analysis.source(), analysis.inspection().sourceDigest(), analysis.moduleId(), analysis.targets(), targetId);
+    }
+
+    private static CompilerProtocol.ContextRequest contextRequest(String source, String sourceDigest, SemanticId moduleId,
+            Map<SemanticId, Target> targets, SemanticId targetId) {
+        Target target = targets.get(targetId);
+        if (target == null) target = targets.get(moduleId);
+        var kind = target.kind().equals("module") ? CompilerProtocol.ContextKind.MODULE
+                : target.kind().equals("declaration") ? CompilerProtocol.ContextKind.SYMBOL : CompilerProtocol.ContextKind.NODE;
+        return new CompilerProtocol.ContextRequest(new RevisionRef(sourceDigest), kind, target.id(),
+                target.kind().equals("module") ? sourceDigest : digest(source.substring(target.start(), target.end())));
+    }
+
+    public static CompilerProtocol.ContextResult queryContext(String source, String modulePath,
+            CompilerProtocol.ContextRequest request) {
+        return queryContext(source, modulePath, request, rejectingResolver(), SourceAdapter.IDENTITY);
+    }
+
+    public static CompilerProtocol.ContextResult queryContext(String source, String modulePath,
+            CompilerProtocol.ContextRequest request, ModuleResolver resolver, SourceAdapter adapter) {
+        Objects.requireNonNull(request, "request");
+        Analysis analysis = analyze(source, modulePath, resolver, adapter);
+        String code = null;
+        String message = null;
+        String expected = revision(analysis).sourceDigest();
+        String actual = request.revision().sourceDigest();
+        if (!revision(analysis).equals(request.revision())) {
+            code = "CP1001";
+            message = "Stale context revision; inspect the current source before requesting details";
+        } else {
+            Target target = analysis.targets().get(request.targetId());
+            if (target == null) {
+                code = "CP1003";
+                message = "Unknown context target; inspect the current source before requesting details";
+                expected = "compiler-issued target in current revision";
+                actual = request.targetId().value();
+            } else {
+                var current = contextRequest(analysis, target.id());
+                if (current.kind() != request.kind()) {
+                    code = "CP1005";
+                    message = "Context request kind does not match the current semantic target";
+                    expected = current.kind().name();
+                    actual = request.kind().name();
+                } else if (!current.targetFingerprint().equals(request.targetFingerprint())) {
+                    code = "CP1011";
+                    message = "Stale context target fingerprint; inspect the current target before requesting details";
+                    expected = current.targetFingerprint();
+                    actual = request.targetFingerprint();
+                }
+            }
+        }
+        if (code != null) return new CompilerProtocol.ContextResult(false, revision(analysis), null,
+                List.of(diagnostic(code, message, request.targetId(), null,
+                        expected, actual, List.of(), contextRequest(analysis, analysis.moduleId()))
+                        .withFacts(new deal.diagnostics.DiagnosticFacts("context." + code.toLowerCase(java.util.Locale.ROOT),
+                                "context.query", expected, actual, List.of(
+                                        "Inspect the current module, then issue a new typed request using its revision, target kind and fingerprint. "
+                                                + "Do not reuse stale node identities or treat a read request as edit authorization.")))));
+        SemanticSlice slice = switch (request.kind()) {
+            case MODULE -> new SemanticSlice(revision(analysis), analysis.moduleId(), "module", "",
+                    analysis.inspection().symbols(), List.of(), moduleDescriptors(analysis, analysis.targets().get(analysis.moduleId())));
+            case SYMBOL -> {
+                var symbol = analysis.symbolsById().get(request.targetId());
+                var nodes = analysis.inspection().nodes().stream().filter(n -> n.ownerId().equals(symbol.id())).toList();
+                yield new SemanticSlice(revision(analysis), symbol.id(), "symbol", sliceSource(analysis, analysis.targets().get(symbol.id())),
+                        List.of(symbol), nodes, descriptorsFor(analysis, symbol.id(), nodes));
+            }
+            case NODE -> {
+                var node = analysis.inspection().nodes().stream().filter(n -> n.id().equals(request.targetId())).findFirst().orElseThrow();
+                var target = analysis.targets().get(node.id());
+                var owner = analysis.symbolsById().get(node.ownerId());
+                yield new SemanticSlice(revision(analysis), node.id(), node.kind(), sliceSource(analysis, target),
+                        owner == null ? List.of() : List.of(owner), List.of(node), List.of(descriptor(analysis, target)));
+            }
+        };
+        return new CompilerProtocol.ContextResult(true, revision(analysis), slice, List.of());
     }
 
     public static SemanticSlice querySymbol(String source, String modulePath, SemanticId symbolId) {
@@ -322,7 +401,7 @@ public final class AmendWorkspace {
             return rejected(base, diagnostic(
                     "CP1001", "Stale source digest; inspect the current source before editing",
                     base.moduleId(), null, base.inspection().sourceDigest(), precondition.baseDigest(),
-                    List.of(), "inspectCanonicalApp"));
+                    List.of(), contextRequest(base, base.moduleId())));
         }
         for (Operation operation : operations) {
             String expected = precondition.expectedTargetFingerprints().get(operation.targetId().value());
@@ -330,13 +409,13 @@ public final class AmendWorkspace {
                 return rejected(base, diagnostic(
                         "CP1010", "Missing target fingerprint precondition",
                         operation.targetId(), null, targetFingerprint(base, operation.targetId()), "missing",
-                        List.of(), "queryDealNode"));
+                        List.of(), contextRequest(base, operation.targetId())));
             }
             String actual = targetFingerprint(base, operation.targetId());
             if (!expected.equals(actual)) {
                 return rejected(base, diagnostic(
                         "CP1011", "Stale target fingerprint; query the target again before editing",
-                        operation.targetId(), null, actual, expected, List.of(), "queryDealNode"));
+                        operation.targetId(), null, actual, expected, List.of(), contextRequest(base, operation.targetId())));
             }
         }
         return null;
@@ -555,7 +634,7 @@ public final class AmendWorkspace {
                     "Repair patch is valid but makes no canonical source progress",
                     null, owner.targetId(), "a source-changing repair payload", "unchanged canonical source",
                     List.of(), List.of(new RepairScope(owner.operation(), owner.targetId())),
-                    "inspectChange");
+                    null);
             change = new ChangeResult(
                     false, source, digest(source), change.inspection(), List.of(diagnostic));
         }
@@ -978,7 +1057,7 @@ public final class AmendWorkspace {
         StructuredDiagnostic diagnostic = new StructuredDiagnostic(
                 code, "error", message, null, workspace.slots().isEmpty()
                         ? new SemanticId("deal:module:app.deal") : workspace.slots().get(0).targetId(),
-                "valid repair workspace", "invalid repair request", List.of(), List.of(), "inspectChange");
+                "valid repair workspace", "invalid repair request", List.of(), List.of(), null);
         return new RepairWorkspaceResult(false, source, digest(source), workspace, null, List.of(diagnostic));
     }
 
@@ -1020,7 +1099,7 @@ public final class AmendWorkspace {
                     base.inspection().sourceDigest(),
                     baseDigest,
                     List.of(),
-                    "inspectCanonicalApp"));
+                    contextRequest(base, base.moduleId())));
         }
         return apply(source, modulePath, base, operations, resolver, adapter);
     }
@@ -1046,7 +1125,7 @@ public final class AmendWorkspace {
                     "valid base source",
                     "compiler diagnostics",
                     List.of(),
-                    "inspectCanonicalApp"));
+                    contextRequest(base, base.moduleId())));
         }
 
         List<Replacement> replacements = new ArrayList<>();
@@ -1064,7 +1143,7 @@ public final class AmendWorkspace {
                         "target issued for " + baseDigest,
                         "missing target",
                         List.of(),
-                        "inspectDealSymbol"));
+                        contextRequest(base, base.moduleId())));
             }
             switch (operation) {
                 case AddDeclaration value -> {
@@ -1086,7 +1165,7 @@ public final class AmendWorkspace {
                                 target.id(), target.range(), "one class or function declaration",
                                 addedIdentity,
                                 List.of(new RepairScope(ADD_DECLARATION, target.id())),
-                                "queryDealModule").withOperationIndex(operationIndex));
+                                contextRequest(base, target.id())).withOperationIndex(operationIndex));
                     }
                     String separator = source.isEmpty() || source.endsWith("\n") ? "" : "\n";
                     replacements.add(new Replacement(
@@ -1117,7 +1196,7 @@ public final class AmendWorkspace {
                                 "Declaration replacement must contain exactly one declaration with the same identity",
                                 target.id(), target.range(), target.id().value(), replacementIdentity,
                                 List.of(new RepairScope(REPLACE_DECLARATION, target.id())),
-                                "queryDealSymbol").withOperationIndex(operationIndex));
+                                contextRequest(base, target.id())).withOperationIndex(operationIndex));
                     }
                     replacements.add(new Replacement(
                             target.start(), target.end(), value.declaration().strip(), false));
@@ -1164,7 +1243,7 @@ public final class AmendWorkspace {
                                 "unique lowercase dotted capability identifiers",
                                 String.valueOf(value.capabilities()),
                                 List.of(new RepairScope(SET_CAPABILITIES, target.id())),
-                                "queryDealModule"));
+                                contextRequest(base, target.id())));
                     }
                     Matcher matcher = CAPABILITY.matcher(source);
                     while (matcher.find()) {
@@ -1190,7 +1269,7 @@ public final class AmendWorkspace {
                         "non-overlapping operations",
                         "overlapping ranges",
                         List.of(),
-                        "inspectDealSymbol"));
+                        contextRequest(base, base.moduleId())));
             }
         }
 
@@ -1334,6 +1413,7 @@ public final class AmendWorkspace {
         List<StructuredDiagnostic> diagnostics = rawDiagnostics.stream()
                 .map(value -> diagnostic(value, moduleId, functionsByName.values(), classesByName.values(), targets.values())
                         .withMissingSymbols(value.missingSymbols()))
+                .map(value -> value.withContextRequest(contextRequest(source, sourceDigest, moduleId, targets, value.ownerId())))
                 .toList();
         Inspection inspection = new Inspection(
                 sourceDigest,
@@ -1547,7 +1627,7 @@ public final class AmendWorkspace {
                 value.facts().actual(),
                 List.of(),
                 scopes,
-                owner == null ? "inspectCanonicalApp" : "queryDealSymbol(" + owner.id().value() + ")",
+                null,
                 value.notes()).withFacts(value.facts());
     }
 
@@ -1559,10 +1639,10 @@ public final class AmendWorkspace {
             String expected,
             String actual,
             List<RepairScope> scopes,
-            String contextQuery) {
+            CompilerProtocol.ContextRequest contextRequest) {
         return new StructuredDiagnostic(
                 code, "error", message, range, owner, expected, actual,
-                List.of(), scopes, contextQuery);
+                List.of(), scopes, contextRequest);
     }
 
     private static StructuredDiagnostic scopeDiagnostic(
@@ -1580,7 +1660,7 @@ public final class AmendWorkspace {
                 diagnostic.code(), diagnostic.severity(), diagnostic.message(), diagnostic.range(),
                 diagnostic.ownerId(), diagnostic.facts(),
                 ownedOperations.stream().map(Operation::targetId).toList(), scopes,
-                diagnostic.contextQuery(), diagnostic.notes(), diagnostic.operationIndex(), diagnostic.missingSymbols());
+                diagnostic.contextRequest(), diagnostic.notes(), diagnostic.operationIndex(), diagnostic.missingSymbols());
     }
 
     private static SemanticId operationOwner(Operation operation, Analysis base) {
@@ -1602,7 +1682,8 @@ public final class AmendWorkspace {
                 base.source(),
                 base.inspection().sourceDigest(),
                 base.inspection(),
-                List.of(diagnostic));
+                List.of(diagnostic.contextRequest() == null
+                        ? diagnostic.withContextRequest(contextRequest(base, diagnostic.ownerId())) : diagnostic));
     }
 
     private static ChangeResult wrongKind(
@@ -1615,7 +1696,7 @@ public final class AmendWorkspace {
                 expectedKind,
                 target.kind(),
                 List.of(),
-                "inspectDealSymbol"));
+                contextRequest(base, target.id())));
     }
 
     private static ChangeResult nullSource(
@@ -1628,7 +1709,7 @@ public final class AmendWorkspace {
                 expected,
                 "null or blank",
                 List.of(new RepairScope(operationName(operation), operation.targetId())),
-                "queryDealNode"));
+                contextRequest(base, target.id())));
     }
 
     private static boolean looksLikeCompleteFunctionDeclaration(String source) {
@@ -1644,7 +1725,7 @@ public final class AmendWorkspace {
                 "statement list, for example: return state;",
                 "complete function declaration",
                 List.of(new RepairScope(operationName(operation), operation.targetId())),
-                "queryDealNode(" + operation.targetId().value() + ")");
+                null);
     }
 
     private static String applyReplacements(String source, List<Replacement> replacements) {
@@ -1746,7 +1827,7 @@ public final class AmendWorkspace {
                     r,
                     operation.targetId(), "", "", List.of(),
                     List.of(new RepairScope(operationName(operation), operation.targetId())),
-                    "repairOperation", value.notes(), operationIndex).withFacts(value.facts());
+                    null, value.notes(), operationIndex).withFacts(value.facts());
         }).toList();
     }
 

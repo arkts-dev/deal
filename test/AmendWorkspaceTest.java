@@ -49,7 +49,63 @@ public final class AmendWorkspaceTest {
         exportRepairRequiresChosenDeclaration();
         actionabilityFactsAndRepairScope();
         smallestEditableBlockIsNotSemanticOwner();
+        typedContextRequestsAreRevisionPinned();
         System.out.println("AmendWorkspaceTest: all tests passed");
+    }
+
+    private static void typedContextRequestsAreRevisionPinned() {
+        String source = "// 😀\r\nexport function run():number{let value:number=\"bad\";return 1;}";
+        var inspection = AmendWorkspace.inspect(source, "context.deal");
+        var diagnostic = inspection.diagnostics().stream().filter(d -> d.code().equals("E3001")).findFirst().orElseThrow();
+        var request = diagnostic.contextRequest();
+        check(request != null && request.kind() == CompilerProtocol.ContextKind.SYMBOL
+                        && request.revision().sourceDigest().equals(inspection.sourceDigest())
+                        && request.targetId().equals(diagnostic.ownerId()), "diagnostic carries typed exact-revision semantic context");
+        var result = AmendWorkspace.queryContext(source, "context.deal", request);
+        check(result.accepted() && result.slice().source().startsWith("export function run")
+                        && result.slice().revision().equals(request.revision()), "issued request retrieves exact declaration context");
+        check(result.slice().symbols().getFirst().fingerprint().equals(request.targetFingerprint()), "request fingerprint equals issued target fingerprint");
+        var copied = diagnostic.withFacts(diagnostic.facts()).withMissingSymbols(List.of()).withOperationIndex(0);
+        check(copied.contextRequest().equals(request), "diagnostic copies preserve typed request");
+        String json = CompilerProtocolJson.encode(diagnostic);
+        check(json.contains("\"contextRequest\"") && json.contains("\"revision\"") && !json.contains("contextQuery")
+                        && !json.contains("queryDealSymbol("), "one current protocol exposes no executable-looking context query");
+        var node = inspection.nodes().stream().filter(n -> n.kind().equals("function-body")).findFirst().orElseThrow();
+        var nodeRequest = new CompilerProtocol.ContextRequest(request.revision(), CompilerProtocol.ContextKind.NODE, node.id(), node.fingerprint());
+        check(AmendWorkspace.queryContext(source, "context.deal", nodeRequest).slice().source().startsWith("{"), "node request uses full exact body range");
+        var wrongFingerprint = AmendWorkspace.queryContext(source, "context.deal",
+                new CompilerProtocol.ContextRequest(request.revision(), request.kind(), request.targetId(), "stale"));
+        check(!wrongFingerprint.accepted() && wrongFingerprint.slice() == null
+                        && wrongFingerprint.diagnostics().getFirst().code().equals("CP1011")
+                        && wrongFingerprint.diagnostics().getFirst().expected().equals(request.targetFingerprint()),
+                "fingerprint rejection exposes exact expected fingerprint without leaking a stale slice");
+        var wrongKind = AmendWorkspace.queryContext(source, "context.deal",
+                new CompilerProtocol.ContextRequest(request.revision(), CompilerProtocol.ContextKind.NODE, request.targetId(), request.targetFingerprint()));
+        check(!wrongKind.accepted() && wrongKind.diagnostics().getFirst().code().equals("CP1005"), "typed kind mismatch fails closed");
+        var wrongTarget = AmendWorkspace.queryContext(source, "context.deal",
+                new CompilerProtocol.ContextRequest(request.revision(), CompilerProtocol.ContextKind.SYMBOL,
+                        new CompilerProtocol.SemanticId("invented"), request.targetFingerprint()));
+        check(!wrongTarget.accepted() && wrongTarget.diagnostics().getFirst().code().equals("CP1003"), "unknown semantic identity fails closed");
+        String changed = source.replace("return 1", "return 2");
+        var stale = AmendWorkspace.queryContext(changed, "context.deal", request);
+        check(!stale.accepted() && stale.slice() == null && stale.diagnostics().getFirst().code().equals("CP1001"),
+                "stable declaration name cannot bypass revision pin");
+        var reinspect = stale.diagnostics().getFirst().contextRequest();
+        check(reinspect.kind() == CompilerProtocol.ContextKind.MODULE && reinspect.revision().equals(stale.revision())
+                        && AmendWorkspace.queryContext(changed, "context.deal", reinspect).accepted(), "rejection offers current revision module reinspection");
+        var freshDiagnostic = AmendWorkspace.inspect(changed, "context.deal").diagnostics().stream()
+                .filter(d -> d.code().equals("E3001")).findFirst().orElseThrow();
+        check(AmendWorkspace.queryContext(changed, "context.deal", freshDiagnostic.contextRequest()).accepted(), "fresh inspection restores authorized read");
+        var clean = AmendWorkspace.inspect(source.replace("\"bad\"", "2"), "context.deal");
+        var cleanNode = clean.nodes().stream().filter(n -> n.kind().equals("function-body")).findFirst().orElseThrow();
+        String cleanSource = source.replace("\"bad\"", "2");
+        var missingPrecondition = AmendWorkspace.applyChecked(cleanSource, "context.deal",
+                new CompilerProtocol.ChangeSetPrecondition(clean.sourceDigest(), Map.of()),
+                List.of(new AmendWorkspace.ReplaceFunctionBody(cleanNode.id(), "return 3;")));
+        var preconditionRequest = missingPrecondition.diagnostics().getFirst().contextRequest();
+        check(!missingPrecondition.accepted() && preconditionRequest.kind() == CompilerProtocol.ContextKind.NODE
+                        && AmendWorkspace.queryContext(cleanSource, "context.deal", preconditionRequest).accepted(),
+                "missing edit precondition gives exact typed target reinspection, not implicit edit permission");
     }
 
     private static void smallestEditableBlockIsNotSemanticOwner() {
@@ -713,7 +769,7 @@ public final class AmendWorkspaceTest {
                                 "immutable borrowed state", "write through alias", List.of(actionId),
                                 List.of(new CompilerProtocol.RepairScope(
                                         AmendWorkspace.ADD_DECLARATION, handlerId)),
-                                "queryDealSymbol(" + handlerId.value() + ")")));
+                                null)));
         var rejected = staged.workspace().slots().stream()
                 .filter(value -> value.status() == CompilerProtocol.RepairSlotStatus.REJECTED).toList();
         check(rejected.size() == 1 && rejected.get(0).payload().get("declaration").contains("function done"),
