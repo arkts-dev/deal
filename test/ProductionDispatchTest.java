@@ -2835,9 +2835,8 @@ public class ProductionDispatchTest {
             checkStructuredOrigin(context, structured, expectedCode, expectedMessage, offending,
                 startLine, startColumn, endLine, endColumn, startOffset,
                 endOffset, scalarLength);
-            checkEq(DiagnosticStructuredOutput.toJson(errors), structured,
-                context + ": the structured document is exactly the error's "
-                    + "structured diagnostic");
+            checkEq(DiagnosticStructuredOutput.toJson(errors, arm.orchestrator().operations(), arm.orchestrator().outcome()), structured,
+                context + ": the structured document retains exact diagnostics and actual compiler execution");
             checkTreeIdentical(before, out,
                 context + ": the CLI failure preserves the previous set");
 

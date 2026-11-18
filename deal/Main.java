@@ -383,7 +383,7 @@ public final class Main {
                 try {
                     Files.writeString(diagnosticsJsonPath, DiagnosticStructuredOutput.toJson(
                             deal.diagnostics.DiagnosticOrder.canonical(orchestrator.diagnostics()),
-                            List.of(failure.structuredDiagnostic())));
+                            List.of(failure.structuredDiagnostic()), orchestrator.outcome()));
                 } catch (IOException e) {
                     System.err.println("deal: cannot write diagnostics JSON to '"
                             + diagnosticsJsonPath + "': " + e.getMessage());

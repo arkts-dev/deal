@@ -1213,6 +1213,8 @@ public final class NativeToolchainTest {
                         && json.contains("\"category\": \"build-input\"")
                         && json.contains("\"tool\": null"),
                 "native input failure retains classification without invented child");
+        check(json.contains("\"published\": true") && json.contains("\"phase\": \"PUBLICATION\", \"status\": \"SUCCEEDED\""),
+                "native preflight failure preserves successful compiler artifact publication outcome");
         check(!json.contains(".partial") && rejected.stderr().contains("deal: native host unit unmatched:"),
                 "structured export leaves terminal failure unchanged and hides staging");
         var repaired = capture(() -> Main.run(new String[] {"native", "build", entry.toString(),

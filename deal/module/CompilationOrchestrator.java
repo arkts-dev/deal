@@ -15,6 +15,9 @@ import deal.project.ProjectDeploymentIdentity;
 import deal.project.ProjectLocator;
 import deal.project.ProtectedPathOps;
 import deal.diagnostics.CompilerDiagnostic;
+import deal.diagnostics.CompilationOutcome;
+import deal.diagnostics.CompilationOutcome.Phase;
+import deal.diagnostics.CompilationOutcome.Status;
 import deal.diagnostics.DiagnosticFormatter;
 import deal.diagnostics.DiagnosticOrder;
 import deal.diagnostics.DiagnosticRange;
@@ -146,6 +149,9 @@ public final class CompilationOrchestrator {
     private final Map<String, ModuleInfo> modules = new LinkedHashMap<>();
     private final List<CompilerDiagnostic> diagnostics = new ArrayList<>();
     private final List<deal.diagnostics.OperationalDiagnostic> operations = new ArrayList<>();
+    private final EnumMap<Phase, Status> phaseStatuses = new EnumMap<>(Phase.class);
+    private Phase activePhase;
+    private boolean artifactsPublished;
     private boolean hasErrors = false;
 
     private List<String> dependencyOrder = List.of();
@@ -590,6 +596,10 @@ public final class CompilationOrchestrator {
         stager = PublicationStager.forRoot(outputRoot);
         pendingStageFailure = null;
         operations.clear();
+        phaseStatuses.clear();
+        for (Phase phase : Phase.values()) phaseStatuses.put(phase, Status.SKIPPED);
+        activePhase = null;
+        artifactsPublished = false;
         pendingIrDumps.clear();
         // Per-compilation production-arm state: a second compile() on the
         // same orchestrator observes its own one produced project and its
@@ -601,8 +611,11 @@ public final class CompilationOrchestrator {
         try {
             success = compileInternal();
             if (success) {
+                beginPhase(Phase.PUBLICATION);
                 try {
                     stager.publish();
+                    artifactsPublished = true;
+                    endPhase(true);
                 } catch (IOException publishFailure) {
                     // Publish-step I/O failure (D4): the stager already
                     // restored/cleaned per D2; report the pinned
@@ -612,10 +625,12 @@ public final class CompilationOrchestrator {
                         + outputRoot + "': " + publishFailure.getMessage();
                     System.err.println(message);
                     operations.add(publicationFailure("publication.replace", message));
+                    endPhase(false);
                     success = false;
                 }
             }
         } finally {
+            if (activePhase != null) endPhase(false);
             if (!stager.published()) {
                 // Any failure (or no publish) removes the stage tree and
                 // releases the per-root lock: the prior live set is
@@ -650,7 +665,7 @@ public final class CompilationOrchestrator {
                 // emission-order collection is unchanged.
                 Files.writeString(diagnosticsJsonPath,
                     DiagnosticStructuredOutput.toJson(
-                        DiagnosticOrder.canonical(diagnostics), operations));
+                        DiagnosticOrder.canonical(diagnostics), operations, outcome()));
             } catch (IOException e) {
                 System.err.println("deal: cannot write diagnostics JSON to '"
                     + diagnosticsJsonPath + "': " + e.getMessage());
@@ -676,29 +691,40 @@ public final class CompilationOrchestrator {
 
         log("Phase 0: Module discovery and parsing");
         long phaseStarted = System.nanoTime();
-        try { discoverAndParse(); }
+        beginPhase(Phase.DISCOVERY_PARSE);
+        try { discoverAndParse(); endPhase(!hasErrors); }
         finally { CompilationTiming.record("parse", phaseStarted); }
         if (hasErrors) { printDiagnostics(); return false; }
 
         log("Phase 1: Export signature extraction");
         phaseStarted = System.nanoTime();
-        try { extractSignatures(); }
+        beginPhase(Phase.SIGNATURES);
+        try { extractSignatures(); endPhase(!hasErrors); }
         finally { CompilationTiming.record("signatures", phaseStarted); }
         if (hasErrors) { printDiagnostics(); return false; }
 
         // DEAL v1.6 selected-entry rule: the entry module must export
         // non-async main() with signature (): void.  The backend invokes
         // main() from that module.
+        beginPhase(Phase.ENTRY_VALIDATION);
         validateEntryMain();
+        endPhase(!hasErrors);
 
         log("Phase 2: Dependency graph and ordering");
+        beginPhase(Phase.MODULE_ORDER);
         List<String> checkOrder = buildCheckOrder();
+        endPhase(checkOrder != null);
         if (checkOrder == null) { printDiagnostics(); return false; }
         this.dependencyOrder = List.copyOf(checkOrder);
 
         log("Phase 3: Type checking (" + checkOrder.size() + " modules)");
         phaseStarted = System.nanoTime();
-        try { typeCheckAll(checkOrder); }
+        beginPhase(Phase.TYPECHECK);
+        int errorsBeforeTypecheck = (int) diagnostics.stream().filter(d -> d.severity().equals("error")).count();
+        try {
+            typeCheckAll(checkOrder);
+            endPhase(diagnostics.stream().filter(d -> d.severity().equals("error")).count() == errorsBeforeTypecheck);
+        }
         finally { CompilationTiming.record("typecheck", phaseStarted); }
         if (hasErrors) { printDiagnostics(); return false; }
 
@@ -709,13 +735,15 @@ public final class CompilationOrchestrator {
         // diagnostics fail the compile exactly like frontend errors.
         log("Phase 3.5: Checked project and interface index");
         phaseStarted = System.nanoTime();
-        try { buildCheckedProject(checkOrder); }
+        beginPhase(Phase.CHECKED_PROJECT);
+        try { buildCheckedProject(checkOrder); endPhase(!hasErrors); }
         finally { CompilationTiming.record("checked-project", phaseStarted); }
         if (hasErrors) { printDiagnostics(); return false; }
 
         log("Phase 3.6: Semantic requirement manifests");
         phaseStarted = System.nanoTime();
-        try { computeRequirementManifests(); }
+        beginPhase(Phase.REQUIREMENTS);
+        try { computeRequirementManifests(); endPhase(!hasErrors); }
         finally { CompilationTiming.record("requirements", phaseStarted); }
         if (hasErrors) { printDiagnostics(); return false; }
 
@@ -724,23 +752,26 @@ public final class CompilationOrchestrator {
 
         log("Phase 3.8: Default planning and declaration default analysis");
         phaseStarted = System.nanoTime();
-        try { planDefaultClasses(); }
+        beginPhase(Phase.CONSTRUCTION_PLANS);
+        try { planDefaultClasses(); endPhase(!hasErrors); }
         finally { CompilationTiming.record("construction-plans", phaseStarted); }
         if (hasErrors) { printDiagnostics(); return false; }
 
         log("Phase 3.85: Runtime dependency graph and plan publication");
         phaseStarted = System.nanoTime();
-        try { evaluateDependencyGraph(); }
+        beginPhase(Phase.DEPENDENCY_PLAN);
+        try { evaluateDependencyGraph(); endPhase(!hasErrors); }
         finally { CompilationTiming.record("dependency-plan", phaseStarted); }
         if (hasErrors) { printDiagnostics(); return false; }
         enrichCheckedProjectProviders();
 
         log("Phase 4: Code generation");
 
+        beginPhase(Phase.EMISSION);
         hostDeclarationSurface = produceHostDeclarationSurface();
-        if (hasErrors) { printDiagnostics(); return false; }
+        if (hasErrors) { endPhase(false); printDiagnostics(); return false; }
         phaseStarted = System.nanoTime();
-        try { codegenAll(); }
+        try { codegenAll(); endPhase(!hasErrors); }
         finally { CompilationTiming.record("codegen-total", phaseStarted); }
         if (hasErrors) { printDiagnostics(); return false; }
 
@@ -750,7 +781,8 @@ public final class CompilationOrchestrator {
         // never reaches this point, discards its pending dumps, and stages
         // nothing at all.
         phaseStarted = System.nanoTime();
-        try { stageIrDumps(); }
+        beginPhase(Phase.STAGE_DUMPS);
+        try { stageIrDumps(); endPhase(!hasErrors); }
         finally { CompilationTiming.record("stage-ir", phaseStarted); }
         if (hasErrors) { printDiagnostics(); return false; }
 
@@ -764,6 +796,24 @@ public final class CompilationOrchestrator {
 
     public List<CompilerDiagnostic> diagnostics() {
         return Collections.unmodifiableList(diagnostics);
+    }
+
+    private void beginPhase(Phase phase) {
+        if (activePhase != null) throw new IllegalStateException("Compiler phase already active");
+        activePhase = phase;
+        phaseStatuses.put(phase, Status.RUNNING);
+    }
+
+    private void endPhase(boolean success) {
+        phaseStatuses.put(activePhase, success ? Status.SUCCEEDED : Status.FAILED);
+        activePhase = null;
+    }
+
+    public CompilationOutcome outcome() {
+        return new CompilationOutcome(backend.cliName(), invocation.semanticProfile().toString(),
+                invocation.releaseStateHash(), artifactsPublished,
+                Arrays.stream(Phase.values()).map(phase -> new CompilationOutcome.PhaseResult(
+                        phase, phaseStatuses.getOrDefault(phase, Status.SKIPPED))).toList());
     }
 
     public List<deal.diagnostics.OperationalDiagnostic> operations() {

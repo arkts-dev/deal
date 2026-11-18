@@ -912,6 +912,10 @@ public class PublicationStagerTest {
                             && json.contains("\"phase\": \"publication\"") && json.contains("\"diagnostics\": []")
                             && json.contains("injected move failure"),
                     "failed atomic replacement has a nonempty operational report, not an empty language success");
+            check(json.contains("\"published\": false")
+                            && json.contains("\"phase\": \"EMISSION\", \"status\": \"SUCCEEDED\"")
+                            && json.contains("\"phase\": \"PUBLICATION\", \"status\": \"FAILED\""),
+                    "successful emission is distinguished from failed atomic replacement");
             check(!json.contains(PublicationStager.STAGE_TREE_MARKER)
                             && !json.contains(PublicationStager.RETIRED_TREE_MARKER),
                     "operational report invents no final staging artifact");
@@ -1022,6 +1026,10 @@ public class PublicationStagerTest {
                             && json.contains("\"operation\": \"publication.stage\"")
                             && json.contains("injected staging failure"),
                     "staging failure classified at actual producer without invented tool execution");
+            check(json.contains("\"published\": false")
+                            && json.contains("\"phase\": \"EMISSION\", \"status\": \"FAILED\"")
+                            && json.contains("\"phase\": \"PUBLICATION\", \"status\": \"SKIPPED\""),
+                    "staging failure does not claim publication was attempted");
             check(!second, "the injected staging failure fails the "
                 + "compile");
             check(capturedErr.toString().contains(

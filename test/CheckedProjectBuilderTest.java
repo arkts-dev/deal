@@ -1410,6 +1410,41 @@ public class CheckedProjectBuilderTest {
         }
     }
 
+    private static void testObservedCompilationPhases() throws Exception {
+        Path root = Files.createTempDirectory("observed-phases-");
+        try {
+            Path entry = root.resolve("main.deal"), out = root.resolve("out");
+            for (String[] sample : new String[][] {
+                    {"export function main(:void{}", "DISCOVERY_PARSE"},
+                    {"export function main():number{return 1;}", "ENTRY_VALIDATION"},
+                    {"export function main():void{let x:number=\"bad\";}", "TYPECHECK"},
+                    {"export function main():void{}", "SUCCESS"}}) {
+                Files.writeString(entry, sample[0]);
+                CompilationOrchestrator compiler = new CompilationOrchestrator(entry, out, false, false, false,
+                        Backend.JS, null, List.of(root), null);
+                boolean accepted = compileQuietly(compiler);
+                var outcome = compiler.outcome();
+                check(accepted == sample[1].equals("SUCCESS") && outcome.published() == accepted,
+                        "published means actual accepted atomic replacement: " + sample[1]);
+                check(outcome.backend().equals("js") && !outcome.semanticProfile().isEmpty()
+                                && outcome.releaseStateHash().length() == 64,
+                        "outcome retains resolved invocation rather than guessed capability");
+                check(outcome.phases().stream().noneMatch(p -> p.status() == deal.diagnostics.CompilationOutcome.Status.RUNNING),
+                        "completed compiler leaves no running phase");
+                if (accepted) check(outcome.phases().stream().allMatch(p -> p.status() == deal.diagnostics.CompilationOutcome.Status.SUCCEEDED),
+                        "success ran every compiler phase including publication");
+                else {
+                    check(outcome.phases().stream().anyMatch(p -> p.phase().name().equals(sample[1])
+                                    && p.status() == deal.diagnostics.CompilationOutcome.Status.FAILED),
+                            "actual blocking phase retained: " + sample[1]);
+                    check(outcome.phases().stream().filter(p -> p.phase() == deal.diagnostics.CompilationOutcome.Phase.PUBLICATION)
+                                    .allMatch(p -> p.status() == deal.diagnostics.CompilationOutcome.Status.SKIPPED),
+                            "frontend rejection never claims publication execution");
+                }
+            }
+        } finally { deleteRecursively(root); }
+    }
+
     // =========================================================================
     // Main
     // =========================================================================
@@ -1436,6 +1471,7 @@ public class CheckedProjectBuilderTest {
         testConstructionEntryDerivation();
         testDeterminismAndDigestGolden();
         testImportCycleRejection();
+        testObservedCompilationPhases();
         testDigestFreeWitnessDeterminism();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);

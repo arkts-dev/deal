@@ -69,6 +69,11 @@ public final class DiagnosticStructuredOutput {
     }
 
     public static String toJson(List<CompilerDiagnostic> diagnostics, List<OperationalDiagnostic> operations) {
+        return toJson(diagnostics, operations, null);
+    }
+
+    public static String toJson(List<CompilerDiagnostic> diagnostics, List<OperationalDiagnostic> operations,
+                                CompilationOutcome outcome) {
         List<CompilerDiagnostic> list = diagnostics == null ? List.of() : diagnostics;
         List<OperationalDiagnostic> failures = List.copyOf(operations);
         StringBuilder sb = new StringBuilder();
@@ -99,8 +104,28 @@ public final class DiagnosticStructuredOutput {
             indent(sb, 2).append('}');
         }
         if (!failures.isEmpty()) sb.append("\n  ");
-        sb.append("]\n}");
+        sb.append("],\n  \"compilation\": ");
+        appendOutcome(sb, outcome);
+        sb.append("\n}");
         return sb.toString();
+    }
+
+    private static void appendOutcome(StringBuilder sb, CompilationOutcome outcome) {
+        if (outcome == null) { sb.append("null"); return; }
+        sb.append("{\n");
+        indent(sb, 2).append("\"backend\": ").append(jsonString(outcome.backend())).append(",\n");
+        indent(sb, 2).append("\"semanticProfile\": ").append(jsonString(outcome.semanticProfile())).append(",\n");
+        indent(sb, 2).append("\"releaseStateHash\": ").append(jsonString(outcome.releaseStateHash())).append(",\n");
+        indent(sb, 2).append("\"published\": ").append(outcome.published()).append(",\n");
+        indent(sb, 2).append("\"phases\": [");
+        for (int i = 0; i < outcome.phases().size(); i++) {
+            if (i > 0) sb.append(',');
+            var phase = outcome.phases().get(i);
+            sb.append('\n');
+            indent(sb, 3).append("{\"phase\": ").append(jsonString(phase.phase().name()))
+                    .append(", \"status\": ").append(jsonString(phase.status().name())).append('}');
+        }
+        sb.append("\n    ]\n  }");
     }
 
     /** Emits producer facts and missing names without interpreting message text. */
