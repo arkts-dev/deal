@@ -1442,7 +1442,7 @@ public final class Parser {
                         : n);
                 }
                 diagnostics.add(new CompilerDiagnostic(d.code(), d.severity(),
-                    d.message(), rebased, rebasedNotes, d.diagnosticCode()));
+                    d.message(), rebased, rebasedNotes, d.diagnosticCode(), d.missingSymbols(), d.facts()));
             } else {
                 diagnostics.add(d);
             }

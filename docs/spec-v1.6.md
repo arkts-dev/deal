@@ -1670,6 +1670,45 @@ span length
 optional notes
 ```
 
+`--diagnostics-json <path>` writes the current version-2 JSON document with
+`version` and an ordered `diagnostics` array. Each diagnostic contains `code`,
+`severity`, `message`, `range`, ordered `notes`, `facts`, and `missingSymbols`.
+There is one current schema, not a selectable legacy representation.
+
+`range` carries `file`, one-based `startLine`/`startColumn` and
+`endLine`/`endColumn`, zero-based `startScalarOffset`/`endScalarOffset`,
+`scalarLength`, and `origin` (`SOURCE` or `SYNTHETIC`). Despite their scalar-named
+fields, compiler source offsets, lengths and columns count UTF-16 code units;
+supplementary characters consume two units and tabs one. End positions are
+exclusive. CRLF consumes two offset units and one line break. Unavailable or malformed offsets normalize to synthetic ranges with an internal
+range-defect note. Synthetic anchors do not assert real source coverage and carry an
+anchor note. Secondary notes carry their own complete range or `null` when no
+location is available. These source/editor coordinates are distinct from runtime
+JSON scanner offsets, which are one-based UTF-8 byte positions.
+
+`facts` separates producer-owned `reason`, failed `operation`, `expected`,
+`actual`, and ordered `guidance` from explanatory message text. Empty strings or
+arrays mean unavailable evidence, not a license to reconstruct it from prose.
+`missingSymbols` contains producer-owned `kind`, `name`, `namespace`, and
+`constraints`. Copies, reanchoring and amendment transport preserve these facts.
+JSON strings preserve UTF-16 units, escaping isolated surrogates and controls.
+Codes and report-time ordering remain independent of richer type rendering;
+function types include parameter/result types and the async marker with grouping
+for nullable and array positions. Depth-bounded rendering states truncation.
+Assertion failures identify source/target and the assignability rule; assertions
+are not conversions. E3002 requests the intended annotation or class/Record
+context without inventing a type or changing inference.
+
+The amendment transport is `compiler-protocol-v3`; diagnostics use these same
+complete ranges and nested facts. Exact repeats may collapse only when all
+carrier fields match; distinct occurrences remain. Semantic ownership does not
+itself authorize a repair: signature errors require declaration replacement,
+whereas errors inside a function body may use body replacement. A repair is a
+revision-pinned, fingerprint-checked, one-module frontend transaction. Invalid
+candidate source is never published; scoped repair rechecks the corrected
+candidate, including consumer validation, before committing. It does not certify
+a project build.
+
 ### Required diagnostic classes
 
 | Code range | Category |

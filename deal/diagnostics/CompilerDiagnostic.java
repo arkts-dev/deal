@@ -11,8 +11,8 @@ import java.util.List;
  *
  * <p>Carrier contract (D1):
  * {@code CompilerDiagnostic(code, severity, message, range, notes,
- * diagnosticCode, missingSymbols)}. The six-argument constructor remains compatible
- * and supplies an empty missing-symbol list. The compatibility accessors {@link #file()},
+ * diagnosticCode, missingSymbols, facts)}. Convenience construction supplies empty
+ * facts when the producer has no additional evidence. The accessors {@link #file()},
  * {@link #line()}, and {@link #column()} derive from the range start;
  * {@link #code()}, {@link #severity()}, {@link #message()}, and
  * {@link #diagnosticCode()} are the record components.
@@ -56,7 +56,8 @@ public record CompilerDiagnostic(
     DiagnosticRange range,
     List<DiagnosticNote> notes,
     DiagnosticCode diagnosticCode,
-    List<MissingSymbol> missingSymbols
+    List<MissingSymbol> missingSymbols,
+    DiagnosticFacts facts
 ) {
     public record MissingSymbol(String kind, String name, String namespace, List<String> constraints) {
         public MissingSymbol {
@@ -68,16 +69,33 @@ public record CompilerDiagnostic(
 
     public CompilerDiagnostic(String code, String severity, String message, DiagnosticRange range,
                               List<DiagnosticNote> notes, DiagnosticCode diagnosticCode) {
-        this(code, severity, message, range, notes, diagnosticCode, List.of());
+        this(code, severity, message, range, notes, diagnosticCode, List.of(), DiagnosticFacts.EMPTY);
+    }
+
+    public CompilerDiagnostic(String code, String severity, String message, DiagnosticRange range,
+                              List<DiagnosticNote> notes, DiagnosticCode diagnosticCode,
+                              List<MissingSymbol> missingSymbols) {
+        this(code, severity, message, range, notes, diagnosticCode, missingSymbols, DiagnosticFacts.EMPTY);
+    }
+
+    public CompilerDiagnostic withFacts(DiagnosticFacts value) {
+        return new CompilerDiagnostic(code, severity, message, range, notes, diagnosticCode, missingSymbols, value);
+    }
+
+    public CompilerDiagnostic withNote(String message, DiagnosticRange relatedRange) {
+        var related = new ArrayList<>(notes);
+        related.add(new DiagnosticNote(message, relatedRange));
+        return new CompilerDiagnostic(code, severity, this.message, range, related, diagnosticCode, missingSymbols, facts);
     }
 
     public CompilerDiagnostic withMissingSymbol(String kind, String name, String namespace, List<String> constraints) {
         var facts = new ArrayList<>(missingSymbols);
         facts.add(new MissingSymbol(kind, name, namespace, constraints));
-        return new CompilerDiagnostic(code, severity, message, range, notes, diagnosticCode, facts);
+        return new CompilerDiagnostic(code, severity, message, range, notes, diagnosticCode, facts, this.facts);
     }
 
     public CompilerDiagnostic {
+        java.util.Objects.requireNonNull(facts, "facts");
         missingSymbols = List.copyOf(missingSymbols);
         if (code == null || code.isEmpty()) {
             throw new IllegalArgumentException("code must not be null or empty");

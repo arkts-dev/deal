@@ -5,6 +5,6 @@
     "code": "E3001",
     "line": 6,
     "column": 113,
-    "message": "Cannot assign function to function"
+    "message": "Cannot assign async () => number to (number) => number"
   }
 }

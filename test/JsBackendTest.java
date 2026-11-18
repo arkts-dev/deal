@@ -6845,9 +6845,8 @@ public class JsBackendTest {
             // The public release-owned CLI surface: the release-owned
             // invocation and the whole-project publication, with the
             // source-map sidecars enabled on the same run.
-            Path buildDir = Path.of("build").toAbsolutePath().normalize();
             Process process = new ProcessBuilder(
-                "java", "-ea", "-cp", buildDir.toString(), "deal.Main",
+                "java", "-ea", "-cp", TestClasspath.absolute(TestClasspath.EmptyEntry.OMIT), "deal.Main",
                 "compile", entry.toString(), "--source-map",
                 "--diagnostics-json", diagnosticsJson.toString())
                 .directory(Path.of("").toAbsolutePath().normalize().toFile())
@@ -6871,7 +6870,7 @@ public class JsBackendTest {
                     + " document");
             if (Files.isRegularFile(diagnosticsJson)) {
                 String diag = Files.readString(diagnosticsJson);
-                check(diag.contains("\"version\": 1")
+                check(diag.contains("\"version\": 2")
                         && diag.contains("\"diagnostics\": []"),
                     "the public compile succeeds with zero diagnostics: "
                         + diag);

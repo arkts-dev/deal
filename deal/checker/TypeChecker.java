@@ -1552,7 +1552,11 @@ public final class TypeChecker {
         if (id.name().equals("undefined")) return Type.Undefined.INSTANCE;
         Symbol sym = resolveVisibleBinding(id.name());
         if (sym == null) {
-            error(DiagnosticCode.E2001, "Undeclared identifier '" + id.name() + "'", id.span());
+            diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E2001,
+                    "Undeclared identifier '" + id.name() + "'", id.span())
+                    .withMissingSymbol("VALUE", id.name(), id.span().file(), List.of())
+                    .withFacts(new deal.diagnostics.DiagnosticFacts("name.unresolved", "read",
+                            "visible value binding", id.name(), List.of("Check the binding's spelling, scope and imports."))));
             return Type.Error.INSTANCE;
         }
 
@@ -1706,8 +1710,12 @@ public final class TypeChecker {
                     return leftType;
                 }
             }
-            error(DiagnosticCode.E3010, "Invalid operand types for '+': "
-                + typeName(leftType) + " and " + typeName(rightType), bin.span());
+            diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E3010, "Invalid operand types for '+': "
+                    + typeName(leftType) + " and " + typeName(rightType), bin.span()).withFacts(
+                    new deal.diagnostics.DiagnosticFacts("operator.add.operands", "addition",
+                            "Both '+' operands must be numeric, or both must be string; DEAL has no implicit coercion",
+                            "left: " + typeName(leftType) + "; right: " + typeName(rightType),
+                            List.of("Choose operands of the same supported kind; do not use a cast as a conversion."))));
             return Type.Error.INSTANCE;
         }
 
@@ -2859,7 +2867,12 @@ public final class TypeChecker {
         if (target instanceof Type.Void || source instanceof Type.Void
                 || (!(source instanceof Type.Unknown) && !isAssignable(target, source)
                     && !isAssignable(source, target))) {
-            error(DiagnosticCode.E3001, "Incompatible checked assertion", assertion.span());
+            diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E3001,
+                    "Incompatible checked assertion from " + typeName(source) + " to " + typeName(target)
+                            + ": void is not data; otherwise one type must be assignable to the other",
+                    assertion.span()).withFacts(new deal.diagnostics.DiagnosticFacts(
+                            "assertion.incompatible", "assertion", typeName(target), typeName(source),
+                            List.of("Use compatible types; a checked assertion does not perform a conversion."))));
             return Type.Error.INSTANCE;
         }
         recordExactClassDecl(assertion, target, exactAnnotationClassSymbol(currentScope, assertion.target()));
@@ -3304,6 +3317,7 @@ public final class TypeChecker {
      * reverse-arity extension case (F10), E3001 otherwise.
      */
     private void reportAssignabilityError(Type targetType, Type actualType, Span span) {
+        int diagnosticIndex = diagnostics.size();
         // F10: Detect reverse arity for E5004
         if (targetType instanceof Type.Func tf && actualType instanceof Type.Func af
                 && isReverseArity(af, tf)) {
@@ -3317,6 +3331,9 @@ public final class TypeChecker {
                 "Cannot assign " + typeName(actualType) + " to " + typeName(targetType),
                 span);
         }
+        diagnostics.set(diagnosticIndex, diagnostics.get(diagnosticIndex).withFacts(
+                new deal.diagnostics.DiagnosticFacts("type.assignability", "assignment",
+                        typeName(targetType), typeName(actualType), List.of())));
     }
 
     private boolean isAssignable(Type expected, Type actual) {
@@ -3492,7 +3509,12 @@ public final class TypeChecker {
      * Returns {@code "<error>"} for the internal error sentinel.
      */
     public static String typeName(Type t) {
+        return typeName(t, 0);
+    }
+
+    private static String typeName(Type t, int depth) {
         if (t == null) return "null";
+        if (depth >= 32) return "<type truncated at depth 32>";
         return switch (t) {
             case Type.Null ignored -> "null";
             case Type.Undefined ignored -> "undefined";
@@ -3504,15 +3526,27 @@ public final class TypeChecker {
             case Type.String ignored -> "string";
             case Type.Table ignored -> "Record<string, unknown>";
             case Type.Error ignored -> "<error>";
-            case Type.Array a -> typeName(a.element()) + "[]";
-            case Type.Nullable n -> typeName(n.inner()) + (n.admitsNull() ? " | null" : "")
-                + (n.admitsUndefined() ? " | undefined" : "");
+            case Type.Array a -> (a.element() instanceof Type.Nullable || a.element() instanceof Type.Func
+                    ? "(" + typeName(a.element(), depth + 1) + ")"
+                    : typeName(a.element(), depth + 1)) + "[]";
+            case Type.Nullable n -> (n.inner() instanceof Type.Func
+                    ? "(" + typeName(n.inner(), depth + 1) + ")" : typeName(n.inner(), depth + 1))
+                + (n.admitsNull() ? " | null" : "") + (n.admitsUndefined() ? " | undefined" : "");
             case Type.Class c -> c.name();
-            case Type.Func f -> "function";
+            case Type.Func f -> (f.isAsync() ? "async " : "") + "("
+                    + f.paramTypes().stream().map(p -> typeName(p, depth + 1))
+                            .collect(java.util.stream.Collectors.joining(", "))
+                    + ") => " + typeName(f.returnType(), depth + 1);
         };
     }
 
     private void error(DiagnosticCode code, String message, Span span) {
-        diagnostics.add(CompilerDiagnostic.error(code, message, span));
+        CompilerDiagnostic diagnostic = CompilerDiagnostic.error(code, message, span);
+        if (code == DiagnosticCode.E3002) {
+            diagnostic = diagnostic.withFacts(new deal.diagnostics.DiagnosticFacts(
+                    "context.required", "inference", "explicit contextual type", "no usable contextual type",
+                    List.of("For an empty array, annotate the intended element type; for an object, supply the intended class or Record construction context.")));
+        }
+        diagnostics.add(diagnostic);
     }
 }

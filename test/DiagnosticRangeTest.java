@@ -3089,11 +3089,14 @@ public class DiagnosticRangeTest {
     }
 
     private static String expectedJsonDocument(String code, String message, String range, String notes) {
-        return "{\n  \"version\": 1,\n  \"diagnostics\": [\n    {\n"
+        return "{\n  \"version\": 2,\n  \"diagnostics\": [\n    {\n"
             + "      \"code\": \"" + code + "\",\n      \"severity\": \"error\",\n"
             + "      \"message\": \"" + message + "\",\n      \"range\": "
             + range.replace("\n", "\n      ") + ",\n      \"notes\": "
-            + notes.replace("\n", "\n      ") + "\n    }\n  ]\n}";
+            + notes.replace("\n", "\n      ") + ",\n"
+            + "      \"facts\": {\n        \"reason\": \"\",\n        \"operation\": \"\",\n"
+            + "        \"expected\": \"\",\n        \"actual\": \"\",\n        \"guidance\": []\n      },\n"
+            + "      \"missingSymbols\": []\n    }\n  ]\n}";
     }
 
     private static String expectedJsonNote(String message, String range) {
@@ -3106,11 +3109,11 @@ public class DiagnosticRangeTest {
     }
 
     private static void testStructuredOutput() {
-        System.out.println("-- DiagnosticStructuredOutput: deterministic JSON v1 (D8) --");
+        System.out.println("-- DiagnosticStructuredOutput: deterministic JSON v2 --");
 
         // Empty diagnostics list; a null list yields the same empty document.
         String emptyJson = "{\n"
-            + "  \"version\": 1,\n"
+            + "  \"version\": 2,\n"
             + "  \"diagnostics\": []\n"
             + "}";
         check(DiagnosticStructuredOutput.toJson(List.of()).equals(emptyJson),
@@ -3185,6 +3188,38 @@ public class DiagnosticRangeTest {
                     + "\\" + "u0007bell\""),
             "JSON string escaping, got: " + escapedJson);
 
+        var facts = new deal.diagnostics.DiagnosticFacts("name.unresolved", "read", "binding", "missing",
+                List.of("Check spelling \"first\".", "Check scope."));
+        CompilerDiagnostic rich = escaped.withFacts(facts)
+                .withMissingSymbol("VALUE", "missing😀", "path\\module", List.of("visible", "value"));
+        String richJson = DiagnosticStructuredOutput.toJson(List.of(rich));
+        var parsed = deal.amend.CompilerProtocolJson.requireObject(
+                deal.amend.CompilerProtocolJson.decode(richJson), "document");
+        var items = deal.amend.CompilerProtocolJson.requireArray(
+                deal.amend.CompilerProtocolJson.field(parsed, "diagnostics"), "diagnostics");
+        var item = deal.amend.CompilerProtocolJson.requireObject(items.items().get(0), "diagnostic");
+        check(deal.amend.CompilerProtocolJson.encode(facts).equals(deal.semantic.ir.CanonicalJson.serializeText(
+                        deal.amend.CompilerProtocolJson.field(item, "facts"))), "CLI facts equal amendment facts");
+        var names = deal.amend.CompilerProtocolJson.requireArray(
+                deal.amend.CompilerProtocolJson.field(item, "missingSymbols"), "missing symbols");
+        check(names.items().size() == 1 && richJson.contains("missing😀"), "missing-symbol facts survive JSON");
+        check(rich.withMissingSymbol("TYPE", "T", "m", List.of()).facts().equals(facts),
+                "adding a missing symbol must retain existing producer facts");
+        var guidance = new java.util.ArrayList<>(List.of("keep"));
+        var immutable = new deal.diagnostics.DiagnosticFacts("reason", "operation", "expected", "actual", guidance);
+        guidance.clear();
+        check(immutable.guidance().equals(List.of("keep")), "producer guidance is defensively copied");
+        CompilerDiagnostic withNote = rich.withNote("related", rich.range());
+        check(withNote.facts().equals(facts) && withNote.missingSymbols().equals(rich.missingSymbols())
+                        && rich.notes().size() + 1 == withNote.notes().size(), "adding notes retains facts without mutation");
+        String loneJson = DiagnosticStructuredOutput.toJson(List.of(rich.withFacts(
+                new deal.diagnostics.DiagnosticFacts("reason\uD800", "op\uDC00", "\u0000", "😀", List.of("\n\t")))));
+        check(loneJson.contains("reason\\ud800") && loneJson.contains("op\\udc00")
+                        && loneJson.contains("\\u0000") && loneJson.contains("😀"),
+                "JSON escapes lone surrogates and controls without damaging supplementary pairs");
+        var loneRoundTrip = deal.amend.CompilerProtocolJson.requireObject(
+                deal.amend.CompilerProtocolJson.decode(loneJson), "document");
+        check(loneRoundTrip != null, "escaped lone units remain valid JSON");
         // Determinism: serializing twice yields the identical document.
         check(DiagnosticStructuredOutput.toJson(List.of(withNotes))
                 .equals(DiagnosticStructuredOutput.toJson(List.of(withNotes))),

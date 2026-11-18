@@ -42,7 +42,60 @@ public final class AmendWorkspaceTest {
         numericStringDiagnosticPublishesRepairContract();
         syntaxDiagnosticsCarryCandidateEvidence();
         syntaxRecoveryCannotAuthorizeMissingDependencies();
+        actionabilityFactsAndRepairScope();
         System.out.println("AmendWorkspaceTest: all tests passed");
+    }
+
+    private static void actionabilityFactsAndRepairScope() {
+        String source = "// supplementary 😀\r\nexport function broken(x:Missing):number{return 1;}";
+        var inspection = AmendWorkspace.inspect(source, "probe.deal");
+        var diagnostics = inspection.diagnostics().stream().filter(d -> d.code().equals("E3004")).toList();
+        check(diagnostics.size() == 1, "exact repeated unknown-type diagnostic must appear once: " + diagnostics);
+        var diagnostic = diagnostics.get(0);
+        check(diagnostic.range().origin() == deal.diagnostics.RangeOrigin.SOURCE
+                        && diagnostic.range().startScalarOffset() == source.indexOf("Missing")
+                        && diagnostic.range().scalarLength() == 7,
+                "amendment retains the complete UTF-16 source range, including CRLF and supplementary units");
+        check(diagnostic.repairScopes().equals(List.of(new CompilerProtocol.RepairScope(
+                        AmendWorkspace.REPLACE_DECLARATION, diagnostic.ownerId()))),
+                "signature errors require declaration repair, not body repair: " + diagnostic);
+        String clean = "export function broken(x:number):number{return x;}";
+        var base = AmendWorkspace.inspect(clean, "probe.deal");
+        var target = base.symbols().stream().filter(s -> s.kind().equals("function")).findFirst().orElseThrow();
+        var change = AmendWorkspace.inspectChange(clean, "probe.deal", base.sourceDigest(),
+                List.of(target.id()), List.of(AmendWorkspace.REPLACE_DECLARATION));
+        var staged = AmendWorkspace.stageChange(clean, "probe.deal",
+                new CompilerProtocol.ChangeSetPrecondition(base.sourceDigest(),
+                        Map.of(target.id().value(), target.fingerprint())), change,
+                List.of(new AmendWorkspace.ReplaceDeclaration(target.id(),
+                        "export function broken(x:Missing):number{return 1;}")));
+        check(!staged.accepted() && staged.source().equals(clean), "invalid signature stays an unpublished candidate");
+        var repaired = AmendWorkspace.patchRepairWorkspace(clean, "probe.deal", staged.workspace(),
+                List.of(new CompilerProtocol.SlotPatch("R1", Map.of("declaration", clean))));
+        check(!repaired.accepted() && repaired.diagnostics().stream().anyMatch(d -> d.code().equals("CP1029")),
+                "a no-op restoration cannot masquerade as source-changing repair");
+        repaired = AmendWorkspace.patchRepairWorkspace(clean, "probe.deal", staged.workspace(),
+                List.of(new CompilerProtocol.SlotPatch("R1", Map.of("declaration",
+                        "export function broken(x:number):number{return x + 1;}"))));
+        check(repaired.accepted() && AmendWorkspace.inspect(repaired.source(), "probe.deal").diagnostics().isEmpty(),
+                "advertised declaration repair must actually recheck successfully: " + repaired.diagnostics());
+        var body = AmendWorkspace.inspect("export function f():number{let x:number=\"bad\";return 1;}", "probe.deal");
+        var bodyDiagnostic = body.diagnostics().stream().filter(d -> d.code().equals("E3001")).findFirst().orElseThrow();
+        check(bodyDiagnostic.repairScopes().equals(List.of(new CompilerProtocol.RepairScope(
+                        AmendWorkspace.REPLACE_FUNCTION_BODY, bodyDiagnostic.ownerId()))),
+                "body-owned errors keep body-only repair");
+        var copied = bodyDiagnostic.withOperationIndex(2).withMissingSymbols(diagnostic.missingSymbols());
+        check(copied.facts().equals(bodyDiagnostic.facts()) && copied.range().equals(bodyDiagnostic.range())
+                        && copied.operationIndex() == 2, "operation attribution and missing facts preserve producer data");
+        var two = AmendWorkspace.inspect("export function f(x:Missing,y:Missing):number{return 1;}", "probe.deal");
+        check(two.diagnostics().stream().filter(d -> d.code().equals("E3004")).count() == 2,
+                "independent occurrences must not be collapsed");
+        var mismatch = AmendWorkspace.inspect("let x:number=\"bad\";", "probe.deal").diagnostics().stream()
+                .filter(d -> d.code().equals("E3001")).findFirst().orElseThrow();
+        check(mismatch.facts().expected().equals("number") && mismatch.facts().actual().equals("string"),
+                "amendment forwards producer types rather than parsing prose");
+        String json = CompilerProtocolJson.encode(mismatch);
+        check(json.contains("\"facts\"") && json.contains("\"startScalarOffset\""), "current protocol exports facts and ranges");
     }
 
     private static void syntaxRecoveryCannotAuthorizeMissingDependencies() {

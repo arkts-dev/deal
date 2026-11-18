@@ -4,13 +4,13 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * Canonical structured JSON diagnostic output (D8): version 1, one
+ * Canonical structured JSON diagnostic output (D8): version 2, one
  * deterministic document with a fixed field order, diagnostics in list
  * order, notes in order.
  *
  * <pre>
  * {
- *   "version": 1,
+ *   "version": 2,
  *   "diagnostics": [
  *     {
  *       "code": "E3001",
@@ -29,7 +29,11 @@ import java.util.Objects;
  *       },
  *       "notes": [
  *         { "message": "...", "range": { ... } | null }
- *       ]
+ *       ],
+ *       "facts": { "reason": "...", "operation": "...", "expected": "...",
+ *                  "actual": "...", "guidance": ["..."] },
+ *       "missingSymbols": [{ "kind": "VALUE", "name": "...", "namespace": "...",
+ *                            "constraints": [] }]
  *     }
  *   ]
  * }
@@ -57,14 +61,14 @@ public final class DiagnosticStructuredOutput {
 
     /**
      * Serializes the diagnostics as the canonical structured JSON document
-     * (version 1).
+     * (version 2).
      *
      */
     public static String toJson(List<CompilerDiagnostic> diagnostics) {
         List<CompilerDiagnostic> list = diagnostics == null ? List.of() : diagnostics;
         StringBuilder sb = new StringBuilder();
         sb.append("{\n")
-            .append("  \"version\": 1,\n")
+            .append("  \"version\": 2,\n")
             .append("  \"diagnostics\": ");
         if (list.isEmpty()) {
             sb.append("[]\n")
@@ -80,7 +84,7 @@ public final class DiagnosticStructuredOutput {
         return sb.toString();
     }
 
-    /** Appends one {@code { code, severity, message, range, notes }} object. */
+    /** Emits producer facts and missing names without interpreting message text. */
     private static void appendDiagnostic(StringBuilder sb, CompilerDiagnostic d, boolean last) {
         Objects.requireNonNull(d, "diagnostic element must not be null");
         indent(sb, 2).append("{\n");
@@ -90,7 +94,50 @@ public final class DiagnosticStructuredOutput {
         appendRange(sb, d.range(), 3);
         sb.append(",\n");
         appendNotes(sb, d.notes(), 3);
+        sb.append(",\n");
+        appendFacts(sb, d.facts(), 3);
+        sb.append(",\n");
+        appendMissingSymbols(sb, d.missingSymbols(), 3);
+        sb.append('\n');
         indent(sb, 2).append('}').append(last ? "\n" : ",\n");
+    }
+
+    private static void appendFacts(StringBuilder sb, DiagnosticFacts facts, int level) {
+        indent(sb, level).append("\"facts\": {\n");
+        indent(sb, level + 1).append("\"reason\": ").append(jsonString(facts.reason())).append(",\n");
+        indent(sb, level + 1).append("\"operation\": ").append(jsonString(facts.operation())).append(",\n");
+        indent(sb, level + 1).append("\"expected\": ").append(jsonString(facts.expected())).append(",\n");
+        indent(sb, level + 1).append("\"actual\": ").append(jsonString(facts.actual())).append(",\n");
+        indent(sb, level + 1).append("\"guidance\": ");
+        appendStrings(sb, facts.guidance());
+        sb.append('\n');
+        indent(sb, level).append('}');
+    }
+
+    private static void appendMissingSymbols(StringBuilder sb, List<CompilerDiagnostic.MissingSymbol> facts, int level) {
+        indent(sb, level).append("\"missingSymbols\": [");
+        for (int i = 0; i < facts.size(); i++) {
+            if (i > 0) sb.append(',');
+            var fact = facts.get(i);
+            sb.append("\n");
+            indent(sb, level + 1).append("{\"kind\": ").append(jsonString(fact.kind()))
+                    .append(", \"name\": ").append(jsonString(fact.name()))
+                    .append(", \"namespace\": ").append(jsonString(fact.namespace()))
+                    .append(", \"constraints\": ");
+            appendStrings(sb, fact.constraints());
+            sb.append('}');
+        }
+        if (!facts.isEmpty()) { sb.append('\n'); indent(sb, level); }
+        sb.append(']');
+    }
+
+    private static void appendStrings(StringBuilder sb, List<String> values) {
+        sb.append('[');
+        for (int i = 0; i < values.size(); i++) {
+            if (i > 0) sb.append(", ");
+            sb.append(jsonString(values.get(i)));
+        }
+        sb.append(']');
     }
 
     /**
@@ -116,18 +163,18 @@ public final class DiagnosticStructuredOutput {
         indent(sb, level).append('}');
     }
 
-    /** Appends the {@code "notes": [ ... ]} list with its trailing newline. */
+    /** Appends notes without a trailing separator. */
     private static void appendNotes(StringBuilder sb, List<DiagnosticNote> notes, int level) {
         indent(sb, level).append("\"notes\": ");
         if (notes.isEmpty()) {
-            sb.append("[]\n");
+            sb.append("[]");
             return;
         }
         sb.append("[\n");
         for (int i = 0; i < notes.size(); i++) {
             appendNote(sb, notes.get(i), level + 1, i == notes.size() - 1);
         }
-        indent(sb, level).append("]\n");
+        indent(sb, level).append(']');
     }
 
     /** Appends one {@code { message, range }|{ message, range: null }} object. */
@@ -169,7 +216,11 @@ public final class DiagnosticStructuredOutput {
                 case '\r' -> sb.append("\\r");
                 case '\t' -> sb.append("\\t");
                 default -> {
-                    if (c < 0x20) {
+                    if (c < 0x20 || (Character.isSurrogate(c)
+                            && !(Character.isHighSurrogate(c) && i + 1 < s.length()
+                                && Character.isLowSurrogate(s.charAt(i + 1)))
+                            && !(Character.isLowSurrogate(c) && i > 0
+                                && Character.isHighSurrogate(s.charAt(i - 1))))) {
                         sb.append(String.format("\\u%04x", (int) c));
                     } else {
                         sb.append(c);

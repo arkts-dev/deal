@@ -2857,7 +2857,7 @@ public class ProductionDispatchTest {
     }
 
     /**
-     * The structured-document pins: version 1, one error diagnostic with
+     * The structured-document pins: version 2, one error diagnostic with
      * the complete message and the exact SOURCE range, and no notes.
      */
     private static void checkStructuredOrigin(String context, String structured,
@@ -2866,7 +2866,7 @@ public class ProductionDispatchTest {
             int scalarLength) {
         CanonicalJson.Value root = CanonicalJson.parse(structured);
         CanonicalJson.Obj rootObj = (CanonicalJson.Obj) root;
-        checkEq(1, jsonInt(jsonField(rootObj, "version")),
+        checkEq(2, jsonInt(jsonField(rootObj, "version")),
             context + ": the structured document version");
         CanonicalJson.Arr diagnostics =
             (CanonicalJson.Arr) jsonField(rootObj, "diagnostics");

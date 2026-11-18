@@ -1,25 +1,17 @@
 package deal.amend;
 
+import deal.diagnostics.DiagnosticRange;
+import deal.diagnostics.DiagnosticFacts;
+
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
 /** Transport-neutral records shared by DEAL compiler frontends. */
 public final class CompilerProtocol {
-    public static final String VERSION = "compiler-protocol-v2";
+    public static final String VERSION = "compiler-protocol-v3";
 
     private CompilerProtocol() {}
-
-    public record SourceRange(
-            String file,
-            int startLine,
-            int startColumn,
-            int endLine,
-            int endColumn) {
-        public SourceRange {
-            Objects.requireNonNull(file, "file");
-        }
-    }
 
     public record SemanticId(String value) {
         public SemanticId {
@@ -157,28 +149,28 @@ public final class CompilerProtocol {
             String code,
             String severity,
             String message,
-            SourceRange range,
+            DiagnosticRange range,
             SemanticId ownerId,
-            String expected,
-            String actual,
+            DiagnosticFacts facts,
             List<SemanticId> relatedIds,
             List<RepairScope> repairScopes,
             String contextQuery,
             List<deal.diagnostics.DiagnosticNote> notes,
             Integer operationIndex,
             List<deal.diagnostics.CompilerDiagnostic.MissingSymbol> missingSymbols) {
-        public StructuredDiagnostic(String code, String severity, String message, SourceRange range,
+        public StructuredDiagnostic(String code, String severity, String message, DiagnosticRange range,
                                     SemanticId ownerId, String expected, String actual,
                                     List<SemanticId> relatedIds, List<RepairScope> repairScopes, String contextQuery,
                                     List<deal.diagnostics.DiagnosticNote> notes, Integer operationIndex) {
-            this(code, severity, message, range, ownerId, expected, actual, relatedIds, repairScopes,
+            this(code, severity, message, range, ownerId,
+                    new DiagnosticFacts(code, "repair", expected, actual, List.of()), relatedIds, repairScopes,
                     contextQuery, notes, operationIndex, List.of());
         }
         public StructuredDiagnostic withMissingSymbols(List<deal.diagnostics.CompilerDiagnostic.MissingSymbol> facts) {
-            return new StructuredDiagnostic(code, severity, message, range, ownerId, expected, actual,
+            return new StructuredDiagnostic(code, severity, message, range, ownerId, this.facts,
                     relatedIds, repairScopes, contextQuery, notes, operationIndex, facts);
         }
-        public StructuredDiagnostic(String code, String severity, String message, SourceRange range,
+        public StructuredDiagnostic(String code, String severity, String message, DiagnosticRange range,
                                     SemanticId ownerId, String expected, String actual,
                                     List<SemanticId> relatedIds, List<RepairScope> repairScopes, String contextQuery,
                                     List<deal.diagnostics.DiagnosticNote> notes) {
@@ -186,12 +178,20 @@ public final class CompilerProtocol {
                     contextQuery, notes, (Integer) null);
         }
 
+        public String expected() { return facts.expected(); }
+        public String actual() { return facts.actual(); }
+
+        public StructuredDiagnostic withFacts(DiagnosticFacts value) {
+            return new StructuredDiagnostic(code, severity, message, range, ownerId, value,
+                    relatedIds, repairScopes, contextQuery, notes, operationIndex, missingSymbols);
+        }
+
         /** Index in this response's ChangeSet only; never a persisted semantic identity. */
         public StructuredDiagnostic withOperationIndex(int index) {
-            return new StructuredDiagnostic(code, severity, message, range, ownerId, expected, actual,
+            return new StructuredDiagnostic(code, severity, message, range, ownerId, facts,
                     relatedIds, repairScopes, contextQuery, notes, index, missingSymbols);
         }
-        public StructuredDiagnostic(String code, String severity, String message, SourceRange range,
+        public StructuredDiagnostic(String code, String severity, String message, DiagnosticRange range,
                                     SemanticId ownerId, String expected, String actual,
                                     List<SemanticId> relatedIds, List<RepairScope> repairScopes, String contextQuery) {
             this(code, severity, message, range, ownerId, expected, actual, relatedIds, repairScopes,
@@ -202,6 +202,7 @@ public final class CompilerProtocol {
             Objects.requireNonNull(code, "code");
             Objects.requireNonNull(severity, "severity");
             Objects.requireNonNull(message, "message");
+            Objects.requireNonNull(facts, "facts");
             relatedIds = List.copyOf(relatedIds);
             repairScopes = List.copyOf(repairScopes);
             notes = List.copyOf(notes);
@@ -236,7 +237,7 @@ public final class CompilerProtocol {
             SemanticId id,
             String kind,
             String name,
-            SourceRange range,
+            DiagnosticRange range,
             String description,
             String fingerprint,
             List<SemanticId> callers,
@@ -251,7 +252,7 @@ public final class CompilerProtocol {
             SemanticId id,
             SemanticId ownerId,
             String kind,
-            SourceRange range,
+            DiagnosticRange range,
             String fingerprint) {}
 
     public record SemanticSlice(

@@ -1,16 +1,15 @@
 package deal.diagnostics;
 
 /**
- * A complete immutable half-open decoded-Unicode-scalar source range.
+ * A complete immutable half-open UTF-16 source range.
  *
- * <p>The range covers the decoded Unicode scalars
- * {@code [startScalarOffset, endScalarOffset)} in {@code file}; the
- * documented invariant is
+ * <p>Despite their scalar-named fields, offsets and lengths count UTF-16
+ * code units in {@code file}. Known offsets satisfy
  * {@code scalarLength == endScalarOffset - startScalarOffset}.
- * {@code endLine}/{@code endColumn} denote the position of the first
- * scalar after the range (half-open). Positions and offsets are measured
- * in decoded Unicode scalars: CRLF counts as two scalars, a tab as one,
- * and a supplementary code point as one.</p>
+ * {@code endLine}/{@code endColumn} denote the exclusive end. Lines and
+ * columns are one-based; columns count UTF-16 units. CRLF consumes two
+ * offset units and one line break, a tab one column, and a supplementary
+ * character two columns/offset units. These are not JSON UTF-8 byte offsets.</p>
  *
  * <p>This record performs no validation and never throws for any input —
  * including nulls, non-positive positions, and negative or inverted
@@ -19,8 +18,8 @@ package deal.diagnostics;
  * treated as "no offset information" (UNKNOWN) by that normalization.</p>
  *
  * <p>The origin separates computed source ranges from synthetic anchors:
- * a {@link RangeOrigin#SOURCE} range always carries exact computed scalar
- * offsets, while a {@link RangeOrigin#SYNTHETIC} range uses the canonical
+ * a {@link RangeOrigin#SOURCE} range carries source coordinates and, when
+ * available, exact computed UTF-16 offsets, while a {@link RangeOrigin#SYNTHETIC} range uses the canonical
  * zero-length shape {@code (file,1,1,1,1,0,0,0,SYNTHETIC)} and carries an
  * anchor note naming the missing anchor.</p>
  *

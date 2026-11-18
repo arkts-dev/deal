@@ -122,6 +122,43 @@ public class CheckerTest {
         );
     }
 
+    private static void diagnosticActionability() {
+        var missing = checkProgram("let value = nowhere;").result().diagnostics().stream()
+                .filter(d -> d.code().equals("E2001")).findFirst().orElseThrow();
+        check(missing.missingSymbols().size() == 1
+                        && missing.missingSymbols().get(0).kind().equals("VALUE")
+                        && missing.missingSymbols().get(0).name().equals("nowhere")
+                        && missing.facts().reason().equals("name.unresolved"), "unresolved read publishes missing-value evidence");
+        var assertion = checkProgram("let value = 1 as string;").result().diagnostics().stream()
+                .filter(d -> d.code().equals("E3001")).findFirst().orElseThrow();
+        check(assertion.facts().expected().equals("string") && assertion.facts().actual().equals("number")
+                        && assertion.facts().operation().equals("assertion")
+                        && assertion.message().contains("one type must be assignable to the other"),
+                "assertion publishes source, target and failed rule without inventing a conversion");
+        var assignment = checkProgram("let f: (x:number)=>number = function(x:string):number{return 1;};")
+                .result().diagnostics().stream().filter(d -> d.code().equals("E3001")).findFirst().orElseThrow();
+        check(assignment.facts().expected().equals("(number) => number")
+                        && assignment.facts().actual().equals("(string) => number"), "assignment publishes complete signatures");
+        Type function = new Type.Func(List.of(Type.Number.INSTANCE), Type.String.INSTANCE, true);
+        check(TypeChecker.typeName(function).equals("async (number) => string"), "async marker is explicit");
+        check(TypeChecker.typeName(new Type.Array(Types.nullable(function)))
+                        .equals("((async (number) => string) | null)[]"), "function/nullish array grouping is unambiguous");
+        check(TypeChecker.typeName(new Type.Func(List.of(function), new Type.Array(function)))
+                        .equals("(async (number) => string) => (async (number) => string)[]"), "nested function types retain signatures");
+        Type deep = Type.Number.INSTANCE;
+        for (int i = 0; i < 40; i++) deep = new Type.Array(deep);
+        check(TypeChecker.typeName(deep).contains("<type truncated at depth 32>"), "bounded rendering states truncation honestly");
+        var context = checkProgram("let xs = [];").result().diagnostics().stream()
+                .filter(d -> d.code().equals("E3002")).findFirst().orElseThrow();
+        check(context.facts().reason().equals("context.required")
+                        && context.facts().guidance().get(0).contains("intended element type"),
+                "context rejection requests user intent, not a guessed type");
+        var add = checkProgram("let x = 1 + \"a\";").result().diagnostics().stream()
+                .filter(d -> d.code().equals("E3010")).findFirst().orElseThrow();
+        check(add.facts().actual().equals("left: number; right: string")
+                        && add.facts().operation().equals("addition"), "addition owns operand roles and types");
+    }
+
     private static boolean hasErrors(List<CompilerDiagnostic> diags) {
         return diags.stream().anyMatch(d -> "error".equals(d.severity()));
     }
@@ -228,6 +265,7 @@ public class CheckerTest {
     }
 
     public static void main(String[] args) {
+        diagnosticActionability();
         testNestedDeclarationValidation();
         System.out.println("=== Running Type Checker Tests ===");
 
@@ -5994,8 +6032,8 @@ public class CheckerTest {
                     + "'2 error(s), 0 warning(s)'");
 
             String json = Files.readString(jsonPath);
-            check(json.contains("\"version\": 1"),
-                "D1 both surfaces: JSON document stays version 1");
+            check(json.contains("\"version\": 2"),
+                "D1 both surfaces: current JSON document version");
             int arrayStart = json.indexOf("\"diagnostics\": [");
             check(arrayStart >= 0,
                 "D1 both surfaces: JSON document has the diagnostics array");

@@ -465,7 +465,7 @@ public final class Main {
         System.err.println("  --verbose, -v        Verbose output with per-module timing");
         System.err.println("  --dump-ir            Produce IR dump files at <outputDir>/<module-path>.ir.txt");
         System.err.println("  --source-map         Accepted (source comments and .deal.map.json sidecars are the default)");
-        System.err.println("  --diagnostics-json <path>  Write the structured diagnostics document (version 1)");
+        System.err.println("  --diagnostics-json <path>  Write the structured diagnostics document (version 2)");
         System.err.println();
         System.err.println("The native verb compiles with the llvm backend and links the published set");
         System.err.println("through the pinned clang window (LLVM 14-16); `deal native run` executes the");

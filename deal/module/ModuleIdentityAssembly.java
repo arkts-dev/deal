@@ -616,6 +616,6 @@ public final class ModuleIdentityAssembly {
         List<DiagnosticNote> combined = new ArrayList<>(base.notes());
         combined.addAll(notes);
         return new CompilerDiagnostic(base.code(), base.severity(),
-            base.message(), base.range(), combined, base.diagnosticCode());
+            base.message(), base.range(), combined, base.diagnosticCode(), base.missingSymbols(), base.facts());
     }
 }

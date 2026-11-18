@@ -40,7 +40,7 @@ import deal.amend.CompilerProtocol.RepairWorkspaceSnapshot;
 import deal.amend.CompilerProtocol.SemanticId;
 import deal.amend.CompilerProtocol.SemanticSlice;
 import deal.amend.CompilerProtocol.RevisionRef;
-import deal.amend.CompilerProtocol.SourceRange;
+import deal.diagnostics.DiagnosticRange;
 import deal.amend.CompilerProtocol.StructuredDiagnostic;
 import deal.amend.CompilerProtocol.SlotPatch;
 import deal.amend.CompilerProtocol.SymbolSnapshot;
@@ -1245,13 +1245,18 @@ public final class AmendWorkspace {
         SymbolTable symbols = names.resolve(parsed.program());
         // Recovery ASTs can omit later declarations. Their unresolved names must not
         // authorize adding dependencies until the syntax has been repaired.
-        if (rawDiagnostics.stream().noneMatch(value -> value.severity().equals("error")))
-            rawDiagnostics.addAll(names.diagnostics());
+        if (rawDiagnostics.stream().noneMatch(value -> value.severity().equals("error"))) {
+            for (CompilerDiagnostic diagnostic : names.diagnostics()) {
+                if (!rawDiagnostics.contains(diagnostic)) rawDiagnostics.add(diagnostic);
+            }
+        }
         if (rawDiagnostics.stream().noneMatch(value -> value.severity().equals("error"))) {
             CheckResult checked = TypeChecker.check(modulePath, symbols, names, parsed.program());
             // Field types can be resolved lazily by the checker; retain their owning diagnostics.
             names.diagnostics().stream().filter(value -> !rawDiagnostics.contains(value)).forEach(rawDiagnostics::add);
-            rawDiagnostics.addAll(checked.diagnostics());
+            for (CompilerDiagnostic diagnostic : checked.diagnostics()) {
+                if (!rawDiagnostics.contains(diagnostic)) rawDiagnostics.add(diagnostic);
+            }
         }
 
         SourceIndex index = new SourceIndex(source);
@@ -1502,7 +1507,9 @@ public final class AmendWorkspace {
         SemanticId ownerId = owner == null ? moduleId : owner.id();
         List<RepairScope> scopes = owner == null
                 ? List.of()
-                : List.of(new RepairScope(REPLACE_FUNCTION_BODY, owner.id()));
+                : List.of(new RepairScope(
+                        contains(owner.function().body().span(), value.line(), value.column())
+                                ? REPLACE_FUNCTION_BODY : REPLACE_DECLARATION, owner.id()));
         if (owner == null) {
             for (ClassInfo valueClass : classes) {
                 if (contains(valueClass.declarationSpan(), value.line(), value.column())) {
@@ -1513,33 +1520,25 @@ public final class AmendWorkspace {
             }
         }
         var compilerRange = value.range();
-        String expected = value.code().equals("E3010")
-                ? "Both '+' operands must be numeric, or both must be string; DEAL has no implicit coercion"
-                : "";
         return new StructuredDiagnostic(
                 value.code(),
                 value.severity(),
                 value.message(),
-                new SourceRange(
-                        compilerRange.file(),
-                        compilerRange.startLine(),
-                        compilerRange.startColumn(),
-                        compilerRange.endLine(),
-                        compilerRange.endColumn()),
+                compilerRange,
                 ownerId,
-                expected,
-                "",
+                value.facts().expected(),
+                value.facts().actual(),
                 List.of(),
                 scopes,
                 owner == null ? "inspectCanonicalApp" : "queryDealSymbol(" + owner.id().value() + ")",
-                value.notes());
+                value.notes()).withFacts(value.facts());
     }
 
     private static StructuredDiagnostic diagnostic(
             String code,
             String message,
             SemanticId owner,
-            SourceRange range,
+            DiagnosticRange range,
             String expected,
             String actual,
             List<RepairScope> scopes,
@@ -1562,7 +1561,7 @@ public final class AmendWorkspace {
                 .toList();
         return new StructuredDiagnostic(
                 diagnostic.code(), diagnostic.severity(), diagnostic.message(), diagnostic.range(),
-                diagnostic.ownerId(), diagnostic.expected(), diagnostic.actual(),
+                diagnostic.ownerId(), diagnostic.facts(),
                 ownedOperations.stream().map(Operation::targetId).toList(), scopes,
                 diagnostic.contextQuery(), diagnostic.notes(), diagnostic.operationIndex(), diagnostic.missingSymbols());
     }
@@ -1679,9 +1678,8 @@ public final class AmendWorkspace {
         return diagnostics.stream().anyMatch(value -> value.severity().equals("error"));
     }
 
-    private static SourceRange range(Span value) {
-        return new SourceRange(
-                value.file(), value.startLine(), value.startColumn(), value.endLine(), value.endColumn());
+    private static DiagnosticRange range(Span value) {
+        return value.range();
     }
 
     private static Span declarationSpan(StatementNode statement, StatementNode declaration) {
@@ -1728,10 +1726,10 @@ public final class AmendWorkspace {
         return errors.stream().filter(value -> value.severity().equals("error")).map(value -> {
             var r = value.range();
             return new StructuredDiagnostic(value.code(), value.severity(), value.message(),
-                    new SourceRange(modulePath, r.startLine(), r.startColumn(), r.endLine(), r.endColumn()),
+                    r,
                     operation.targetId(), "", "", List.of(),
                     List.of(new RepairScope(operationName(operation), operation.targetId())),
-                    "repairOperation", value.notes(), operationIndex);
+                    "repairOperation", value.notes(), operationIndex).withFacts(value.facts());
         }).toList();
     }
 
@@ -1862,7 +1860,7 @@ public final class AmendWorkspace {
             SemanticId id,
             SemanticId ownerId,
             String kind,
-            SourceRange range,
+            DiagnosticRange range,
             int start,
             int end,
             int contentStart,
