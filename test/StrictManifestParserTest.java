@@ -78,6 +78,7 @@ public final class StrictManifestParserTest {
         testFailFastCanonicalOrder();
         testContentOnlyAndDeterminism();
         testCompleteScalarRanges();
+        testProducerFacts();
 
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
@@ -85,6 +86,51 @@ public final class StrictManifestParserTest {
             System.err.println("StrictManifestParserTest FAILED: " + failed + " failure(s)");
             System.exit(1);
         }
+    }
+
+    private static void testProducerFacts() {
+        String valid = "\"languageVersion\":\"1.6\"";
+        for (String[] sample : new String[][] {
+                {"{}", "config.required-member", "string \"1.6\"", "absent", "languageVersion"},
+                {"{\"languageVersion\":null}", "config.value-kind", "string \"1.6\"", "null", "languageVersion"},
+                {"{\"languageVersion\":\"old\"}", "config.language-version", "1.6", "old", "languageVersion"},
+                {"{" + valid + ",\"backend\":\"lua\"}", "config.backend", "luajit | jvm | js | llvm", "lua", "backend"},
+                {"{" + valid + ",\"backend\":42}", "config.value-kind", "string", "42", "backend"},
+                {"{" + valid + ",\"stdlib\":\"old\"}", "config.stdlib-version", "1.6", "old", "stdlib"},
+                {"{" + valid + ",\"stdlib\":false}", "config.value-kind", "string \"1.6\"", "false", "stdlib"}}) {
+            var result = parse(sample[0]);
+            check(result.manifest() == null && result.failure() != null, "facts never publish invalid configuration");
+            if (result.failure() == null) continue;
+            var facts = result.failure().facts();
+            check(facts.reason().equals(sample[1]) && facts.operation().equals("manifest.validate"), "producer reason/operation " + sample[0]);
+            check(facts.expected().equals(sample[2]) && facts.actual().equals(sample[3]), "producer expected/actual " + sample[0]);
+            check(facts.path().size() == 1 && facts.path().getFirst().name().equals(sample[4]), "rejected member path " + sample[0]);
+            check(facts.guidance().isEmpty() == sample[4].equals("languageVersion"), "required version has no invented default");
+            if (!facts.guidance().isEmpty()) check(facts.guidance().getFirst().contains("never replaced"), "default is explanatory, not a fallback on error");
+        }
+        String duplicate = "{\"languageVersion\":\"1.6\",\"dependencies\":{\"😀\":1,\"\\uD83D\\uDE00\":2}}";
+        var result = parse(duplicate);
+        check(result.manifest() == null && result.failure() != null, "decoded duplicate rejects");
+        if (result.failure() != null) {
+            var diagnostic = result.failure();
+            check(diagnostic.facts().reason().equals("config.duplicate-member")
+                    && diagnostic.facts().actual().equals("😀"), "decoded duplicate key producer facts");
+            check(diagnostic.notes().size() == 1, "exact first duplicate declaration note");
+            if (!diagnostic.notes().isEmpty()) {
+                var range = diagnostic.notes().getFirst().range();
+                check(range.startScalarOffset() == duplicate.indexOf("\"😀\""), "duplicate first key UTF-16 start");
+                check(range.endScalarOffset() == duplicate.indexOf("\"😀\"") + 4
+                        && range.origin() == RangeOrigin.SOURCE, "duplicate first key complete source range");
+            }
+            check(diagnostic.range().startScalarOffset() == duplicate.indexOf("\"\\uD83D"), "duplicate primary stays on later raw spelling");
+            check(deal.diagnostics.DiagnosticStructuredOutput.toJson(java.util.List.of(diagnostic))
+                    .contains("config.duplicate-member"), "duplicate facts exported through current schema");
+        }
+        var defaults = parse("{" + valid + "}");
+        check(defaults.failure() == null && defaults.manifest().backend().equals("luajit")
+                && defaults.manifest().stdlib().equals("1.6"), "absence defaults remain unchanged");
+        var first = parse("{\"languageVersion\":\"old\",\"backend\":\"bad\"}");
+        check(first.failure().facts().reason().equals("config.language-version"), "canonical fail-fast validation order unchanged");
     }
 
     // =========================================================================

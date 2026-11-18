@@ -16,7 +16,6 @@ import deal.source.SourceScalarRange;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
-import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -89,15 +88,17 @@ public final class StrictManifestParser {
 
         Defect first = firstDefect(strictFaults, tokenDefects);
         if (first != null) {
-            return new StrictManifestParseResult(null,
-                e2010(file, first.message(), first.range()));
+            var diagnostic = e2010(file, first.message(), first.range()).withFacts(first.facts());
+            if (first.relatedRange() != null)
+                diagnostic = diagnostic.withNote("First member with this decoded key", sourceRange(file, first.relatedRange()));
+            return new StrictManifestParseResult(null, diagnostic);
         }
 
         ProjectConfigValidator.Outcome outcome = ProjectConfigValidator.validate(
             new StrictJsonDocument(rootHolder[0], valueRanges));
         if (outcome.failure() != null) {
             return new StrictManifestParseResult(null,
-                e2010(file, outcome.failure().message(), outcome.failure().anchorRange()));
+                e2010(file, outcome.failure().message(), outcome.failure().anchorRange()).withFacts(outcome.failure().facts()));
         }
         return new StrictManifestParseResult(outcome.manifest(), null);
     }
@@ -125,7 +126,7 @@ public final class StrictManifestParser {
         final SourceScalarRange startRange;
         final LinkedHashMap<String, StrictJsonValue> members;
         final ArrayList<StrictJsonValue> elements;
-        final Set<String> keys;
+        final Map<String, SourceScalarRange> keys;
         String pendingKey;
 
         private Frame(boolean isObject, Role role, SourceScalarRange startRange) {
@@ -134,7 +135,7 @@ public final class StrictManifestParser {
             this.startRange = startRange;
             this.members = isObject ? new LinkedHashMap<>() : null;
             this.elements = isObject ? null : new ArrayList<>();
-            this.keys = isObject ? new HashSet<>() : null;
+            this.keys = isObject ? new LinkedHashMap<>() : null;
         }
 
         static Frame object(Role role, SourceScalarRange startRange) {
@@ -147,7 +148,11 @@ public final class StrictManifestParser {
     }
 
     /** One scan-order defect: an anchor range plus a message. */
-    private record Defect(SourceScalarRange range, String message) {
+    private record Defect(SourceScalarRange range, String message, deal.diagnostics.DiagnosticFacts facts,
+                          SourceScalarRange relatedRange) {
+        private Defect(SourceScalarRange range, String message) {
+            this(range, message, deal.diagnostics.DiagnosticFacts.EMPTY, null);
+        }
     }
 
     /**
@@ -186,9 +191,13 @@ public final class StrictManifestParser {
                             "deal.json: invalid JSON: invalid escape sequence in member key"));
                     } else {
                         String key = scan.value();
-                        if (!top.keys.add(key)) {
+                        SourceScalarRange previous = top.keys.putIfAbsent(key, token.range());
+                        if (previous != null) {
                             defects.add(new Defect(token.range(),
-                                "deal.json: duplicate member '" + key + "'"));
+                                "deal.json: duplicate member '" + key + "'",
+                                new deal.diagnostics.DiagnosticFacts("config.duplicate-member", "manifest.parse",
+                                        "unique decoded member key", key, List.of(
+                                                "Choose the intended member value; no duplicate is silently preferred.")), previous));
                         } else if (top.role == Role.TOP_LEVEL && !TOP_LEVEL_MEMBERS.contains(key)) {
                             defects.add(new Defect(token.range(),
                                 "deal.json: unknown member '" + key + "'"));
@@ -564,9 +573,12 @@ public final class StrictManifestParser {
     /** One fail-fast E2010 with a complete SOURCE scalar range. */
     private static CompilerDiagnostic e2010(String file, String message,
                                             SourceScalarRange range) {
-        return CompilerDiagnostic.error(DiagnosticCode.E2010, message, new DiagnosticRange(file,
-            range.startLine(), range.startColumn(), range.endLine(), range.endColumn(),
-            range.startScalarOffset(), range.endScalarOffset(),
-            range.endScalarOffset() - range.startScalarOffset(), RangeOrigin.SOURCE));
+        return CompilerDiagnostic.error(DiagnosticCode.E2010, message, sourceRange(file, range));
+    }
+
+    private static DiagnosticRange sourceRange(String file, SourceScalarRange range) {
+        return new DiagnosticRange(file, range.startLine(), range.startColumn(), range.endLine(), range.endColumn(),
+                range.startScalarOffset(), range.endScalarOffset(),
+                range.endScalarOffset() - range.startScalarOffset(), RangeOrigin.SOURCE);
     }
 }

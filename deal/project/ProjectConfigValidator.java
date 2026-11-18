@@ -31,7 +31,10 @@ public final class ProjectConfigValidator {
     }
 
     /** A post-walk validation failure: a message plus an anchor range. */
-    public record Failure(String message, SourceScalarRange anchorRange) {
+    public record Failure(String message, SourceScalarRange anchorRange, deal.diagnostics.DiagnosticFacts facts) {
+        public Failure(String message, SourceScalarRange anchorRange) {
+            this(message, anchorRange, deal.diagnostics.DiagnosticFacts.EMPTY);
+        }
     }
 
     /**
@@ -42,27 +45,29 @@ public final class ProjectConfigValidator {
     public static Outcome validate(StrictJsonDocument document) {
         // 1. languageVersion — required, exactly the JSON string "1.6".
         if (document.root() == null) {
-            return failure("deal.json: missing required member 'languageVersion'",
-                DOCUMENT_START);
+            return constraint("deal.json: missing required member 'languageVersion'",
+                DOCUMENT_START, "config.required-member", "languageVersion", "string \"1.6\"", "absent", null);
         }
         if (!(document.root() instanceof StrictJsonValue.ObjectVal rootObj)) {
-            return failure("deal.json: manifest root must be a JSON object",
-                rangeOf(document, document.root()));
+            return constraint("deal.json: manifest root must be a JSON object",
+                rangeOf(document, document.root()), "config.root-kind", "", "object", observed(document.root()), null);
         }
         Map<String, StrictJsonValue> rootMembers = rootObj.members();
         StrictJsonValue languageVersionValue = rootMembers.get("languageVersion");
         if (languageVersionValue == null) {
-            return failure("deal.json: missing required member 'languageVersion'",
-                rangeOf(document, rootObj));
+            return constraint("deal.json: missing required member 'languageVersion'",
+                rangeOf(document, rootObj), "config.required-member", "languageVersion", "string \"1.6\"", "absent", null);
         }
         if (!(languageVersionValue instanceof StrictJsonValue.StringVal languageVersion)) {
-            return failure("deal.json: 'languageVersion' must be the JSON string \"1.6\"",
-                rangeOf(document, languageVersionValue));
+            return constraint("deal.json: 'languageVersion' must be the JSON string \"1.6\"",
+                rangeOf(document, languageVersionValue), "config.value-kind", "languageVersion", "string \"1.6\"",
+                observed(languageVersionValue), null);
         }
         if (!ProjectLocator.LANGUAGE_VERSION.equals(languageVersion.value())) {
-            return failure("deal.json: 'languageVersion' must be exactly \"1.6\", got: '"
+            return constraint("deal.json: 'languageVersion' must be exactly \"1.6\", got: '"
                     + languageVersion.value() + "'",
-                rangeOf(document, languageVersionValue));
+                rangeOf(document, languageVersionValue), "config.language-version", "languageVersion", "1.6",
+                languageVersion.value(), null);
         }
 
         // 2. backend — exactly "luajit" | "jvm" | "js" | "llvm"; absence defaults
@@ -71,16 +76,18 @@ public final class ProjectConfigValidator {
         StrictJsonValue backendValue = rootMembers.get("backend");
         if (backendValue != null) {
             if (!(backendValue instanceof StrictJsonValue.StringVal backendString)) {
-                return failure("deal.json: 'backend' must be a string",
-                    rangeOf(document, backendValue));
+                return constraint("deal.json: 'backend' must be a string",
+                    rangeOf(document, backendValue), "config.value-kind", "backend", "string",
+                    observed(backendValue), "luajit");
             }
             if (!backendString.value().equals("luajit")
                     && !backendString.value().equals("jvm")
                     && !backendString.value().equals("js")
                     && !backendString.value().equals("llvm")) {
-                return failure("deal.json: unsupported backend '" + backendString.value()
+                return constraint("deal.json: unsupported backend '" + backendString.value()
                         + "'. Supported backends: 'luajit', 'jvm', 'js', 'llvm'",
-                    rangeOf(document, backendValue));
+                    rangeOf(document, backendValue), "config.backend", "backend", "luajit | jvm | js | llvm",
+                    backendString.value(), "luajit");
             }
             backend = backendString.value();
         }
@@ -136,13 +143,15 @@ public final class ProjectConfigValidator {
         StrictJsonValue stdlibValue = rootMembers.get("stdlib");
         if (stdlibValue != null) {
             if (!(stdlibValue instanceof StrictJsonValue.StringVal stdlibString)) {
-                return failure("deal.json: 'stdlib' must be a string",
-                    rangeOf(document, stdlibValue));
+                return constraint("deal.json: 'stdlib' must be a string",
+                    rangeOf(document, stdlibValue), "config.value-kind", "stdlib", "string \"1.6\"",
+                    observed(stdlibValue), "1.6");
             }
             if (!ProjectLocator.LANGUAGE_VERSION.equals(stdlibString.value())) {
-                return failure("deal.json: 'stdlib' must be exactly \"1.6\", got: '"
+                return constraint("deal.json: 'stdlib' must be exactly \"1.6\", got: '"
                         + stdlibString.value() + "'",
-                    rangeOf(document, stdlibValue));
+                    rangeOf(document, stdlibValue), "config.stdlib-version", "stdlib", "1.6",
+                    stdlibString.value(), "1.6");
             }
             stdlib = stdlibString.value();
         }
@@ -278,6 +287,29 @@ public final class ProjectConfigValidator {
     private static SourceScalarRange rangeOf(StrictJsonDocument document,
                                              StrictJsonValue value) {
         return document.rangeOf(value);
+    }
+
+    private static String observed(StrictJsonValue value) {
+        if (value == null) return "absent";
+        return switch (value) {
+            case StrictJsonValue.StringVal string -> string.value();
+            case StrictJsonValue.NumberVal number -> number.sourceText();
+            case StrictJsonValue.BoolVal bool -> Boolean.toString(bool.value());
+            case StrictJsonValue.NullVal ignored -> "null";
+            case StrictJsonValue.ArrayVal ignored -> "array";
+            case StrictJsonValue.ObjectVal ignored -> "object";
+        };
+    }
+
+    private static Outcome constraint(String message, SourceScalarRange range, String reason, String member,
+                                      String expected, String actual, String defaultValue) {
+        var guidance = defaultValue == null ? List.<String>of()
+                : List.of("When '" + member + "' is absent its default is '" + defaultValue
+                        + "'; an invalid explicit value is never replaced by that default.");
+        var path = member.isEmpty() ? List.<deal.diagnostics.DiagnosticFacts.PathSegment>of()
+                : List.of(new deal.diagnostics.DiagnosticFacts.PathSegment(deal.diagnostics.DiagnosticFacts.PathKind.FIELD, member));
+        return new Outcome(null, new Failure(message, range, new deal.diagnostics.DiagnosticFacts(
+                reason, "manifest.validate", expected, actual, guidance, path)));
     }
 
     private static Outcome failure(String message, SourceScalarRange range) {
