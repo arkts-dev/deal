@@ -38,6 +38,10 @@ const $runtimeDiagnostics = $process.env.DEAL_DIAGNOSTICS_JSON === "1";
 const $jsonQuote = JSON.stringify;
 const $ownDescriptor = Object.getOwnPropertyDescriptor;
 const $diagnosticErrors = new WeakSet();
+const $diagnosticErrorHas = $diagnosticErrors.has.bind($diagnosticErrors);
+const $diagnosticErrorAdd = $diagnosticErrors.add.bind($diagnosticErrors);
+const $descriptorHasOwn = Object.prototype.hasOwnProperty.call.bind(Object.prototype.hasOwnProperty);
+const $diagnosticFinite = Number.isFinite;
 
 // ===== Error spine: the module-private $DEALError class =====
 // (js-backend-runtime-artifact D8) The single constructor path every
@@ -68,7 +72,7 @@ function $stackFrames($error) {
 class $DEALError extends Error {
   constructor($code, $message, $file, $line, $column, $expected, $actual) {
     super($message);
-    $diagnosticErrors.add(this);
+    $diagnosticErrorAdd(this);
     this.code = $code;
     this.$dealCode = $code;
     if ($file !== $undefined) this.file = $file;
@@ -1918,7 +1922,7 @@ const $rt = {
   errorValue: function $errorValue(code, message, file, line, column,
       expected, actual, frames, cause) {
     const $value = {};
-    $diagnosticErrors.add($value);
+    $diagnosticErrorAdd($value);
     $rt.setProp($value, "$kind", "class");
     $rt.setProp($value, "$classname", "Error");
     $rt.setProp($value, "name", code);
@@ -1971,12 +1975,17 @@ const $rt = {
   runtimeDiagnostic: function $runtimeDiagnostic(error) {
     const own = (value, key) => {
       const descriptor = $ownDescriptor(value, key);
-      return descriptor && Object.prototype.hasOwnProperty.call(descriptor, "value") ? descriptor.value : $undefined;
+      return descriptor && $descriptorHasOwn(descriptor, "value") ? descriptor.value : $undefined;
     };
-    const seen = new Set();
+    // Eight retained metadata records at most; no mutable host Set hooks.
+    const seen = [];
+    const visited = value => {
+      for (let i = 0; i < seen.length; i++) if (seen[i] === value) return true;
+      return false;
+    };
     const render = (value, depth) => {
-      if (value === null || typeof value !== "object" || !$diagnosticErrors.has(value) || seen.has(value)) return "null";
-      seen.add(value);
+      if (value === null || typeof value !== "object" || !$diagnosticErrorHas(value) || visited(value)) return "null";
+      seen[seen.length] = value;
       const fields = [];
       for (const key of ["code", "message", "file", "expected", "actual", "frames"]) {
         const text = own(value, key);
@@ -1988,11 +1997,11 @@ const $rt = {
       }
       for (const key of ["line", "column"]) {
         const number = own(value, key);
-        if (typeof number === "number" && Number.isFinite(number)) fields.push($jsonQuote(key) + ":" + number);
+        if (typeof number === "number" && $diagnosticFinite(number)) fields.push($jsonQuote(key) + ":" + number);
       }
       const cause = own(value, "cause");
       if (cause !== null && typeof cause === "object") {
-        if (depth >= 7 || seen.has(cause) || !$diagnosticErrors.has(cause)) fields.push('"causeTruncated":true');
+        if (depth >= 7 || visited(cause) || !$diagnosticErrorHas(cause)) fields.push('"causeTruncated":true');
         else fields.push('"cause":' + render(cause, depth + 1));
       }
       return "{" + fields.join(",") + "}";

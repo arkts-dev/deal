@@ -42,6 +42,11 @@ public final class ErrorNameMessageTest {
             while(chain.cause){chain=chain.cause;depth++;}
             if(depth!==8||!chain.causeTruncated)process.exit(5);
             if(JSON.parse(runtime.runtimeDiagnostic({code:'Forged',message:'not an Error'})).runtime!==null)process.exit(6);
+            const savedHas=WeakSet.prototype.has, savedOwn=Object.prototype.hasOwnProperty, savedFinite=Number.isFinite;
+            WeakSet.prototype.has=Object.prototype.hasOwnProperty=Number.isFinite=()=>{throw Error('mutable host hook');};
+            const captured=runtime.runtimeDiagnostic(nested);
+            WeakSet.prototype.has=savedHas;Object.prototype.hasOwnProperty=savedOwn;Number.isFinite=savedFinite;
+            if(!captured.includes('Outer'))process.exit(7);
             """), Path.of("").toAbsolutePath(), Map.of());
         if (getterControl.exitCode() != 0) throw new AssertionError("runtime export invoked mutable host metadata: " + getterControl);
         List<String> jvmProjection = List.of("java", "-cp", TestClasspath.absolute(TestClasspath.EmptyEntry.OMIT),
