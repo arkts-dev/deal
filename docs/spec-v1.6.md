@@ -1704,7 +1704,19 @@ nominal, function-async, function-arity, null-presence, undefined-presence and
 void-result constraints (`type.` prefix). At 32 path components,
 `type.detail-limit` with `truncated: true` reports the remaining compared types
 without claiming an unseen leaf. Absent mismatch evidence is `null`; it neither
-changes typing nor selects a repair or a new declaration. Arithmetic,
+changes typing nor selects a repair or a new declaration.
+Member/index failures distinguish `access.undeclared-field`,
+`access.field-receiver`, `index.record-key`, `index.array-key`, and
+`index.receiver`, with checked actual types and required key/receiver types.
+Field routes retain the exact requested name; a known class receiver's missing
+field links its selected declaration, never a same-spelled replacement. Shared
+storage-address validation reports `field.target`/`record.index.target`, not an
+invented write-versus-delete attribution. Raw Record reads retain `unknown`;
+an enclosing expected result type is not extraction. Guidance distinguishes
+checked extraction, supported binding narrowing, nullish receiver guards and
+optional skipped access without equating field presence with a value guard.
+Array key facts require `number`, while integrality and bounds remain runtime
+checks with no implicit truncation. Arithmetic,
 relational, equality, logical and unary rejection facts retain the exact operator
 `token`, source-ordered `operands` (`role`, checked `type`, complete expression
 `range`), and ordered `acceptedCombinations`. Binary roles are `left`/`right`;

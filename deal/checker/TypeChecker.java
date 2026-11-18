@@ -2408,23 +2408,25 @@ public final class TypeChecker {
                     }
                     return fieldType;
                 } else {
-                    error(DiagnosticCode.E4002, "Field '" + field + "' not declared in class '"
-                        + cls.name() + "'", mae.span());
+                    var diagnostic = CompilerDiagnostic.error(DiagnosticCode.E4002,
+                            "Field '" + field + "' not declared in class '" + cls.name() + "'", mae.span())
+                            .withFacts(new deal.diagnostics.DiagnosticFacts("access.undeclared-field",
+                                    assignmentTargetMode ? "field.target" : "field.read",
+                                    "declared field of " + typeName(cls), field, List.of(
+                                            "Choose a field declared by the selected class; no field or declaration is invented."),
+                                    List.of(new deal.diagnostics.DiagnosticFacts.PathSegment(
+                                            deal.diagnostics.DiagnosticFacts.PathKind.FIELD, field))));
+                    if (sym.declarationRange() != null)
+                        diagnostic = diagnostic.withNote("Receiver class declaration", sym.declarationRange());
+                    diagnostics.add(diagnostic);
                     return Type.Error.INSTANCE;
                 }
             }
             return Type.Error.INSTANCE;
         }
 
-        // F4: Table access — in write context (assignment target), allow without
-        // contextual type. Otherwise admit only a direct read in one of the
-        // five specification positions (let initializer, assignment value,
-        // return expression, call argument, if condition): the expected
-        // type must be present and the read must be the position's own
-        // outermost expression (`contextualReadPosition`). Every other table
-        // read — a loop condition, a composite operand, an array or class
-        // literal element, a template interpolation part included — is
-        // E3003 at the read.
+        // Raw Record reads retain unknown; an enclosing expected type does not
+        // extract a concrete type. Storage targets retain their write handling.
         if (objType instanceof Type.Table) {
             if (assignmentTargetMode) {
                 return Type.Table.INSTANCE;
@@ -2432,9 +2434,23 @@ public final class TypeChecker {
             return Type.Unknown.INSTANCE;
         }
 
-        error(DiagnosticCode.E3003,
-            "Cannot access field '" + field + "' on type " + typeName(objType), mae.span());
+        diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E3003,
+            "Cannot access field '" + field + "' on type " + typeName(objType), mae.span())
+                .withFacts(new deal.diagnostics.DiagnosticFacts("access.field-receiver",
+                        assignmentTargetMode ? "field.target" : "field.read",
+                        "Record or a declared class receiver; string/array only for supported members",
+                        typeName(objType), receiverReadGuidance(objType), List.of(
+                                new deal.diagnostics.DiagnosticFacts.PathSegment(
+                                        deal.diagnostics.DiagnosticFacts.PathKind.FIELD, field)))));
         return Type.Error.INSTANCE;
+    }
+
+    private static List<String> receiverReadGuidance(Type receiver) {
+        if (receiver instanceof Type.Unknown) return List.of(
+                "Unknown requires checked extraction or supported binding narrowing; an expected result type does not extract a raw Record read.");
+        if (receiver instanceof Type.Nullable || receiver instanceof Type.Null || receiver instanceof Type.Undefined)
+            return List.of("Establish a non-nullish receiver with a supported guard or choose optional chaining when skipped access is intended; presence alone does not refine a field value.");
+        return List.of("Choose a receiver supporting this access; no conversion or replacement declaration is inferred.");
     }
 
     // =======================================================================
@@ -2456,19 +2472,21 @@ public final class TypeChecker {
                 if (indexType instanceof Type.String) {
                     return Type.Table.INSTANCE;
                 }
-                error(DiagnosticCode.E3018,
+                diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E3018,
                     "Table index key must have static type string, got "
-                    + typeName(indexType), idx.index().span());
+                    + typeName(indexType), idx.index().span()).withFacts(
+                            new deal.diagnostics.DiagnosticFacts("index.record-key", "record.index.target",
+                                    "string", typeName(indexType), List.of(
+                                            "Choose an intended string key; no implicit key conversion is performed."))));
                 return Type.Error.INSTANCE;
             }
-            // A computed table read takes the contextual target type the
-            // surrounding expression supplies only in the same five direct
-            // positions (the algorithm of a table member read); its key
-            // must have static type string.
+            // Computed Record reads retain unknown and require string keys.
             if (!(indexType instanceof Type.String)) {
-                error(DiagnosticCode.E3007,
+                diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E3007,
                     "Array index must be int, got " + typeName(indexType),
-                    idx.index().span());
+                    idx.index().span()).withFacts(new deal.diagnostics.DiagnosticFacts(
+                            "index.record-key", "record.index.read", "string", typeName(indexType), List.of(
+                                    "Choose an intended string key; no implicit key conversion is performed."))));
                 return Type.Error.INSTANCE;
             }
             return Type.Unknown.INSTANCE;
@@ -2476,8 +2494,11 @@ public final class TypeChecker {
 
         // Integrality and bounds are runtime checks; static indexes are numbers.
         if (!(indexType instanceof Type.Number)) {
-            error(DiagnosticCode.E3007, "Array index must be number, got " + typeName(indexType),
-                idx.index().span());
+            diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E3007,
+                "Array index must be number, got " + typeName(indexType), idx.index().span()).withFacts(
+                        new deal.diagnostics.DiagnosticFacts("index.array-key", "array.index", "number",
+                                typeName(indexType), List.of(
+                                        "Choose a numeric index; integrality and bounds are validated at runtime, without truncation."))));
             return Type.Error.INSTANCE;
         }
         if (arrayType instanceof Type.Array arr) {
@@ -2489,7 +2510,10 @@ public final class TypeChecker {
             return arr.element();
         }
 
-        error(DiagnosticCode.E3007, "Cannot index type " + typeName(arrayType), idx.array().span());
+        diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E3007,
+                "Cannot index type " + typeName(arrayType), idx.array().span()).withFacts(
+                        new deal.diagnostics.DiagnosticFacts("index.receiver", "index",
+                                "array or Record", typeName(arrayType), receiverReadGuidance(arrayType))));
         return Type.Error.INSTANCE;
     }
 

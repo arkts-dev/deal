@@ -123,6 +123,36 @@ public class CheckerTest {
     }
 
     private static void diagnosticActionability() {
+        for (String[] candidate : new String[][] {
+                {"let value:Record<string,unknown>={};let result=value.child.name;", "access.field-receiver", "field.read", "unknown", "let value:Record<string,unknown>={};let result=(value.child as Record<string,unknown>).name;"},
+                {"function run(value:Record<string,unknown>|null):void{let result=value.name;}", "access.field-receiver", "field.read", "Record<string, unknown> | null", "function run(value:Record<string,unknown>|null):void{let result=value?.name;}"},
+                {"let value:Record<string,unknown>={};let result=value[1];", "index.record-key", "record.index.read", "number", "let value:Record<string,unknown>={};let result=value[\"1\"];"},
+                {"let value:Record<string,unknown>={};value[1]=7;", "index.record-key", "record.index.target", "number", "let value:Record<string,unknown>={};value[\"1\"]=7;"},
+                {"let value:number[]=[7];let result=value[true];", "index.array-key", "array.index", "boolean", "let value:number[]=[7];let result=value[0];"},
+                {"let value:number=7;let result=value[0];", "index.receiver", "index", "number", "let value:number[]=[7];let result=value[0];"},
+                {"class C{name:string;}let value:C={name:\"ok\"};let result=value.missing;", "access.undeclared-field", "field.read", "missing", "class C{name:string;}let value:C={name:\"ok\"};let result=value.name;"}}) {
+            var output = checkProgram(candidate[0]);
+            var diagnostic = output.result().diagnostics().stream().filter(d -> d.facts().reason().equals(candidate[1]))
+                    .findFirst().orElseThrow(() -> new AssertionError(candidate[0] + ": " + output.result().diagnostics()));
+            check(diagnostic.facts().operation().equals(candidate[2]) && diagnostic.facts().actual().equals(candidate[3]),
+                    "access facts distinguish receiver, key and raw unknown constraints: " + diagnostic.facts());
+            if (candidate[1].equals("access.undeclared-field"))
+                check(diagnostic.notes().size() == 1 && diagnostic.notes().getFirst().range().startScalarOffset() == 0,
+                        "missing class field identifies exact receiver declaration");
+            assertNoErrors(checkProgram(candidate[4]), "explicitly chosen access repair");
+        }
+        var nullableRead = checkProgram("class C{name:string;}function read(value:C|null):string{return value.name;}")
+                .result().diagnostics().stream().filter(d -> d.facts().reason().equals("access.field-receiver"))
+                .findFirst().orElseThrow();
+        check(nullableRead.facts().actual().equals("C | null")
+                        && nullableRead.facts().guidance().getFirst().contains("presence alone"),
+                "nullish access guidance does not conflate presence with a value guard");
+        assertNoErrors(checkProgram("class C{name:string;}function read(value:C|null):string{if(value!==null){return value.name;}return \"absent\";}"),
+                "explicitly chosen non-null receiver guard rechecks");
+        var deleteKey = checkProgram("let value:Record<string,unknown>={};delete value[1];").result().diagnostics().stream()
+                .filter(d -> d.facts().reason().equals("index.record-key")).findFirst().orElseThrow();
+        check(deleteKey.facts().operation().equals("record.index.target"),
+                "shared storage-target evidence does not falsely attribute deletion as assignment");
         String[][] mismatches = {
             {"function run(value:number[][],other:string[][]):void{value=other;}", "type.exact", "number", "string", "ARRAY_ELEMENT,ARRAY_ELEMENT", "function run(value:number[][],other:number[][]):void{value=other;}"},
             {"function run(value:(x:number)=>string,other:(x:number)=>boolean):void{value=other;}", "type.exact", "string", "boolean", "FUNCTION_RESULT", "function run(value:(x:number)=>string,other:(x:number)=>string):void{value=other;}"},
