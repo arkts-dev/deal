@@ -12689,6 +12689,7 @@ public final class SemanticLowerer {
                     + classId + "." + access.field() + " on an unrepresentable receiver "
                     + "type (" + defect.getMessage() + ")", access.span());
             }
+            deal.semantic.ir.ClassLayout readLayout = null;
             if (classCore) {
                 // The exact declaring provider of the receiver's checked
                 // declaration: the read's declared result descriptor comes
@@ -12696,14 +12697,21 @@ public final class SemanticLowerer {
                 // provider reference keeps the field link coherent with the
                 // declaring declaration's layout (a harness-synthesized
                 // identity can still name two declarations).
-                providerRef = resolveFieldReceiver(access.object(), classId,
-                    "class field read '" + access.field() + "'",
-                    access.span()).providerRef();
+                FieldReceiverResolution resolution = resolveFieldReceiver(access.object(), classId,
+                    "class field read '" + access.field() + "'", access.span());
+                providerRef = resolution.providerRef();
+                readLayout = resolution.layout();
             }
             RuntimeDescriptor resultDescriptor =
                 ContainerPayloadDescriptors.resultDescriptorOf(checkedType(access));
+            boolean refined = checks.narrowedReads().contains(access);
+            if (refined) {
+                deal.semantic.ir.ClassLayout.FieldLayout field = readLayout == null ? null : readLayout.fieldOf(access.field());
+                if (field == null) throw new ConstructUnlowered("Missing declared field layout", access.span());
+                resultDescriptor = field.readResultDescriptor();
+            }
             ValueId receiver = lowerExpression(access.object());
-            ValueId result = slot != null ? slot : ids.nextValueId(module, nextOrdinal++, 0);
+            ValueId result = !refined && slot != null ? slot : ids.nextValueId(module, nextOrdinal++, 0);
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
             OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
             SemanticOp receiverBoundary = buildNullOp(SemanticOpKind.BOUNDARY,
@@ -12732,7 +12740,15 @@ public final class SemanticLowerer {
             // read registers exactly one dynamic materialization keyed by
             // the read's result identity (the read allocates it).
             registerDynamicMaterialization(result, opId, resultDescriptor);
-            return result;
+            if (!refined) return result;
+            RuntimeDescriptor refinedDescriptor = ContainerPayloadDescriptors.resultDescriptorOf(checkedType(access));
+            ValueId admitted = emitOperandOp(SemanticOpKind.BOUNDARY,
+                new KindPayload.BoundaryPayload(BoundaryKind.NARROWED_READ, refinedDescriptor,
+                    result, new BoundaryRealization.RuntimeValidation(CANONICAL_RUNTIME_VALIDATION_ID)),
+                List.of(result), List.of(resultDescriptor), access.span(), refinedDescriptor,
+                descriptorKindPolicy(refinedDescriptor), slot);
+            registerDynamicMaterialization(admitted, producerOpId(admitted), refinedDescriptor);
+            return admitted;
         }
 
         /**
@@ -13098,7 +13114,7 @@ public final class SemanticLowerer {
 
 
         private ValueId emitNarrowedConditionCheck(ExpressionNode expr, ValueId value) {
-            if (!checks.narrowedReads().contains(expr)) {
+            if (!checks.narrowedReads().contains(expr) || expr instanceof MemberAccessExpr) {
                 return value;
             }
             RuntimeDescriptor descriptor =
@@ -13126,7 +13142,7 @@ public final class SemanticLowerer {
 
         private ValueId emitNarrowedReadCheck(ExpressionNode expr, ValueId value,
                                               ValueId slot) {
-            if (!checks.narrowedReads().contains(expr)) {
+            if (!checks.narrowedReads().contains(expr) || expr instanceof MemberAccessExpr) {
                 return value;
             }
             RuntimeDescriptor descriptor =

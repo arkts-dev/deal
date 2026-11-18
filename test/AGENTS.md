@@ -1,5 +1,7 @@
 # Tests
 
+Bounded narrowing controls pin RHS read facts versus declared writes, adapted signatures, direct-field eligibility/identity, evaluation-order invalidation and actual-unknown joins. Execute supported reads on all four backends; retain rejection controls for aliases, nested paths, calls, writes, await and function/loop boundaries.
+
 ProductionProjectEmissionTest compiles all production sources with --release 21 and checks real shared-phase timing order, nonnegative durations, nested/thread isolation and observer failure containment. PublicationStagerTest retains atomic replacement and stale-tree recovery coverage independently of nonce spelling.
 
 TypeLegalityFlowTest pins short-circuit and terminating-guard acceptance, binding-identity ownership across shadowing/scope exits, assignment/await/function/loop/catch invalidation, inferred void-data frontend rejection on every production target and legal void-result function arrays. CatchNarrowingIsolationProductionTest rejects await followed by a same-type successful-path guard at catch entry; AsyncExportInvokerProductionTest actually invokes repaired catch re-guards after mutation/throw. Descriptor/runtime/IR tests distinguish recursive data/result positions, malformed callable ingress and bare-void data slots from legal completion checks. Execute admitted controls on JS/LuaJIT/JVM and LLVM O0/O2 normal/stress; compilation is not execution evidence.

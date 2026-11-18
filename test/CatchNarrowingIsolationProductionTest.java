@@ -399,7 +399,7 @@ public final class CatchNarrowingIsolationProductionTest {
                   }
                   return ;
                 }
-                """, "E3001", 9, 27, 5, "Cannot assign number | null to number"),
+                """, "E3001", 9, 27, 5, "Cannot assign null to number"),
             new Rejection("awaited resumption inside the catch",
                 """
                 async function echoInt(value: number): Promise<number> {

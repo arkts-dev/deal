@@ -32,7 +32,7 @@ Annotate parameters/results; pass arrays for variable inputs. Closures capture b
 
 ## Field access
 
-Read nullish fields into locals before narrowing. Assignment/await invalidate as specified; refinements stay within their function/iteration. Closures see declared captured types.
+Initialization/assignment refine local reads to the RHS type; annotated write types stay fixed. Guard direct declared fields through local/parameter receivers; writes, deletion and calls clear field facts. Await clears refinements; facts stay within their function/iteration. Closures see declared captured types.
 
 Object.hasOwn tests presence, not value type. Class keys name literal declared fields; Record keys are strings. Optional absence reads undefined; present null remains null. Deletion removes presence rather than storing undefined.
 

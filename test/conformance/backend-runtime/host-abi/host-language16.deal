@@ -33,7 +33,7 @@ export function test_sync(): void {
   item.n = 11;
   check(host.classNumber(original) === 11);
   let fresh = host.fresh();
-  let freshUnknown: unknown = fresh;
+  let freshUnknown: unknown = hide(fresh);
   check((freshUnknown as number[])[0] === 4);
   let wrongDescriptor: boolean = false;
   try { let rejected = freshUnknown as unknown[]; } catch (e) { if (e instanceof Error) { wrongDescriptor = e.name === "E8001"; } }
@@ -78,4 +78,5 @@ export async function test_async(): Promise<void> {
   check(absent === undefined);
   await host.asyncVoid();
 }
+function hide(value:unknown):unknown{return value;}
 export function main(): void { return ; }

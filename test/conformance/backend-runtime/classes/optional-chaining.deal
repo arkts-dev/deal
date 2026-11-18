@@ -7,19 +7,19 @@ function require(ok:boolean, message:string):void { if(!ok){throw {name:"TEST",m
 export function main():void {
  let calls=0;
  let key=():number=>{calls=calls+1;return 0;};
- let a:Item|null=null;
- let noop:((x:number)=>void)|null=null;
+ let a:Item|null=maybeItem(null);
+ let noop:((x:number)=>void)|null=maybeVoid(null);
  noop?.(key());require(calls===0,"skipped void");
  noop=(x:number):void=>{calls=calls+10;};noop?.(key());
  require(calls===11,"void");calls=0;
- let record:Record<string,unknown>|null=null;
+ let record:Record<string,unknown>|null=maybeRecord(null);
  delete record?.[String(key())];require(calls===0,"skipped delete key");
  record={x:1};delete record?.x;
  require(!Object.hasOwn(record as Record<string,unknown>,"x"),"delete");
  require((a?.x??7)===7,"absent");
- let xs:Item[]|null=null;
+ let xs:Item[]|null=maybeItems(null);
  require((xs?.[key()].x??9)===9&&calls===0,"key");
- let fn:((x:number)=>number)|null=null;
+ let fn:((x:number)=>number)|null=maybeFunction(null);
  require((fn?.(key())??8)===8&&calls===0,"call");
  let item:Item={x:4,child:null,f:(x:number):number=>x+2};
  a=item;
@@ -45,7 +45,7 @@ export function main():void {
  require(1/kept[0]===-1/0&&Number.isNaN(kept[1])&&kept[2]===1/0,"numeric data");
  let zero:number|undefined=kept?.[0];require(1/(zero??1)===-1/0,"zero not nullish");
  let saved:Item|null|undefined=item;
- a=null;saved=a?.child??item;require((saved as Item)===item,"assignment chain");
+ a=maybeItem(null);saved=a?.child??item;require((saved as Item)===item,"assignment chain");
  let table:Record<string,unknown>={};table["saved"]=a?.x;
  require(table.saved===undefined,"record assignment");
  let skipped=():number=>{throw {name:"SKIP",message:"must not run"};};
@@ -58,7 +58,7 @@ export function main():void {
  }
  let readIndex=():number=>{calls=calls+1;return 99;};
  let before=calls;
- xs=null;require(xs?.[readIndex()]===undefined&&calls===before,"absent bounds skip");
+ xs=maybeItems(null);require(xs?.[readIndex()]===undefined&&calls===before,"absent bounds skip");
  xs=[item];
  try { saved=xs?.[readIndex()]; } catch(e) {
   require((saved as Item)===item&&calls===before+1,"bounds rollback");
@@ -80,7 +80,7 @@ export function main():void {
  require((decoded as left.Item).value===25,"optional JSON exact provider");
  let direct:left.Item|undefined=left.identity?.({value:26});
  require((direct as left.Item).value===26,"guarded imported declaration");
- let untyped:unknown=sibling;
+ let untyped:unknown=opaque(sibling);
  try { owned=exact?.(untyped as left.Item); } catch(e) {
   require((owned as left.Item).value===24,"sibling rejection preserves destination");
   require((e as Error).name==="E8001","sibling nominal failure");
@@ -90,13 +90,13 @@ export function main():void {
  require((extracted as number)===17,"checked optional record read");
  let take:((n:number)=>number)|null=(n:number):number=>n;
  require((take?.(JSON.parse("18"))??0)===18,"contextual parse argument");
- take=null;require((take?.(JSON.parse("invalid"))??19)===19,"skipped parse argument");
+ take=maybeFunction(null);require((take?.(JSON.parse("invalid"))??19)===19,"skipped parse argument");
  let adapt:(n:number,index:number)=>number=closures?.[0] as ()=>number;
  require((adapt?.(1,2)??0)===8,"selected function adaptation");
  let done:((n:number)=>void)|null=(n:number):void=>{calls=calls+n;};
  let voidArrow=():void=>done?.(2);
  before=calls;voidArrow();require(calls===before+2,"void expression arrow");
- done=null;voidArrow();require(calls===before+2,"void arrow skipped");
+ done=maybeVoid(null);voidArrow();require(calls===before+2,"void arrow skipped");
  let stale:Item|null=item;
  let clear=():void=>{stale=null;};
  if(stale!==null) {
@@ -113,6 +113,12 @@ export function main():void {
 }
 function failure():number|undefined {
  let item:Item|null={x:1,child:null,f:(x:number):number=>x};
- let bad:unknown="bad";
+ let bad:unknown=opaque("bad");
  return item?.f(bad as number);
 }
+function maybeItem(value:Item|null):Item|null{return value;}
+function maybeItems(value:Item[]|null):Item[]|null{return value;}
+function maybeRecord(value:Record<string,unknown>|null):Record<string,unknown>|null{return value;}
+function maybeFunction(value:((x:number)=>number)|null):((x:number)=>number)|null{return value;}
+function maybeVoid(value:((x:number)=>void)|null):((x:number)=>void)|null{return value;}
+function opaque(value:unknown):unknown{return value;}

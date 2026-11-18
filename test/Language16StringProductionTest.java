@@ -99,7 +99,7 @@ public final class Language16StringProductionTest {
               for(let opaque of [false,true]) {
                 let graph:unknown[]=[1,9];let alias=graph;
                 host.corrupt(graph,opaque);
-                let old:unknown=17;let destination=old;let rejected=false;
+                let old:unknown=17;let destination:unknown=old;let rejected=false;
                 try { destination=graph[0]; }
                 catch(e) {
                   check((e as Error).name==="E8001");

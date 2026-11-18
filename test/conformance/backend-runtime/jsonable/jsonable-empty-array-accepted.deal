@@ -4,6 +4,7 @@
 // @features: json, arrays, classes
 
 export class Values { xs: number[]; }
+function hide(value:unknown):unknown{return value;}
 
 export function main(): void {
   let values: Values = JSON.parse("{\"xs\":[]}");
@@ -11,7 +12,7 @@ export function main(): void {
   if (values.xs.length !== 0 || values.xs === other.xs) { throw {name: "TEST_FAIL", message: "empty array freshness lost"}; }
   values.xs[0] = 7;
   if (other.xs.length !== 0) { throw {name: "TEST_FAIL", message: "decoded array alias"}; }
-  let opaque: unknown = values.xs;
+  let opaque: unknown = hide(values.xs);
   if ((opaque as number[]) !== values.xs) { throw {name: "TEST_FAIL", message: "decoded array identity"}; }
   let rejected = false;
   try { let invalid = opaque as unknown[]; }

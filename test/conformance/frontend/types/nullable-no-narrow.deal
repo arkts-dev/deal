@@ -4,8 +4,9 @@
 // @features: type-system, nullable
 
 export function main(): null {
-let a: number | null = 42;
+let a: number | null = nullable(42);
 let b: number = a;
 
 return null;
 }
+function nullable(value:number|null):number|null{return value;}

@@ -263,13 +263,14 @@ public final class LlvmExpressionEmissionTest {
      * {@code as number} assertion, so the exit status is the observation.
      */
     private static final String LOGICAL_SOURCE = """
+        function hide(value:unknown):unknown{return value;}
         function wrong(): number {
-          let v: unknown = true;
+          let v: unknown = hide(true);
           return v as number;
         }
 
         function poison(): boolean {
-          let v: unknown = 1;
+          let v: unknown = hide(1);
           return v as boolean;
         }
 
@@ -333,8 +334,9 @@ public final class LlvmExpressionEmissionTest {
      * versus undefined, each observed through a failing assertion.
      */
     private static final String UNKNOWN_EQUALITY_SOURCE = """
+        function hide(value:unknown):unknown{return value;}
         function wrong(): number {
-          let v: unknown = true;
+          let v: unknown = hide(true);
           return v as number;
         }
 
@@ -398,8 +400,9 @@ public final class LlvmExpressionEmissionTest {
      * reach this assertion, so a run of it must exit 1 with the E8001 arm.
      */
     private static final String LOGICAL_CONTROL_SOURCE = """
+        function hide(value:unknown):unknown{return value;}
         function wrong(): number {
-          let v: unknown = true;
+          let v: unknown = hide(true);
           return v as number;
         }
 

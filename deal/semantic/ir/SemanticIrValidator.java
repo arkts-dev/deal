@@ -2844,9 +2844,8 @@ public final class SemanticIrValidator {
                 // member receiver, a .length receiver, a for-of iterable, a
                 // has receiver or a throw operand included): the
                 // descriptor-kind policy of its own
-                // descriptor, and the input is one identifier read (a
-                // BINDING_LOAD result) — the refinement claim is about a
-                // binding, never about an arbitrary value.
+                // descriptor, and the input is a binding read or a direct
+                // declared-field read from a binding, never an arbitrary value.
                 if (!matchesDescriptorKind(descriptor, policy)) {
                     return Optional.of(kind.name() + " boundary policy " + policy.name()
                         + " violates the descriptor-kind rule");
@@ -2855,12 +2854,18 @@ public final class SemanticIrValidator {
                 boolean readProduced = false;
                 if (input != null) {
                     for (RawOp candidate : unit.ops()) {
-                        if (input.equals(candidate.resultValue())
-                                && enumByName(SemanticOpKind.class, candidate.kind())
-                                    == SemanticOpKind.BINDING_LOAD) {
+                        if (!input.equals(candidate.resultValue())) continue;
+                        SemanticOpKind producer = enumByName(SemanticOpKind.class, candidate.kind());
+                        if (producer == SemanticOpKind.BINDING_LOAD) {
                             readProduced = true;
-                            break;
+                        } else if (producer == SemanticOpKind.FIELD_READ) {
+                            ValueId receiver = parseValueIdQuiet(payloadValue(candidate.payload(), "classValue")
+                                instanceof CanonicalJson.Obj obj ? obj : null);
+                            readProduced = unit.ops().stream().anyMatch(op -> receiver != null
+                                && receiver.equals(op.resultValue())
+                                && enumByName(SemanticOpKind.class, op.kind()) == SemanticOpKind.BINDING_LOAD);
                         }
+                        if (readProduced) break;
                     }
                 }
                 if (!readProduced) {

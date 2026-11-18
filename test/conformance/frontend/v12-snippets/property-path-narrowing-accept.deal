@@ -1,7 +1,7 @@
 // @spec: Type system
-// @description: Corner-case subject property-path-narrowing-accept — Direct field comparison vs local snapshot. (basis: Narrowing only locals and parameters; no property paths)
+// @description: A direct declared field narrows under its own guard.
 // @expected: compile-ok
 // @features: v1.2, frontend, accept-control
 
 class C {x: number | null;}
-export function f(c: C): number {let x: number | null = c.x; if(x !== null) {return x;} return 0;}
+export function f(c: C): number {if(c.x !== null) {return c.x;} return 0;}

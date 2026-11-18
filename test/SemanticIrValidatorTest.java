@@ -595,9 +595,8 @@ public class SemanticIrValidatorTest {
             "R-BOUNDARY-TRIPLE", "NARROWED_READ", "descriptor-kind rule");
 
         // R-BOUNDARY-TRIPLE: the refined-operand cell's input is one
-        // identifier read — an input no BINDING_LOAD produces fails closed
-        // (the refinement claim is about a binding, never a value). The
-        // typed surface and the canonical text surface reject identically.
+        // binding/direct-field read — an unowned input fails closed.
+        // The typed and canonical text surfaces reject identically.
         {
             LoweredModuleUnit readless = unit(List.of(
                 boundary(BoundaryKind.NARROWED_READ, INT,
@@ -606,6 +605,25 @@ public class SemanticIrValidatorTest {
                 "R-BOUNDARY-TRIPLE", "NARROWED_READ", "not a binding read");
             assertE6005(SemanticIrValidator.validateText(
                     SemanticIrValidator.toUnitText(readless), FACTS),
+                "R-BOUNDARY-TRIPLE", "NARROWED_READ", "not a binding read");
+        }
+
+        // A field read from an arbitrary value is not a direct binding subject.
+        {
+            ValueId receiver = nextValue(), field = nextValue();
+            LoweredModuleUnit indirect = unit(List.of(
+                op(SemanticOpKind.CONST, new KindPayload.ConstPayload(new ScalarValue.Number(1)),
+                    receiver, INT, FailurePolicyId.NO_DEAL_FAILURE, null),
+                op(SemanticOpKind.FIELD_READ,
+                    new KindPayload.FieldReadPayload(receiver, new ClassId("mod.a", "C"), "x"),
+                    field, INT, FailurePolicyId.NO_DEAL_FAILURE, null),
+                op(SemanticOpKind.BOUNDARY,
+                    new KindPayload.BoundaryPayload(BoundaryKind.NARROWED_READ, INT, field,
+                        new BoundaryRealization.RuntimeValidation("check")),
+                    null, null, FailurePolicyId.TYPE_DESCRIPTOR, null)));
+            assertE6005(SemanticIrValidator.validate(indirect, FACTS),
+                "R-BOUNDARY-TRIPLE", "NARROWED_READ", "not a binding read");
+            assertE6005(SemanticIrValidator.validateText(SemanticIrValidator.toUnitText(indirect), FACTS),
                 "R-BOUNDARY-TRIPLE", "NARROWED_READ", "not a binding read");
         }
 

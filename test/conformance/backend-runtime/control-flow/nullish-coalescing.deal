@@ -3,7 +3,8 @@
 // @features: control-flow, classes, closures, arrays
 class Item {x:number;}
 function check(ok:boolean,label:string):void{if(!ok){throw {name:label,message:label};}}
-function assertionFallback():number{let bad:unknown="wrong";return bad as number;}
+function assertionFallback():number{let bad:unknown=opaque("wrong");return bad as number;}
+function opaque(value:unknown):unknown{return value;}
 function badSelection():number{let absent:number|null=null;return absent??assertionFallback();}
 export async function asyncCoalescing():Promise<number>{
   let effects="";

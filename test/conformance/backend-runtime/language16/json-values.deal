@@ -8,6 +8,7 @@ export class Box { data: Record<string, unknown>; numbers: number[]; }
 class Child { payload: number; }
 function check(ok: boolean): void { if (!ok) { throw {name: "FAIL", message: "JSON value contract"}; } }
 function callback(): void {}
+function hide(value:unknown):unknown{return value;}
 function rejectsNumbers(value: unknown): boolean {
   let rejected: boolean = false;
   try { let numbers = value as number[]; }
@@ -49,7 +50,7 @@ export function main(): void {
     check(record.leaf !== null); check(!(record.leaf === null));
     check(!Object.hasOwn(record, "leaf"));
   }
-  let numbers: unknown = box.numbers;
+  let numbers: unknown = hide(box.numbers);
   check((numbers as number[]) === box.numbers);
   let wrong: boolean = false;
   try { numbers as unknown[]; } catch (e) { if (e instanceof Error) { wrong = true; } }

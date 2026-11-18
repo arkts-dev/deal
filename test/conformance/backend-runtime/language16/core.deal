@@ -18,6 +18,7 @@ function lengthAdapted(f: (text: string, extra: number) => number): number {
 }
 function tick(): void { return; }
 function fall(): void {}
+function hide(value:unknown):unknown{return value;}
 async function asyncTick(): Promise<void> { return; }
 async function asyncCheck(): Promise<void> { await asyncTick(); }
 async function arrayTick(): Promise<unknown> {
@@ -131,7 +132,7 @@ export function main(): void {
   let checkedBox: Box = classUnknown as Box;
   if (checkedBox !== box) { throw {name: "FAIL", message: "class assertion identity"}; }
   let recordRejected: boolean = false;
-  let recordUnknown: unknown = record;
+  let recordUnknown: unknown = hide(record);
   try { let forged: Box = recordUnknown as Box; } catch (e) { if (e instanceof Error) { recordRejected = true; } }
   if (!recordRejected) { throw {name: "FAIL", message: "records must not retag as classes"}; }
   if (typeof box.value !== "undefined") { throw {name: "FAIL", message: "optional absence"}; }
@@ -209,13 +210,13 @@ export function main(): void {
   if ((JSON.stringify(nonfiniteArrays) as string) !== "{\"numbers\":[null,null,null],\"nested\":[],\"nullish\":[]}") {
     throw {name: "FAIL", message: "generated declared nonfinite number array"};
   }
-  let decodedNumbers: unknown = arrayBox.numbers;
-  let decodedStrings: unknown = arrayBox.nested[0];
+  let decodedNumbers: unknown = hide(arrayBox.numbers);
+  let decodedStrings: unknown = hide(arrayBox.nested[0]);
   let sameDecodedNumbers = decodedNumbers as number[];
   if (sameDecodedNumbers !== arrayBox.numbers) { throw {name: "FAIL", message: "decoded array assertion identity"}; }
   sameDecodedNumbers[0] = 9;
   if (arrayBox.numbers[0] !== 9) { throw {name: "FAIL", message: "decoded array write alias"}; }
-  let decodedNullish: unknown = arrayBox.nullish;
+  let decodedNullish: unknown = hide(arrayBox.nullish);
   let sameNullish = decodedNullish as (number | null | undefined)[];
   sameNullish[0] = undefined;
   if (arrayBox.nullish[0] !== undefined) { throw {name: "FAIL", message: "decoded nullish array write"}; }
@@ -232,34 +233,34 @@ export function main(): void {
   catch (e) { if (e instanceof Error) { decodedStringsRejected = e.name === "E8001"; } }
   if (!decodedStringsRejected) { throw {name: "FAIL", message: "decoded nested array descriptor"}; }
   let splitValues: string[] = strings.split("a,b", ",");
-  let splitOpaque: unknown = splitValues;
+  let splitOpaque: unknown = hide(splitValues);
   let splitRejected: boolean = false;
   try { let widenedSplit = splitOpaque as unknown[]; } catch (e) { if (e instanceof Error) { splitRejected = true; } }
   if (!splitRejected) { throw {name: "FAIL", message: "split persistent descriptor"}; }
   let keyValues: string[] = tables.keys({a: true});
-  let keyOpaque: unknown = keyValues;
+  let keyOpaque: unknown = hide(keyValues);
   let keysRejected: boolean = false;
   try { let widenedKeys = keyOpaque as unknown[]; } catch (e) { if (e instanceof Error) { keysRejected = true; } }
   if (!keysRejected) { throw {name: "FAIL", message: "keys persistent descriptor"}; }
   let numbers: number[] = [1, 2];
-  let opaque: unknown = numbers;
+  let opaque: unknown = hide(numbers);
   let sameNumbers: number[] = opaque as number[];
   sameNumbers[0] = 3;
   if (numbers[0] !== 3) { throw {name: "FAIL", message: "array identity"}; }
   let emptyNumbers: number[] = [];
-  let emptyUnknown: unknown = emptyNumbers;
+  let emptyUnknown: unknown = hide(emptyNumbers);
   let emptyRejected: boolean = false;
   try { let wrongEmpty: unknown[] = emptyUnknown as unknown[]; } catch (e) { if (e instanceof Error) { emptyRejected = true; } }
   if (!emptyRejected) { throw {name: "FAIL", message: "empty persistent descriptor"}; }
   let broadArray: unknown[] = [1, 2];
-  let broadUnknown: unknown = broadArray;
+  let broadUnknown: unknown = hide(broadArray);
   let broadRejected: boolean = false;
   try { let narrowedArray: number[] = broadUnknown as number[]; } catch (e) { if (e instanceof Error) { broadRejected = true; } }
   if (!broadRejected) { throw {name: "FAIL", message: "array cannot narrow its descriptor"}; }
   let arrayRejected: boolean = false;
   try { let wrong: unknown[] = opaque as unknown[]; } catch (e) { if (e instanceof Error) { arrayRejected = true; } }
   if (!arrayRejected) { throw {name: "FAIL", message: "persistent array descriptor"}; }
-  let callableUnknown: unknown = narrow;
+  let callableUnknown: unknown = hide(narrow);
   let checkedCallable: (n: number) => number = callableUnknown as (n: number) => number;
   if (checkedCallable !== narrow) { throw {name: "FAIL", message: "function assertion identity"}; }
   if (checkedCallable(14) !== 14) { throw {name: "FAIL", message: "asserted function invocation"}; }

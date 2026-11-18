@@ -81,8 +81,67 @@ public final class TypeLegalityFlowTest {
         if (!facts.isEmpty()) throw new AssertionError("identity join");
     }
 
+    private static void boundedNarrowing() {
+        for (String body : List.of(
+                "let x:number|null=1;let n:number=x;x=null;let z:null=x;x=2;n=x;",
+                "let x:unknown=1;let n:number=x;x=\"s\";let s:string=x;",
+                "let x:number|null=null;x=1;let n:number=x;",
+                "let f:(n:number)=>number=():number=>7;let n:number=f(1);",
+                "let f:((n:number)=>number)|null=(n:number):number=>7;let n:number=f(1);f=null;f=(n:number):number=>8;n=f(2);",
+
+                "let x:number|null=1;let g=():void=>{x=null;};g();let n:number=x;"))
+            check("function f0():void{" + body + "}", null);
+        check("function f(x:number|null):number{x=1;return x;}", null);
+        check("function f():void{let x:number|null=1;x=\"s\";}", "E3001");
+        check("function f():void{let x:unknown=\"bad\";let n=x as number;}", "E3001");
+        check("function f():void{let x:number|null=1;let g=():number=>x;}", "E5003");
+        String classes = "class C{n:number;}class P{value:string|null;opt?:string|null;data:unknown;child:C|null;fn:((n:number)=>number)|null;nums:number[]|null;next:P|null;}";
+        for (String body : List.of(
+                "if(p.value!==null){return p.value;}return \"\";",
+                "if(p.value===null){return \"\";}return p.value;",
+                "if(null!==p.value){return p.value;}return \"\";",
+                "if(!(p.value===null)){return p.value;}return \"\";",
+                "if(p.opt!==null && p.opt!==undefined){return p.opt;}return \"\";",
+                "if(p.opt===null || p.opt===undefined){return \"\";}return p.opt;",
+                "if(typeof p.data===\"string\"){return p.data;}return \"\";",
+                "if(p.value!==null){if(p.value===null){return \"\";}return p.value;}return \"\";",
+                "return p.value!==null?p.value:\"\";"))
+            check(classes + "function f(p:P):string{" + body + "}", null);
+        for (String body : List.of(
+                "if(p.value!==null){q.value=null;return p.value;}",
+                "if(p.value!==null){let alias=p;alias.value=null;return p.value;}",
+                "if(p.value!==null){let n=0;n=1;return p.value;}",
+                "if(p.value!==null){ping();return p.value;}",
+                "if(p.value!==null){Object.keys(p);return p.value;}",
+                "if(p.value!==null){Object.hasOwn(p,\"value\");return p.value;}",
+                "if(p.value!==null){delete p.opt;return p.value;}",
+                "if(p.value!==null){p=q;return p.value;}",
+                "if(p.value!==null){return q.value;}",
+                "if(p.value!==null){let g=():string=>p.value;}",
+                "if(p.value!==null){while(true){return p.value;}}",
+                "if(p.value!==null){for(let n of [1]){return p.value;}}",
+                "if(p.value!==null && ping()){return p.value;}",
+                "if(p.value!==null && ((q.value=null)===null)){return p.value;}",
+                "if(p.value!==null){try{ping();}catch(e){}return p.value;}",
+                "if(p.value!==null){while(ping()){break;}return p.value;}",
+                "if(p.value!==null){try{ping();}catch(e){return p.value;}}",
+                "if(p.next!==null && p.next.value!==null){return p.next.value;}"))
+            check(classes + "function ping():boolean{return true;}function f(p:P,q:P):string{" + body + "return \"\";}", "E5003");
+        check(classes + "function f(p:P):void{if(p.value!==null){p.value=null;let s:string=p.value;}}", "E3001");
+        check(classes + "function f(p:P):void{if(p.data instanceof C){let n:number=p.data.n;}if(p.fn!==null){let n:number=p.fn(1);}if(p.nums!==null){let n:number=p.nums.length;}}", null);
+        check(classes + "function f(p:P):void{while(p.value!==null){let s:string=p.value;break;}}", null);
+        check(classes + "function f(p:P):void{if(p.value!==null){let s:string=p.value;let alias=p;let t:string=alias.value;}}", "E3001");
+        check(classes + "async function tick():Promise<void>{}async function f(p:P):Promise<void>{if(p.value!==null){await tick();let s:string=p.value;}}", "E3001");
+        for (String expression : List.of("b?u:1", "b?1:u", "u??1", "n??u"))
+            check("function f(b:boolean,u:unknown,n:number|null):void{let x=" + expression + ";let y:unknown=x;}", null);
+        check("function f(b:boolean):void{let x=b?1:\"s\";}", "E3006");
+        check("function f(n:number|null):void{let x=n??\"s\";}", "E3006");
+        check("function v():void{}function f(b:boolean,u:unknown):void{let x=b?u:v();}", "E3006");
+    }
+
     public static void main(String[] args) throws Exception {
         bindingOwnership();
+        boundedNarrowing();
         for (String expression : List.of("x!==null && x>0", "x===null || x>0", "!(x===null) && x>0"))
             check("function f(x:number|null):boolean{return " + expression + ";}", null);
         for (String condition : List.of("x!==null && x!==undefined", "!(x===null || x===undefined)"))
@@ -152,6 +211,44 @@ public final class TypeLegalityFlowTest {
                 CompositionProductionTest.execute(executed, "", root.resolve(fixture), null,
                     List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             }
+            String bounded = """
+                class C { n:number; }
+                class P { value:string|null; opt?:string|null; data:unknown; child:C|null; fn:((n:number)=>number)|null; nums:number[]|null; }
+                function choose(b:boolean,u:unknown,n:number|null):unknown {let x=b?u:1;let y=n??u;return b?x:y;}
+                function read(p:P):string {
+                  if(p.value!==null){let v:string=p.value;if(p.value===null){return "bad";}return v;}
+                  return "none";
+                }
+                function extract(p:P):number {
+                  if(p.data instanceof C){return p.data.n;}return 0;
+                }
+                function length(p:P):number {if(p.nums!==null){return p.nums.length;}return 0;}
+                function invoke(p:P):number {if(p.fn!==null){return p.fn(2);}return 0;}
+                function optional(p:P):string {if(p.opt!==null && p.opt!==undefined){return p.opt;}return "none";}
+                export function main():void {
+                  let repeated:unknown=2;
+                  while(typeof repeated==="number"){let n:number=repeated;if(n>0){repeated=n - 1;continue;}repeated="done";}
+                  let state:number|null=2;while(state!==null){let n:number=state;state=null;}
+                  let x:number|null=1;let first:number=x;x=null;let absent:null=x;x=3;
+                  let count:number=x;let opaque:unknown=4;let known:number=opaque;
+                  let adapted:(n:number)=>number=():number=>7;
+                  let maybe:((n:number)=>number)|null=(n:number):number=>9;
+                  if(maybe(3)!==9){throw {name:"FAIL",message:"nullable function"};}
+                  let stale:number|null=1;let clear=():void=>{stale=null;};clear();let caught=false;
+                  try{let rejected:number=stale;}catch(e){caught=(e as Error).name==="E8001";}
+                  if(!caught){throw {name:"FAIL",message:"assignment read boundary"};}
+                  let c:C={n:8};let p:P={value:"yes",data:c,child:c,fn:(n:number):number=>n+1,nums:[1,2]};
+                  if(read(p)!=="yes"||optional(p)!=="none"||extract(p)!==8||length(p)!==2||invoke(p)!==3){throw {name:"FAIL",message:"property"};}
+                  p.opt="present";if(optional(p)!=="present"){throw {name:"FAIL",message:"optional"};}
+                  while(p.value!==null){let s:string=p.value;if(s!=="yes"){throw {name:"FAIL",message:"loop"};}break;}
+                  let any:unknown=choose(true,"chosen",null);let selected:string=any as string;
+                  if(selected!=="chosen"||first!==1||count!==3||known!==4||adapted(99)!==7){throw {name:"FAIL",message:"binding/join"};}
+                  let target:unknown=choose(false,"fallback",null);if((target as string)!=="fallback"){throw {name:"FAIL",message:"coalesce"};}
+                  let fresh:unknown=choose(false,"unused",6);if((fresh as number)!==6){throw {name:"FAIL",message:"coalesce selected"};}
+                }
+                """;
+            CompositionProductionTest.execute(bounded, "", root.resolve("bounded"), null,
+                List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             String source = "function positive(x:number|null):boolean{return x!==null && x>0;}"
                 + "function text(x:string|null|undefined):string{if(x===null || x===undefined){return \"empty\";}return x;}"
                 + "class C{n:number;}function value(x:unknown):number{if(x instanceof C && x.n>0){return x.n;}return 0;}"

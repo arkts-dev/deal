@@ -1,5 +1,10 @@
 import * as check from "./check";
 
+function optionalCallback(enabled: boolean): ((value: number) => number) | null {
+  if (enabled) { return (value: number): number => value + 1; }
+  return null;
+}
+
 function readCount(data: Record<string, unknown>): number {
   let count: number = data.count as number;
   if (count < 0) {
@@ -43,7 +48,7 @@ export function exercise(): null {
   check.require(counts.every((value: number): boolean => value > 0), "every value matches");
   let optionalCounts: number[] | null = counts;
   check.require((optionalCounts?.[1] ?? 0) === 2, "optional indexed access");
-  let callback: ((value: number) => number) | null = null;
+  let callback = optionalCallback(false);
   check.require((callback?.(3) ?? 0) === 0, "optional callback fallback");
   callback = (value: number): number => value + 1;
   check.require((callback?.(3) ?? 0) === 4, "present optional callback");

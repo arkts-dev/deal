@@ -969,7 +969,8 @@ public final class LlvmStageClassifier {
             // admitted datum is projected at the declared representation.
             return Optional.empty();
         }
-        if (boundary.kind() != BoundaryKind.ASSERTION) {
+        if (boundary.kind() != BoundaryKind.ASSERTION
+                && boundary.kind() != BoundaryKind.NARROWED_READ) {
             return Optional.of(reject(op, "BOUNDARY " + boundary.kind()
                 + " whose static operand type '" + actual.canonicalSpecText()
                 + "' does not prove the declared '"

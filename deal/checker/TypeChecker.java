@@ -109,6 +109,8 @@ public final class TypeChecker {
     /** Post-evaluation states: effects have already invalidated stale facts. */
     private record ConditionFlow(NullNarrowing whenTrue, NullNarrowing whenFalse) {}
     private final Map<ExpressionNode, ConditionFlow> conditionFlows = new IdentityHashMap<>();
+    private final Map<ExpressionNode, Type> declaredReadTypes = new IdentityHashMap<>();
+    private final Map<ExpressionNode, Object> propertyReadEpochs = new IdentityHashMap<>();
 
     // -- Assignment tracking for the open try regions of the current
     //    function: one frame per open try block, holding the resolved
@@ -716,6 +718,9 @@ public final class TypeChecker {
         }
 
         recordDeclaration(vd.name());
+        Symbol binding = currentScope.resolveLocal(vd.name());
+        if (targetType != null && exprType != Type.Error.INSTANCE && isAssignable(targetType, exprType))
+            refineAssignedBinding(binding, targetType, exprType);
     }
 
     /**
@@ -729,9 +734,15 @@ public final class TypeChecker {
         narrowing.onAssignment(currentScope.resolveLocal(varName));
     }
 
+    private void refineAssignedBinding(Symbol binding, Type target, Type value) {
+        Type stored = target instanceof Type.Func && value instanceof Type.Func
+            && !Types.equals(target, value) ? target : value;
+        narrowing.narrow(binding, stored);
+    }
+
     /**
      * Assignment bookkeeping shared by assignment expressions: the
-     * narrowed entry is cleared immediately, and the resolved binding is
+     * old refinement is cleared, and the resolved binding is
      * recorded for the enclosing loop (a loop back-edge invalidates the
      * entry for the code after the loop) and for the open try blocks of
      * the current function (after a try/catch every binding assigned
@@ -934,16 +945,46 @@ public final class TypeChecker {
     }
 
     private void refineCondition(ExpressionNode condition, boolean matching) {
-        narrowing.onIfCondition(condition, matching, this::resolveVisibleBinding, this::getDeclaredType);
+        narrowing.onCondition(condition, matching, this::guardSubject, this::guardDeclaredType);
         while (condition instanceof UnaryExpr unary && unary.op() == UnaryOp.NOT) {
             condition = unary.expr();
             matching = !matching;
         }
-        if (matching && condition instanceof InstanceofExpr test
-                && test.value() instanceof IdentifierExpr id) {
+        if (matching && condition instanceof InstanceofExpr test) {
             Type.Class target = instanceofTargets.get(test);
-            if (target != null) narrowing.narrow(resolveVisibleBinding(id.name()), target);
+            if (target != null) narrowing.narrow(guardSubject(test.value()), target);
         }
+    }
+
+    private NullNarrowing.Subject propertySubject(ExpressionNode expression) {
+        if (!(expression instanceof MemberAccessExpr member)
+                || !(member.object() instanceof IdentifierExpr id)
+                || !(typeMap.get(id) instanceof Type.Class cls)) return null;
+        Symbol binding = resolveVisibleBinding(id.name());
+        if (!(binding instanceof Symbol.VariableSymbol)) return null;
+        Symbol.ClassSymbol declaration = exactReceiverClassSymbol(id, cls);
+        if (declaration == null) declaration = resolveClassSymbol(cls);
+        ClassField field = declaration == null ? null
+            : IntrinsicResolvers.findField(declaration.fields(), member.field());
+        return field == null ? null : new NullNarrowing.Subject(binding, field);
+    }
+
+    private NullNarrowing.Subject guardSubject(ExpressionNode expression) {
+        if (expression instanceof IdentifierExpr id)
+            return new NullNarrowing.Subject(resolveVisibleBinding(id.name()), null);
+        return propertyReadEpochs.get(expression) == narrowing.propertyEpoch()
+            ? propertySubject(expression) : null;
+    }
+
+    private Type guardDeclaredType(ExpressionNode expression) {
+        return expression instanceof IdentifierExpr id ? declaredTypeOf(id.name())
+            : declaredReadTypes.get(expression);
+    }
+
+    private void invalidatePropertyNarrowing() {
+        narrowing.invalidateProperties();
+        for (NullNarrowing entry : tryEntryFacts) entry.invalidateProperties();
+        for (NullNarrowing saved : loopSavedNarrowing) saved.invalidateProperties();
     }
 
     // =======================================================================
@@ -972,7 +1013,7 @@ public final class TypeChecker {
         }
 
         narrowCondition(ws.condition(), true);
-        NullNarrowing freshGuard = freshGuardFlow(ws.condition(), true, new NullNarrowing());
+        NullNarrowing freshGuard = freshGuardFlow(ws.condition(), true, narrowing.emptyBranch());
         narrowing.retainRefinements(freshGuard);
         loopDepth++;
         walkStatement(ws.body());
@@ -982,7 +1023,41 @@ public final class TypeChecker {
         loopDepth--;
         loopSavedNarrowing.pop();
         closeLoopAssignments(assigned, savedNarrowing);
+        resetRepeatedGuardReads(ws.condition(), assigned);
         narrowing = savedNarrowing;
+    }
+
+    /** A repeated guard must test the current value, not its first-entry fact. */
+    private void resetRepeatedGuardReads(ExpressionNode expression, Set<Symbol> assigned) {
+        if (expression instanceof UnaryExpr unary) {
+            if (unary.op() == UnaryOp.TYPEOF) resetGuardSubject(unary.expr(), assigned);
+            else resetRepeatedGuardReads(unary.expr(), assigned);
+        } else if (expression instanceof InstanceofExpr test) {
+            resetGuardSubject(test.value(), assigned);
+        } else if (expression instanceof BinaryExpr binary) {
+            if (binary.op() == BinaryOp.EQ || binary.op() == BinaryOp.NEQ) {
+                if (isNullishGuardLiteral(binary.left())) resetGuardSubject(binary.right(), assigned);
+                if (isNullishGuardLiteral(binary.right())) resetGuardSubject(binary.left(), assigned);
+            }
+            resetRepeatedGuardReads(binary.left(), assigned);
+            resetRepeatedGuardReads(binary.right(), assigned);
+        }
+    }
+
+    private static boolean isNullishGuardLiteral(ExpressionNode expression) {
+        return expression instanceof LiteralExpr literal && literal.value() instanceof LiteralValue.NullLiteral
+            || expression instanceof IdentifierExpr id && id.name().equals("undefined");
+    }
+
+    private void resetGuardSubject(ExpressionNode expression, Set<Symbol> assigned) {
+        NullNarrowing.Subject subject = expression instanceof IdentifierExpr id
+            ? new NullNarrowing.Subject(resolveVisibleBinding(id.name()), null) : propertySubject(expression);
+        if (subject == null || subject.field() == null && !assigned.contains(subject.binding())) return;
+        Type declared = guardDeclaredType(expression);
+        if (declared != null) {
+            typeMap.put(expression, declared);
+            narrowedReads.remove(expression);
+        }
     }
 
     /** Guard-only facts, intersected with evaluated outcomes before body entry.
@@ -999,11 +1074,10 @@ public final class TypeChecker {
             return mergeFlows(freshGuardFlow(binary.left(), !and, entry.branch()),
                 freshGuardFlow(binary.right(), matching, selected));
         }
-        entry.onIfCondition(condition, matching, this::resolveVisibleBinding, this::getDeclaredType);
-        if (matching && condition instanceof InstanceofExpr test
-                && test.value() instanceof IdentifierExpr id) {
+        entry.onCondition(condition, matching, this::guardSubject, this::guardDeclaredType);
+        if (matching && condition instanceof InstanceofExpr test) {
             Type.Class target = instanceofTargets.get(test);
-            if (target != null) entry.narrow(resolveVisibleBinding(id.name()), target);
+            if (target != null) entry.narrow(guardSubject(test.value()), target);
         }
         return entry;
     }
@@ -1254,6 +1328,7 @@ public final class TypeChecker {
             }
             // Table delete: any field is allowed (no further check needed)
         }
+        invalidatePropertyNarrowing();
         // A-D10 (assignment-delete-address-chains): table index delete
         // keys must have static type string — the write-context
         // checkIndex gate enforces E3018 for IndexExpr delete targets
@@ -1279,6 +1354,7 @@ public final class TypeChecker {
         try {
             conditionFlows.remove(expr);
             Type t = computeExpressionType(expr);
+            if (expr instanceof CallExpr || expr instanceof HasExpr) invalidatePropertyNarrowing();
             if (t instanceof Type.Boolean && !conditionFlows.containsKey(expr)) {
                 NullNarrowing after = narrowing;
                 narrowing = after.branch();
@@ -2183,16 +2259,8 @@ public final class TypeChecker {
             }
         }
 
-        // Class field access (including built-in Error class).
-        //
-        // ISSUE-0717 (defect snippet 30): a nullable-typed receiver must
-        // be narrowed before its fields are read. Narrowing is supported
-        // only for local variables and parameters (docs/spec-v1.6.md
-        // §Nullable semantics — "No property-path narrowing"), so a
-        // plain identifier receiver is narrowed by the null-narrowing
-        // analysis inside its guarded branch and an unguarded read — a
-        // property-path receiver included — stays E3003: the receiver's
-        // declared nullable type is never unwrapped here.
+        // Class receivers must already be non-nullish. Only direct
+        // identifier receivers can own a guarded field refinement.
         Type classTarget = objType;
         if (classTarget instanceof Type.Class cls) {
             // The receiver's own checked declaration names the exact
@@ -2223,6 +2291,14 @@ public final class TypeChecker {
                         // field declared null reads as null | undefined.
                         // Absence never becomes explicit null.
                         fieldType = Types.optionalRead(fieldType);
+                    }
+                    declaredReadTypes.put(mae, fieldType);
+                    propertyReadEpochs.put(mae, narrowing.propertyEpoch());
+                    NullNarrowing.Subject subject = propertySubject(mae);
+                    Type refined = assignmentTargetMode || subject == null ? null : narrowing.getNarrowedType(subject);
+                    if (refined != null && !Types.equals(refined, fieldType)) {
+                        narrowedReads.add(mae);
+                        return refined;
                     }
                     return fieldType;
                 } else {
@@ -2854,6 +2930,7 @@ public final class TypeChecker {
             error(DiagnosticCode.E3006, "Void conditional branches must both return void", span);
             return Type.Error.INSTANCE;
         }
+        if (consequent instanceof Type.Unknown || alternate instanceof Type.Unknown) return Type.Unknown.INSTANCE;
         if (consequent instanceof Type.Null) return Types.withNullish(alternate, false, false);
         if (alternate instanceof Type.Null) return Types.withNullish(consequent, false, false);
         if (consequent instanceof Type.Undefined) return Types.withNullish(alternate, true, false);
@@ -3040,6 +3117,9 @@ public final class TypeChecker {
             return Type.Error.INSTANCE;
         }
 
+        invalidatePropertyNarrowing();
+        if (assign.target() instanceof IdentifierExpr id && isAssignable(declaredTarget, valueType))
+            refineAssignedBinding(resolveVisibleBinding(id.name()), declaredTarget, valueType);
         return valueType;
     }
 
@@ -3317,8 +3397,9 @@ public final class TypeChecker {
     }
 
     private Type equalityDeclaredType(ExpressionNode expression, Type checked) {
-        return expression instanceof IdentifierExpr id && narrowedReads.contains(expression)
-            ? declaredTypeOf(id.name()) : checked;
+        if (!narrowedReads.contains(expression)) return checked;
+        return expression instanceof IdentifierExpr id ? declaredTypeOf(id.name())
+            : declaredReadTypes.getOrDefault(expression, checked);
     }
 
     private static boolean isNullableOf(Type maybeNullable, Type other) {

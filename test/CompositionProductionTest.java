@@ -488,6 +488,7 @@ public final class CompositionProductionTest {
                 import * as right from "./right";
                 class Envelope { first:left.Node; second:right.Node; }
                 function verify(ok:boolean):void{if(!ok){throw {name:"TEST",message:"parse provider"};}}
+                function hide(value:unknown):unknown{return value;}
                 export function main():void {
                   let a:left.Node=JSON.parse(`{"z":1,"a":2,"next":{"z":3,"a":4}}`);
                   let b:right.Node=JSON.parse(`{"z":5,"a":6}`);
@@ -497,7 +498,7 @@ public final class CompositionProductionTest {
                   keys=Object.keys(b);verify(keys[0]==="a" && keys[1]==="z");
                   let nested:Envelope=JSON.parse(`{"first":{"z":7,"a":8},"second":{"a":9,"z":10}}`);
                   verify(left.read(nested.first)===7 && right.read(nested.second)===9);
-                  let rawA:unknown=a;let rawB:unknown=b;
+                  let rawA:unknown=hide(a);let rawB:unknown=hide(b);
                   let caught=0;try{let wrong:right.Node=rawA as right.Node;}catch(e){caught=caught+1;}
                   try{let wrong:left.Node=rawB as left.Node;}catch(e){caught=caught+1;}
                   verify(caught===2);

@@ -4414,6 +4414,7 @@ public class JsBackendTest {
 
         NodeResult run = runDealNode("""
             class Tri { field?: number | null; }
+            function hide(value:unknown):unknown{return value;}
             export function test(): number {
               let missing: Tri = {};
               if (Object.hasOwn(missing, "field")) { return 0; }
@@ -4422,7 +4423,7 @@ public class JsBackendTest {
               if (!Object.hasOwn(explicitNull, "field") || explicitNull.field !== null) { return 0; }
               let value: Tri = { field: 5 };
               if (!Object.hasOwn(value, "field")) { return 0; }
-              let v: unknown = value.field;
+              let v: unknown = hide(value.field);
               if (typeof v === "number") {
                 if (v !== 5) { return 0; }
               } else {

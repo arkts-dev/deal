@@ -9,7 +9,7 @@ export function main():void {
   let e:Error={name:"X",message:"original"};
   let alias=e;
   let original:unknown=null;
-  let destination=original;
+  let destination:unknown=original;
   host.edit(e);
   destination=e;
   let admitted=destination as Error;

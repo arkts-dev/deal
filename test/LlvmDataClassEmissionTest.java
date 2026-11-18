@@ -346,7 +346,8 @@ public final class LlvmDataClassEmissionTest {
               if (Object.hasOwn(record, key)) { report("R3", "deleted"); }
 
               let empty: string[] = [];
-              let descriptor: unknown = empty;
+              let hide= (value:unknown):unknown=>value;
+              let descriptor: unknown = hide(empty);
               let rejected: boolean = false;
               try {
                 let incompatible: number[] = descriptor as number[];

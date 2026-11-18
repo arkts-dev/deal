@@ -1732,17 +1732,9 @@ public class CheckerTest {
         assertNoErrors(out, "narrowed local nullable class member access");
     }
 
-    /**
-     * ISSUE-0717 review: the supported null narrowing is binding-based
-     * only (docs/spec-v1.6.md §Nullable semantics — "No property-path
-     * narrowing"), so a nullable member-path receiver stays rejected even
-     * after a {@code path !== null} test, and an assignment to a narrowed
-     * binding invalidates its refinement (the later dereference is
-     * rejected).
-     */
+    /** Direct declared fields narrow; assignments replace binding facts. */
     static void testNullablePropertyPathAndAssignmentInvalidation() {
-        System.out.println("-- Nullable property paths never narrow; assignment "
-            + "invalidates the binding's refinement --");
+        System.out.println("-- Direct guarded fields narrow; assignment replaces binding facts --");
 
         CheckerOutput path = checkProgram(
             "class Child { n: number; }\n" +
@@ -1754,9 +1746,7 @@ public class CheckerTest {
             "  return 0;\n" +
             "}"
         );
-        assertError(path, "E3003",
-            "a guarded nullable property path is not narrowed (no property-path "
-                + "narrowing)");
+        assertNoErrors(path, "a guarded direct declared field narrows");
 
         CheckerOutput assigned = checkProgram(
             "class C { n: number; }\n" +
@@ -5577,7 +5567,7 @@ public class CheckerTest {
             "  }" +
             "  return ;" +
             "}");
-        assertErrorMessage(outerAssigned, "E3001", "Cannot assign number | null to number",
+        assertErrorMessage(outerAssigned, "E3001", "Cannot assign null to number",
             "a catch-block assignment to the enclosing binding invalidates its refinement");
 
         // -- The resolver's own fact: the catch identifier is a distinct

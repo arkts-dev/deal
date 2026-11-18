@@ -217,7 +217,8 @@ public final class LlvmCallClosureEmissionTest {
         function one(n: number): number { return n; }
         export function main(): void {
           let a: (n: number) => number = one;
-          let boxed: unknown = a;
+          let hide=(value:unknown):unknown=>value;
+          let boxed: unknown = hide(a);
           let back: string = boxed as string;
           return ;
         }
@@ -232,7 +233,8 @@ public final class LlvmCallClosureEmissionTest {
         function one(n: number): number { return n; }
         export function main(): void {
           let empty: ((n: number) => number) | null = null;
-          let boxed: unknown = empty;
+          let hide=(value:unknown):unknown=>value;
+          let boxed: unknown = hide(empty);
           let back: string = boxed as string;
           return ;
         }
@@ -1404,7 +1406,8 @@ public final class LlvmCallClosureEmissionTest {
         function id(x: string): string { return x; }
         export function main(): void {
           let f: (x: string) => string = id;
-          let boxed: unknown = f;
+          let hide=(value:unknown):unknown=>value;
+          let boxed: unknown = hide(f);
           let wrong: (n: number) => number = boxed as (n: number) => number;
           let applied: number = wrong(2);
           return ;
@@ -1414,7 +1417,8 @@ public final class LlvmCallClosureEmissionTest {
     /** A nullish assertion over a value the declared base never admits. */
     private static final String ASSERTION_NULLISH_MISMATCH_SOURCE = """
         export function main(): void {
-          let text: unknown = 1;
+          let hide=(value:unknown):unknown=>value;
+          let text: unknown = hide(1);
           let nullish: string | null = text as string | null;
           if (nullish === null) { return ; }
           return ;
@@ -1451,7 +1455,7 @@ public final class LlvmCallClosureEmissionTest {
             check(run.stdout().contains("DEAL_ERROR_CODE: E8001"),
                 "-O" + level + " the assertion reports E8001: "
                     + run.describe());
-            check(run.stdout().contains("\"line\":5"),
+            check(run.stdout().contains("\"line\":6"),
                 "-O" + level + " the E8001 arm carries the assertion's own"
                     + " origin: " + run.describe());
         }
@@ -1466,7 +1470,7 @@ public final class LlvmCallClosureEmissionTest {
             check(run.stdout().contains("DEAL_ERROR_CODE: E8001"),
                 "-O" + level + " the nullish assertion reports E8001: "
                     + run.describe());
-            check(run.stdout().contains("\"line\":3"),
+            check(run.stdout().contains("\"line\":4"),
                 "-O" + level + " the E8001 arm carries the assertion's own"
                     + " origin: " + run.describe());
         }
