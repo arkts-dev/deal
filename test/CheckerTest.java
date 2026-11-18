@@ -210,6 +210,60 @@ public class CheckerTest {
         check(syntheticCrossing.notes().size() == 1
                         && syntheticCrossing.notes().getFirst().message().equals("Expected class declaration"),
                 "synthetic provider without declaration evidence does not invent an actual class location");
+        for (String source : List.of("// 😀\r\nconst value=1;value=2;",
+                "const value=1;{let value=\"ok\";value=\"yes\";}value=2;",
+                "function f():void{for(const value of [1]){value=2;}}")) {
+            var mutation = checkProgram(source).result().diagnostics().stream()
+                    .filter(d -> d.code().equals("E3017")).findFirst().orElseThrow();
+            check(mutation.facts().reason().equals("mutation.const-reassignment")
+                            && mutation.facts().operation().equals("assignment")
+                            && mutation.notes().getFirst().range().startScalarOffset()
+                                    == (source.contains("for(") ? source.indexOf("for(") : source.indexOf("const")),
+                    "const restriction retains declaration evidence after inference, shadowing or for-of replacement");
+        }
+        String functionMutation = "// 😀\r\nfunction f():void{}f=function():void{};";
+        var immutableFunction = checkProgram(functionMutation).result().diagnostics().stream()
+                .filter(d -> d.code().equals("E3017")).findFirst().orElseThrow();
+        check(immutableFunction.facts().reason().equals("mutation.non-variable")
+                        && immutableFunction.notes().getFirst().range().startScalarOffset() == functionMutation.indexOf("function f"),
+                "function-binding mutation identifies immutable declaration");
+        String requiredDelete = "class C{value:number;}let c:C={value:1};delete c.value;";
+        var deletion = checkProgram(requiredDelete).result().diagnostics().stream()
+                .filter(d -> d.code().equals("E4004")).findFirst().orElseThrow();
+        check(deletion.facts().reason().equals("mutation.required-field-delete")
+                        && deletion.facts().operation().equals("delete")
+                        && deletion.notes().getFirst().range().startScalarOffset() == requiredDelete.indexOf("value:number"),
+                "required-field delete locates the field imposing presence");
+        var arrayDelete = checkProgram("let xs:number[]=[1];delete xs[0];").result().diagnostics().stream()
+                .filter(d -> d.code().equals("E3017")).findFirst().orElseThrow();
+        check(arrayDelete.facts().reason().equals("mutation.array-delete")
+                        && arrayDelete.facts().operation().equals("delete") && arrayDelete.notes().isEmpty(),
+                "array deletion retains its distinct rule without inventing a declaration");
+        var importedDelete = checkProgramWithModule(fieldConsumer.replace("P.C={}", "P.C={value:1}")
+                + "delete c.value;", fieldResolver).result().diagnostics().stream()
+                .filter(d -> d.code().equals("E4004")).findFirst().orElseThrow();
+        check(importedDelete.facts().reason().equals("mutation.required-field-delete")
+                        && importedDelete.notes().getFirst().range().file().equals("provider.deal")
+                        && importedDelete.notes().getFirst().range().startScalarOffset() == fieldProviderSource.indexOf("value"),
+                "required-field deletion uses exact imported provider evidence beside same-named locals");
+        for (String source : List.of("let xs:number[]=[1];xs.length=0;", "let text:string=\"x\";delete text.length;")) {
+            var length = checkProgram(source).result().diagnostics().stream()
+                    .filter(d -> d.code().equals("E3017")).findFirst().orElseThrow();
+            check(length.facts().reason().equals("mutation.length-readonly") && length.notes().isEmpty(),
+                    "intrinsic length restriction does not fabricate a declaration");
+        }
+        StubModuleResolver mutationImports = new StubModuleResolver();
+        mutationImports.register("./lib", Map.of("value", Type.Number.INSTANCE));
+        String importMutation = "// 😀\r\nimport * as P from \"./lib\";P.value=2;";
+        var immutableImport = checkProgramWithModule(importMutation, mutationImports).result().diagnostics().stream()
+                .filter(d -> d.code().equals("E3017")).findFirst().orElseThrow();
+        check(immutableImport.facts().reason().equals("mutation.import-readonly")
+                        && immutableImport.notes().getFirst().range().startScalarOffset() == importMutation.indexOf("import"),
+                "import mutation locates the selected namespace import");
+        assertNoErrors(checkProgram("let value=1;value=2;const xs:number[]=[1];xs[0]=2;"),
+                "explicit mutable binding repair keeps const aggregate contents mutable");
+        assertNoErrors(checkProgram(requiredDelete.replace("value:number", "value?:number")),
+                "explicit optional-field contract repair admits deletion");
         var assignment = checkProgram("let f: (x:number)=>number = function(x:string):number{return 1;};")
                 .result().diagnostics().stream().filter(d -> d.code().equals("E3001")).findFirst().orElseThrow();
         check(assignment.facts().expected().equals("(number) => number")

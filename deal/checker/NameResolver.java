@@ -559,12 +559,12 @@ public final class NameResolver {
                 fe.params().stream().map(p -> resolveTypeNode(p.type())).toList(),
                 resolveResultTypeNode(fe.returnType()), fe.isAsync());
             define(currentScope, name, new Symbol.VariableSymbol(name, bindingType, false,
-                declaredClass, vd.typeAnnotation().orElse(null), vd.isConst()), vd.span());
+                declaredClass, vd.typeAnnotation().orElse(null), vd.isConst(), vd.span().range()), vd.span());
             walkExpression(fe);
         } else {
             walkExpression(vd.initializer());
             define(currentScope, name, new Symbol.VariableSymbol(name, type, false,
-                declaredClass, vd.typeAnnotation().orElse(null), vd.isConst()), vd.span());
+                declaredClass, vd.typeAnnotation().orElse(null), vd.isConst(), vd.span().range()), vd.span());
         }
     }
 
@@ -709,7 +709,7 @@ public final class NameResolver {
             }
             Type paramType = resolveTypeNode(p.type());
             define(currentScope, name, new Symbol.VariableSymbol(name, paramType,
-                true, declaredClassSymbolOf(p.type()), p.type()), p.span());
+                true, declaredClassSymbolOf(p.type()), p.type(), false, p.span().range()), p.span());
         }
     }
 
@@ -768,7 +768,7 @@ public final class NameResolver {
         // Define the loop variable in the new scope
         currentScope.define(fos.varName(),
             new Symbol.VariableSymbol(fos.varName(), varType, false,
-                varDeclaredClass, fos.varType(), fos.isConst()));
+                varDeclaredClass, fos.varType(), fos.isConst(), fos.span().range()));
 
         loopDepth++;
         walkBlock(fos.body()); // Creates block scope, records in scopeMap
@@ -789,7 +789,7 @@ public final class NameResolver {
         scopeMap.put(ts, currentScope);
         currentScope.define(ts.catchVar(),
             new Symbol.VariableSymbol(ts.catchVar(),
-                Type.Unknown.INSTANCE, true));
+                Type.Unknown.INSTANCE, true, null, null, false, ts.catchVarSpan().range()));
         walkBlock(ts.catchBlock());
         currentScope = saved;
     }

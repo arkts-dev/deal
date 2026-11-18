@@ -699,7 +699,7 @@ public final class TypeChecker {
                             ? vs.declaredClass() : initDeclaredClass;
                         currentScope.defineReplace(vd.name(),
                             new Symbol.VariableSymbol(vd.name(), targetType, false,
-                                provenance, vs.declaredType(), vs.isConst()));
+                                provenance, vs.declaredType(), vs.isConst(), vs.declarationRange()));
                     }
                 }
             }
@@ -1141,7 +1141,7 @@ public final class TypeChecker {
         SymbolTable bodyScope = scopeMap.get(fos.body());
         if (bodyScope != null && bodyScope.parent() != null) {
             bodyScope.parent().defineReplace(fos.varName(),
-                new Symbol.VariableSymbol(fos.varName(), varType, false, null, null, fos.isConst()));
+                new Symbol.VariableSymbol(fos.varName(), varType, false, null, null, fos.isConst(), fos.span().range()));
         }
 
         if (iterableType instanceof Type.Array arr) {
@@ -1305,7 +1305,8 @@ public final class TypeChecker {
         Type targetType = checkExpression(ds.target());
         ExpressionNode target = ds.target() instanceof OptionalChainExpr chain ? chain.expression() : ds.target();
         if (target instanceof IndexExpr index && typeOf(index.array()) instanceof Type.Array) {
-            error(DiagnosticCode.E3017, "Array elements cannot be deleted", ds.span());
+            mutationError(DiagnosticCode.E3017, "Array elements cannot be deleted", ds.span(),
+                    "mutation.array-delete", "delete", "array elements retained", "array element deletion", null);
         }
         assignmentTargetMode = savedMode;
 
@@ -1317,8 +1318,8 @@ public final class TypeChecker {
             // Defensive rejection — codegen would otherwise emit invalid
             // `#xs = nil` Lua for a program the checker had accepted.
             if ((objType instanceof Type.Array || objType instanceof Type.String) && mae.field().equals("length")) {
-                error(DiagnosticCode.E3017, "Length is read-only",
-                    ds.target().span());
+                mutationError(DiagnosticCode.E3017, "Length is read-only", ds.target().span(),
+                        "mutation.length-readonly", "delete", "read-only length", typeName(objType), null);
                 return;
             }
             if (objType instanceof Type.Class cls) {
@@ -1336,9 +1337,10 @@ public final class TypeChecker {
                 if (sym != null) {
                     ClassField field = IntrinsicResolvers.findField(sym.fields(), mae.field());
                     if (field != null && !field.optional()) {
-                        error(DiagnosticCode.E4004,
-                            "Cannot delete required field '" + mae.field() + "'",
-                            ds.span());
+                        mutationError(DiagnosticCode.E4004,
+                            "Cannot delete required field '" + mae.field() + "'", ds.span(),
+                            "mutation.required-field-delete", "delete", "required field presence", mae.field(),
+                            field.span().range());
                     }
                 }
             }
@@ -2864,7 +2866,7 @@ public final class TypeChecker {
                 paramNames.add(p.name());
                 Type pt = paramTypes.get(fe.params().indexOf(p));
                 currentScope.define(p.name(), new Symbol.VariableSymbol(p.name(), pt,
-                    true, nameResolver.declaredClassSymbolOf(p.type()), p.type()));
+                    true, nameResolver.declaredClassSymbolOf(p.type()), p.type(), false, p.span().range()));
             }
         }
 
@@ -3189,27 +3191,33 @@ public final class TypeChecker {
         boolean readOnlyTarget = false;
         if (assign.target() instanceof IdentifierExpr id
                 && !(resolveVisibleBinding(id.name()) instanceof Symbol.VariableSymbol)) {
-            error(DiagnosticCode.E3017, "Assignment requires a variable binding", id.span());
+            mutationError(DiagnosticCode.E3017, "Assignment requires a variable binding", id.span(),
+                    "mutation.non-variable", "assignment", "mutable variable binding", id.name(),
+                    bindingDeclarationRange(resolveVisibleBinding(id.name())));
             readOnlyTarget = true;
         }
         if (assign.target() instanceof IdentifierExpr id
                 && resolveVisibleBinding(id.name()) instanceof Symbol.VariableSymbol variable
                 && variable.isConst()) {
-            error(DiagnosticCode.E3017, "Cannot reassign const binding '" + id.name() + "'", id.span());
+            mutationError(DiagnosticCode.E3017, "Cannot reassign const binding '" + id.name() + "'", id.span(),
+                    "mutation.const-reassignment", "assignment", "mutable variable binding", "const " + id.name(),
+                    variable.declarationRange());
             readOnlyTarget = true;
         }
         ExpressionNode receiver = assign.target() instanceof MemberAccessExpr member ? member.object()
             : assign.target() instanceof IndexExpr index ? index.array() : null;
         if (receiver instanceof IdentifierExpr id
-                && resolveVisibleBinding(id.name()) instanceof Symbol.ModuleSymbol) {
-            error(DiagnosticCode.E3017, "Imported exports are read-only", assign.target().span());
+                && resolveVisibleBinding(id.name()) instanceof Symbol.ModuleSymbol module) {
+            mutationError(DiagnosticCode.E3017, "Imported exports are read-only", assign.target().span(),
+                    "mutation.import-readonly", "assignment", "locally mutable storage", "imported export",
+                    module.importSpan() == null ? null : module.importSpan().range());
             readOnlyTarget = true;
         }
         if (assign.target() instanceof MemberAccessExpr mae
                 && mae.field().equals("length")
                 && (typeOf(mae.object()) instanceof Type.Array || typeOf(mae.object()) instanceof Type.String)) {
-            error(DiagnosticCode.E3017, "Length is read-only",
-                assign.target().span());
+            mutationError(DiagnosticCode.E3017, "Length is read-only", assign.target().span(),
+                    "mutation.length-readonly", "assignment", "read-only length", typeName(typeOf(mae.object())), null);
             readOnlyTarget = true;
         }
 
@@ -3287,6 +3295,25 @@ public final class TypeChecker {
     // =======================================================================
     // Assignment compatibility
     // =======================================================================
+
+    private static deal.diagnostics.DiagnosticRange bindingDeclarationRange(Symbol binding) {
+        if (binding instanceof Symbol.VariableSymbol variable) return variable.declarationRange();
+        if (binding instanceof Symbol.FunctionSymbol function && function.declaration() != null)
+            return function.declaration().span().range();
+        if (binding instanceof Symbol.ClassSymbol cls) return cls.declarationRange();
+        if (binding instanceof Symbol.ModuleSymbol module && module.importSpan() != null)
+            return module.importSpan().range();
+        return null;
+    }
+
+    private void mutationError(DiagnosticCode code, String message, Span span, String reason,
+            String operation, String expected, String actual, deal.diagnostics.DiagnosticRange declaration) {
+        CompilerDiagnostic diagnostic = CompilerDiagnostic.error(code, message, span).withFacts(
+                new deal.diagnostics.DiagnosticFacts(reason, operation, expected, actual,
+                        List.of("Choose storage and mutation consistent with the declared contract; no declaration rewrite is inferred.")));
+        if (declaration != null) diagnostic = diagnostic.withNote("Restriction declared here", declaration);
+        diagnostics.add(diagnostic);
+    }
 
     private static deal.diagnostics.DiagnosticFacts classFieldFacts(String reason, String field,
             String expected, String actual, String guidance) {

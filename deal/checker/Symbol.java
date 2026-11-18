@@ -41,8 +41,13 @@ public sealed interface Symbol
      * (GitHub #6).</p>
      */
     record VariableSymbol(String name, Type type, boolean isParameter,
-                          ClassSymbol declaredClass, TypeNode declaredType, boolean isConst)
-            implements Symbol {
+                          ClassSymbol declaredClass, TypeNode declaredType, boolean isConst,
+                          DiagnosticRange declarationRange) implements Symbol {
+        /** Synthetic bindings may have no source declaration. */
+        public VariableSymbol(String name, Type type, boolean isParameter,
+                              ClassSymbol declaredClass, TypeNode declaredType, boolean isConst) {
+            this(name, type, isParameter, declaredClass, declaredType, isConst, null);
+        }
         public VariableSymbol(String name, Type type, boolean isParameter,
                               ClassSymbol declaredClass, TypeNode declaredType) {
             this(name, type, isParameter, declaredClass, declaredType, false);

@@ -1705,6 +1705,16 @@ Async diagnostics distinguish await outside an async body, await of a non-async
 call, an unawaited async call, and an async call inside an optional chain using
 separate reason identifiers. Async call failures retain the same known call
 context; guidance does not silently change a caller's asynchronous API contract.
+Mutation failures distinguish `mutation.non-variable`,
+`mutation.const-reassignment`, `mutation.import-readonly`,
+`mutation.length-readonly`, `mutation.array-delete` and
+`mutation.required-field-delete` with `assignment` or `delete` operations.
+`Restriction declared here` locates the exact binding/import/required-field
+that imposes the restriction when available. Inferred const and for-of bindings
+retain their original declaration range (the loop range for for-of); intrinsic
+length/array restrictions do not invent source declarations. These diagnostics
+do not propose silently removing const, making fields optional or changing APIs;
+const aggregate contents remain mutable under the existing rules.
 E3019 nominal-crossing failures use reason `type.class-provider` and operation
 `assignment.nominal`, retaining expected/actual types and ordered labels
 `Expected class declaration` then `Actual class declaration` for the exact
