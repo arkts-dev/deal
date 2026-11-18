@@ -11,7 +11,23 @@ public record DiagnosticFacts(
         String actual,
         List<String> guidance,
         List<PathSegment> path,
-        CallContext call) {
+        CallContext call,
+        OperatorContext operator) {
+    /** Operand roles are producer-selected; ranges identify checked expressions, not guessed fixes. */
+    public record Operand(String role, String type, DiagnosticRange range) {
+        public Operand {
+            Objects.requireNonNull(role, "role");
+            Objects.requireNonNull(type, "type");
+            Objects.requireNonNull(range, "range");
+        }
+    }
+    public record OperatorContext(String token, List<Operand> operands, List<String> acceptedCombinations) {
+        public OperatorContext {
+            Objects.requireNonNull(token, "token");
+            operands = List.copyOf(operands);
+            acceptedCombinations = List.copyOf(acceptedCombinations);
+        }
+    }
     /** Argument indices are zero-based; -1 means the failure concerns the whole call. */
     public record CallContext(String callee, String signature, DiagnosticRange declarationRange,
                               int argumentIndex, String parameterName, int expectedCount,
@@ -45,8 +61,17 @@ public record DiagnosticFacts(
         this(reason, operation, expected, actual, guidance, path, null);
     }
 
+    public DiagnosticFacts(String reason, String operation, String expected, String actual,
+                           List<String> guidance, List<PathSegment> path, CallContext call) {
+        this(reason, operation, expected, actual, guidance, path, call, null);
+    }
+
     public DiagnosticFacts withCall(CallContext context) {
-        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, context);
+        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, context, operator);
+    }
+
+    public DiagnosticFacts withOperator(OperatorContext context) {
+        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, context);
     }
 
     public static final DiagnosticFacts EMPTY = new DiagnosticFacts("", "", "", "", List.of());

@@ -125,6 +125,34 @@ public final class AmendWorkspaceTest {
                 "amendment forwards producer types rather than parsing prose");
         String json = CompilerProtocolJson.encode(mismatch);
         check(json.contains("\"facts\"") && json.contains("\"startScalarOffset\""), "current protocol exports facts and ranges");
+        String operatorBase = "// 😀\r\nexport function run():number{return 1+2;}";
+        var operatorInspection = AmendWorkspace.inspect(operatorBase, "probe.deal");
+        var operatorBody = operatorInspection.nodes().stream().filter(n -> n.kind().equals("function-body"))
+                .findFirst().orElseThrow();
+        var rejectedOperator = AmendWorkspace.applyChecked(operatorBase, "probe.deal",
+                new CompilerProtocol.ChangeSetPrecondition(operatorInspection.sourceDigest(),
+                        Map.of(operatorBody.id().value(), operatorBody.fingerprint())),
+                List.of(new AmendWorkspace.ReplaceFunctionBody(operatorBody.id(), "return 1+\"bad\";")));
+        var operatorDiagnostic = rejectedOperator.diagnostics().stream().filter(d -> d.code().equals("E3010"))
+                .findFirst().orElseThrow();
+        var operator = operatorDiagnostic.facts().operator();
+        check(!rejectedOperator.accepted() && rejectedOperator.source().equals(operatorBase)
+                        && operator.token().equals("+") && operator.operands().get(1).type().equals("string")
+                        && operator.operands().get(1).range().startScalarOffset()
+                            == operatorDiagnostic.range().startScalarOffset() + 2
+                        && operator.operands().get(1).range().file().equals("probe.deal")
+                        && operator.operands().get(1).range().startLine() == operatorDiagnostic.range().startLine()
+                        && operator.operands().get(1).range().scalarLength() == 5
+                        && operatorDiagnostic.withOperationIndex(0).facts().operator().equals(operator),
+                "rejected candidate keeps operator evidence in full candidate coordinates without publication: " + operatorDiagnostic);
+        var repairedOperator = AmendWorkspace.applyChecked(operatorBase, "probe.deal",
+                new CompilerProtocol.ChangeSetPrecondition(operatorInspection.sourceDigest(),
+                        Map.of(operatorBody.id().value(), operatorBody.fingerprint())),
+                List.of(new AmendWorkspace.ReplaceFunctionBody(operatorBody.id(), "return 1+7;")));
+        check(repairedOperator.accepted()
+                        && operator.operands().get(1).range().startScalarOffset() == repairedOperator.source().indexOf("1+7") + 2
+                        && AmendWorkspace.inspect(repairedOperator.source(), "probe.deal").diagnostics().isEmpty(),
+                "chosen data operand repair publishes only after clean recheck");
         String calls = "// 😀\r\nfunction f(value:number):void{} export function run():void{f(\"bad\");}";
         var callDiagnostic = AmendWorkspace.inspect(calls, "probe.deal").diagnostics().stream()
                 .filter(d -> d.code().equals("E5001")).findFirst().orElseThrow();

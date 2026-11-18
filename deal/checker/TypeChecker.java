@@ -1655,9 +1655,10 @@ public final class TypeChecker {
         if (left == Type.Error.INSTANCE || right == Type.Error.INSTANCE) return Type.Error.INSTANCE;
         if (!(left instanceof Type.Boolean) || !(right instanceof Type.Boolean)) {
             boolean badLeft = !(left instanceof Type.Boolean);
-            error(DiagnosticCode.E3007, (badLeft ? "Left" : "Right") + " operand of '"
+            binaryOperatorError(DiagnosticCode.E3007, (badLeft ? "Left" : "Right") + " operand of '"
                 + opSymbol(bin.op()) + "' must be boolean, got " + typeName(badLeft ? left : right),
-                (badLeft ? bin.left() : bin.right()).span());
+                (badLeft ? bin.left() : bin.right()).span(), bin, left, right, "operator.logical.operands",
+                "boolean operands", List.of("boolean, boolean"));
             return Type.Error.INSTANCE;
         }
         return Type.Boolean.INSTANCE;
@@ -1708,9 +1709,11 @@ public final class TypeChecker {
                 }
                 return Type.Boolean.INSTANCE;
             }
-            error(DiagnosticCode.E3006,
+            binaryOperatorError(DiagnosticCode.E3006,
                 "Cannot compare " + typeName(leftType) + " with " + typeName(rightType),
-                bin.span());
+                bin.span(), bin, leftType, rightType, "operator.equality.operands",
+                "equal non-void types or an eligible nullish comparison", List.of(
+                        "equal non-void types", "eligible nullable or unknown value, null or undefined (either order)"));
             return Type.Error.INSTANCE;
         }
 
@@ -1720,8 +1723,9 @@ public final class TypeChecker {
                     return Type.Boolean.INSTANCE;
                 }
             }
-            error(DiagnosticCode.E3007, "Invalid operand types for comparison: "
-                + typeName(leftType) + " and " + typeName(rightType), bin.span());
+            binaryOperatorError(DiagnosticCode.E3007, "Invalid operand types for comparison: "
+                + typeName(leftType) + " and " + typeName(rightType), bin.span(), bin, leftType, rightType,
+                "operator.relational.operands", "both number or both string", List.of("number, number", "string, string"));
             return Type.Error.INSTANCE;
         }
 
@@ -1737,14 +1741,16 @@ public final class TypeChecker {
                     new deal.diagnostics.DiagnosticFacts("operator.add.operands", "addition",
                             "Both '+' operands must be numeric, or both must be string; DEAL has no implicit coercion",
                             "left: " + typeName(leftType) + "; right: " + typeName(rightType),
-                            List.of("Choose operands of the same supported kind; do not use a cast as a conversion."))));
+                            List.of("Choose operands of the same supported kind; do not use a cast as a conversion."))
+                            .withOperator(binaryOperatorContext(bin, leftType, rightType, List.of("number, number", "string, string")))));
             return Type.Error.INSTANCE;
         }
 
         // Other arithmetic: both operands must be numbers.
         if (!Types.equals(leftType, rightType)) {
-            error(DiagnosticCode.E3007, "Invalid operand types for '" + opSymbol(op) + "': "
-                + typeName(leftType) + " and " + typeName(rightType), bin.span());
+            binaryOperatorError(DiagnosticCode.E3007, "Invalid operand types for '" + opSymbol(op) + "': "
+                + typeName(leftType) + " and " + typeName(rightType), bin.span(), bin, leftType, rightType,
+                "operator.arithmetic.operands", "number operands", List.of("number, number"));
             return Type.Error.INSTANCE;
         }
 
@@ -1752,8 +1758,9 @@ public final class TypeChecker {
             return leftType;
         }
 
-        error(DiagnosticCode.E3007, "Invalid operand types for '" + opSymbol(op) + "': "
-            + typeName(leftType) + " and " + typeName(rightType), bin.span());
+        binaryOperatorError(DiagnosticCode.E3007, "Invalid operand types for '" + opSymbol(op) + "': "
+            + typeName(leftType) + " and " + typeName(rightType), bin.span(), bin, leftType, rightType,
+            "operator.arithmetic.operands", "number operands", List.of("number, number"));
         return Type.Error.INSTANCE;
     }
 
@@ -1785,16 +1792,16 @@ public final class TypeChecker {
             }
             case NOT -> {
                 if (!(exprType instanceof Type.Boolean)) {
-                    error(DiagnosticCode.E3007, "Operand of '!' must be boolean, got "
-                        + typeName(exprType), un.expr().span());
+                    unaryOperatorError("Operand of '!' must be boolean, got " + typeName(exprType),
+                            un, exprType, "!", "boolean");
                     yield Type.Error.INSTANCE;
                 }
                 yield Type.Boolean.INSTANCE;
             }
             case NEG -> {
                 if (!(exprType instanceof Type.Number)) {
-                    error(DiagnosticCode.E3007, "Operand of unary '-' must be number, got "
-                        + typeName(exprType), un.expr().span());
+                    unaryOperatorError("Operand of unary '-' must be number, got " + typeName(exprType),
+                            un, exprType, "-", "number");
                     yield Type.Error.INSTANCE;
                 }
                 yield exprType;
@@ -3298,6 +3305,31 @@ public final class TypeChecker {
     // =======================================================================
     // Assignment compatibility
     // =======================================================================
+
+    private deal.diagnostics.DiagnosticFacts.OperatorContext binaryOperatorContext(
+            BinaryExpr bin, Type left, Type right, List<String> accepted) {
+        return new deal.diagnostics.DiagnosticFacts.OperatorContext(opSymbol(bin.op()), List.of(
+                new deal.diagnostics.DiagnosticFacts.Operand("left", typeName(left), bin.left().span().range()),
+                new deal.diagnostics.DiagnosticFacts.Operand("right", typeName(right), bin.right().span().range())), accepted);
+    }
+
+    private void binaryOperatorError(DiagnosticCode code, String message, Span span, BinaryExpr bin,
+            Type left, Type right, String reason, String expected, List<String> accepted) {
+        diagnostics.add(CompilerDiagnostic.error(code, message, span).withFacts(
+                new deal.diagnostics.DiagnosticFacts(reason, "operator." + opSymbol(bin.op()), expected,
+                        "left: " + typeName(left) + "; right: " + typeName(right),
+                        List.of("Choose operands allowed by the operator; DEAL does not implicitly coerce operands."))
+                        .withOperator(binaryOperatorContext(bin, left, right, accepted))));
+    }
+
+    private void unaryOperatorError(String message, UnaryExpr unary, Type actual, String token, String expected) {
+        diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E3007, message, unary.expr().span()).withFacts(
+                new deal.diagnostics.DiagnosticFacts("operator.unary.operand", "operator." + token, expected,
+                        typeName(actual), List.of("Choose an operand of the required type; no coercion is inferred."))
+                        .withOperator(new deal.diagnostics.DiagnosticFacts.OperatorContext(token, List.of(
+                                new deal.diagnostics.DiagnosticFacts.Operand("operand", typeName(actual), unary.expr().span().range())),
+                                List.of(expected)))));
+    }
 
     private void voidDataError(DiagnosticCode code, String message, Span span, ExpressionNode producer,
                                String operation) {

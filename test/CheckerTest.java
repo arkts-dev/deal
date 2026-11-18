@@ -145,6 +145,52 @@ public class CheckerTest {
                             && constraint.notes().getFirst().range().startScalarOffset() == source.indexOf(annotation),
                     "assignment constraint locates exact binding annotation, including shadowing and UTF-16 text");
         }
+        String[][] operatorCases = {
+                {"1+\"bad\"", "+", "operator.add.operands", "1+2", "number", "string"},
+                {"true-1", "-", "operator.arithmetic.operands", "2-1", "boolean", "number"},
+                {"\"a\"*\"b\"", "*", "operator.arithmetic.operands", "2*3", "string", "string"},
+                {"true/1", "/", "operator.arithmetic.operands", "2/1", "boolean", "number"},
+                {"true%1", "%", "operator.arithmetic.operands", "2%1", "boolean", "number"},
+                {"true<false", "<", "operator.relational.operands", "1<2", "boolean", "boolean"},
+                {"1<=\"a\"", "<=", "operator.relational.operands", "1<=2", "number", "string"},
+                {"1>\"a\"", ">", "operator.relational.operands", "1>2", "number", "string"},
+                {"1>=\"a\"", ">=", "operator.relational.operands", "1>=2", "number", "string"},
+                {"1===\"bad\"", "===", "operator.equality.operands", "1===2", "number", "string"},
+                {"1!==\"bad\"", "!==", "operator.equality.operands", "1!==2", "number", "string"},
+                {"1&&true", "&&", "operator.logical.operands", "false&&true", "number", "boolean"},
+                {"false||1", "||", "operator.logical.operands", "false||true", "boolean", "number"},
+                {"!1", "!", "operator.unary.operand", "!true", "number"},
+                {"-true", "-", "operator.unary.operand", "-1", "boolean"}};
+        for (String[] candidate : operatorCases) {
+            String source = "// 😀\r\nlet result=" + candidate[0] + ";";
+            var diagnostic = checkProgram(source).result().diagnostics().stream()
+                    .filter(d -> d.facts().reason().equals(candidate[2])).findFirst()
+                    .orElseThrow(() -> new AssertionError("Expected operator facts for " + source));
+            var operator = diagnostic.facts().operator();
+            boolean unary = candidate[2].equals("operator.unary.operand");
+            check(operator.token().equals(candidate[1]) && operator.operands().size() == (unary ? 1 : 2)
+                            && operator.operands().getFirst().role().equals(unary ? "operand" : "left")
+                            && operator.operands().getFirst().type().equals(candidate[4])
+                            && operator.operands().getFirst().range().startScalarOffset()
+                                == source.indexOf(candidate[0]) + (unary ? 1 : 0)
+                            && operator.acceptedCombinations().equals(switch (candidate[1]) {
+                                case "+", "<", "<=", ">", ">=" -> List.of("number, number", "string, string");
+                                case "&&", "||" -> List.of("boolean, boolean");
+                                case "===", "!==" -> List.of("equal non-void types",
+                                        "eligible nullable or unknown value, null or undefined (either order)");
+                                case "!" -> List.of("boolean");
+                                case "-" -> unary ? List.of("number") : List.of("number, number");
+                                default -> List.of("number, number");
+                            }),
+                    "operator facts retain typed roles, exact UTF-16 expression ranges and accepted combinations: " + candidate[0]);
+            if (!unary) check(operator.operands().get(1).role().equals("right")
+                            && operator.operands().get(1).type().equals(candidate[5])
+                            && operator.operands().get(1).range().startScalarOffset()
+                                > operator.operands().getFirst().range().startScalarOffset(),
+                    "binary operand evidence retains checked source order");
+            assertNoErrors(checkProgram(source.replace(candidate[0], candidate[3])),
+                    "explicit intended operand repair rechecks: " + candidate[0]);
+        }
         var inferred = checkProgram("let value=1;value=\"bad\";").result().diagnostics().stream()
                 .filter(d -> d.code().equals("E3001")).findFirst().orElseThrow();
         check(inferred.notes().isEmpty(), "inferred binding does not invent an annotation location");

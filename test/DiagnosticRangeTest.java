@@ -3101,7 +3101,7 @@ public class DiagnosticRangeTest {
             + range.replace("\n", "\n      ") + ",\n      \"notes\": "
             + notes.replace("\n", "\n      ") + ",\n"
             + "      \"facts\": {\n        \"reason\": \"\",\n        \"operation\": \"\",\n"
-            + "        \"expected\": \"\",\n        \"actual\": \"\",\n        \"guidance\": [],\n        \"path\": [],\n        \"call\": null\n      },\n"
+            + "        \"expected\": \"\",\n        \"actual\": \"\",\n        \"guidance\": [],\n        \"path\": [],\n        \"call\": null,\n        \"operator\": null\n      },\n"
             + "      \"missingSymbols\": []\n    }\n  ]\n}";
     }
 
@@ -3232,6 +3232,27 @@ public class DiagnosticRangeTest {
         check(deal.amend.CompilerProtocolJson.encode(callFacts).equals(deal.semantic.ir.CanonicalJson.serializeText(
                         deal.amend.CompilerProtocolJson.field(callItem, "facts"))),
                 "CLI and amendment call facts agree including both ranges and parameter name");
+        var operands = new java.util.ArrayList<>(List.of(
+                new deal.diagnostics.DiagnosticFacts.Operand("left\"\uD800", "number", zero.range())));
+        var accepted = new java.util.ArrayList<>(List.of("number, number"));
+        var operator = new deal.diagnostics.DiagnosticFacts.OperatorContext("+", operands, accepted);
+        var operatorFacts = callFacts.withOperator(operator);
+        operands.clear();
+        accepted.clear();
+        check(operator.operands().size() == 1 && operator.acceptedCombinations().equals(List.of("number, number"))
+                        && operatorFacts.withCall(null).operator().equals(operator)
+                        && operatorFacts.call().equals(callContext),
+                "operator collections are immutable and fact copies preserve independent evidence");
+        String operatorJson = DiagnosticStructuredOutput.toJson(List.of(escaped.withFacts(operatorFacts)));
+        var operatorDocument = deal.amend.CompilerProtocolJson.requireObject(
+                deal.amend.CompilerProtocolJson.decode(operatorJson), "document");
+        var operatorItems = deal.amend.CompilerProtocolJson.requireArray(
+                deal.amend.CompilerProtocolJson.field(operatorDocument, "diagnostics"), "diagnostics");
+        var operatorItem = deal.amend.CompilerProtocolJson.requireObject(operatorItems.items().getFirst(), "diagnostic");
+        check(deal.amend.CompilerProtocolJson.encode(operatorFacts).equals(deal.semantic.ir.CanonicalJson.serializeText(
+                        deal.amend.CompilerProtocolJson.field(operatorItem, "facts")))
+                        && operatorJson.contains("left\\\"\\ud800"),
+                "CLI and amendment operator facts agree with escaped roles, accepted combinations and complete ranges");
         var schemaFacts = new deal.diagnostics.DiagnosticFacts("schema", "decode", "number", "function", List.of(), schemaPath);
         schemaPath.clear();
         check(schemaFacts.path().size() == 2, "schema paths are defensively copied");

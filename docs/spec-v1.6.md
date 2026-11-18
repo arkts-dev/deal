@@ -1687,8 +1687,16 @@ location is available. These source/editor coordinates are distinct from runtime
 JSON scanner offsets, which are one-based UTF-8 byte positions.
 
 `facts` separates producer-owned `reason`, failed `operation`, `expected`,
-`actual`, ordered `guidance`, a typed `path`, and nullable typed `call` context
-from explanatory message text. Call failures retain the declared callee name when
+`actual`, ordered `guidance`, a typed `path`, nullable typed `call` context
+and nullable typed `operator` context from explanatory message text. Arithmetic,
+relational, equality, logical and unary rejection facts retain the exact operator
+`token`, source-ordered `operands` (`role`, checked `type`, complete expression
+`range`), and ordered `acceptedCombinations`. Binary roles are `left`/`right`;
+unary uses `operand`. These facts describe the rejected checked pair without
+claiming which operand the author intended to change. Stable subordinate reasons
+distinguish addition, arithmetic, relational, equality, logical and unary rules;
+existing codes, primary ranges, type/refinement rules and evaluation order remain
+unchanged. Guidance never implies an implicit coercion or an inferred cast. Call failures retain the declared callee name when
 available, full signature, nullable `declarationRange`, zero-based
 `argumentIndex` (`-1` for whole-call failures), `parameterName` (empty when
 unavailable), expected/actual argument counts, and nullable `parameterRange`

@@ -121,7 +121,7 @@ public final class DiagnosticStructuredOutput {
         sb.append("],\n");
         indent(sb, level + 1).append("\"call\": ");
         var call = facts.call();
-        if (call == null) sb.append("null\n");
+        if (call == null) sb.append("null");
         else {
             sb.append("{\n");
             indent(sb, level + 2).append("\"callee\": ").append(jsonString(call.callee())).append(",\n");
@@ -135,6 +135,32 @@ public final class DiagnosticStructuredOutput {
             indent(sb, level + 2).append("\"actualCount\": ").append(call.actualCount()).append(",\n");
             if (call.parameterRange() == null) indent(sb, level + 2).append("\"parameterRange\": null");
             else appendRange(sb, call.parameterRange(), level + 2, "parameterRange");
+            sb.append('\n');
+            indent(sb, level + 1).append('}');
+        }
+        sb.append(",\n");
+        indent(sb, level + 1).append("\"operator\": ");
+        var operator = facts.operator();
+        if (operator == null) sb.append("null\n");
+        else {
+            sb.append("{\n");
+            indent(sb, level + 2).append("\"token\": ").append(jsonString(operator.token())).append(",\n");
+            indent(sb, level + 2).append("\"operands\": [");
+            for (int i = 0; i < operator.operands().size(); i++) {
+                if (i > 0) sb.append(',');
+                var operand = operator.operands().get(i);
+                sb.append('\n');
+                indent(sb, level + 3).append("{\n");
+                indent(sb, level + 4).append("\"role\": ").append(jsonString(operand.role())).append(",\n");
+                indent(sb, level + 4).append("\"type\": ").append(jsonString(operand.type())).append(",\n");
+                appendRange(sb, operand.range(), level + 4);
+                sb.append('\n');
+                indent(sb, level + 3).append('}');
+            }
+            if (!operator.operands().isEmpty()) { sb.append('\n'); indent(sb, level + 2); }
+            sb.append("],\n");
+            indent(sb, level + 2).append("\"acceptedCombinations\": ");
+            appendStrings(sb, operator.acceptedCombinations());
             sb.append('\n');
             indent(sb, level + 1).append("}\n");
         }
