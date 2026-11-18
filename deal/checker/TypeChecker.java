@@ -111,6 +111,7 @@ public final class TypeChecker {
     private final Map<ExpressionNode, ConditionFlow> conditionFlows = new IdentityHashMap<>();
     private final Map<ExpressionNode, Type> declaredReadTypes = new IdentityHashMap<>();
     private final Map<ExpressionNode, Object> propertyReadEpochs = new IdentityHashMap<>();
+    private final Map<ExpressionNode, NullNarrowing.LostRefinement> lostRefinementReads = new IdentityHashMap<>();
 
     // -- Assignment tracking for the open try regions of the current
     //    function: one frame per open try block, holding the resolved
@@ -1512,7 +1513,7 @@ public final class TypeChecker {
         // recovery (e.g., `await 42`). A bare cast would throw ClassCastException.
         if (!(await.callee() instanceof CallExpr call)) {
             // Parser already reported E1042; avoid cascading errors.
-            invalidateAllNarrowing();
+            invalidateAllNarrowing(await.span().range());
             return Type.Error.INSTANCE;
         }
 
@@ -1521,7 +1522,7 @@ public final class TypeChecker {
         if (calleeFuncType instanceof Type.Func f && f.isAsync()) {
             // Valid await: resultType is the return type R of the async function.
             // Invalidate narrowing after await.
-            invalidateAllNarrowing();
+            invalidateAllNarrowing(await.span().range());
             return resultType;
         }
 
@@ -1531,7 +1532,7 @@ public final class TypeChecker {
                         new deal.diagnostics.DiagnosticFacts("await.non-async-call", "await",
                                 "direct async function call", typeName(calleeFuncType), List.of())));
         }
-        invalidateAllNarrowing();
+        invalidateAllNarrowing(await.span().range());
         return Type.Error.INSTANCE;
     }
 
@@ -1545,11 +1546,11 @@ public final class TypeChecker {
      * stack at their boundary, so their suspensions stay scoped to
      * themselves.
      */
-    private void invalidateAllNarrowing() {
-        narrowing.invalidateAll();
-        for (NullNarrowing entry : tryEntryFacts) entry.invalidateAll();
+    private void invalidateAllNarrowing(deal.diagnostics.DiagnosticRange awaitRange) {
+        narrowing.invalidateAtAwait(awaitRange);
+        for (NullNarrowing entry : tryEntryFacts) entry.invalidateAtAwait(awaitRange);
         for (NullNarrowing saved : loopSavedNarrowing) {
-            saved.invalidateAll();
+            saved.invalidateAtAwait(awaitRange);
         }
     }
 
@@ -1596,6 +1597,7 @@ public final class TypeChecker {
         }
         Type declaredType = getDeclaredType(sym);
         Type narrowedType = narrowing.getNarrowedType(sym);
+        recordLostRefinement(id, new NullNarrowing.Subject(sym, null), declaredType);
         if (narrowedType != null && !Types.equals(declaredType, narrowedType)) {
             // The read is a refinement claim (declared T | null, read as
             // T): publish the fact the one lowering consumes at the
@@ -2404,6 +2406,7 @@ public final class TypeChecker {
                     declaredReadTypes.put(mae, fieldType);
                     propertyReadEpochs.put(mae, narrowing.propertyEpoch());
                     NullNarrowing.Subject subject = propertySubject(mae);
+                    if (!assignmentTargetMode) recordLostRefinement(mae, subject, fieldType);
                     Type refined = assignmentTargetMode || subject == null ? null : narrowing.getNarrowedType(subject);
                     if (refined != null && !Types.equals(refined, fieldType)) {
                         narrowedReads.add(mae);
@@ -2437,15 +2440,29 @@ public final class TypeChecker {
             return Type.Unknown.INSTANCE;
         }
 
-        diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E3003,
+        diagnostics.add(withLostRefinement(CompilerDiagnostic.error(DiagnosticCode.E3003,
             "Cannot access field '" + field + "' on type " + typeName(objType), mae.span())
                 .withFacts(new deal.diagnostics.DiagnosticFacts("access.field-receiver",
                         assignmentTargetMode ? "field.target" : "field.read",
                         "Record or a declared class receiver; string/array only for supported members",
                         typeName(objType), receiverReadGuidance(objType), List.of(
                                 new deal.diagnostics.DiagnosticFacts.PathSegment(
-                                        deal.diagnostics.DiagnosticFacts.PathKind.FIELD, field)))));
+                                        deal.diagnostics.DiagnosticFacts.PathKind.FIELD, field)))), mae.object()));
         return Type.Error.INSTANCE;
+    }
+
+    private void recordLostRefinement(ExpressionNode expression, NullNarrowing.Subject subject, Type declared) {
+        NullNarrowing.LostRefinement lost = subject == null ? null : narrowing.lostRefinement(subject);
+        if (lost == null || Types.equals(lost.previous(), declared)) lostRefinementReads.remove(expression);
+        else lostRefinementReads.put(expression, lost);
+    }
+
+    private CompilerDiagnostic withLostRefinement(CompilerDiagnostic diagnostic, ExpressionNode expression) {
+        var lost = lostRefinementReads.get(expression);
+        return lost == null ? diagnostic : diagnostic.withNote(
+                "Earlier refinement to " + typeName(lost.previous())
+                        + " was invalidated by this await; inspect or guard the current value again before use",
+                lost.awaitRange());
     }
 
     private static List<String> receiverReadGuidance(Type receiver) {
@@ -2513,10 +2530,10 @@ public final class TypeChecker {
             return arr.element();
         }
 
-        diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E3007,
+        diagnostics.add(withLostRefinement(CompilerDiagnostic.error(DiagnosticCode.E3007,
                 "Cannot index type " + typeName(arrayType), idx.array().span()).withFacts(
                         new deal.diagnostics.DiagnosticFacts("index.receiver", "index",
-                                "array or Record", typeName(arrayType), receiverReadGuidance(arrayType))));
+                                "array or Record", typeName(arrayType), receiverReadGuidance(arrayType))), idx.array()));
         return Type.Error.INSTANCE;
     }
 

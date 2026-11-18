@@ -19,18 +19,23 @@ public final class NullNarrowing {
         }
     }
 
+    /** Diagnostic evidence only; never participates in type or flow decisions. */
+    public record LostRefinement(Type previous, deal.diagnostics.DiagnosticRange awaitRange) {}
+    private final Map<Subject, LostRefinement> lostRefinements = new HashMap<>();
     private final Map<Subject, Type> narrowed = new HashMap<>();
     private Object propertyEpoch = new Object();
 
     public NullNarrowing() {}
     private NullNarrowing(NullNarrowing other) {
         narrowed.putAll(other.narrowed);
+        lostRefinements.putAll(other.lostRefinements);
         propertyEpoch = other.propertyEpoch;
     }
     public Object propertyEpoch() { return propertyEpoch; }
     public NullNarrowing emptyBranch() {
         NullNarrowing result = branch();
         result.narrowed.clear();
+        result.lostRefinements.clear();
         return result;
     }
     public NullNarrowing branch() { return new NullNarrowing(this); }
@@ -108,22 +113,41 @@ public final class NullNarrowing {
 
     public void narrow(Symbol binding, Type type) { narrow(new Subject(binding, null), type); }
     public void narrow(Subject subject, Type type) {
-        if (subject != null && subject.binding() instanceof Symbol.VariableSymbol) narrowed.put(subject, type);
+        if (subject != null && subject.binding() instanceof Symbol.VariableSymbol) {
+            narrowed.put(subject, type);
+            lostRefinements.remove(subject);
+        }
     }
     public Type getNarrowedType(Symbol binding) { return getNarrowedType(new Subject(binding, null)); }
     public Type getNarrowedType(Subject subject) { return narrowed.get(subject); }
     public void onAssignment(Symbol binding) { invalidate(binding); }
-    public void invalidate(Symbol binding) { narrowed.keySet().removeIf(key -> key.binding() == binding); }
+    public LostRefinement lostRefinement(Subject subject) { return lostRefinements.get(subject); }
+    public void invalidate(Symbol binding) {
+        narrowed.keySet().removeIf(key -> key.binding() == binding);
+        lostRefinements.keySet().removeIf(key -> key.binding() == binding);
+    }
     public void invalidateProperties() {
         narrowed.keySet().removeIf(key -> key.field() != null);
+        lostRefinements.keySet().removeIf(key -> key.field() != null);
         propertyEpoch = new Object();
     }
-    public void invalidateAll() { narrowed.clear(); propertyEpoch = new Object(); }
+    public void invalidateAll() {
+        narrowed.clear();
+        lostRefinements.clear();
+        propertyEpoch = new Object();
+    }
+    public void invalidateAtAwait(deal.diagnostics.DiagnosticRange range) {
+        narrowed.forEach((subject, type) -> lostRefinements.put(subject, new LostRefinement(type, range)));
+        narrowed.clear();
+        propertyEpoch = new Object();
+    }
     public boolean isEmpty() { return narrowed.isEmpty(); }
 
     /** Facts survive a join only for identical declarations and identical types. */
     public void merge(NullNarrowing other) {
         narrowed.entrySet().removeIf(entry -> !Types.equals(entry.getValue(), other.narrowed.get(entry.getKey())));
+        // A single exact cause is advertised only when both incoming paths retain it.
+        lostRefinements.entrySet().removeIf(entry -> !entry.getValue().equals(other.lostRefinements.get(entry.getKey())));
         if (propertyEpoch != other.propertyEpoch) propertyEpoch = new Object();
     }
     public void retainRefinements(NullNarrowing allowed) { merge(allowed); }

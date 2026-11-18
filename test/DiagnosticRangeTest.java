@@ -103,6 +103,7 @@ public class DiagnosticRangeTest {
         testPeekPseudoEof();
         testTemplateInterpolationRebasing();
         testCheckerProducerRanges();
+        testAwaitRefinementEvidence();
         testCatchVariableIdentifierRange();
         testProgramSpanAnchorsCombined();
         testV12CornerCaseScalarCoordinatePins();
@@ -1046,6 +1047,97 @@ public class DiagnosticRangeTest {
         List<CompilerDiagnostic> diags = new ArrayList<>(nr.diagnostics());
         diags.addAll(result.diagnostics());
         return diags;
+    }
+
+    private static void testAwaitRefinementEvidence() {
+        String prefix = "async function tick():Promise<void>{}\r\n";
+        String source = prefix + "async function f(x:string|null):Promise<void>{"
+                + "let text=\"😀\";if(x!==null){await tick();let n=x.length;}}";
+        var diagnostic = checkerDiag(checkerDiagnostics(source, "await.deal"), "E3003");
+        check(diagnostic != null, "await invalidation preserves E3003 rejection");
+        if (diagnostic != null) {
+            checkEq("access.field-receiver", diagnostic.facts().reason(), "await keeps access reason");
+            checkEq("string | null", diagnostic.facts().actual(), "await keeps current receiver type");
+            var note = diagnostic.notes().stream().filter(n -> n.message().contains("invalidated by this await"))
+                    .findFirst().orElse(null);
+            check(note != null, "lost binding refinement has await evidence");
+            if (note != null) {
+                checkEq(source.indexOf("await tick()"), note.range().startScalarOffset(), "await exact UTF-16 start");
+                checkEq(source.indexOf("await tick()") + "await tick()".length(),
+                        note.range().endScalarOffset(), "await exact end");
+                checkEq(RangeOrigin.SOURCE, note.range().origin(), "await note source origin");
+                check(note.message().contains("string") && note.message().contains("guard the current value again"),
+                        "await explains prior refinement and reinspection");
+                check(DiagnosticStructuredOutput.toJson(List.of(diagnostic)).contains("invalidated by this await"),
+                        "await evidence survives canonical transport");
+            }
+        }
+        String arraySource = prefix + "async function f(xs:number[]|null):Promise<void>{"
+                + "if(xs!==null){await tick();let n=xs[0];}}";
+        var array = checkerDiag(checkerDiagnostics(arraySource, "await.deal"), "E3007");
+        check(array != null && array.notes().stream().anyMatch(n -> n.message().contains("invalidated by this await")),
+                "array receiver retains await evidence");
+        String fields = prefix + "class C{value:string|null;}";
+        var fieldDiagnostic = checkerDiag(checkerDiagnostics(fields
+                + "async function f(c:C):Promise<void>{if(c.value!==null){await tick();let n=c.value.length;}}",
+                "await.deal"), "E3003");
+        check(fieldDiagnostic != null && fieldDiagnostic.notes().stream()
+                .noneMatch(n -> n.message().contains("invalidated by this await")),
+                "await callee call clears direct-field fact before suspension; no invented await cause");
+        var clearedField = checkerDiagnostics(fields
+                + "async function f(c:C):Promise<void>{if(c.value!==null){await tick();tick();let n=c.value.length;}}",
+                "await.deal");
+        check(clearedField.stream().filter(d -> d.code().equals("E3003")).flatMap(d -> d.notes().stream())
+                .noneMatch(n -> n.message().contains("invalidated by this await")),
+                "later call clearing field facts also clears stale attribution");
+        // Neither a different binding nor an overwritten/branch-specific fact authorizes attribution.
+        for (String body : List.of(
+                "await tick();let n=x.length;",
+                "let value:number=1;await tick();let n=value.missing;",
+                "if(x!==null){await tick();x=null;let n=x.length;}",
+                "if(x!==null){await tick();{let x:string|null=null;let n=x.length;}}",
+                "if(x!==null){await tick();let g=():number=>x.length;}",
+                "if(x!==null){if(flag){await tick();}let n=x.length;}",
+                "if(x!==null){if(flag){await tick();}else{await tick();}let n=x.length;}")) {
+            var rejected = checkerDiagnostics(prefix
+                    + "async function f(x:string|null,flag:boolean):Promise<void>{" + body + "}", "await.deal");
+            check(rejected.stream().anyMatch(d -> d.code().equals("E3003")), "unattributed access still rejects: " + body);
+            check(rejected.stream().flatMap(d -> d.notes().stream())
+                    .noneMatch(n -> n.message().contains("invalidated by this await")),
+                    "no invented single await cause: " + body);
+        }
+        var first = new Symbol.VariableSymbol("x", Type.Unknown.INSTANCE, false);
+        var equalButDistinct = new Symbol.VariableSymbol("x", Type.Unknown.INSTANCE, false);
+        var state = new deal.checker.NullNarrowing();
+        var awaitRange = new DiagnosticRange("await.deal", 1, 1, 1, 6, 0, 5, 5, RangeOrigin.SOURCE);
+        state.narrow(first, Type.String.INSTANCE);
+        state.invalidateAtAwait(awaitRange);
+        var branch = state.branch();
+        check(branch.lostRefinement(new deal.checker.NullNarrowing.Subject(first, null)) != null,
+                "await cause copied into branch");
+        check(branch.lostRefinement(new deal.checker.NullNarrowing.Subject(equalButDistinct, null)) == null,
+                "await cause uses declaration identity, not symbol equality");
+        branch.narrow(first, Type.Number.INSTANCE);
+        check(branch.lostRefinement(new deal.checker.NullNarrowing.Subject(first, null)) == null
+                        && state.lostRefinement(new deal.checker.NullNarrowing.Subject(first, null)) != null,
+                "re-guard clears only branch cause");
+        state.merge(branch);
+        check(state.lostRefinement(new deal.checker.NullNarrowing.Subject(first, null)) == null,
+                "join drops cause absent from other path");
+        String repeated = prefix + "async function f(x:string|null):Promise<void>{"
+                + "if(x!==null){await tick();await tick();let n=x.length;}}";
+        var repeatedDiag = checkerDiag(checkerDiagnostics(repeated, "await.deal"), "E3003");
+        check(repeatedDiag != null && repeatedDiag.notes().stream().anyMatch(n -> n.range() != null
+                && n.message().contains("invalidated by this await")
+                && n.range().startScalarOffset() == repeated.indexOf("await tick()")),
+                "later await does not replace actual invalidating await");
+        for (String body : List.of(
+                "if(x!==null){await tick();if(x!==null){let n=x.length;}}",
+                "if(x!==null){let n=x.length;}",
+                "if(x!==null){let g=async ():Promise<void>=>{await tick();};let n=x.length;}")) {
+            check(checkerDiagnostics(prefix + "async function f(x:string|null):Promise<void>{" + body + "}",
+                    "await.deal").isEmpty(), "guarded/repaired/nested-function positive: " + body);
+        }
     }
 
     /** Finds a diagnostic with the given code. */
