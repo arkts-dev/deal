@@ -1,6 +1,7 @@
 package deal.checker;
 
 import deal.ast.ClassField;
+import deal.ast.FunctionDeclaration;
 import deal.ast.Span;
 import deal.ast.TypeNode;
 import deal.identity.CanonicalClassIdentity;
@@ -53,8 +54,8 @@ public sealed interface Symbol
 
     /**
      * A function declaration, carrying its function type and — for a
-     * function the frontend walked — its declared parameter type
-     * annotations and the module path declaring it. A call argument's
+     * function the frontend walked — its exact declaration and the module
+     * path declaring it. A call argument's
      * construction context resolves the exact declaring provider of a
      * class-typed parameter through the parameter's own declared
      * annotation and the callee's declaring module: never an identity-first
@@ -63,14 +64,8 @@ public sealed interface Symbol
      * the identity-keyed route.
      */
     record FunctionSymbol(String name, Type.Func funcType,
-                          List<TypeNode> paramTypeNodes,
+                          FunctionDeclaration declaration,
                           String declaringModulePath) implements Symbol {
-        public FunctionSymbol {
-            if (paramTypeNodes != null) {
-                paramTypeNodes = List.copyOf(paramTypeNodes);
-            }
-        }
-
         /** The declaration-surface-free symbol (synthetic helpers, retained harnesses). */
         public FunctionSymbol(String name, Type.Func funcType) {
             this(name, funcType, null, null);

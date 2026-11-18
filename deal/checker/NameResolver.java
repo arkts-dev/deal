@@ -385,8 +385,7 @@ public final class NameResolver {
         }
 
         Type.Func ft = new Type.Func(paramTypes, funcType, fd.isAsync());
-        define(root, name, new Symbol.FunctionSymbol(name, ft,
-            fd.params().stream().map(Parameter::type).toList(), modulePath), fd.span());
+        define(root, name, new Symbol.FunctionSymbol(name, ft, fd, modulePath), fd.span());
     }
 
     /**
@@ -671,8 +670,7 @@ public final class NameResolver {
             }
 
             Type.Func ft = new Type.Func(paramTypes, funcType, fd.isAsync());
-            define(currentScope, fd.name(), new Symbol.FunctionSymbol(fd.name(), ft,
-                fd.params().stream().map(Parameter::type).toList(), modulePath), fd.span());
+            define(currentScope, fd.name(), new Symbol.FunctionSymbol(fd.name(), ft, fd, modulePath), fd.span());
         }
 
         SymbolTable saved = currentScope;

@@ -215,7 +215,9 @@ public class CheckerTest {
                 .filter(d -> d.code().equals("E5001")).findFirst().orElseThrow();
         var call = callFailure.facts().call();
         check(call.callee().equals("f") && call.signature().equals("(number) => void")
-                        && call.argumentIndex() == 0 && call.expectedCount() == 1 && call.actualCount() == 1
+                        && call.argumentIndex() == 0 && call.parameterName().equals("value")
+                        && call.declarationRange().startScalarOffset() == 0
+                        && call.expectedCount() == 1 && call.actualCount() == 1
                         && call.parameterRange().startScalarOffset() == badCall.indexOf("number")
                         && callFailure.notes().getFirst().range().equals(call.parameterRange())
                         && callFailure.facts().actual().equals("string"),
@@ -226,9 +228,35 @@ public class CheckerTest {
         check(arity.facts().call().argumentIndex() == -1 && arity.facts().call().expectedCount() == 1
                         && arity.facts().call().actualCount() == 0 && arity.facts().call().parameterRange() == null,
                 "arity mismatch records counts without inventing a failing argument");
+        String providerSource = "// 😀\r\nexport function f(chosen:number):void{}";
+        var provider = checkProgram(providerSource, "provider.deal").result().symbolTable();
+        var providerFunction = (Symbol.FunctionSymbol) provider.resolve("f");
+        ModuleResolver exactProvider = new ModuleResolver() {
+            public Map<String, Type> resolveModule(String module, String importer, Set<String> pending) {
+                return Map.of("f", providerFunction.funcType());
+            }
+            public Map<String, Symbol.FunctionSymbol> resolveModuleFunctionSymbols(
+                    String module, String importer, Set<String> pending) {
+                return Map.of("f", providerFunction);
+            }
+            public Symbol.ClassSymbol resolveClassSymbol(String name, String module, String importer) { return null; }
+        };
+        String consumer = "import * as First from \"./provider\"; import * as Second from \"./provider\";"
+                + "function f(local:string):void{} Second.f(\"bad\");";
+        var imported = checkProgramWithModule(consumer, "consumer.deal", exactProvider).result().diagnostics().stream()
+                .filter(d -> d.code().equals("E5001")).findFirst().orElseThrow();
+        check(imported.facts().call().parameterName().equals("chosen")
+                        && imported.facts().call().declarationRange().equals(providerFunction.declaration().span().range())
+                        && imported.facts().call().parameterRange().file().equals("provider.deal")
+                        && imported.facts().call().parameterRange().startScalarOffset() == providerSource.indexOf("number")
+                        && imported.range().file().equals("consumer.deal"),
+                "imported call keeps exact provider declaration/parameter despite local name and duplicate aliases");
+        assertNoErrors(checkProgramWithModule(consumer.replace("Second.f(\"bad\")", "Second.f(1)"),
+                        "consumer.deal", exactProvider), "intended imported argument repair rechecks clean");
         var indirect = checkProgram("let f:(x:number)=>void=function(x:number):void{}; f(\"bad\");")
                 .result().diagnostics().stream().filter(d -> d.code().equals("E5001")).findFirst().orElseThrow();
-        check(indirect.facts().call().callee().isEmpty() && indirect.facts().call().parameterRange() == null,
+        check(indirect.facts().call().callee().isEmpty() && indirect.facts().call().parameterRange() == null
+                        && indirect.facts().call().parameterName().isEmpty() && indirect.facts().call().declarationRange() == null,
                 "function-valued call does not invent a declaration or annotation");
         for (String source : List.of("function f():number{return \"bad\";}", "function f():number{return;}")) {
             var result = checkProgram(source).result().diagnostics().stream()
@@ -236,6 +264,24 @@ public class CheckerTest {
             check(result.facts().operation().equals("return") && result.facts().expected().equals("number")
                             && result.facts().actual().equals(source.contains("bad") ? "string" : "undefined"),
                     "return mismatch distinguishes wrong data from omitted value");
+        }
+        String nestedReturns = "function outer():string{let inner=function():number{return \"bad\";};return 1;}";
+        var returns = checkProgram(nestedReturns).result().diagnostics().stream()
+                .filter(d -> d.code().equals("E5003")).toList();
+        check(returns.size() == 2 && returns.get(0).notes().getFirst().range().startScalarOffset() == nestedReturns.indexOf("number")
+                        && returns.get(1).notes().getFirst().range().startScalarOffset() == nestedReturns.indexOf("string"),
+                "nested function return constraints restore the outer result annotation");
+        assertNoErrors(checkProgram(nestedReturns.replace("return \"bad\"", "return 2").replace("return 1", "return \"ok\"")),
+                "explicit intended nested and outer returns repair both failures");
+        for (String source : List.of("function f():number{}", "let f=function():number{};", "let f=():number=>{};")) {
+            var failure = checkProgram(source).result().diagnostics().stream()
+                    .filter(d -> d.code().equals("E5002")).findFirst().orElseThrow();
+            check(failure.facts().reason().equals("return.not-definite")
+                            && failure.facts().expected().equals("number")
+                            && failure.notes().getFirst().range().startScalarOffset() == source.indexOf("number"),
+                    "missing-return diagnostic identifies exact result annotation: " + source);
+            assertNoErrors(checkProgram(source.replace("number{}", "number{return 1;}").replace("number=>{}", "number=>{return 1;}")),
+                    "intended result implementation repairs missing return");
         }
         var add = checkProgram("let x = 1 + \"a\";").result().diagnostics().stream()
                 .filter(d -> d.code().equals("E3010")).findFirst().orElseThrow();

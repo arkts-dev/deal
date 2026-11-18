@@ -3218,12 +3218,20 @@ public class DiagnosticRangeTest {
         var schemaPath = new java.util.ArrayList<>(List.of(
                 new deal.diagnostics.DiagnosticFacts.PathSegment(deal.diagnostics.DiagnosticFacts.PathKind.FIELD, "a\"\uD800"),
                 new deal.diagnostics.DiagnosticFacts.PathSegment(deal.diagnostics.DiagnosticFacts.PathKind.ARRAY_ELEMENT, "")));
-        var callContext = new deal.diagnostics.DiagnosticFacts.CallContext("f\"\uD800", "(number) => void", 0, 1, 1, multi.range());
+        var callContext = new deal.diagnostics.DiagnosticFacts.CallContext("f\"\uD800", "(number) => void", zero.range(), 0, "value", 1, 1, multi.range());
         var callFacts = new deal.diagnostics.DiagnosticFacts("call.argument-type", "call", "number", "string", List.of()).withCall(callContext);
         String callJson = DiagnosticStructuredOutput.toJson(List.of(escaped.withFacts(callFacts)));
         check(callJson.contains("\"argumentIndex\": 0") && callJson.contains("\"parameterRange\": {")
                         && callJson.contains("\"expectedCount\": 1") && callJson.contains("\\ud800"),
                 "call context uses typed counts, exact ranges and Unicode-safe strings");
+        var callDocument = deal.amend.CompilerProtocolJson.requireObject(
+                deal.amend.CompilerProtocolJson.decode(callJson), "document");
+        var callItems = deal.amend.CompilerProtocolJson.requireArray(
+                deal.amend.CompilerProtocolJson.field(callDocument, "diagnostics"), "diagnostics");
+        var callItem = deal.amend.CompilerProtocolJson.requireObject(callItems.items().getFirst(), "diagnostic");
+        check(deal.amend.CompilerProtocolJson.encode(callFacts).equals(deal.semantic.ir.CanonicalJson.serializeText(
+                        deal.amend.CompilerProtocolJson.field(callItem, "facts"))),
+                "CLI and amendment call facts agree including both ranges and parameter name");
         var schemaFacts = new deal.diagnostics.DiagnosticFacts("schema", "decode", "number", "function", List.of(), schemaPath);
         schemaPath.clear();
         check(schemaFacts.path().size() == 2, "schema paths are defensively copied");

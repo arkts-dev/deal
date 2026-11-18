@@ -7,7 +7,6 @@ import deal.types.Types;
 
 import java.util.*;
 import deal.diagnostics.DiagnosticCode;
-import deal.diagnostics.DiagnosticRange;
 
 /**
  * Pass 2 of the type checker: type checking.
@@ -137,6 +136,7 @@ public final class TypeChecker {
 
     // -- Current function return type (for return checking) --
     private Type currentReturnType = null;
+    private TypeNode currentReturnAnnotation = null;
 
     // -- The exact class declaration the current function's declared
     //    return annotation names (resolved in the scope of the function's
@@ -782,6 +782,8 @@ public final class TypeChecker {
         }
 
         Type savedReturnType = currentReturnType;
+        TypeNode savedReturnAnnotation = currentReturnAnnotation;
+        currentReturnAnnotation = fd.returnType();
         Symbol.ClassSymbol savedReturnContext = currentReturnContext;
         boolean savedInsideAsync = insideAsyncFunction;
         if (funcType != null) {
@@ -834,13 +836,14 @@ public final class TypeChecker {
             Type retType = funcType.returnType();
             if (!(retType instanceof Type.Void)
                     && !ReturnAnalysis.definitelyReturns(fd.body())) {
-                error(DiagnosticCode.E5002,
+                diagnostics.add(missingReturnDiagnostic(
                     "Function '" + fd.name() + "' must return a value on all paths",
-                    fd.span());
+                    fd.span(), retType, fd.returnType()));
             }
         }
 
         currentReturnType = savedReturnType;
+        currentReturnAnnotation = savedReturnAnnotation;
         currentReturnContext = savedReturnContext;
         insideAsyncFunction = savedInsideAsync;
     }
@@ -848,6 +851,14 @@ public final class TypeChecker {
     // =======================================================================
     // Return statement
     // =======================================================================
+
+    private CompilerDiagnostic missingReturnDiagnostic(String message, Span span, Type result, TypeNode annotation) {
+        return CompilerDiagnostic.error(DiagnosticCode.E5002, message, span).withFacts(
+                new deal.diagnostics.DiagnosticFacts("return.not-definite", "return.flow",
+                        typeName(result), "not all paths return or throw",
+                        List.of("Implement the intended result on all required paths; no dummy return or result widening is inferred.")))
+                .withNote("Declared result annotation", annotation.span().range());
+    }
 
     private void checkReturnStatement(ReturnStatement rs) {
         if (rs.expr().isPresent()) {
@@ -880,7 +891,8 @@ public final class TypeChecker {
                         "Return type mismatch: expected " + typeName(currentReturnType)
                         + ", got " + typeName(exprType), rs.expr().get().span()).withFacts(
                                 new deal.diagnostics.DiagnosticFacts("return.incompatible", "return",
-                                        typeName(currentReturnType), typeName(exprType), List.of())));
+                                        typeName(currentReturnType), typeName(exprType), List.of()))
+                                .withNote("Declared result annotation", currentReturnAnnotation.span().range()));
                 }
             }
         } else {
@@ -889,7 +901,8 @@ public final class TypeChecker {
                     "Return type mismatch: expected " + typeName(currentReturnType)
                     + ", got undefined", rs.span()).withFacts(new deal.diagnostics.DiagnosticFacts(
                             "return.missing-value", "return", typeName(currentReturnType), "undefined",
-                            List.of("Provide the intended result; no placeholder value is inferred."))));
+                            List.of("Provide the intended result; no placeholder value is inferred.")))
+                            .withNote("Declared result annotation", currentReturnAnnotation.span().range()));
             }
         }
     }
@@ -2135,11 +2148,12 @@ public final class TypeChecker {
      */
     private List<Symbol.ClassSymbol> getParamClassDeclsForContext(CallExpr call) {
         Symbol.FunctionSymbol callee = calleeDeclarationOf(call);
-        if (callee == null || callee.paramTypeNodes() == null) {
+        if (callee == null || callee.declaration() == null) {
             return null;
         }
         List<Symbol.ClassSymbol> decls = new ArrayList<>();
-        for (TypeNode paramNode : callee.paramTypeNodes()) {
+        for (Parameter parameter : callee.declaration().params()) {
+            TypeNode paramNode = parameter.type();
             decls.add(paramNode == null ? null
                 : nameResolver.resolveTypeNodeClassSymbolInModule(paramNode,
                     callee.declaringModulePath()));
@@ -2202,13 +2216,14 @@ public final class TypeChecker {
                                                       int argument, String expected, String actual) {
         Symbol.FunctionSymbol declaration = calleeDeclarationOf(call);
         String name = declaration == null ? "" : declaration.name();
-        DiagnosticRange parameter = null;
-        if (argument >= 0 && declaration != null && declaration.paramTypeNodes() != null
-                && argument < declaration.paramTypeNodes().size())
-            parameter = declaration.paramTypeNodes().get(argument).span().range();
+        FunctionDeclaration source = declaration == null ? null : declaration.declaration();
+        Parameter parameter = source != null && argument >= 0 && argument < source.params().size()
+            ? source.params().get(argument) : null;
         return new deal.diagnostics.DiagnosticFacts(reason, "call", expected, actual, List.of())
-                .withCall(new deal.diagnostics.DiagnosticFacts.CallContext(name, typeName(signature), argument,
-                        signature.paramTypes().size(), call.args().size(), parameter));
+                .withCall(new deal.diagnostics.DiagnosticFacts.CallContext(name, typeName(signature),
+                        source == null ? null : source.span().range(), argument,
+                        parameter == null ? "" : parameter.name(), signature.paramTypes().size(),
+                        call.args().size(), parameter == null ? null : parameter.type().span().range()));
     }
 
     private Type checkFunctionCall(CallExpr call, Type.Func funcType, List<Type> argTypes) {
@@ -2847,6 +2862,8 @@ public final class TypeChecker {
         }
 
         Type savedReturnType = currentReturnType;
+        TypeNode savedReturnAnnotation = currentReturnAnnotation;
+        currentReturnAnnotation = fe.returnType();
         Symbol.ClassSymbol savedReturnContext = currentReturnContext;
         boolean savedInsideAsync = insideAsyncFunction;
         currentReturnType = returnType;
@@ -2885,7 +2902,11 @@ public final class TypeChecker {
         if (fe.expressionBody() && returnType instanceof Type.Void
                 && fe.body().statements().getFirst() instanceof ExpressionStatement expression
                 && !(typeOf(expression.expr()) instanceof Type.Void)) {
-            error(DiagnosticCode.E5003, "Void arrow body requires a void expression", expression.span());
+            diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E5003,
+                    "Void arrow body requires a void expression", expression.span()).withFacts(
+                            new deal.diagnostics.DiagnosticFacts("return.void-arrow-data", "return",
+                                    "void", typeName(typeOf(expression.expr())), List.of()))
+                    .withNote("Declared result annotation", fe.returnType().span().range()));
         }
         narrowing = savedNarrowing;
         loopAssignments = savedLoopAssignments;
@@ -2896,11 +2917,12 @@ public final class TypeChecker {
 
         if (!(returnType instanceof Type.Void)
                 && !ReturnAnalysis.definitelyReturns(fe.body())) {
-            error(DiagnosticCode.E5002,
-                "Function expression must return a value on all paths", fe.span());
+            diagnostics.add(missingReturnDiagnostic(
+                "Function expression must return a value on all paths", fe.span(), returnType, fe.returnType()));
         }
 
         currentReturnType = savedReturnType;
+        currentReturnAnnotation = savedReturnAnnotation;
         currentReturnContext = savedReturnContext;
         insideAsyncFunction = savedInsideAsync;
         currentScope = savedScope;

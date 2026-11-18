@@ -1689,12 +1689,18 @@ JSON scanner offsets, which are one-based UTF-8 byte positions.
 `facts` separates producer-owned `reason`, failed `operation`, `expected`,
 `actual`, ordered `guidance`, a typed `path`, and nullable typed `call` context
 from explanatory message text. Call failures retain the declared callee name when
-available, full signature, zero-based `argumentIndex` (`-1` for whole-call
-failures), expected/actual argument counts, and the parameter annotation range
-when known. Function-valued callees never invent declaration evidence. Argument
+available, full signature, nullable `declarationRange`, zero-based
+`argumentIndex` (`-1` for whole-call failures), `parameterName` (empty when
+unavailable), expected/actual argument counts, and nullable `parameterRange`
+for the parameter annotation. Imported declarations keep their own source ranges
+and parameter names, independent of consumer aliases or same-named local
+functions. Function-valued callees never invent declaration evidence. Argument
 type failures also label the parameter annotation with an ordered note. Return
 failures publish expected/actual types and distinguish an omitted value
-(`undefined`) from incompatible data without proposing placeholder returns.
+(`undefined`) from incompatible data; ordered notes locate the declared result
+annotation. Definite-return failures use `return.not-definite` / `return.flow`
+with the required result type and its annotation, without claiming an unproved
+execution path, proposing placeholder returns or widening the result contract.
 Async diagnostics distinguish await outside an async body, await of a non-async
 call, an unawaited async call, and an async call inside an optional chain using
 separate reason identifiers. Async call failures retain the same known call

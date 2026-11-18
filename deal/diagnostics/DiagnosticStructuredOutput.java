@@ -126,7 +126,11 @@ public final class DiagnosticStructuredOutput {
             sb.append("{\n");
             indent(sb, level + 2).append("\"callee\": ").append(jsonString(call.callee())).append(",\n");
             indent(sb, level + 2).append("\"signature\": ").append(jsonString(call.signature())).append(",\n");
+            if (call.declarationRange() == null) indent(sb, level + 2).append("\"declarationRange\": null");
+            else appendRange(sb, call.declarationRange(), level + 2, "declarationRange");
+            sb.append(",\n");
             indent(sb, level + 2).append("\"argumentIndex\": ").append(call.argumentIndex()).append(",\n");
+            indent(sb, level + 2).append("\"parameterName\": ").append(jsonString(call.parameterName())).append(",\n");
             indent(sb, level + 2).append("\"expectedCount\": ").append(call.expectedCount()).append(",\n");
             indent(sb, level + 2).append("\"actualCount\": ").append(call.actualCount()).append(",\n");
             if (call.parameterRange() == null) indent(sb, level + 2).append("\"parameterRange\": null");

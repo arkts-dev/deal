@@ -13,11 +13,13 @@ public record DiagnosticFacts(
         List<PathSegment> path,
         CallContext call) {
     /** Argument indices are zero-based; -1 means the failure concerns the whole call. */
-    public record CallContext(String callee, String signature, int argumentIndex,
-                              int expectedCount, int actualCount, DiagnosticRange parameterRange) {
+    public record CallContext(String callee, String signature, DiagnosticRange declarationRange,
+                              int argumentIndex, String parameterName, int expectedCount,
+                              int actualCount, DiagnosticRange parameterRange) {
         public CallContext {
             Objects.requireNonNull(callee, "callee");
             Objects.requireNonNull(signature, "signature");
+            Objects.requireNonNull(parameterName, "parameterName");
             if (argumentIndex < -1 || expectedCount < 0 || actualCount < 0 || argumentIndex >= actualCount)
                 throw new IllegalArgumentException("Invalid call diagnostic geometry");
         }

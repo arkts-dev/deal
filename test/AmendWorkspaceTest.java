@@ -125,6 +125,31 @@ public final class AmendWorkspaceTest {
                 "amendment forwards producer types rather than parsing prose");
         String json = CompilerProtocolJson.encode(mismatch);
         check(json.contains("\"facts\"") && json.contains("\"startScalarOffset\""), "current protocol exports facts and ranges");
+        String calls = "// 😀\r\nfunction f(value:number):void{} export function run():void{f(\"bad\");}";
+        var callDiagnostic = AmendWorkspace.inspect(calls, "probe.deal").diagnostics().stream()
+                .filter(d -> d.code().equals("E5001")).findFirst().orElseThrow();
+        var call = callDiagnostic.facts().call();
+        check(call.parameterName().equals("value") && call.parameterRange().startScalarOffset() == calls.indexOf("number")
+                        && call.declarationRange().startScalarOffset() == calls.indexOf("function f")
+                        && callDiagnostic.withOperationIndex(3).facts().equals(callDiagnostic.facts()),
+                "amendment and operation-index copies preserve exact call evidence after UTF-16/CRLF text");
+        String callJson = CompilerProtocolJson.encode(callDiagnostic);
+        check(callJson.contains("\"declarationRange\"") && callJson.contains("\"parameterName\":\"value\""),
+                "current protocol carries typed call declaration and parameter evidence");
+        String fragmentBase = "// 😀\r\nfunction f(value:number):void{} export function run():void{}";
+        var fragmentInspection = AmendWorkspace.inspect(fragmentBase, "probe.deal");
+        var run = fragmentInspection.symbols().stream().filter(s -> s.name().equals("run")).findFirst().orElseThrow();
+        var runBody = fragmentInspection.nodes().stream()
+                .filter(n -> n.kind().equals("function-body") && n.ownerId().equals(run.id())).findFirst().orElseThrow();
+        var rejectedCall = AmendWorkspace.applyChecked(fragmentBase, "probe.deal",
+                new CompilerProtocol.ChangeSetPrecondition(fragmentInspection.sourceDigest(), Map.of(runBody.id().value(), runBody.fingerprint())),
+                List.of(new AmendWorkspace.ReplaceFunctionBody(runBody.id(), "f(\"bad\");")));
+        var candidateCall = rejectedCall.diagnostics().stream().filter(d -> d.code().equals("E5001")).findFirst()
+                .orElseThrow(() -> new AssertionError("Expected candidate call mismatch: " + rejectedCall.diagnostics()));
+        check(!rejectedCall.accepted() && rejectedCall.source().equals(fragmentBase)
+                        && candidateCall.facts().call().equals(call)
+                        && candidateCall.withOperationIndex(0).facts().equals(callDiagnostic.facts()),
+                "full candidate checking and operation-attribution copies preserve exact callee facts");
     }
 
     private static void syntaxRecoveryCannotAuthorizeMissingDependencies() {
