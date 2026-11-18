@@ -3431,9 +3431,17 @@ public class DiagnosticRangeTest {
         return json.append("  \"origin\": \"").append(origin).append("\"\n}").toString();
     }
 
+    private static String expectedClassification(String code) {
+        var classification = deal.diagnostics.DiagnosticClassification.forCode(code);
+        return classification == null ? "null" : "{\"phase\": \"" + classification.phase()
+                + "\", \"category\": \"" + classification.category()
+                + "\", \"responsibility\": \"" + classification.responsibility() + "\"}";
+    }
+
     private static String expectedJsonDocument(String code, String message, String range, String notes) {
         return "{\n  \"version\": 2,\n  \"diagnostics\": [\n    {\n"
-            + "      \"code\": \"" + code + "\",\n      \"severity\": \"error\",\n"
+            + "      \"code\": \"" + code + "\",\n      \"classification\": "
+            + expectedClassification(code) + ",\n      \"severity\": \"error\",\n"
             + "      \"message\": \"" + message + "\",\n      \"range\": "
             + range.replace("\n", "\n      ") + ",\n      \"notes\": "
             + notes.replace("\n", "\n      ") + ",\n"

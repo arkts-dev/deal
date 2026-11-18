@@ -86,6 +86,51 @@ public class DiagnosticClassificationTest {
             "E8001 -> RUNTIME");
     }
 
+    static void testStructuredContractClassification() {
+        for (DiagnosticCode code : DiagnosticCode.values()) {
+            var classification = code.classification();
+            check(classification.phase() == code.phase() && classification.category() != null
+                            && classification.responsibility() != null,
+                    code + " owns a total contract classification");
+            check(deal.diagnostics.DiagnosticClassification.forCode(code.code()).equals(classification),
+                    code + " lookup retains registry identity");
+        }
+        var range = deal.diagnostics.DiagnosticRange.synthetic("classification.deal");
+        for (DiagnosticCode code : List.of(DiagnosticCode.E1001, DiagnosticCode.E2003, DiagnosticCode.E2010,
+                DiagnosticCode.E3001, DiagnosticCode.E4001, DiagnosticCode.E5002, DiagnosticCode.E6005,
+                DiagnosticCode.E7001, DiagnosticCode.E8011)) {
+            var diagnostic = CompilerDiagnostic.error(code, "arbitrary wording and no causal attribution", range);
+            var protocol = new deal.amend.CompilerProtocol.StructuredDiagnostic(code.code(), "error", diagnostic.message(), range,
+                    new deal.amend.CompilerProtocol.SemanticId("owner"), "", "", List.of(), List.of(), null);
+            var report = deal.amend.CompilerProtocolJson.requireObject(deal.amend.CompilerProtocolJson.decode(
+                    deal.diagnostics.DiagnosticStructuredOutput.toJson(List.of(diagnostic))), "report");
+            var exported = deal.amend.CompilerProtocolJson.requireObject(deal.amend.CompilerProtocolJson.requireArray(
+                    deal.amend.CompilerProtocolJson.field(report, "diagnostics"), "diagnostics").items().getFirst(), "diagnostic");
+            var amendment = deal.amend.CompilerProtocolJson.requireObject(deal.amend.CompilerProtocolJson.toValue(protocol), "amendment");
+            check(deal.amend.CompilerProtocolJson.field(exported, "classification").equals(
+                            deal.amend.CompilerProtocolJson.field(amendment, "classification")),
+                    code + " uses identical classifications in the only CLI/amendment schemas");
+            check(protocol.withFacts(protocol.facts()).classification().equals(code.classification()),
+                    code + " fact copies cannot erase classification");
+            check(deal.diagnostics.DiagnosticFormatter.format(diagnostic).equals(
+                            "classification.deal:1:1-1:1: ERROR " + code + ": arbitrary wording and no causal attribution [span 0]"),
+                    code + " classification does not change default terminal prose");
+        }
+        check(DiagnosticCode.E2010.classification().category() == deal.diagnostics.DiagnosticClassification.Category.CONFIGURATION,
+                "configuration is distinguished from module lookup");
+        check(DiagnosticCode.E6005.classification().responsibility() == deal.diagnostics.DiagnosticClassification.Responsibility.COMPILER_CONTRACT,
+                "lowering labels the compiler contract, not a guessed source repair");
+        check(DiagnosticCode.E8011.classification().responsibility() == deal.diagnostics.DiagnosticClassification.Responsibility.RUNTIME_CONTRACT,
+                "runtime code alone assigns no source versus host blame");
+        check(deal.diagnostics.DiagnosticClassification.forCode("E9999") == null
+                        && deal.diagnostics.DiagnosticClassification.forCode("CP1001") == null,
+                "unknown/extension/protocol codes do not gain classifications by prefix");
+        var extension = new deal.amend.CompilerProtocol.StructuredDiagnostic("CUSTOM", "error", "opaque", range,
+                new deal.amend.CompilerProtocol.SemanticId("owner"), "", "", List.of(), List.of(), null);
+        check(deal.amend.CompilerProtocolJson.encode(extension).contains("\"classification\":null"),
+                "unavailable extension classification is explicitly null");
+    }
+
     static void testNoCodeOutsideRange() {
         System.out.println("-- No code outside E1xxx-E8xxx --");
         for (DiagnosticCode dc : DiagnosticCode.values()) {
@@ -261,6 +306,7 @@ public class DiagnosticClassificationTest {
         testAllCodesHavePhase();
         testPhaseClassificationByRange();
         testCriticalCodes();
+        testStructuredContractClassification();
         testNoCodeOutsideRange();
         testTriggeredCodesAreRegistered();
         testNoUnregisteredCodesEmitted();

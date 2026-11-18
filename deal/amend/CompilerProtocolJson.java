@@ -51,9 +51,9 @@ public final class CompilerProtocolJson {
             entries.sort(Comparator.comparing(CanonicalJson.Entry::key));
             return CanonicalJson.obj(entries);
         }
-        if (value.getClass().isRecord()) return recordValue(value);
+        if (value.getClass().isRecord()) return withClassification(value, recordValue(value));
         CanonicalJson.Obj desugaredRecord = desugaredRecordValue(value);
-        if (desugaredRecord != null) return desugaredRecord;
+        if (desugaredRecord != null) return withClassification(value, desugaredRecord);
         throw new IllegalArgumentException("Unsupported protocol JSON value: " + value.getClass().getName());
     }
 
@@ -85,6 +85,13 @@ public final class CompilerProtocolJson {
         CanonicalJson.Value value = field(object, name);
         if (value instanceof CanonicalJson.Int number) return number.value();
         throw new IllegalArgumentException("Protocol field '" + name + "' must be an integer");
+    }
+
+    private static CanonicalJson.Obj withClassification(Object value, CanonicalJson.Obj object) {
+        if (!(value instanceof CompilerProtocol.StructuredDiagnostic diagnostic)) return object;
+        var entries = new ArrayList<>(object.entries());
+        entries.add(CanonicalJson.e("classification", toValue(diagnostic.classification())));
+        return CanonicalJson.obj(entries);
     }
 
     private static CanonicalJson.Obj recordValue(Object record) {

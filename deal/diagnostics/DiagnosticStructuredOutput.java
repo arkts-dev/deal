@@ -133,6 +133,8 @@ public final class DiagnosticStructuredOutput {
         Objects.requireNonNull(d, "diagnostic element must not be null");
         indent(sb, 2).append("{\n");
         indent(sb, 3).append("\"code\": ").append(jsonString(d.code())).append(",\n");
+        appendClassification(sb, DiagnosticClassification.forCode(d.code()), 3);
+        sb.append(",\n");
         indent(sb, 3).append("\"severity\": ").append(jsonString(d.severity())).append(",\n");
         indent(sb, 3).append("\"message\": ").append(jsonString(d.message())).append(",\n");
         appendRange(sb, d.range(), 3);
@@ -144,6 +146,14 @@ public final class DiagnosticStructuredOutput {
         appendMissingSymbols(sb, d.missingSymbols(), 3);
         sb.append('\n');
         indent(sb, 2).append('}').append(last ? "\n" : ",\n");
+    }
+
+    private static void appendClassification(StringBuilder sb, DiagnosticClassification classification, int level) {
+        indent(sb, level).append("\"classification\": ");
+        if (classification == null) { sb.append("null"); return; }
+        sb.append("{\"phase\": ").append(jsonString(classification.phase().name()))
+            .append(", \"category\": ").append(jsonString(classification.category().name()))
+            .append(", \"responsibility\": ").append(jsonString(classification.responsibility().name())).append('}');
     }
 
     private static void appendFacts(StringBuilder sb, DiagnosticFacts facts, int level) {

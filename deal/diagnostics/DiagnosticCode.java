@@ -379,6 +379,35 @@ public enum DiagnosticCode {
         return phase;
     }
 
+    /** Classification of the registered contract, independent of message wording and code prefixes. */
+    public DiagnosticClassification classification() {
+        var category = switch (this) {
+            case E1001, E1002, E1003, E1004, E1005, E1006, E1007, E1008, E1009, E1010,
+                 E1011, E1012, E1013, E1014, E1015, E1016, E1017, E1018, E1019, E1020,
+                 E1021, E1022, E1023, E1024, E1025, E1026, E1027, E1028, E1029, E1030,
+                 E1031, E1032, E1033, E1034, E1035, E1037, E1038, E1039, E1040, E1041,
+                 E1042, E1047, E1048, E1049, E1050, E1051, E1052, E1053, E1054, E1055,
+                 E1056, E1057, E1058, E1059 -> DiagnosticClassification.Category.SYNTAX;
+            case E2000, E5002 -> DiagnosticClassification.Category.CONTROL_FLOW;
+            case E2001, E2002, E2006, E2007, E2008, E2013 -> DiagnosticClassification.Category.NAME_RESOLUTION;
+            case E2003, E2004, E2005, E2009 -> DiagnosticClassification.Category.MODULE_RESOLUTION;
+            case E2010 -> DiagnosticClassification.Category.CONFIGURATION;
+            case E2011, E2012, E3008, E3009, E5001, E5003, E5004 -> DiagnosticClassification.Category.CALL;
+            case E3001, E3002, E3003, E3004, E3005, E3006, E3007, E3010, E3011, E3012,
+                 E3013, E3014, E3015, E3016, E3017, E3018, E3019 -> DiagnosticClassification.Category.TYPE_CHECKING;
+            case E4001, E4002, E4003, E4004, E4005, E4006 -> DiagnosticClassification.Category.CONSTRUCTION;
+            case E6000, E6001, E6002, E6003, E6004, E6005 -> DiagnosticClassification.Category.LOWERING;
+            case E7001 -> DiagnosticClassification.Category.DECLARATION_FILE;
+            case E8001, E8002, E8003, E8006, E8007, E8010, E8011 -> DiagnosticClassification.Category.RUNTIME_BOUNDARY;
+        };
+        var responsibility = switch (phase) {
+            case FRONTEND -> DiagnosticClassification.Responsibility.SOURCE_CONTRACT;
+            case BACKEND_LOWERING -> DiagnosticClassification.Responsibility.COMPILER_CONTRACT;
+            case RUNTIME -> DiagnosticClassification.Responsibility.RUNTIME_CONTRACT;
+        };
+        return new DiagnosticClassification(phase, category, responsibility);
+    }
+
     /** The diagnostic code string (e.g. "E1001"). */
     public String code() {
         return name();
