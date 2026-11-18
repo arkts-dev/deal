@@ -1688,7 +1688,7 @@ JSON scanner offsets, which are one-based UTF-8 byte positions.
 
 `facts` separates producer-owned `reason`, failed `operation`, `expected`,
 `actual`, ordered `guidance`, a typed `path`, nullable typed `call` context
-and nullable typed `operator`, `mismatch`, `syntax`, `names`, `construction`, and `exports` contexts from explanatory message text.
+and nullable typed `operator`, `mismatch`, `syntax`, `names`, `construction`, `exports`, and `resolution` contexts from explanatory message text.
 Missing module exports retain E2004 messages and ranges with
 `module.export-missing`, operation `module.member` or `module.type`, the rejected
 name, and `exports`: `alias`, `requested`, ordered `available` names,
@@ -1699,6 +1699,24 @@ evidence. An available import is also labeled `Module imported here`. This is
 an inventory, not a compatibility claim, inferred import, new declaration or
 authorized replacement: explicitly chosen alternatives undergo normal checking.
 All independent contexts survive copies; rendering never parses `Available:`.
+Import candidate search failures retain their historical E2003/E2009 messages,
+primary import ranges and early-stop order. Independent nullable `resolution`
+facts contain `specifier`, `mode` (`bare` or `relative`), `attempted`,
+`attemptedCount`, and `truncated`. The first 32 actually visited candidate paths
+are retained in search order, with an exact total and explicit truncation;
+rendering never parses `Attempted:` or probes the filesystem. Bare lookup uses
+configured roots in order, authoritative externals and the pinned stdlib surface,
+not importer-directory or working-directory fallback. Relative lookup searches
+only the importer-relative candidates. Reasons distinguish `module.search-exhausted`,
+`module.candidate-unreadable`, `module.external-undeclared`,
+`module.stdlib-not-listed`, `module.stdlib-surface-absent`,
+`module.stdlib-path`, `module.stdlib-declaration-missing`, and
+`module.canonical-uri`, with operation `module.resolve` and producer-owned
+expected/actual facts. An unlisted stdlib rejection has zero attempts; a missing
+pinned stdlib declaration retains preceding root attempts and the one pinned
+candidate. Failures before candidate search may omit resolution evidence;
+failed lookup publishes and memoizes no location, so a chosen file/configuration
+repair must resolve again normally.
 Class-literal constraint failures retain `construction`: `className`, `provider`,
 nullable complete `declarationRange`, `fieldName`, nullable Boolean `optional`,
 nullable `fieldRange` and nullable `annotationRange`. The provider is the selected

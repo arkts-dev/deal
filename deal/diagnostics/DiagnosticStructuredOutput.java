@@ -250,7 +250,7 @@ public final class DiagnosticStructuredOutput {
         sb.append(",\n");
         indent(sb, level + 1).append("\"exports\": ");
         var exports = facts.exports();
-        if (exports == null) sb.append("null\n");
+        if (exports == null) sb.append("null");
         else {
             sb.append("{\n");
             indent(sb, level + 2).append("\"alias\": ").append(jsonString(exports.alias())).append(",\n");
@@ -262,6 +262,21 @@ public final class DiagnosticStructuredOutput {
             indent(sb, level + 2).append("\"truncated\": ").append(exports.truncated()).append(",\n");
             appendNullableRange(sb, exports.importRange(), level + 2, "importRange");
             sb.append('\n');
+            indent(sb, level + 1).append('}');
+        }
+        sb.append(",\n");
+        indent(sb, level + 1).append("\"resolution\": ");
+        var resolution = facts.resolution();
+        if (resolution == null) sb.append("null\n");
+        else {
+            sb.append("{\n");
+            indent(sb, level + 2).append("\"specifier\": ").append(jsonString(resolution.specifier())).append(",\n");
+            indent(sb, level + 2).append("\"mode\": ").append(jsonString(resolution.mode())).append(",\n");
+            indent(sb, level + 2).append("\"attempted\": ");
+            appendStrings(sb, resolution.attempted());
+            sb.append(",\n");
+            indent(sb, level + 2).append("\"attemptedCount\": ").append(resolution.attemptedCount()).append(",\n");
+            indent(sb, level + 2).append("\"truncated\": ").append(resolution.truncated()).append('\n');
             indent(sb, level + 1).append("}\n");
         }
         indent(sb, level).append('}');

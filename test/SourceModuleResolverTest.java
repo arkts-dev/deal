@@ -70,6 +70,7 @@ public final class SourceModuleResolverTest {
             testProviderContractDigestDomain();
             if (environmentClean) {
                 testResolutionMatrix();
+                testSearchDiagnosticFacts();
                 testStdlibSurfaceRules();
                 testStdlibSurfaceSinglePinnedCandidate();
                 testExternalsAuthorityAndFileKeyedClassification();
@@ -96,6 +97,70 @@ public final class SourceModuleResolverTest {
                 + " failure(s)");
             System.exit(1);
         }
+    }
+
+    private static void testSearchDiagnosticFacts() throws Exception {
+        Path dir = tmpDir.resolve("search-facts");
+        Files.createDirectories(dir.resolve("src"));
+        var roots = new ArrayList<String>();
+        for (int i = 0; i < 10; i++) roots.add("root" + i);
+        var resolver = new SourceModuleResolver(syntheticContext(dir, roots, Map.of(), null));
+        String importer = dir.resolve("src/main.deal").toString();
+        var span = new Span("main.deal", 2, 1, 2, 10, 7, 16);
+        var failed = (SourceModuleResolver.ResolveResult.Failure) resolver.resolve(importer, "missing", span);
+        var facts = failed.diagnostic().facts();
+        check(facts.reason().equals("module.search-exhausted") && facts.operation().equals("module.resolve")
+                && facts.resolution().mode().equals("bare") && facts.resolution().specifier().equals("missing")
+                && facts.resolution().attemptedCount() == 40 && facts.resolution().truncated()
+                && facts.resolution().attempted().size() == 32,
+            "bare search facts retain bounded visited paths with exact count");
+        check(facts.resolution().attempted().subList(0, 4).equals(List.of(
+                dir.resolve("root0/missing.deal").toString(), dir.resolve("root0/missing/index.deal").toString(),
+                dir.resolve("root0/missing.d.deal").toString(), dir.resolve("root0/missing/index.d.deal").toString()))
+                && failed.diagnostic().range().equals(span.range()) && resolver.resolvedLocations().isEmpty(),
+            "search evidence retains root/candidate order, import anchor and no failed publication");
+        var relative = ((SourceModuleResolver.ResolveResult.Failure) resolver.resolve(importer, "./missing", span)).diagnostic();
+        check(relative.facts().resolution().mode().equals("relative")
+                && relative.facts().resolution().attemptedCount() == 4 && !relative.facts().resolution().truncated()
+                && relative.facts().resolution().attempted().getFirst().equals(dir.resolve("src/missing.deal").toString()),
+            "relative search evidence never invents configured-root attempts");
+        var unlisted = ((SourceModuleResolver.ResolveResult.Failure) resolver.resolve(importer, "std/json", span)).diagnostic();
+        check(unlisted.facts().reason().equals("module.stdlib-not-listed")
+                && unlisted.facts().resolution().attemptedCount() == 0 && !unlisted.facts().resolution().truncated(),
+            "unlisted stdlib module rejects before any search");
+        var absent = ((SourceModuleResolver.ResolveResult.Failure) resolver.resolve(importer, "std/math", span)).diagnostic();
+        check(absent.facts().reason().equals("module.stdlib-surface-absent")
+                && absent.facts().resolution().attemptedCount() == 40,
+            "absent stdlib surface retains preceding configured-root attempts only");
+        Path surface = dir.resolve("surface");
+        Files.createDirectories(surface);
+        var pinnedResolver = new SourceModuleResolver(syntheticContext(dir, List.of("root0"), Map.of(), surface.toString()));
+        var pinned = ((SourceModuleResolver.ResolveResult.Failure) pinnedResolver.resolve(importer, "std/math", span)).diagnostic();
+        check(pinned.facts().reason().equals("module.stdlib-declaration-missing")
+                && pinned.facts().resolution().attemptedCount() == 5
+                && pinned.facts().resolution().attempted().getLast().equals(surface.resolve("math.d.deal").toString()),
+            "stdlib failure appends exactly the pinned declaration after root candidates");
+        Files.createDirectories(dir.resolve("root0/bad.deal"));
+        var unreadable = ((SourceModuleResolver.ResolveResult.Failure) resolver.resolve(importer, "bad", span)).diagnostic();
+        check(unreadable.facts().reason().equals("module.candidate-unreadable")
+                && unreadable.facts().resolution().attemptedCount() == 1,
+            "unreadable first candidate stops evidence before later search paths");
+        writeText(dir.resolve("root0/host.d.deal"), "export function f():void;\n");
+        var external = ((SourceModuleResolver.ResolveResult.Failure) resolver.resolve(importer, "host", span)).diagnostic();
+        check(external.code().equals("E2009") && external.facts().reason().equals("module.external-undeclared")
+                && external.facts().resolution().attemptedCount() == 3 && resolver.resolvedLocations().isEmpty(),
+            "unregistered external retains reached attempts without publishing a location");
+        writeText(dir.resolve("root0/missing.deal"), "export function f():void{}\n");
+        check(resolver.resolve(importer, "missing", span) instanceof SourceModuleResolver.ResolveResult.Resolved
+                && resolver.resolvedLocations().size() == 1,
+            "chosen file repair re-resolves failed lookup without a stale failure cache");
+        var document = deal.amend.CompilerProtocolJson.requireObject(deal.amend.CompilerProtocolJson.decode(
+                deal.diagnostics.DiagnosticStructuredOutput.toJson(List.of(relative))), "document");
+        var entries = deal.amend.CompilerProtocolJson.requireArray(deal.amend.CompilerProtocolJson.field(document, "diagnostics"), "diagnostics");
+        var item = deal.amend.CompilerProtocolJson.requireObject(entries.items().getFirst(), "diagnostic");
+        check(deal.amend.CompilerProtocolJson.encode(relative.facts()).equals(deal.semantic.ir.CanonicalJson.serializeText(
+                deal.amend.CompilerProtocolJson.field(item, "facts"))),
+            "resolution facts have one canonical standalone/protocol transport");
     }
 
     // =========================================================================

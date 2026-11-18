@@ -3,6 +3,7 @@ package deal.module;
 import deal.ast.Span;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticCode;
+import deal.diagnostics.DiagnosticFacts;
 import deal.identity.CanonicalModuleIdentity;
 import deal.project.ConfiguredModuleRoot;
 import deal.project.ExternalEntry;
@@ -192,7 +193,8 @@ public final class SourceModuleResolver {
         if (hit != null) {
             return hit;
         }
-        return e2003(notFoundMessage(specifier, attempted), importSpan);
+        return searchFailure(e2003(notFoundMessage(specifier, attempted), importSpan), specifier, false,
+            attempted, "module.search-exhausted", "readable module candidate", "no candidate found");
     }
 
     // =========================================================================
@@ -211,10 +213,11 @@ public final class SourceModuleResolver {
         // source authority).
         if (specifier.startsWith("std/")
                 && !StdlibModuleResolver.SPEC_STDLIB_MODULES.contains(specifier)) {
-            return e2003("Module not found: '" + specifier + "'. Not a spec-listed"
+            return searchFailure(e2003("Module not found: '" + specifier + "'. Not a spec-listed"
                 + " stdlib module (spec-listed: "
                 + String.join(", ", StdlibModuleResolver.SPEC_STDLIB_MODULES) + ")",
-                importSpan);
+                importSpan), specifier, true, List.of(), "module.stdlib-not-listed",
+                "spec-listed stdlib module", specifier);
         }
 
         // Rules 3+4: configured roots in manifest order, then the pinned
@@ -233,9 +236,10 @@ public final class SourceModuleResolver {
             }
         }
         if (specifier.startsWith("std/")) {
-            return resolveStdlibSurface(specifier, importSpan);
+            return resolveStdlibSurface(specifier, importSpan, attempted);
         }
-        return e2003(notFoundMessage(specifier, attempted), importSpan);
+        return searchFailure(e2003(notFoundMessage(specifier, attempted), importSpan), specifier, true,
+            attempted, "module.search-exhausted", "readable module candidate", "no candidate found");
     }
 
     /**
@@ -252,37 +256,42 @@ public final class SourceModuleResolver {
      * missing a spec-listed file — never a {@code RuntimeException}).
      * The stdlib branch always concludes the bare search.
      */
-    private ResolveResult resolveStdlibSurface(String specifier, Span importSpan) {
+    private ResolveResult resolveStdlibSurface(String specifier, Span importSpan, List<String> attempted) {
         String surface = context.stdlibSurfacePath();
         if (surface == null) {
-            return e2003("Module not found: '" + specifier + "'. The stdlib"
+            return searchFailure(e2003("Module not found: '" + specifier + "'. The stdlib"
                 + " surface is absent (no project-local std/ directory and no"
-                + " language-distribution std/ directory)", importSpan);
+                + " language-distribution std/ directory)", importSpan), specifier, true, attempted,
+                "module.stdlib-surface-absent", "available stdlib surface", "absent surface");
         }
         String moduleName = specifier.substring("std/".length());
         Path base = safeResolve(surface, moduleName);
         if (base == null) {
-            return e2003("Module not found: '" + specifier + "'. The pinned"
+            return searchFailure(e2003("Module not found: '" + specifier + "'. The pinned"
                 + " stdlib candidate path cannot be materialized from surface '"
-                + surface + "'", importSpan);
+                + surface + "'", importSpan), specifier, true, attempted,
+                "module.stdlib-path", "materializable pinned declaration path", "invalid path");
         }
         Path candidate = pinnedStdlibCandidate(base, moduleName);
+        attempted.add(candidate.toString());
         if (!probeExists(candidate)) {
-            return e2003("Module not found: '" + specifier + "'. The stdlib"
+            return searchFailure(e2003("Module not found: '" + specifier + "'. The stdlib"
                 + " surface is missing the spec-listed declaration file '"
-                + candidate + "'", importSpan);
+                + candidate + "'", importSpan), specifier, true, attempted,
+                "module.stdlib-declaration-missing", "spec-listed declaration file", "missing file");
         }
         ProtectedPathOps.PathResult converted =
             ProtectedPathOps.canonicalizeExisting(candidate.toString());
         if (converted instanceof ProtectedPathOps.PathResult.Success success) {
             return publishOrGate(candidate, success.resolvedPath(), specifier,
-                importSpan, true);
+                importSpan, true, attempted);
         }
         ProtectedPathOps.PathResult.Failure failure =
             (ProtectedPathOps.PathResult.Failure) converted;
-        return e2003("Module not found: '" + specifier + "'. The spec-listed"
+        return searchFailure(e2003("Module not found: '" + specifier + "'. The spec-listed"
             + " stdlib declaration file '" + candidate + "' is not a readable"
-            + " module: " + failure.reason(), importSpan);
+            + " module: " + failure.reason(), importSpan), specifier, true, attempted,
+            "module.candidate-unreadable", "readable regular module file", failure.kind().name());
     }
 
     /**
@@ -346,16 +355,17 @@ public final class SourceModuleResolver {
                 ProtectedPathOps.canonicalizeExisting(candidate.toString());
             if (converted instanceof ProtectedPathOps.PathResult.Success success) {
                 return publishOrGate(candidate, success.resolvedPath(), specifier,
-                    importSpan, bare);
+                    importSpan, bare, attempted);
             }
             ProtectedPathOps.PathResult.Failure failure =
                 (ProtectedPathOps.PathResult.Failure) converted;
             if (failure.kind() == ProtectedPathOps.PathResult.FailureKind.NOT_FOUND) {
                 continue;
             }
-            return e2003("Module not found: '" + specifier + "'. Candidate '"
+            return searchFailure(e2003("Module not found: '" + specifier + "'. Candidate '"
                 + candidate + "' is not a readable module: " + failure.reason(),
-                importSpan);
+                importSpan), specifier, bare, attempted, "module.candidate-unreadable",
+                "readable regular module file", failure.kind().name());
         }
         return null;
     }
@@ -410,19 +420,21 @@ public final class SourceModuleResolver {
      */
     private ResolveResult publishOrGate(Path lexicalCandidate, Path resolvedReal,
                                         String specifier, Span importSpan,
-                                        boolean bare) {
+                                        boolean bare, List<String> attempted) {
         String canonicalUri = uriOf(resolvedReal);
         if (canonicalUri == null) {
-            return e2003("Module not found: '" + specifier + "'. Cannot derive"
-                + " the canonical file: URI of '" + resolvedReal + "'", importSpan);
+            return searchFailure(e2003("Module not found: '" + specifier + "'. Cannot derive"
+                + " the canonical file: URI of '" + resolvedReal + "'", importSpan), specifier, bare, attempted,
+                "module.canonical-uri", "canonical file URI", "unrepresentable URI");
         }
         ModuleIdentityResolver.ModuleClassification classification =
             ModuleIdentityResolver.classify(context, canonicalUri);
         if (bare && isUndeclaredNonStdlibDeclaration(classification.moduleIdentity(),
                 resolvedReal)) {
-            return e2009("Import of external host module '" + specifier
+            return searchFailure(e2009("Import of external host module '" + specifier
                 + "' is not declared in deal.json externals (resolved declaration"
-                + " file: '" + resolvedReal + "')", importSpan);
+                + " file: '" + resolvedReal + "')", importSpan), specifier, bare, attempted,
+                "module.external-undeclared", "declaration registered in deal.json externals", "unregistered declaration");
         }
         return publish(lexicalCandidate, resolvedReal, importSpan, classification);
     }
@@ -547,6 +559,18 @@ public final class SourceModuleResolver {
         } catch (InvalidPathException e) {
             return null;
         }
+    }
+
+    private static ResolveResult searchFailure(ResolveResult result, String specifier, boolean bare,
+                                               List<String> attempted, String reason, String expected, String actual) {
+        ResolveResult.Failure failure = (ResolveResult.Failure) result;
+        int count = attempted.size();
+        var facts = new DiagnosticFacts(reason, "module.resolve", expected, actual, List.of(
+            bare ? "Inspect configured module roots, authoritative externals and the stdlib surface; bare imports do not fall back to the importer directory or working directory."
+                 : "Inspect the specifier relative to the importer directory; relative imports do not search configured module roots."))
+            .withResolution(new DiagnosticFacts.ResolutionContext(specifier, bare ? "bare" : "relative",
+                attempted.subList(0, Math.min(count, 32)), count, count > 32));
+        return new ResolveResult.Failure(failure.diagnostic().withFacts(facts));
     }
 
     /** One E2003 anchored at the import span. */

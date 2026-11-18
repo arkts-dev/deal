@@ -3101,7 +3101,7 @@ public class DiagnosticRangeTest {
             + range.replace("\n", "\n      ") + ",\n      \"notes\": "
             + notes.replace("\n", "\n      ") + ",\n"
             + "      \"facts\": {\n        \"reason\": \"\",\n        \"operation\": \"\",\n"
-            + "        \"expected\": \"\",\n        \"actual\": \"\",\n        \"guidance\": [],\n        \"path\": [],\n        \"call\": null,\n        \"operator\": null,\n        \"mismatch\": null,\n        \"syntax\": null,\n        \"names\": null,\n        \"construction\": null,\n        \"exports\": null\n      },\n"
+            + "        \"expected\": \"\",\n        \"actual\": \"\",\n        \"guidance\": [],\n        \"path\": [],\n        \"call\": null,\n        \"operator\": null,\n        \"mismatch\": null,\n        \"syntax\": null,\n        \"names\": null,\n        \"construction\": null,\n        \"exports\": null,\n        \"resolution\": null\n      },\n"
             + "      \"missingSymbols\": []\n    }\n  ]\n}";
     }
 
@@ -3450,6 +3450,19 @@ public class DiagnosticRangeTest {
         check(invalidExports, "export truncation must match the exact available count");
         check(new deal.diagnostics.DiagnosticFacts.ExportContext("M", "x", List.of(), 0, false, null).importRange() == null,
                 "unavailable import evidence remains null");
+        var attempts = new ArrayList<>(List.of("quoted\"\uD800😀", "nul\u0000"));
+        var resolution = new deal.diagnostics.DiagnosticFacts.ResolutionContext("./missing", "relative", attempts, 3, true);
+        attempts.clear();
+        operatorFacts = operatorFacts.withResolution(resolution);
+        check(resolution.attempted().size() == 2
+                        && operatorFacts.withCall(null).withOperator(null).withMismatch(null).withSyntax(null)
+                            .withNames(null).withConstruction(null).withExports(null).resolution().equals(resolution)
+                        && operatorFacts.withResolution(null).exports().equals(exportContext),
+                "resolution attempts are immutable and independent contexts survive all copies");
+        boolean invalidAttempts = false;
+        try { new deal.diagnostics.DiagnosticFacts.ResolutionContext("x", "bare", List.of(), -1, false); }
+        catch (IllegalArgumentException expected) { invalidAttempts = true; }
+        check(invalidAttempts, "resolution counts reject invalid geometry");
         String operatorJson = DiagnosticStructuredOutput.toJson(List.of(escaped.withFacts(operatorFacts)));
         var operatorDocument = deal.amend.CompilerProtocolJson.requireObject(
                 deal.amend.CompilerProtocolJson.decode(operatorJson), "document");
