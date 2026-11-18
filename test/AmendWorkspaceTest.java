@@ -45,6 +45,7 @@ public final class AmendWorkspaceTest {
         malformedListsRemainStagedUntilRechecked();
         nameAlternativesRemainIntentDependent();
         presenceRepairRechecksCandidate();
+        constructionRepairRechecksProvider();
         actionabilityFactsAndRepairScope();
         smallestEditableBlockIsNotSemanticOwner();
         System.out.println("AmendWorkspaceTest: all tests passed");
@@ -220,6 +221,33 @@ public final class AmendWorkspaceTest {
                         + "export class Entry { text: string; }", "app.deal");
         check(repaired.diagnostics().stream().noneMatch(d -> d.severity().equals("error")),
                 "ordinary resolution resumes after syntax repair");
+    }
+
+    private static void constructionRepairRechecksProvider() {
+        String clean = "// 😀\r\nclass C{x:number;maybe?:string;}\r\nexport function run():C{return {x:7};}";
+        var base = AmendWorkspace.inspect(clean, "construction.deal");
+        var run = base.symbols().stream().filter(s -> s.name().equals("run")).findFirst().orElseThrow();
+        var body = base.nodes().stream().filter(n -> n.kind().equals("function-body") && n.ownerId().equals(run.id()))
+                .findFirst().orElseThrow();
+        var change = AmendWorkspace.inspectChange(clean, "construction.deal", base.sourceDigest(), List.of(body.id()),
+                List.of(AmendWorkspace.REPLACE_FUNCTION_BODY));
+        var staged = AmendWorkspace.stageChange(clean, "construction.deal",
+                new CompilerProtocol.ChangeSetPrecondition(base.sourceDigest(), Map.of(body.id().value(), body.fingerprint())),
+                change, List.of(new AmendWorkspace.ReplaceFunctionBody(body.id(), "return {x:7,maybe:42};")));
+        var rejected = staged.diagnostics().stream().filter(d -> d.code().equals("E4003")).findFirst().orElseThrow();
+        String candidate = clean.replace("return {x:7};", "\n    return {x:7,maybe:42};\n  ");
+        check(!staged.accepted() && staged.source().equals(clean)
+                        && rejected.range().startScalarOffset() == candidate.indexOf("maybe:42")
+                        && Boolean.TRUE.equals(rejected.facts().construction().optional())
+                        && rejected.facts().construction().provider().equals("construction.deal")
+                        && rejected.facts().construction().declarationRange().startScalarOffset() == clean.indexOf("class C")
+                        && rejected.facts().equals(AmendWorkspace.inspect(candidate, "construction.deal").diagnostics().getFirst().facts()),
+                "construction rejection preserves exact provider and optional field at assembled candidate coordinates");
+        var repaired = AmendWorkspace.patchRepairWorkspace(clean, "construction.deal", staged.workspace(),
+                List.of(new CompilerProtocol.SlotPatch("R1", Map.of("body", "return {x:7,maybe:\"chosen\"};"))));
+        check(repaired.accepted() && repaired.source().contains("class C{x:number;maybe?:string;}")
+                        && AmendWorkspace.inspect(repaired.source(), "construction.deal").diagnostics().isEmpty(),
+                "chosen field value rechecks without changing provider, declarations or optionality");
     }
 
     private static void presenceRepairRechecksCandidate() {

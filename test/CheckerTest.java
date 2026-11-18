@@ -457,6 +457,34 @@ public class CheckerTest {
         check(extraField.facts().reason().equals("construction.extra-field")
                         && extraField.facts().path().getFirst().name().equals("typo"),
                 "extra class field retains the rejected field name as a typed route");
+        var requiredContext = required.facts().construction();
+        check(requiredContext.className().equals("C") && requiredContext.provider().equals("test.deal")
+                        && requiredContext.declarationRange().startScalarOffset() == fields.indexOf("class C")
+                        && requiredContext.fieldName().equals("value") && Boolean.FALSE.equals(requiredContext.optional())
+                        && requiredContext.fieldRange().equals(required.notes().getFirst().range())
+                        && requiredContext.annotationRange().startScalarOffset() == fields.indexOf("number"),
+                "required construction context retains selected provider/declaration and nonoptional annotation");
+        check(extraField.facts().construction().optional() == null
+                        && extraField.facts().construction().fieldRange() == null
+                        && extraField.facts().construction().fieldName().equals("typo")
+                        && wrongField.facts().construction().equals(requiredContext),
+                "extra field invents no declaration or optionality; type rejection shares exact selected field");
+        var optionalField = checkProgram(fields + "let c:C={value:1,maybe:7};").result().diagnostics().stream()
+                .filter(d -> d.code().equals("E4003")).findFirst().orElseThrow();
+        check(Boolean.TRUE.equals(optionalField.facts().construction().optional())
+                        && optionalField.facts().construction().fieldName().equals("maybe")
+                        && optionalField.facts().construction().annotationRange().startScalarOffset() == fields.indexOf("string"),
+                "supplied optional field carries optionality without authorizing omission as the intended repair");
+        var computedField = checkProgram(fields + "let c:C={[missing]:1};").result().diagnostics().stream()
+                .filter(d -> d.code().equals("E3001")).findFirst().orElseThrow();
+        check(computedField.facts().reason().equals("construction.computed-key")
+                        && computedField.facts().construction().className().equals("C")
+                        && computedField.facts().construction().declarationRange() == null
+                        && computedField.facts().construction().optional() == null
+                        && computedField.facts().path().isEmpty(),
+                "computed class key rejects before evaluation/provider selection without inventing field evidence");
+        assertNoErrors(checkProgram(fields + "let c:C={value:1,maybe:\"chosen\"};"),
+                "chosen optional-field value rechecks normally");
         String fieldProviderSource = "// 😀\r\nexport class C{value:number;}";
         var fieldProvider = (Symbol.ClassSymbol) checkProgram(fieldProviderSource, "provider.deal")
                 .result().symbolTable().resolve("C");
@@ -470,6 +498,26 @@ public class CheckerTest {
                         && importedField.notes().getFirst().range().file().equals("provider.deal")
                         && importedField.notes().getFirst().range().startScalarOffset() == fieldProviderSource.indexOf("value"),
                 "imported required-field evidence retains provider file and annotation beside same-named local class");
+        check(importedField.facts().construction().provider().equals(fieldProvider.modulePath())
+                        && importedField.facts().construction().declarationRange().equals(fieldProvider.declarationRange())
+                        && importedField.facts().construction().annotationRange().file().equals("provider.deal"),
+                "construction context selects exact imported provider instead of same-spelled local");
+        fieldResolver.registerClassSymbol("./provider", new Symbol.ClassSymbol("C", fieldProvider.fields(),
+                fieldProvider.modulePath(), fieldProvider.identity()));
+        check(checkProgramWithModule(fieldConsumer, fieldResolver).result().diagnostics().stream()
+                        .filter(d -> d.code().equals("E4001")).findFirst().orElseThrow()
+                        .facts().construction().declarationRange() == null,
+                "synthetic construction provider does not invent class declaration evidence");
+        fieldResolver.registerClassSymbol("./provider", fieldProvider);
+        var unavailableFieldResolver = new StubModuleResolver();
+        unavailableFieldResolver.register("./provider", Map.of("C", new Type.Class("C", fieldProvider.identity(), fieldProvider.modulePath())));
+        var missingClass = checkProgramWithModule(fieldConsumer, unavailableFieldResolver).result().diagnostics().stream()
+                .filter(d -> d.code().equals("E3004")).findFirst().orElseThrow();
+        check(missingClass.facts().reason().equals("construction.missing-declaration")
+                        && missingClass.facts().construction().declarationRange() == null
+                        && missingClass.facts().construction().fieldName().isEmpty()
+                        && missingClass.facts().construction().provider().equals(fieldProvider.modulePath()),
+                "unavailable construction declaration retains known carrier provider without guessed local fields");
         assertNoErrors(checkProgramWithModule(fieldConsumer.replace("P.C={}", "P.C={value:1}"), fieldResolver),
                 "explicit imported field repair checks against provider");
         assertNoErrors(checkProgram(fields + "let c:C={value:1};"), "explicit intended field value repairs required/type failures");

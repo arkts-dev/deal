@@ -3101,7 +3101,7 @@ public class DiagnosticRangeTest {
             + range.replace("\n", "\n      ") + ",\n      \"notes\": "
             + notes.replace("\n", "\n      ") + ",\n"
             + "      \"facts\": {\n        \"reason\": \"\",\n        \"operation\": \"\",\n"
-            + "        \"expected\": \"\",\n        \"actual\": \"\",\n        \"guidance\": [],\n        \"path\": [],\n        \"call\": null,\n        \"operator\": null,\n        \"mismatch\": null,\n        \"syntax\": null,\n        \"names\": null\n      },\n"
+            + "        \"expected\": \"\",\n        \"actual\": \"\",\n        \"guidance\": [],\n        \"path\": [],\n        \"call\": null,\n        \"operator\": null,\n        \"mismatch\": null,\n        \"syntax\": null,\n        \"names\": null,\n        \"construction\": null\n      },\n"
             + "      \"missingSymbols\": []\n    }\n  ]\n}";
     }
 
@@ -3226,7 +3226,9 @@ public class DiagnosticRangeTest {
             }
         }
 
-        for (String source : List.of("Object.hasOwn(7,false);", "Object.hasOwn(null,\"x\");",
+        for (String source : List.of("class C{x:number;}let c:C={};",
+                "class C{x?:number;}let c:C={x:\"bad\"};", "class C{}let c:C={extra:1};",
+                "class C{}let c:C={[missing]:1};", "Object.hasOwn(7,false);", "Object.hasOwn(null,\"x\");",
                 "class C{x?:number;}function f(c:C,k:string):void{Object.hasOwn(c,k);}",
                 "class C{x?:number;}function f(c:C):void{Object.hasOwn(c,\"absent\");}",
                 "let value:unknown=7;let test=value instanceof number;",
@@ -3375,6 +3377,20 @@ public class DiagnosticRangeTest {
                         deal.diagnostics.DiagnosticFacts.TypeComponentKind.FUNCTION_PARAMETER, 2)));
         var mismatch = new deal.diagnostics.DiagnosticFacts.TypeMismatch("type.exact", componentPath, "number", "string", false);
         operatorFacts = operatorFacts.withMismatch(mismatch).withSyntax(syntaxContext).withNames(nameContext);
+        var construction = new deal.diagnostics.DiagnosticFacts.ConstructionContext("C\"\uD800😀", "provider\\file",
+                zero.range(), "field\u0000", true, multi.range(), zero.range());
+        operatorFacts = operatorFacts.withConstruction(construction);
+        var unavailableConstruction = new deal.diagnostics.DiagnosticFacts.ConstructionContext("C", "", null, "", null, null, null);
+        check(unavailableConstruction.optional() == null && unavailableConstruction.declarationRange() == null,
+                "construction optionality and source evidence can be honestly unavailable");
+        check(operatorFacts.withCall(null).withOperator(null).withMismatch(null).withSyntax(null).withNames(null)
+                        .construction().equals(construction) && operatorFacts.withConstruction(null).construction() == null
+                        && operatorFacts.withConstruction(null).names().equals(nameContext)
+                        && operatorFacts.withConstruction(null).mismatch().equals(mismatch)
+                        && operatorFacts.withConstruction(null).syntax().equals(syntaxContext),
+                "construction evidence preserves and survives independent context copies and clearing");
+        check(escaped.withFacts(operatorFacts).withNote("copy", null).facts().construction().equals(construction),
+                "diagnostic copies retain construction provider and complete range evidence");
         check(operatorFacts.withNames(null).call().equals(callContext)
                         && operatorFacts.withCall(null).withOperator(null).withMismatch(null).withSyntax(null).names().equals(nameContext),
                 "adding and clearing name alternatives preserve all independent evidence");

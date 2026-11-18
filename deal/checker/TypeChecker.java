@@ -2669,7 +2669,12 @@ public final class TypeChecker {
     private Type checkClassConstruction(ObjectLiteralExpr obj, Type.Class cls) {
         for (Property property : obj.properties()) {
             if (property.key() != null) {
-                error(DiagnosticCode.E3001, "Computed class keys are not permitted", property.span());
+                diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E3001,
+                        "Computed class keys are not permitted", property.span())
+                        .withFacts(new deal.diagnostics.DiagnosticFacts("construction.computed-key", "construction.key",
+                                "static declared-field name", "computed key", List.of(
+                                        "Choose the intended static field name; class construction does not evaluate computed keys."))
+                                .withConstruction(constructionContext(cls, null, "", null))));
                 return Type.Error.INSTANCE;
             }
         }
@@ -2704,7 +2709,11 @@ public final class TypeChecker {
             sym = resolveClassSymbol(cls);
         }
         if (!(sym instanceof Symbol.ClassSymbol cs)) {
-            error(DiagnosticCode.E3004, "Unknown class '" + cls.name() + "'", obj.span());
+            diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E3004, "Unknown class '" + cls.name() + "'", obj.span())
+                    .withFacts(new deal.diagnostics.DiagnosticFacts("construction.missing-declaration", "construction",
+                            "available exact class declaration", typeName(cls), List.of(
+                                    "Inspect the selected class provider; no same-spelled declaration or structural substitute is inferred."))
+                            .withConstruction(constructionContext(cls, null, "", null))));
             return Type.Error.INSTANCE;
         }
         // Checked expression fact: the exact declaration this literal was
@@ -2755,7 +2764,8 @@ public final class TypeChecker {
                     "Extra field '" + propName + "' in class literal for '" + cls.name() + "'",
                     provided.get(propName).span()).withFacts(classFieldFacts(
                             "construction.extra-field", propName, "a declared field of " + cls.name(), propName,
-                            "Choose the intended declared field or revise the intended class contract; no field is inferred.")));
+                            "Choose the intended declared field or revise the intended class contract; no field is inferred.")
+                            .withConstruction(constructionContext(cls, cs, propName, null))));
             }
         }
 
@@ -2769,7 +2779,8 @@ public final class TypeChecker {
                             + "' in class literal for '" + cls.name() + "'",
                         obj.span()).withFacts(classFieldFacts("construction.missing-field", field.name(),
                                 typeName(fieldType), "<absent>",
-                                "Provide the intended field value; required presence is distinct from null or undefined."))
+                                "Provide the intended field value; required presence is distinct from null or undefined.")
+                                .withConstruction(constructionContext(cls, cs, field.name(), field)))
                                 .withNote("Required field declaration", field.span().range()));
                 }
                 continue;
@@ -2788,7 +2799,8 @@ public final class TypeChecker {
                         + typeName(fieldType) + ", got " + typeName(valueType),
                     property.span()).withFacts(classFieldFacts("construction.field-type", field.name(),
                             typeName(fieldType), typeName(valueType), "Choose a value satisfying the declared field type; no coercion is inferred.")
-                            .withMismatch(typeMismatch(fieldType, valueType)))
+                            .withMismatch(typeMismatch(fieldType, valueType))
+                            .withConstruction(constructionContext(cls, cs, field.name(), field)))
                             .withNote("Expected field annotation", field.type().span().range()));
             }
         }
@@ -3423,6 +3435,15 @@ public final class TypeChecker {
                         List.of("Choose storage and mutation consistent with the declared contract; no declaration rewrite is inferred.")));
         if (declaration != null) diagnostic = diagnostic.withNote("Restriction declared here", declaration);
         diagnostics.add(diagnostic);
+    }
+
+    private static deal.diagnostics.DiagnosticFacts.ConstructionContext constructionContext(Type.Class type,
+            Symbol.ClassSymbol declaration, String fieldName, ClassField field) {
+        String provider = declaration == null ? type.providerModule() : declaration.modulePath();
+        return new deal.diagnostics.DiagnosticFacts.ConstructionContext(type.name(), provider == null ? "" : provider,
+                declaration == null ? null : declaration.declarationRange(), fieldName,
+                field == null ? null : field.optional(), field == null ? null : field.span().range(),
+                field == null ? null : field.type().span().range());
     }
 
     private static deal.diagnostics.DiagnosticFacts classFieldFacts(String reason, String field,

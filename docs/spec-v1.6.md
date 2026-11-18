@@ -1688,7 +1688,21 @@ JSON scanner offsets, which are one-based UTF-8 byte positions.
 
 `facts` separates producer-owned `reason`, failed `operation`, `expected`,
 `actual`, ordered `guidance`, a typed `path`, nullable typed `call` context
-and nullable typed `operator`, `mismatch`, `syntax`, and `names` contexts from explanatory message text.
+and nullable typed `operator`, `mismatch`, `syntax`, `names`, and `construction` contexts from explanatory message text.
+Class-literal constraint failures retain `construction`: `className`, `provider`,
+nullable complete `declarationRange`, `fieldName`, nullable Boolean `optional`,
+nullable `fieldRange` and nullable `annotationRange`. The provider is the selected
+declaration's module wiring key, or the checked carrier's known provider before
+selection; empty means unavailable. It is not a new persisted compiler identity.
+Missing/typed supplied fields retain the exact selected field and its optionality.
+Extra fields retain the rejected name but no declared field ranges or optionality.
+Computed-key rejection precedes key evaluation and declaration selection, using
+`construction.computed-key` / `construction.key`; it claims no selected field or
+declaration. Unavailable exact class declarations use
+`construction.missing-declaration` / `construction`, never a same-spelled fallback.
+Neither evidence nor guidance authorizes new fields, changed optionality, dummy
+values, coercion or provider substitution. Existing checks and ordering remain.
+Absent construction evidence is `null`; all independent contexts survive copies.
 Unresolved value/direct-call names retain E2001 and missing-symbol contracts and
 may carry `names`: ordered `candidates`, `matchingCount`, and `truncated`.
 Each candidate contains `name`, `kind` (`VALUE` or `FUNCTION`), its declared

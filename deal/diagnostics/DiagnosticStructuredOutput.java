@@ -203,7 +203,7 @@ public final class DiagnosticStructuredOutput {
         sb.append(",\n");
         indent(sb, level + 1).append("\"names\": ");
         var names = facts.names();
-        if (names == null) sb.append("null\n");
+        if (names == null) sb.append("null");
         else {
             sb.append("{\n");
             indent(sb, level + 2).append("\"candidates\": [");
@@ -227,9 +227,32 @@ public final class DiagnosticStructuredOutput {
             sb.append("],\n");
             indent(sb, level + 2).append("\"matchingCount\": ").append(names.matchingCount()).append(",\n");
             indent(sb, level + 2).append("\"truncated\": ").append(names.truncated()).append('\n');
+            indent(sb, level + 1).append('}');
+        }
+        sb.append(",\n");
+        indent(sb, level + 1).append("\"construction\": ");
+        var construction = facts.construction();
+        if (construction == null) sb.append("null\n");
+        else {
+            sb.append("{\n");
+            indent(sb, level + 2).append("\"className\": ").append(jsonString(construction.className())).append(",\n");
+            indent(sb, level + 2).append("\"provider\": ").append(jsonString(construction.provider())).append(",\n");
+            appendNullableRange(sb, construction.declarationRange(), level + 2, "declarationRange");
+            sb.append(",\n");
+            indent(sb, level + 2).append("\"fieldName\": ").append(jsonString(construction.fieldName())).append(",\n");
+            indent(sb, level + 2).append("\"optional\": ").append(construction.optional()).append(",\n");
+            appendNullableRange(sb, construction.fieldRange(), level + 2, "fieldRange");
+            sb.append(",\n");
+            appendNullableRange(sb, construction.annotationRange(), level + 2, "annotationRange");
+            sb.append('\n');
             indent(sb, level + 1).append("}\n");
         }
         indent(sb, level).append('}');
+    }
+
+    private static void appendNullableRange(StringBuilder sb, DiagnosticRange range, int level, String name) {
+        if (range == null) indent(sb, level).append(jsonString(name)).append(": null");
+        else appendRange(sb, range, level, name);
     }
 
     private static void appendMissingSymbols(StringBuilder sb, List<CompilerDiagnostic.MissingSymbol> facts, int level) {
