@@ -3101,7 +3101,7 @@ public class DiagnosticRangeTest {
             + range.replace("\n", "\n      ") + ",\n      \"notes\": "
             + notes.replace("\n", "\n      ") + ",\n"
             + "      \"facts\": {\n        \"reason\": \"\",\n        \"operation\": \"\",\n"
-            + "        \"expected\": \"\",\n        \"actual\": \"\",\n        \"guidance\": [],\n        \"path\": []\n      },\n"
+            + "        \"expected\": \"\",\n        \"actual\": \"\",\n        \"guidance\": [],\n        \"path\": [],\n        \"call\": null\n      },\n"
             + "      \"missingSymbols\": []\n    }\n  ]\n}";
     }
 
@@ -3218,6 +3218,12 @@ public class DiagnosticRangeTest {
         var schemaPath = new java.util.ArrayList<>(List.of(
                 new deal.diagnostics.DiagnosticFacts.PathSegment(deal.diagnostics.DiagnosticFacts.PathKind.FIELD, "a\"\uD800"),
                 new deal.diagnostics.DiagnosticFacts.PathSegment(deal.diagnostics.DiagnosticFacts.PathKind.ARRAY_ELEMENT, "")));
+        var callContext = new deal.diagnostics.DiagnosticFacts.CallContext("f\"\uD800", "(number) => void", 0, 1, 1, multi.range());
+        var callFacts = new deal.diagnostics.DiagnosticFacts("call.argument-type", "call", "number", "string", List.of()).withCall(callContext);
+        String callJson = DiagnosticStructuredOutput.toJson(List.of(escaped.withFacts(callFacts)));
+        check(callJson.contains("\"argumentIndex\": 0") && callJson.contains("\"parameterRange\": {")
+                        && callJson.contains("\"expectedCount\": 1") && callJson.contains("\\ud800"),
+                "call context uses typed counts, exact ranges and Unicode-safe strings");
         var schemaFacts = new deal.diagnostics.DiagnosticFacts("schema", "decode", "number", "function", List.of(), schemaPath);
         schemaPath.clear();
         check(schemaFacts.path().size() == 2, "schema paths are defensively copied");

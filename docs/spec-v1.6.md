@@ -1687,7 +1687,14 @@ location is available. These source/editor coordinates are distinct from runtime
 JSON scanner offsets, which are one-based UTF-8 byte positions.
 
 `facts` separates producer-owned `reason`, failed `operation`, `expected`,
-`actual`, ordered `guidance`, and a typed `path` from explanatory message text.
+`actual`, ordered `guidance`, a typed `path`, and nullable typed `call` context
+from explanatory message text. Call failures retain the declared callee name when
+available, full signature, zero-based `argumentIndex` (`-1` for whole-call
+failures), expected/actual argument counts, and the parameter annotation range
+when known. Function-valued callees never invent declaration evidence. Argument
+type failures also label the parameter annotation with an ordered note. Return
+failures publish expected/actual types and distinguish an omitted value
+(`undefined`) from incompatible data without proposing placeholder returns.
 Schema paths are root-to-leaf segments with `kind` (`FIELD` or `ARRAY_ELEMENT`)
 and `name` (the exact field name, or empty for an array schema element). They
 never invent a concrete runtime index. Empty strings or

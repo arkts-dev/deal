@@ -199,6 +199,33 @@ public class CheckerTest {
                 "nested JSON schema route distinguishes array schema elements from invented runtime indices");
         assertNoErrors(checkProgram("class Leaf{bad:number;} class Root{items:Leaf[];} let result:Root=JSON.parse(\"{}\");"),
                 "an explicitly selected decodable annotation repairs the schema");
+        String badCall = "function f(value:number):void{} f(\"bad\");";
+        var callFailure = checkProgram(badCall).result().diagnostics().stream()
+                .filter(d -> d.code().equals("E5001")).findFirst().orElseThrow();
+        var call = callFailure.facts().call();
+        check(call.callee().equals("f") && call.signature().equals("(number) => void")
+                        && call.argumentIndex() == 0 && call.expectedCount() == 1 && call.actualCount() == 1
+                        && call.parameterRange().startScalarOffset() == badCall.indexOf("number")
+                        && callFailure.notes().getFirst().range().equals(call.parameterRange())
+                        && callFailure.facts().actual().equals("string"),
+                "call failure owns zero-based argument, full signature and exact parameter annotation");
+        assertNoErrors(checkProgram(badCall.replace("f(\"bad\")", "f(1)")), "intended number argument repairs the call");
+        var arity = checkProgram("function f(x:number):void{} f();").result().diagnostics().stream()
+                .filter(d -> d.code().equals("E3009")).findFirst().orElseThrow();
+        check(arity.facts().call().argumentIndex() == -1 && arity.facts().call().expectedCount() == 1
+                        && arity.facts().call().actualCount() == 0 && arity.facts().call().parameterRange() == null,
+                "arity mismatch records counts without inventing a failing argument");
+        var indirect = checkProgram("let f:(x:number)=>void=function(x:number):void{}; f(\"bad\");")
+                .result().diagnostics().stream().filter(d -> d.code().equals("E5001")).findFirst().orElseThrow();
+        check(indirect.facts().call().callee().isEmpty() && indirect.facts().call().parameterRange() == null,
+                "function-valued call does not invent a declaration or annotation");
+        for (String source : List.of("function f():number{return \"bad\";}", "function f():number{return;}")) {
+            var result = checkProgram(source).result().diagnostics().stream()
+                    .filter(d -> d.code().equals("E5003")).findFirst().orElseThrow();
+            check(result.facts().operation().equals("return") && result.facts().expected().equals("number")
+                            && result.facts().actual().equals(source.contains("bad") ? "string" : "undefined"),
+                    "return mismatch distinguishes wrong data from omitted value");
+        }
         var add = checkProgram("let x = 1 + \"a\";").result().diagnostics().stream()
                 .filter(d -> d.code().equals("E3010")).findFirst().orElseThrow();
         check(add.facts().actual().equals("left: number; right: string")

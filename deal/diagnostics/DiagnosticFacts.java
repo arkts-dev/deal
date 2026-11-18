@@ -10,7 +10,18 @@ public record DiagnosticFacts(
         String expected,
         String actual,
         List<String> guidance,
-        List<PathSegment> path) {
+        List<PathSegment> path,
+        CallContext call) {
+    /** Argument indices are zero-based; -1 means the failure concerns the whole call. */
+    public record CallContext(String callee, String signature, int argumentIndex,
+                              int expectedCount, int actualCount, DiagnosticRange parameterRange) {
+        public CallContext {
+            Objects.requireNonNull(callee, "callee");
+            Objects.requireNonNull(signature, "signature");
+            if (argumentIndex < -1 || expectedCount < 0 || actualCount < 0 || argumentIndex >= actualCount)
+                throw new IllegalArgumentException("Invalid call diagnostic geometry");
+        }
+    }
     public enum PathKind { FIELD, ARRAY_ELEMENT }
 
     /** Schema routes describe types, not a guessed runtime array index. */
@@ -24,7 +35,16 @@ public record DiagnosticFacts(
     }
 
     public DiagnosticFacts(String reason, String operation, String expected, String actual, List<String> guidance) {
-        this(reason, operation, expected, actual, guidance, List.of());
+        this(reason, operation, expected, actual, guidance, List.of(), null);
+    }
+
+    public DiagnosticFacts(String reason, String operation, String expected, String actual,
+                           List<String> guidance, List<PathSegment> path) {
+        this(reason, operation, expected, actual, guidance, path, null);
+    }
+
+    public DiagnosticFacts withCall(CallContext context) {
+        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, context);
     }
 
     public static final DiagnosticFacts EMPTY = new DiagnosticFacts("", "", "", "", List.of());

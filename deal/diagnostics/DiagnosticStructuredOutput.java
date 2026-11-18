@@ -118,7 +118,22 @@ public final class DiagnosticStructuredOutput {
             sb.append("{\"kind\": ").append(jsonString(segment.kind().name()))
                     .append(", \"name\": ").append(jsonString(segment.name())).append('}');
         }
-        sb.append("]\n");
+        sb.append("],\n");
+        indent(sb, level + 1).append("\"call\": ");
+        var call = facts.call();
+        if (call == null) sb.append("null\n");
+        else {
+            sb.append("{\n");
+            indent(sb, level + 2).append("\"callee\": ").append(jsonString(call.callee())).append(",\n");
+            indent(sb, level + 2).append("\"signature\": ").append(jsonString(call.signature())).append(",\n");
+            indent(sb, level + 2).append("\"argumentIndex\": ").append(call.argumentIndex()).append(",\n");
+            indent(sb, level + 2).append("\"expectedCount\": ").append(call.expectedCount()).append(",\n");
+            indent(sb, level + 2).append("\"actualCount\": ").append(call.actualCount()).append(",\n");
+            if (call.parameterRange() == null) indent(sb, level + 2).append("\"parameterRange\": null");
+            else appendRange(sb, call.parameterRange(), level + 2, "parameterRange");
+            sb.append('\n');
+            indent(sb, level + 1).append("}\n");
+        }
         indent(sb, level).append('}');
     }
 
@@ -154,7 +169,11 @@ public final class DiagnosticStructuredOutput {
      * newline).
      */
     private static void appendRange(StringBuilder sb, DiagnosticRange range, int level) {
-        indent(sb, level).append("\"range\": {\n");
+        appendRange(sb, range, level, "range");
+    }
+
+    private static void appendRange(StringBuilder sb, DiagnosticRange range, int level, String name) {
+        indent(sb, level).append(jsonString(name)).append(": {\n");
         indent(sb, level + 1).append("\"file\": ").append(jsonString(range.file())).append(",\n");
         indent(sb, level + 1).append("\"startLine\": ").append(range.startLine()).append(",\n");
         indent(sb, level + 1).append("\"startColumn\": ").append(range.startColumn()).append(",\n");

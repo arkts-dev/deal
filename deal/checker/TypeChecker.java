@@ -7,6 +7,7 @@ import deal.types.Types;
 
 import java.util.*;
 import deal.diagnostics.DiagnosticCode;
+import deal.diagnostics.DiagnosticRange;
 
 /**
  * Pass 2 of the type checker: type checking.
@@ -875,18 +876,20 @@ public final class TypeChecker {
             if (currentReturnType instanceof Type.Void || !isAssignable(currentReturnType, exprType)) {
                 if (!reportClassProviderCrossing(currentReturnType, exprType,
                         rs.expr().get().span())) {
-                    error(DiagnosticCode.E5003,
+                    diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E5003,
                         "Return type mismatch: expected " + typeName(currentReturnType)
-                        + ", got " + typeName(exprType),
-                        rs.expr().get().span());
+                        + ", got " + typeName(exprType), rs.expr().get().span()).withFacts(
+                                new deal.diagnostics.DiagnosticFacts("return.incompatible", "return",
+                                        typeName(currentReturnType), typeName(exprType), List.of())));
                 }
             }
         } else {
             if (currentReturnType != null && !(currentReturnType instanceof Type.Void)) {
-                error(DiagnosticCode.E5003,
+                diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E5003,
                     "Return type mismatch: expected " + typeName(currentReturnType)
-                    + ", got undefined",
-                    rs.span());
+                    + ", got undefined", rs.span()).withFacts(new deal.diagnostics.DiagnosticFacts(
+                            "return.missing-value", "return", typeName(currentReturnType), "undefined",
+                            List.of("Provide the intended result; no placeholder value is inferred."))));
             }
         }
     }
@@ -2185,15 +2188,29 @@ public final class TypeChecker {
         return null;
     }
 
+    private deal.diagnostics.DiagnosticFacts callFacts(String reason, CallExpr call, Type.Func signature,
+                                                      int argument, String expected, String actual) {
+        Symbol.FunctionSymbol declaration = calleeDeclarationOf(call);
+        String name = declaration == null ? "" : declaration.name();
+        DiagnosticRange parameter = null;
+        if (argument >= 0 && declaration != null && declaration.paramTypeNodes() != null
+                && argument < declaration.paramTypeNodes().size())
+            parameter = declaration.paramTypeNodes().get(argument).span().range();
+        return new deal.diagnostics.DiagnosticFacts(reason, "call", expected, actual, List.of())
+                .withCall(new deal.diagnostics.DiagnosticFacts.CallContext(name, typeName(signature), argument,
+                        signature.paramTypes().size(), call.args().size(), parameter));
+    }
+
     private Type checkFunctionCall(CallExpr call, Type.Func funcType, List<Type> argTypes) {
         int paramCount = funcType.paramTypes().size();
 
         // DEAL v1.2: fixed arity only — function types carry no rest arm.
         if (argTypes.size() != paramCount) {
-            error(DiagnosticCode.E3009,
+            diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E3009,
                 "Function argument count mismatch: expected " + paramCount
-                + ", got " + argTypes.size(),
-                call.span());
+                + ", got " + argTypes.size(), call.span()).withFacts(callFacts(
+                        "call.argument-count", call, funcType, -1,
+                        Integer.toString(paramCount), Integer.toString(argTypes.size()))));
             return Type.Error.INSTANCE;
         }
 
@@ -2204,11 +2221,15 @@ public final class TypeChecker {
             if (!isAssignable(paramType, argType)) {
                 if (!reportClassProviderCrossing(paramType, argType,
                         call.args().get(i).span())) {
-                    error(DiagnosticCode.E5001,
+                    var diagnostic = CompilerDiagnostic.error(DiagnosticCode.E5001,
                         "Function argument type mismatch at position " + (i + 1)
                         + ": expected " + typeName(paramType)
-                        + ", got " + typeName(argType),
-                        call.args().get(i).span());
+                        + ", got " + typeName(argType), call.args().get(i).span())
+                        .withFacts(callFacts("call.argument-type", call, funcType, i,
+                                typeName(paramType), typeName(argType)));
+                    var parameterRange = diagnostic.facts().call().parameterRange();
+                    if (parameterRange != null) diagnostic = diagnostic.withNote("Expected parameter annotation", parameterRange);
+                    diagnostics.add(diagnostic);
                 }
             }
         }
