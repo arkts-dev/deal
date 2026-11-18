@@ -1,9 +1,27 @@
 # Host Fixtures
 
-Keep declarations/JS/Java/Lua/C behavior identical. No capability exclusions/dummy companions; representation-specific checks use focused host-integration suites. Reconcile native declaration/companion stems, headers and registrations; presence isn't execution coverage. Companions aren't discovered cases. hostFixture selects stable host/probe; preserve source/external identities. Pair valid/invalid export/signature/nullish/async boundaries; assert catchability, including malformed-function metadata. Generated carriers use the raw deal.json external import key in nominal identities; dotted deployment names never substitute for that key.
+Keep declaration/JS/Java/Lua/C behavior equivalent, with no exclusions or dummy
+companions. Representation-specific cases use focused integration suites.
+Companions are not discovered cases; hostFixture selects stable host/probe.
+Reconcile native stems/headers/registrations and raw external import identities.
+Presence alone is not execution coverage.
 
-Classes carry declared fields; functions use documented wrappers; async implementations return real operations. Native nonstring Record keys use deal_table_set_key without coercion or fabricated boundary failures; key rejection is independent of hidden value legality. Native unsupported objects use deal_opaque with a borrowed nonnull identity, never an out-of-range kind or forged datum; raw host callables use deal_function_raw, not a wrong-signature DEAL wrapper. Both reject recursive data admission before publication; preserve same-carrier repair/retry and await-owned completion rejection. Their private reference-free managed layouts support fixture-only hostile retained mutation, never unchecked public setters or new datum tags. audit16.c retains genuine arrays/callbacks and relays the original Error; async paths complete actual operations. Declarations use Promise results, not async. Use binary64 number/double and Record<string, unknown>; never infer integer kinds from host boxing/numeric spelling.
+Use declared fields, documented wrappers, Promise results (not async declarations)
+and real operations. Preserve binary64, persistent array intent/descriptors and
+null/undefined/presence. Empty Lua tables alone do not establish arrays.
 
-Hostile fixtures mutate admitted storage/Unicode/payloads/Error text, preserving identity/descriptors/unrelated slots to isolate later failures. Native Error pointer replacements also update their length-delimited language-text spans; changing only a pointer must not accidentally truncate a legal lone unit or read beyond replacement storage. Oracle responders mirror mutations without production hooks. Batch drivers use correctly named JVM public classes; preserve shared lowercase-source visibility.
+Admit valid carriers before fixture-only hostile mutation. Retain identity,
+descriptors, unrelated slots and repair/retry; mirror Oracle mutations without
+production hooks. Missing-body callable negatives retain valid signatures.
+Native Error pointer replacements update explicit text lengths. Use correctly
+named JVM public classes and preserve shared lowercase-source visibility.
 
-Lua fixtures use internal deal.json.decode with explicit canonical targets and deal.json.encode, not callable std/json exports. Compare JSON numerically. Records share generic omission/substitution/key-order/nested-class rules; reject unread malformed ingress before publication. Synchronize companions. Unknown-array fixtures tag Lua array intent with the same persistent unknown descriptor as JS/JVM; empty tables alone are not arrays. Malformed callable fixtures preserve the signature but omit the executable body, including unread Record descendants.
+Native nonstring keys use deal_table_set_key without coercion; opaque subjects use
+deal_opaque with borrowed nonnull identity; raw callables use deal_function_raw,
+not forged tags or wrong-signature wrappers. Pin rejection before publication,
+closed retain/apply statuses and exactly-once await-owned failure. Host relays
+preserve the original Error and complete real operations.
+
+Lua uses internal deal.json.decode with explicit canonical targets and
+deal.json.encode, never std/json wrappers. Preserve generic JSON rules and reject
+unread malformed ingress. Compare JSON numerically, not by text replacement.

@@ -1,3 +1,14 @@
 # Types
 
-Define canonical target-neutral checked types. Array elements and function parameters enforce data-position legality at construction; void is result-only, while functions returning void are legal data. Preserve the internal Error recovery sentinel rather than throwing for an already-diagnosed source error. Function parameter lists are immutable snapshots. Preserve structural equality, invariance, nullability, and function rules without runtime-representation assumptions. A class type carries the declaring module's wiring key as its defining provider when the carrier binds one: two bound providers of two same-named declarations are two declarations, so equality and assignment never retag a value across them; the canonical identity itself names the defining file, so two same-named sibling files are already distinct there. The unbound carrier (public descriptor synthesis, the builtin `Error`, retained harnesses) names no second declaration. Delegate textual descriptors to descriptor services. `Types.nullableOrSelf` is the canonical `T | null` wrap: it canonicalizes its inner type, an already-nullable type is its own wrap, and `null` is too, because `null | null` is `null` — the optional-field read type of a field declared `null` never builds the forbidden `Nullable<Null>` form. Coordinate changes with checker, lowering, boundaries, and tests. Keep this file always synchronized with code.
+Define canonical target-neutral types, independent of runtime representation.
+Enforce data-position legality at construction: void is result-only; functions
+returning void remain data. Preserve the Error recovery sentinel for diagnosed
+source errors and snapshot function parameter lists immutably.
+
+Keep equality, invariance, nullability and function rules consistent with checker,
+lowering and boundaries. Nominal identity names defining files; bound provider keys
+distinguish declarations and never permit retagging. Unbound descriptor/builtin
+carriers do not introduce another declaration. Delegate text to descriptor services.
+
+`Types.nullableOrSelf` canonicalizes T|null idempotently, including null itself;
+optional null fields read null|undefined without constructing Nullable<Null>.

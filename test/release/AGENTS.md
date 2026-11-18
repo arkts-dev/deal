@@ -1,3 +1,9 @@
 # Release Tests
 
-The committed smoke project is the out-of-checkout discovery and execution subject for `tools/verify-release.sh`: keep its manifest on the specification's version, its source free of any project-local `std/` or runtime copy, and its output checking real compiled artifacts. Exercise wide binary64 arithmetic, required-nullable class construction, absent optionals, contextual JSON decoding, builtin serialization and thrown required-key omissions with unchanged destination identity on JS/LuaJIT/JVM and native O0/O2 packaged execution. Prevent source-tree or classpath leakage; assert real artifacts and observable execution, not implementation internals. Distribution verification belongs to the tools script, and no dev gate invokes it. Keep this file always synchronized with code.
+`tools/verify-release.sh` executes the committed smoke project outside the checkout;
+no development gate invokes it. Use the active manifest version with no local stdlib/
+runtime copies or source-tree/classpath leakage.
+
+Assert real JS/LuaJIT/JVM and native O0/O2 execution: binary64, required-nullable
+construction, absent optionals, contextual JSON/stringify and failed reconstruction
+with unchanged destination. Test artifacts/behavior, not implementation internals.

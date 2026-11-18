@@ -10,7 +10,7 @@ function values(): number {
   let count: number = 42;
   let fraction: number = 5 / 2; // 2.5; every number is IEEE 754 binary64.
   let label: string = "Ada";
-  let message: string = `Hello ${label}`; // interpolation requires string.
+  let message: string = `Hello ${label}`; // interpolation accepts string/number.
   let enabled: boolean = true;
   let nothing: null = null;
   // Arithmetic rounds nearest/ties-even and does not trap on overflow
@@ -45,8 +45,8 @@ function optionalCallback(callback: ((value: number) => number) | null): number 
   return callback?.(3) ?? 0;
 }
 
-// Functions require parameter and return annotations. A caller may choose
-// to reject a zero divisor; ordinary division itself is nontrapping.
+// Declarations require parameter/result annotations; contextual expressions may
+// omit parameter types. Reject zero explicitly when the application requires it.
 function divide(a: number, b: number): number | null {
   if (b === 0) { return null; }
   return a / b;
@@ -77,13 +77,13 @@ function counter(start: number): () => number {
 // like ECMAScript. It checks every removed value before changing the array
 // and returns a fresh array with the same element type; aliases see the shift.
 // slice(start, end) copies a shallow range without changing the source.
-// Both bounds are required; negatives count from the end, and reversed
-// bounds produce an empty array instead of being swapped.
+// Omit end for the remainder, or both bounds for a copy. Negative bounds count
+// from the end; reversed bounds yield empty storage without swapping.
 // includes(value, fromIndex?) tests membership (including NaN); indexOf uses
 // strict equality and returns the first zero-based match or -1. Negative
 // fromIndex counts from the end. Both stop at the first match.
 // string arrays join(separator) into one string; the separator is required.
-// map infers a fresh result array from a synchronous, explicitly typed mapper.
+// map uses an explicit synchronous result; context can supply parameter types.
 // It snapshots length after mapper evaluation and reads live elements; callback
 // parameter/return boundaries remain checked, including the source-array argument.
 function sumAll(values: number[]): number {

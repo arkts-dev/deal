@@ -1,145 +1,93 @@
 # DEAL Compiler
 
-DEAL: a statically typed, embeddable language using a strict subset of
-TypeScript syntax with runtime-enforced types. Targets: JavaScript, LuaJIT, JVM
-and native Linux x86-64 executables.
-Sole authority: [`docs/spec-v1.6.md`](docs/spec-v1.6.md).
-Projects require `"languageVersion": "1.6"` and stdlib `"1.6"`.
+DEAL is a statically typed, embeddable language with a strict TypeScript syntax
+subset and runtime-enforced types. Targets: JavaScript, LuaJIT, JVM and native
+Linux x86-64. Authority: [v1.6 specification](docs/spec-v1.6.md).
+Projects use `"languageVersion": "1.6"` and stdlib `"1.6"`.
 
-Semantics differ from TypeScript: nominal classes, runtime-checked `as`
-assertions and invariant arrays. DEAL uses
-binary64 `number` with ECMAScript `%` remainder, safe `unknown`,
-`Record<string, unknown>` and independent null/undefined/presence semantics. Supply required fields explicitly.
-`Promise<R>` denotes async results, not promises. Use DEAL APIs.
+Classes are nominal, arrays invariant and `as` assertions checked at runtime.
+Numbers are binary64; null, undefined and field absence are distinct.
+`Promise<R>` denotes async results, not first-class promises. Use DEAL APIs,
+not JavaScript/TypeScript APIs.
 
-Removed source version directives, source `table`/`has`, C-style loops,
-C FFI, bytes, integer/conversion intrinsics and class field
-initializers are not compatibility features.
+See the [language guide](docs/learn-deal.ts),
+[capability demo](docs/deal-capabilities.deal),
+[runtime examples](test/conformance/backend-runtime/) and [agent skill](skills/README.md).
 
-## Native backend (Linux x86-64)
-
-`Backend.LLVM` compiles the one validated project lowering to a deterministic
-textual LLVM module and publishes it with the complete C11 runtime; a
-product-owned toolchain seam links the externally linked Linux x86-64
-executable. The toolchain is pinned to `clang`/LLVM major 14, with the accepted
-window LLVM 14-16 and typed-pointer textual IR; the emitted module declares the
-target triple `x86_64-pc-linux-gnu`.
-
-The reproducible command set for this backend, unchanged by checkout layout:
+## Build and test
 
 ```bash
-./tools/build-release.sh
-./run_tests.sh --jobs 1
-JACOCO_DIR=... ./coverage.sh --jobs 1
-./tools/verify-release.sh [dist]
+./run_tests.sh --jobs 4
+node test/typescript/check-syntax.cjs
+```
+
+The test runner compiles with `javac --release 25`, enables assertions and runs
+`tools/gate-manifest.sh`. `--jobs` bounds concurrent suites (default four);
+nested work and coverage stay serial. Conformance and compositions execute
+without exclusions. Missing tools, hosts, completions or runtime-requirement
+evidence fail the run.
+
+Required tools: `javac`, `java`, `luajit`, `node`, `gcc`, `clang`, `llvm-as` and
+`llvm-dwarfdump`. The separate syntax command uses TypeScript's parser/grammar
+checks, not its type checker.
+
+Production compiler sources also support `javac --release 21` for embedded
+packaging; test/release tooling uses Java 25.
+
+## Native backend
+
+LLVM output targets `x86_64-pc-linux-gnu` with typed-pointer IR. The toolchain
+pins LLVM 14 and accepts majors 14–16.
+
+```bash
 deal compile --backend llvm --output build/llvm <entry>
 deal native build <entry> --opt-level 0|2 [--output <artifactsDir>] [--product <productDir>] [--host <file.c>...]
 deal native run <entry> --opt-level 0|2
 ```
 
-`deal compile --backend llvm` only publishes the deterministic textual set (the
-project module, the complete C11 runtime and one generated header per imported
-host declaration module) and never executes an external tool. `deal native
-build` compiles with `Backend.LLVM` and then links the published set into
-`<productDir>/native/<entry-stem>`; `deal native run` builds and executes it.
-Products are durable and caller-owned, live outside the publication root, and a
-failed rebuild preserves the previous executables byte-identical. The native
-suites print per-fixture results with the optimization level and a final
-pass/fail count; a missing required tool or artifact fails the run instead of
-skipping a case.
+`compile` publishes one deterministic LLVM module, the C11 runtime and imported
+host headers without invoking external tools. `native build` links them into
+`<productDir>/native/<entry-stem>` outside the publication root; a failed rebuild
+preserves the previous executable. `native run` builds and executes it.
 
-For collector testing, `DEAL_GC_STRESS=1` starts a new collection whenever the
-collector is idle, without waiting for allocation pressure. Allocation and loop
-safepoints advance the same bounded mark/sweep slices as normal execution;
-stress does not perform a full live-heap traversal at every allocation. Explicit
-`deal_gc_collect_full` remains available to native collector tests.
-
-Executable examples are in [`test/conformance/backend-runtime/`](test/conformance/backend-runtime/),
-with a language guide in [`docs/learn-deal.ts`](docs/learn-deal.ts) and
-an executable [capability demo](docs/deal-capabilities.deal).
-
-## Build and Test
-
-```bash
-./run_tests.sh --jobs 4
-```
-
-Compiles all production and test sources with `javac --release 25`
-and executes the complete selection in `tools/gate-manifest.sh` with
-assertions enabled, including the TypeScript compiler's syntactic/grammar
-diagnostics and real JS/LuaJIT/JVM runtime records. `--jobs` bounds suites
-(default four); nested work/coverage stay serial.
-No alternate full-suite profile exists. The native corpus and composition suite
-run without exclusions, as does JS/LuaJIT/JVM conformance. Missing native hosts,
-unevidenced runtime requirements and test failures fail the gate.
-
-Run the native corpus independently (after building tests):
+Run the native corpus after building tests:
 
 ```bash
 java -ea -cp build:build/test-classes deal.test.LlvmConformanceTest
 ```
 
-`run_tests.sh` first preflights its required tools (`javac`, `java`, `luajit`,
-`node`, `gcc`, `clang`, `llvm-as`, `llvm-dwarfdump`). A missing required tool fails the run with the named
-`TOOL_MISSING` outcome before any build work, and the LuaJIT/Node records and
-JS production suites have no skip path: a run that omits a supported lane is
-a failure, never a pass.
-
-Production compiler sources also compile with `javac --release 21` for embedded
-packaging; the test/release toolchain remains Java 25. This does not establish
-Android device compatibility or change the generated JVM target.
-
-Embedded callers can scope `deal.module.CompilationTiming.observe((phase, nanos)
--> ...)` with try-with-resources around compilation. Durations use a monotonic
-clock, on the calling thread; nested scopes restore the previous observer and
-observer `RuntimeException`s do not fail compilation. `codegen-total` includes
-`lowering`; these are overlapping measurements, not additive totals. No timing
-values enter generated artifacts, and publication is outside these phase timings.
+`DEAL_GC_STRESS=1` starts collection whenever idle and advances the normal bounded
+mark/sweep slices. Native tests also use explicit `deal_gc_collect_full`.
 
 ## Distribution
 
-Build the packaged compiler with its matched runtime and standard library:
-
 ```bash
 ./tools/build-release.sh
-```
-
-Verify the packaged compiler outside the checkout on JS, LuaJIT, JVM and the
-native backend (compiled with `Backend.LLVM`, byte-equal published runtime
-copies, product built outside the publication root and executed at `-O0` and
-`-O2`, packaged debug information):
-
-```bash
 ./tools/verify-release.sh [dist]
 ```
 
-Verification executes the committed smoke project and rejects old versions,
-missing or mismatched resources, broken deployment copies and failing executions.
-Required tools must be available; missing tools fail rather than skip.
-
-Run the independent TypeScript syntax/grammar check with:
-
-```bash
-node test/typescript/check-syntax.cjs
-```
-
-This uses the TypeScript compiler API on unmodified source text, not TypeScript
-semantic type-checking. DEAL's nominal types and checked runtime assertions have
-their own tests.
+The package includes matched runtimes and stdlib. Verification runs the committed
+smoke project outside the checkout on every backend, including native O0/O2,
+and rejects version/resource mismatches and failed executions. Neither script
+is part of the development gate.
 
 ## Coverage
 
-Provide JaCoCo agent and CLI jars compatible with Java 25 (tested with
-JaCoCo 0.8.14), then run:
+Use Java-25-compatible JaCoCo agent/CLI jars (tested with 0.8.14):
 
 ```bash
 JACOCO_DIR=/path/to/jacoco ./coverage.sh --jobs 1
 ```
 
-Coverage executes the same test runner and instruments Java subprocesses
-without Java startup-option environment variables. Production classes compile into `build/deal`; test classes compile separately
-into `build/test-classes`. Only `build/deal` enters the report; test helpers
-and generated probe classes are excluded. Lua/JS execution is not counted by JaCoCo.
-Minimum production coverage is **85% lines** and **75% branches**.
-Reports are written to `build/coverage.csv`, `build/coverage.xml`, and
-`build/coverage-html/index.html`.
+Coverage uses the same test selection and instruments Java subprocesses.
+Only production classes in `build/deal` count; tests and generated probes do not.
+Minima: **85% lines**, **75% branches**. Reports: `build/coverage.csv`,
+`build/coverage.xml`, `build/coverage-html/index.html`.
+
+## Embedded timing
+
+Scope `deal.module.CompilationTiming.observe((phase, nanos) -> ...)` with
+try-with-resources. Observers are thread-local and nestable; durations are
+monotonic and observer `RuntimeException`s do not fail compilation.
+`codegen-total` includes `lowering`; timings overlap, exclude publication and
+never enter generated artifacts.

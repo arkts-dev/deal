@@ -1,5 +1,19 @@
 # Tools
 
-Maintain reproducible build/test/launcher/packaging. Quote paths, fail fast and avoid checkout assumptions or governance artifacts. Build the matched runtime/stdlib set (including the internal Lua deal/json.lua algorithms), including the complete C11 runtime deployment set that ships byte-equal to its checkout files; verify packaged artifacts outside the checkout on every backend, including missing/mismatched resources and execution failures. Package only the five callable stdlib modules (console/string/table/math/time), without std/json declarations or wrappers; retain the internal Lua JSON resource and its missing/broken-resource execution controls. Neither distribution script joins the dev gate. generate-unicode-case.py verifies pinned Unicode 17.0 UCD input hashes and reproducibly installs backend-local default-case mappings and context properties, with Unicode license notices; generated native unicode_case.h ships in the closed runtime set.
+Keep build/test/launch/package workflows reproducible. Quote paths, fail fast and
+avoid checkout assumptions. Distribution scripts stay outside the development gate.
 
-gate-manifest.sh alone selects tests/coverage, including strict native O0/O2 conformance/accounting and composition execution without exclusions. Missing hosts, unevidenced runtime requirements and test failures fail. Retain json-parse-deep and json-parse-deep-failure's complete native matrices. JS/LuaJIT/JVM selection is unchanged. Keep conformance checks under test/, including TypeScript syntax/grammar failure controls. Bound concurrency; lock batched native objects per-gate; retain cold-controls. Tests: build/test-classes; production coverage: build/deal. Stateful tests require Python 3 and test/requirements.txt; absent Hypothesis fails rather than skipping. Enforce unrounded 85% line/75% branch minima. Distinguish measured speed/reduced work; disclose missing lanes. Synchronize policy/code.
+- Package matched runtime/stdlib resources, including internal deal/json.lua and
+  the byte-identical closed C11 set. Callable modules: console/string/table/math/time,
+  never std/json. Verify outside the checkout on every backend with real executions
+  and missing/mismatched-resource negatives.
+- `generate-unicode-case.py` checks pinned Unicode 17.0 input hashes and regenerates
+  backend-local mappings/context properties with license notices. Ship unicode_case.h.
+- `gate-manifest.sh` alone selects tests/coverage. Native O0/O2 conformance/accounting
+  and compositions have no exclusions; missing hosts/requirements fail. Preserve
+  full deep-JSON success/failure matrices and common JS/LuaJIT/JVM execution.
+- Keep conformance/TypeScript grammar checks under test/. Bound suite concurrency,
+  lock batched native objects per gate and retain cold/cache-invalidating controls.
+- Tests compile to build/test-classes; coverage counts build/deal only and enforces
+  unrounded 85% line/75% branch minima. Stateful tests require Python/Hypothesis from
+  test/requirements.txt; missing dependencies fail, never skip.

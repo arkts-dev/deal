@@ -1,3 +1,16 @@
 # Frontend Conformance
 
-Test lexer, parser, checker and module resolution independently from execution. All comment contents are whitespace; preserve token/range and line-terminator controls, recursive declarations, unused annotation errors, absent synthetic symbols and universal declaration-identifier `$` rejection, including declaration files. Pin accepted/rejected outcomes, diagnostics and token ranges. Initialization/assignment controls distinguish RHS read refinements from fixed write types; direct-field guards accept only the owning receiver binding, not aliases. Record-key fixtures accept quoted/escaped names and computed strings under an explicit Record context; do not retain identifier-only parser-rejection expectations. Keep companions subordinate. Use Promise results, inferred for-of bindings and checked unknown extraction. Supply required class/Error fields so unrelated omissions cannot mask the intended diagnostic. Reject metadata data/array deletion; admit contextual identifiers. Preserve origins/retired-syntax rejections. Retain TypeScript-subset negatives for malformed templates, bare function expressions, constructor fields, adjacent minus tokens and reserved nested declarations; nested declarations also reject builtin/$ names and local collisions.
+Test lexer/parser/checker/resolution independently of execution. Pin acceptance,
+exact diagnostics and token ranges; companions stay subordinate.
+
+- Comments are whitespace: retain range/line-break controls, recursive declarations,
+  unused annotation errors and absent synthetic symbols. Reject $ universally.
+- Distinguish RHS read facts from fixed writes; direct fields refine only their
+  owning binding, not aliases. Contextual parameters/literals preserve exact targets.
+- Record keys admit quoted/escaped/computed strings under genuine Record context.
+  Supply required class/Error fields so omissions cannot mask intended failures.
+- Use Promise results, inferred for-of bindings and checked unknown extraction.
+  Reject namespace data/array deletion; accept contextual identifiers.
+- Keep retired-syntax and TypeScript-subset negatives: malformed templates, bare
+  function expressions, constructor fields, adjacent minus tokens and invalid
+  nested declaration names/collisions.

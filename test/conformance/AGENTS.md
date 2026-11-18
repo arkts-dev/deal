@@ -1,16 +1,28 @@
 # Conformance
 
-Maintain specification-indexed frontend/runtime cases with exact outcomes. CorpusConformanceTest owns discovery/preparation/invocation/verdicts; only artifact launch protocols differ. Bound subprocesses; reconcile backends/exports/completions. Reuse setup; isolate tasks/verdicts. Missing tools/invocations fail. Rejection isn't execution.
+`CorpusConformanceTest` owns specification-indexed discovery, preparation,
+invocation and verdicts; only artifact launch protocols differ. Select membership
+by declared intent, never compiler success. Keep companions explicit, subprocesses
+bounded and denominators/independent consumers intact. Missing execution is failure.
 
-- Recognize the current Records spec heading, including Literal keys and deletion; heading validation must not silently drop valid fixtures.
-- Select membership by declared intent, never compiler success. Keep companions explicit/focused; preserve denominators and independent consumers.
-- Reach return checks through captured locals without parameter checks; construct store destinations before corruption and inspect state after rejection. Pin exact nominal atoms, including same-named siblings and raw external import keys; never add dotted aliases to a project's externals. Distinguish ordinary/assertion projections; include valid controls per declaration.
-- Record reads are unknown. Extract/refine before concrete use, but never let an assertion mask a later parameter/element negative. Admit valid carriers before closure invalidation or fixture-only alias mutation.
-- Function-valued variable reassignment cases observe current bindings through captures, aliases, loops, branches and imported/host paths. Never-assigned, recursive and fixed-adapter controls retain static targets.
-- Arity adapters cover declaration/assignment, arguments, results, supplied fields, writes, arrays, host/stdlib and async sources. Dynamic shorter signatures reject rather than silently adapt. Ignored arguments still evaluate once. Assignment stores may adapt, but yielded RHS identity/type/effects remain original, including nested assignments and retained callbacks.
-- For-of preserves evaluated-once iterables, live contiguous traversal and fresh mutable captured cells. Nested array/string/mixed loops must also compile and execute inside lambdas. Cover mutation, alias replacement, break/continue, Unicode and awaited resumption without duplicate batteries.
-- Call-preserved refinements can be invalidated through closures. Pin failure at the consuming read before body/storage effects; valid controls preserve the admitted value. Throw controls retain Error identity, original origin and once-only evaluation across direct, parenthesized, caller-catch and async paths.
-- Short-circuit assignment covers skipped/selected effects, receiver-key-RHS order, nested results, await and abrupt completion across storage.
-- Catch/narrowing distinguishes scope-correct writes, shadows and uncalled bodies. Preserve outer refinements, fresh catch captures, replacement identity and closure invalidation.
+Sidecars pin contracts; source asserts computed results. JS/LuaJIT/JVM require
+identical expectations without subsets/exclusions. Async pins name export,
+descriptor and binary64 result; use public invokers, shared deadlines and external
+receipts. Missing/duplicate/malformed/wrong completions fail. Compile cases may add
+production-backend checks. Validate current specification headings.
 
-Sidecars pin observable contracts; code asserts computed results. All three backends are mandatory; subsets and backend-specific expectations are rejected. Keep representation-specific host tests in existing focused suites, preserving execution. hostFixture selects companions under stable host/probe, preserving external atoms. Native header/registration reconciliation derives corpus-selected companion identities from sidecars; focused retained-boundary drivers also use host/probe directly. Wrong headers, registrations and duplicates still reject. Compile sidecars may add production-backend checks. Async pins name export/descriptor/binary64 value, including signed zero; public consumers use shared deadlines and transcript-external receipts. Missing/duplicate/malformed/wrong completions fail. Preserve distinct consumers during migration; omit policy inventories.
+HostFixture selects stable host/probe companions, not discovered cases. Reconcile
+native stems, generated headers and registrations from sidecars; reject wrong or
+duplicate records. Preserve exact external atoms, never dotted aliases. Keep
+representation-specific cases in focused integration suites, not dummy companions.
+
+Pair independently executed positives with exact failure projections. Reach the
+intended boundary: admit valid values before capture invalidation/hostile mutation;
+construct destinations before corruption and assert rollback/identity. Return
+negatives must not fail first at parameters/assertions. Preserve required-field,
+unknown-extraction and direct-only builtin rules rather than masking diagnostics.
+
+Exercise mutable functions/adapters/recursion, original assignment results,
+once-only ignored arguments, live for-of/fresh captures, lazy effects and async
+completion. Pin errors at consuming reads and preserve throw/catch identity/origins.
+Fixture-specific matrices and regression details belong in executable tests.

@@ -1,5 +1,8 @@
 # Repository Policy
 
 - `docs/spec-v1.6.md` is the sole authoritative product specification.
-- Do not add claims, evidence/readiness records, artificial release or promotion gates, historical catalogs, generated notes, audit narratives, or equivalent non-product governance artifacts.
-- Keep implementation, tests, tooling, documentation, and the existing `AGENTS.md` hierarchy synchronized; update affected files with code or policy changes. Descendants inherit the nearest file.
+- Keep implementation, tests, tooling and docs synchronized. Read applicable
+  `AGENTS.md` files; descendants inherit parent instructions.
+- Keep guidance terse and current. Regression details belong in executable tests.
+  Do not add claims/readiness/evidence records, artificial release/promotion gates,
+  historical catalogs, generated notes, audit narratives or equivalent governance artifacts.

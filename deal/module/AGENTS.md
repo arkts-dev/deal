@@ -1,15 +1,38 @@
 # Modules
 
-CompilationTiming observes current-thread monotonic phase durations with nested scope restoration. Observer RuntimeExceptions cannot fail compilation; timings never enter artifacts. Use shared phase names, not backend-specific instrumentation; codegen-total includes lowering and excludes publication.
+Own resolution, dependency order, checked-project orchestration and identities.
+Validate the complete graph before lowering/publication. Entry must export
+synchronous zero-parameter main():void. TypeChecker alone owns definite returns.
+Use active version constants in discovery and isolated constructors.
 
-Own resolution, dependency order, checked-project orchestration and identity assembly. The selected entry must export zero-parameter synchronous main():void; missing exports and wrong signatures fail before publication. Ordinary non-entry functions retain their declared result contracts. Validate the complete graph before lowering or publication; preserve deterministic phase order. Isolated constructors use the same active version constants as project discovery. Preserve DistributionHome precedence: project-local stdlib, packaged resources/home, then checkout fallback; runtime files exclude project overrides. The five callable stdlib modules exclude JSON; stray local std/json declarations confer no builtin identity or import authority.
+## Resolution
 
-Carry exact declaration/provider facts through imports, annotations, contextual literals, call results and inferred carriers. Function-cell parameter/result annotations retain their own provider under module-name shadowing. A same-spelled local or sibling declaration cannot capture another provider's layout. Canonical nominal identity names the defining file; reject unrepresentable identities and distinct-provider crossings rather than retagging values. Whole-project provider indexes resolve declarations reached indirectly through fields, parameters and results.
+- Stdlib precedence: project-local, packaged resources/home, checkout fallback.
+  Runtime resources never use project overrides. Callable modules are console,
+  string, table, math and time; stray std/json declarations grant no builtin identity.
+- Carry exact providers through imports, annotations, literals, calls and inferred
+  carriers, including under namespace/parameter shadowing. Nominal identities name
+  defining files; never retag across providers. Project indexes include declarations
+  reached indirectly through fields/parameters/results.
+- Record optional guards/completed chains separately; preserve callee providers and
+  propagate result context through completed wrappers/conditional arms, not guards.
+  Visit computed keys before values without giving keys the value's class provider.
+- Comments grant no symbols/exports. Declaration files share identifier restrictions;
+  report annotation-resolution errors. Class plans contain structural fields only,
+  with no executable initializer/default dependencies. Preserve ordinary body
+  dependencies, resource ranges and provider digests.
 
-Optional-chain traversal records every guard and completed chain as distinct canonical node kinds, preserves parameter/result providers through guarded callees and carries result context only through the completed wrapper. Object-property reference recording visits computed keys before values without applying a value's class provider to its key. Conditional default/reference traversal records all three expressions and propagates result context to the arms only; canonical serialization retains their distinct roles and provider facts.
+## Emission and timing
 
-Comments never grant exports or helper symbols. Declaration files obey the same identifier restrictions as implementations, including `$` rejection; report resolver diagnostics produced during annotation checking. Class plans contain structural fields only: name, descriptor and optional flag. Annotations create no executable initializer/default dependencies. Preserve ordinary function-body dependency discovery, resource ranges and provider digests. Consume TypeChecker's single definite-return decision; no secondary null-falloff walk or recursive-group exception.
+`ProductionProjectEmission` owns one lowering, closure guard and render per target.
+JS stages per-unit CommonJS artifacts/maps; LuaJIT/JVM/LLVM stage one project artifact.
+LLVM adds the closed runtime set without sidecars/tools. No retry, purpose flag or
+AST fallback selects another renderer; returned paths belong to that invocation.
 
-ProductionProjectEmission owns one project lowering, closure guard and rendering per target. JS stages one CommonJS artifact and version-1 sidecar per implementation unit; LuaJIT/JVM/LLVM render one project artifact, and the LLVM arm additionally stages the closed C11 runtime deployment set with no sidecar. The returned entry path and produced project belong to that invocation. No purpose flag, retained backend, retry or AST fallback selects another renderer.
+Stage artifacts/maps/dumps/runtime/stdlib in one publication transaction. Missing
+resources publish nothing. Lua includes internal deal/json.lua. Source maps/comments
+are default; --source-map selects no alternate behavior.
 
-Stage generated artifacts, maps, dumps and required runtime/stdlib copies in one transaction. Lua deployments include deal/json.lua as an internal runtime algorithm resource, not a project-overridable stdlib module or callable surface. Missing resources fail compilation; rejection publishes nothing. Source comments/maps are the default, and --source-map selects no alternate behavior. Keep responsibilities synchronized without policy inventories.
+`CompilationTiming` observes monotonic current-thread phases, restores nested scopes
+and contains observer RuntimeExceptions. Use shared phase names; codegen-total
+includes lowering, excludes publication and never changes artifact bytes.

@@ -1,49 +1,104 @@
 # Semantic IR
 
-Define backend-neutral execution. Exclude AST/checker objects; preserve deterministic IDs/descriptors/payloads/order/serialization. Evolve lowering, validation, Oracle, emitters and tests together.
+Define backend-neutral execution, never AST/checker objects. Preserve deterministic
+IDs, descriptors, payloads, order and serialization. Evolve lowering, admission,
+Oracle, emitters and tests together.
 
 ## Admission
 
-Descriptor legality is positional at parsing, compound construction and admission/materialization: void is result/completion-only, never a field, array element or function parameter. Functions returning void remain legal data, including array elements. Distinguish data and result parser entry points and preserve legal void boundary/completion checks.
+- Enforce descriptor position recursively: void is result/completion-only, never a
+  field/element/parameter. Functions returning void remain legal data.
+- Typed/raw/text surfaces carry complete facts and identical first failures.
+  Validate registry identity, body membership, captures, binding registrations,
+  module/init/export links and construction. Raw materialization has no independent
+  authority; undecodable recognized positions reject.
+- Standalone units reject unavailable providers. Project admission checks framing,
+  module keys, profiles/indexes, provider classification, implementation closure
+  and dependency order. Run each owner once over owned companions in order.
+- Resolve factories/fields/schemas through exact providers. Schema descendants
+  stay in the defining module's import closure; global seeds, consumer-relocated
+  layouts and unrelated imports grant no visibility. Ambiguous owners reject.
+- Carry active profiles/capability hashes and recompute context hashes. Inconsistent
+  comparison/project facts reject R-PROFILE; never substitute retired profiles.
 
-Typed/text surfaces share complete raw facts and composed admission. Validate registry identity, body membership, module/init/export links, captures, binding registrations and construction with identical first failures. RawUnitMaterializer inverts fromTyped without authority; undecodable recognized positions reject.
+## Operations
 
-Standalone units reject unavailable project-provider links. Project admission validates framing, module keys, profiles, index coverage, provider classification, implementation closure and dependency order. Run each production owner once over owned companions in established order. Resolve class factories/fields/JSON through recorded exact providers; ambiguous shared identities fail closed, never select siblings.
+Operands must precede their consumers with exact descriptors, ownership and payload
+agreement. Closed catalog signatures/selectors/policies apply identically on every
+transport. Direct-only selectors grant no callable namespace exports; append native
+IDs without renumbering existing ones.
 
-Carry active profiles through constructors/guards. Recompute context hashes from carried profiles/capability hashes; inconsistent comparison/project facts reject R-PROFILE. No retired-profile substitution.
+| Operation | Required contract |
+|---|---|
+| NUMBER_REM | ECMAScript dividend-sign remainder and nontrapping binary64 specials |
+| STRING_TO_NUMBER | Checked string, whole-string ECMAScript conversion, malformed -> NaN, NO_DEAL_FAILURE |
+| NUMBER_TO_STRING | Number -> shortest ECMAScript text, NO_DEAL_FAILURE; before later template effects |
+| OBJECT_KEYS | Exact class/Record -> fresh string[]; presence/order only, never field admission |
+| ARRAY_POP | Exact array -> optional element; validate live tail before removal |
+| ARRAY_SPLICE | Exact array/number/number -> same array type; admit all removed positions before mutation |
+| ARRAY_SLICE | Exact array/number/number -> same array type; post-argument relative bounds, selected checks, fresh shallow storage |
+| ARRAY_ELEMENT_GET | Exact array/number -> element; integrality/bounds/presence E8002 before present-element admission |
+| ARRAY_HAS | Exact array/number -> boolean, NO_DEAL_FAILURE; presence only, invalid indexes absent |
+| ARRAY_JOIN | String-array/string -> string; post-argument snapshot, ordered checks, holes contribute empty text |
+| ARRAY_SEARCH | Array/element/number, includes mode and boolean/number result; ordered reached checks and early exit |
 
-## Values and operations
+Array mutations/results preserve descriptors, aliases and rollback. Present-element
+failures retain original source-index E8003 and unwrapped leaf cause/origin. Missing
+strict reads fail even when elements admit undefined. Includes uses SameValueZero
+and holes as undefined; indexOf uses strict equality and skips holes. Native storage
+remains dense. Numeric bounds truncate/clamp before integer casts.
 
-- NUMBER_REM follows ECMAScript remainder (dividend sign, signed zero, nontrapping NaN/special values), never floor modulo. Canonical binary64 atoms preserve signed zero, subnormals, infinities and NaN across typed/raw/text transport. Integer IDs cannot substitute for numeric scalars.
-- STRING_TO_NUMBER is a direct-only string -> number STDLIB_CALL under NO_DEAL_FAILURE. NumberSemantics owns whole-string ECMAScript grammar, whitespace and correctly rounded binary64 conversion; malformed text yields NaN, not a language failure.
-- NUMBER_TO_STRING requires number -> string and NO_DEAL_FAILURE. Template lowering inserts it before each numeric fragment's later siblings; STRING_CONCAT remains string-only. NumberSemantics owns ECMAScript shortest decimal conversion, distinct from JSON presentation.
-- OBJECT_KEYS consumes one preceding Record/class receiver with its exact descriptor and returns a fresh string array under NO_DEAL_FAILURE. Snapshot presence only, including stored null/undefined and excluding absent fields/metadata; never traverse or admit field values. Record array-index keys sort numerically before other keys in creation order; classes retain declaration order.
-- FOR_EACH requires a preceding iterable matching ARRAY_VALUES/STRING_SCALARS, an owned body and TYPE_DESCRIPTOR policy on typed/raw/text admission. Array.from uses this existing live traversal with ordinary dynamic-call boundaries and checked append chains; it adds no opaque builtin payload or backend-specific algorithm.
-- Builtin namespace/receiver member constructs map to their shared operation contracts (existing algorithms use STDLIB_CALL) without fictitious namespace/export values. Preserve parameter/result boundaries and record receiver/argument order. STDLIB_SIGNATURE admission requires the catalog's exact parameter/result descriptors, fixed arity, selector and ordered payload/operand agreement on typed/raw/text surfaces. Direct-only Number, Math, String casing, String.slice and positional string-search selectors grant no callable export; append native selector IDs without changing existing ordinals.
-- ARRAY_POP consumes exactly one preceding array value with its exact descriptor, returns optionalRead(element), and owns ARRAY_ELEMENT_DESCRIPTOR. Validate the live tail before removing storage; rejection preserves all slots/length, empty yields undefined. Preserve the outer position's E8003 and leaf cause through Oracle transport and artifacts.
-- ARRAY_SPLICE consumes preceding array/start/deleteCount operands with exact array/number/number descriptors and the same array result descriptor under ARRAY_ELEMENT_DESCRIPTOR. Normalize numbers with ECMAScript ToIntegerOrInfinity and clamp before integer casts; admit every removed element in ascending original position before any mutation. Return fresh typed storage, preserve survivor identity and shift metadata with slots.
-- ARRAY_SLICE consumes preceding array/start/end with exact array/number/number descriptors and the same array result under ARRAY_ELEMENT_DESCRIPTOR. Truncate/clamp relative bounds after argument effects; reversed bounds yield empty storage. Selected present positions own source-index E8003 with the unwrapped leaf cause. Preserve shallow references, missing positions and independent fresh result storage without source mutation.
-- ARRAY_ELEMENT_GET consumes preceding exact array/number operands, returns the element descriptor and owns ARRAY_PRESENT_ELEMENT. Validate integrality, live bounds and presence first with ARRAY_READ_BOUNDS/E8002, then admit present storage with ARRAY_ELEMENT_DESCRIPTOR at the original one-based source index. Missing is E8002 even for undefined-admitting elements; preserve present undefined, leaf causes, origin and storage. Ordinary INDEX_READ remains unchanged. Map expands shared control/call/append IR around this primitive and retains all ordinary callback boundaries.
-- ARRAY_HAS consumes preceding exact array/number operands, returns boolean and owns NO_DEAL_FAILURE. Observe current bounds/presence only, never element admission. Nonfinite, nonintegral, negative or out-of-current-length positions are absent; negative zero addresses zero and stored undefined is present. Filter/some/every guard shared strict-read/call IR with this operation; native arrays remain dense.
-- ARRAY_JOIN consumes preceding exact string-array/string operands, returns string and owns ARRAY_ELEMENT_DESCRIPTOR. Save receiver before separator effects, snapshot length afterward and admit present strings in source order. Missing contributes empty text, stored undefined/null rejects; retain UTF-16 units, source-index E8003/leaf causes and source/destination rollback.
-- ARRAY_SEARCH consumes preceding array/element/number operands with exact descriptors, a boolean includes mode and boolean/number result respectively, under ARRAY_ELEMENT_DESCRIPTOR. Snapshot length after argument evaluation, normalize relative start and visit only reached positions. Includes uses SameValueZero with missing as undefined; indexOf uses strict equality and skips missing. Stop on the first match; reached present element failures retain source-index E8003 and leaf causes without mutation.
-- StringSemantics owns UTF-16 algorithms and display-only lone-unit replacement; console display never changes language text or lossless trace transport.
-- Nominal checks validate complete declared field plans using operation-local cycle guards, never lasting certificates. Callable admission validates payload/signature, including unread descendants.
-- Required fields read their declared descriptor; optional reads use RuntimeDescriptor.optionalRead and add undefined. Missing normalizes to undefined, never null. Host failure shapes distinguish language undefined from private absent-carrier nil.
-- CLASS_NEW requires every nonoptional field, including nullable and Error fields. Supplied fields own declaration-order boundaries; omissions own none. Reject retired initializer operations, payload keys and companion/default flags rather than ignoring them.
-- HOST function reads correlate with the alias cell initialized by their unique MODULE_IMPORT occurrence. STDLIB once-only surfaces record no occurrence; missing/mismatched links fail at the read origin.
-- IS_NULLISH accepts one preceding data operand and returns boolean under NO_DEAL_FAILURE without coercion or admission. NON_NULLISH removes only that operand's nullable envelope; it requires the identical operand/descriptor in its owning CONDITIONAL's preceding same-block IS_NULLISH guard. The guard immediately precedes the conditional in execution order, and projection begins its alternate block. Reject singleton-nullish/void projections and forged ownership/order on every transport surface.
-- BRANCH/CONDITIONAL carries a preceding same-block boolean condition, two distinct owned arm blocks and compatible explicit arm result links, never eager arm operands. Resolve repeated value identities within their recorded blocks. Preserve ordinary selector payload shapes; reject extraneous conditional value fields. CONDITIONAL_BRANCH function-adapter cells belong to the corresponding arm and join with the exact result descriptor; ordinary read boundaries never adapt.
-- FOR_EACH evaluates once and traverses increasing live positions. Absence stops traversal; contiguous appends are visited; wrong present elements fail their terminal check.
-- NARROWED_READ consumes a BINDING_LOAD or declared FIELD_READ from a binding receiver, carrying its refined descriptor and read origin. It may publish an admitted value, thread a consumer identity or validate in place; receiver/key/length/iterable/presence consumers must use that result. Ordinary boundaries retain their own projections.
-- ASSERTION carries an explicit target and reports E8001 for every mismatch, including function/array failures. CHECKED_ASSERTION maps to BOUNDARY, not fictitious UNARY.
-- INSTANCEOF alone carries a nominal unary target. Validate operand production order, types and exact results; HAS_FIELD requires one key form and valid receiver/string-key producers.
-- ASSIGN publishes original RHS identity/type while commits consume storage-typed values. Adapters retain evaluated VALUE operands; storage adapters consume preceding RHS children. Operand completion cannot hoist later loads before initialization.
+FOR_EACH validates iterable mode, body ownership and TYPE_DESCRIPTOR policy.
+Evaluate once and traverse increasing live positions; contiguous appends are visited,
+absence ends traversal and present invalid values fail. Expanded callback algorithms
+use ordinary iteration/branch/call/append operations and dynamic boundaries, never
+opaque backend algorithms.
 
-## JSON and failures
+IS_NULLISH is a one-data-operand boolean test without coercion/admission.
+NON_NULLISH requires the identical operand/descriptor in its owning same-block guard,
+which immediately precedes CONDITIONAL; projection begins the alternate block.
+Reject void/singleton-nullish projections or forged order/ownership.
 
-JSON_PARSE has one preceding string operand, explicit target equal to its result descriptor, and JSON_RECONSTRUCTION policy. Validate the entire reachable schema, including optional fields; Unknown/Record stop schema traversal, recursive classes are valid, and Func/Void/unavailable or ambiguous layouts reject. Schema descendants remain scoped to each defining module's import closure; an unrelated consumer import cannot supply a displaced private layout or globally registered declaration layout. External schema aliases join through exact resolved imports; nonbuiltin schema classes require a defining module. Assertions never supply decoding targets. Preserve syntax/duplicate-key errors, extras-first then declaration-order reconstruction failures and exactly one terminal event per started parse, caught or uncaught.
+BRANCH/CONDITIONAL owns a preceding boolean and distinct lazy arm blocks with explicit
+compatible result links, never eager arm operands. Resolve repeated IDs within their
+blocks. Contextual adapters belong to the corresponding arm/CONDITIONAL_BRANCH cell;
+ordinary read boundaries do not adapt.
 
-Preserve closed failure arms and their location/token dialects, including the unlocated raw host-result shape. Builtin serialization uses ordinary reached-position typed checks plus separate unsupported-carrier and fieldless cycle arms; retain no helper field-path parameter, null-swallowing policy or synthetic JSON field boundary. Substring and sqrt have no algorithm failure; their declared parameter/result boundaries remain. Never feed rendered table tokens into canonical descriptor parsing.
+NARROWED_READ consumes a binding load or declared field read from a binding receiver,
+with refined descriptor/read origin. Consumers use its admitted identity. ASSERTION
+carries explicit target and owns E8001 for every mismatch; CHECKED_ASSERTION is a
+BOUNDARY, not UNARY. INSTANCEOF alone carries a nominal unary target. HAS_FIELD
+requires exactly one key form and valid receiver/key producers.
 
-Decode preserves persistent descriptors recursively, including empty arrays, presence checks and exact failure paths. Generic/generated Records omit object undefined/functions, null-substitute arrays/nonfinite numbers, order numeric keys first and encode nested classes; declared nonfinite numbers encode null. Unknown equality compares kinds/scalars/original identities without conversion. Validate Record/unknown ingress graphs, preserving supported cycles.
+ASSIGN yields original RHS identity/type while commits use storage-typed values.
+Adapters consume preceding evaluated VALUE sources; completion cannot hoist later
+loads. CLASS_NEW requires all nonoptional fields, including nullable/Error fields,
+with declaration-order supplied-field checks and no omitted-field boundaries.
+Reject initializer/default payloads rather than ignoring them. HOST reads correlate
+with the unique MODULE_IMPORT alias cell; stdlib once-only surfaces invent none.
+
+## Runtime values and failures
+
+Canonical binary64 atoms preserve signed zero/subnormals/infinities/NaN; integer IDs
+cannot substitute for scalars. StringSemantics owns UTF-16 operations. Console-only
+lone-unit replacement must not change language text or lossless traces.
+
+Nominal/callable checks validate complete current plans, payloads and signatures,
+including unread descendants, with operation-local cycle guards. Required fields
+read declared descriptors; optionalRead adds undefined and missing never becomes
+null. Unknown equality compares kinds/scalars/original identities without conversion.
+Record/unknown ingress validates whole graphs while preserving supported cycles.
+
+JSON_PARSE owns one preceding string, an explicit target equal to the result and
+JSON_RECONSTRUCTION policy. Validate the entire schema, including optional fields:
+unknown/Record stop traversal; recursive classes are valid; function/void/unavailable
+or ambiguous layouts reject. Assertions supply no target. Preserve syntax/duplicate
+errors, extras-before-declaration-ordered fields and exactly one terminal per START.
+
+Decode retains descriptors recursively, including empty arrays. Stringify uses
+reached-position checks, separate unsupported-carrier and fieldless-cycle arms;
+no synthetic field boundaries or null-swallowing helpers. Records follow generic
+omission/substitution/numeric-key order; declared classes follow presence/order.
+Finite JSON numbers share ECMAScript spelling; nonfinite leaves become null.
+Preserve closed failure arms, locations and token dialects, including raw unlocated
+host-result shapes. Rendered table tokens are not canonical descriptors.

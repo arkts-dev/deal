@@ -1,7 +1,23 @@
 # JVM Backend
 
-Async-export return-descriptor validation uses the canonical result parser: bare void is legal there, never in array elements or function parameters.
+`JvmSemanticEmitter`/`JvmNames` render validated IR only. Verify real javac/java
+execution, host/async identity and normalized failures.
 
-Contextual JSON.parse uses the shared scanner/reconstructor, not a private null-returning parser, and passes the generated artifact's own immutable canonical-identity-to-plan map through reconstruction and materialization. Never select schemas or constructors from process-global registrations; another project's same canonical class identity must not replace them. Decode and ordinary boundary admission use operation-local explicit work stacks, preserving leaf normalization, required presence, declaration order and causes without persistent validity certificates.
-
-JvmSemanticEmitter/JvmNames render validated IR, never ASTs. Execute boundary/host/async identity via javac/java; normalize native failures. Distinguish null/missing/UNDEFINED; resultless bodies return JvmRuntime.UNDEFINED. Preserve sentinels before projection. Segment whole operations; finally preserves recursion/captures/transfers/frames/maps/diagnostics. Function carriers save/restore their own activation slots at entry/exit, including dynamic, adapter, host and async invocation; restore cell references, never undo live captured-cell mutations. Large closures partition static storage and function factories/snapshots into nested classes in the same Java artifact to avoid class-wide constant-pool overflow; preserve qualified access, source maps, initialization and sync/async re-entry. Class JSON preserves private order/presence/cycle identity; Error exposes required mutable name/message only; diagnostic transport binds name at first throw and retains that code independently on rethrow. Records share JSON rules; parsed projection: stack-safe. For-of traversal temporaries carry their operation id, including inside lambdas; Java locals cannot shadow enclosing loop locals. Preserve host identities/aliases/array descriptors; cache bridges. Validate class/Record/unknown graphs before publication: complete declaration plans, operation-local identity/descriptor guards, valid callable payloads/signatures including unread descendants. Host malformed transport uses closed reasons, never blanket catches. String traces escape surrogate units losslessly; UTF-8 console display replaces only lone units with U+FFFD. String algorithms reuse StringSemantics without scalar-only search/trim or lone-unit JSON rejection.
+- Distinguish null, missing and UNDEFINED; resultless bodies return UNDEFINED.
+  Async-export result parsing admits void only in result positions.
+- Function carriers save/restore activation slots on every invocation path;
+  restore cell references without undoing live captured mutations. Segment whole
+  operations; finally preserves recursion, transfers, frames and diagnostics.
+- Partition large closures/factories/snapshots into nested classes to avoid
+  constant-pool limits. Preserve qualification, initialization/maps and re-entry.
+  Generated loop/catch temporaries use operation-specific names, including lambdas.
+- Preserve host aliases/descriptors and cache bridges. Admit complete current
+  class/Record/unknown graphs with operation-local identity/descriptor guards,
+  including unread callable bodies/signatures. Closed malformed-transport reasons
+  replace blanket catches; no persistent validity certificates.
+- Contextual JSON uses the shared stack-safe scanner/reconstructor and each
+  artifact's immutable exact plan map, never process-global schema selection.
+  Preserve private field order/presence/cycle identity and generic Record rules.
+  Error exposes mutable required name/message; first throw binds code independently.
+- Reuse StringSemantics. Escape UTF-16 units losslessly in traces; console UTF-8
+  display replaces lone units only, without changing language text.

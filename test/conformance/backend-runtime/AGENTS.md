@@ -1,18 +1,25 @@
 # Runtime Conformance
 
-Execute production artifacts and assert values, effects, exact failures/origins, nominal identity and evaluation order. Every case requires JS/LuaJIT/JVM with identical expectations and zero exclusions; missing tools, exports, host companions or completions fail. Do not bless AST-only behavior.
+Execute production artifacts and assert values, effects, identity, order and exact
+failures/origins. Every case requires JS/LuaJIT/JVM with identical expectations and
+no exclusions. Missing tools, hosts, exports or completions fail.
 
-CorpusConformanceTest discovers cases and parses invocation plans: main once, then eligible zero-arity exports in declaration order. Reconcile transcript-external receipts. Sidecar-pinned numeric async exports use public invokers and raw binary64 comparison: JSON 1/1.0 agree; signed zeros differ. Negatives with probes require empty main and one failing probe; split independent throws. Assert computed results locally; preserve focused consumers.
+`CorpusConformanceTest` invokes main once, then eligible zero-arity exports in
+declaration order; reconcile external receipts. Numeric async exports use public
+invokers and raw binary64 comparison: 1/1.0 agree, signed zeros differ. Negative
+probes use empty main and one failing probe; split independent throws.
 
-- Import standard modules under nonreserved aliases when the imported surface is the subject; retain imported callable identity and keep exact failure coordinates stable during alias migrations.
-- Pin exact sibling declaration atoms with independently executed valid controls. Assertions use E8001; ordinary identity boundaries keep their own projections.
-- Supply all required class fields, including nullable/callable fields. Separate literals establish freshness; supplied references establish aliases. Failed construction preserves expression effects without publishing partial targets.
-- Preserve binary64, signed zero and nontrapping arithmetic. Compare JSON structures/decoded numbers for value assertions; separately pin ECMAScript numeric spelling, including signed-zero normalization and exponent thresholds.
-- JSON.stringify omits object undefined/functions, null-substitutes arrays/nonfinite numbers, and returns undefined for unrepresentable roots. Independently cover cycle rejection, declared-field ordering, any-root parse success and contextual Record target rejection of nonobject roots. Contextual JSON.parse throws on invalid reconstruction; pin E8007 for extra class fields separately from E8001 syntax/type failures and verify unchanged destinations/descendant aliases. Preserve imported callable subjects using ordinary declared wrappers rather than treating direct-only builtins as values; no declaration marker or generated helper is required.
-- Every object literal has a genuine contextual type, including Record literals inside conditional branches; retain the same runtime observations when adding required annotations.
-- Catch/Record reads remain unknown until checked extraction or supported refinement. Use declared-result wrappers when a runtime negative needs an unknown or nullable source that initialization would otherwise refine; preserve the actual failing boundary and lazy-path observation. Preserve shadowing, async invalidation and actual consuming-boundary negatives; do not assume unsupported post-termination narrowing.
-- Presence uses Object.hasOwn without refinement. Distinguish absence, null and stored undefined. Delete Record keys/optional fields, never array elements. Void completion is not null.
-
-Dynamic-recursion fixtures exercise mutable bindings, arrays, Records, assertions, adapters, caught throws and escaped per-activation local cells; named/nonrecursive controls remain distinct. Async fixtures pin public completion invocations rather than merely calling main. Syntax controls preserve parenthesized expressions, separated minus tokens and literal valid template escape spellings.
-
-Host setup must supply equivalent array intent/descriptors and malformed-callable inputs across backends. Native reflection and field states unrepresentable in JVM typed storage belong to focused host-integration suites. Synchronize migrated source coordinates without weakening expectations.
+- Pin exact nominal/provider identities with valid controls. Assertions own E8001;
+  ordinary boundaries retain their projections. Contextualize literals and supply
+  required fields. Fresh literals versus supplied aliases remain distinct.
+- Preserve binary64 specials, null/undefined/absence and result-only void. Compare
+  JSON values structurally; pin numeric spelling/order separately. Contextual decode
+  failures preserve destinations; extras use E8007, syntax/type failures E8001.
+- Unknown/catch reads require extraction. Use declared-result wrappers when a test
+  needs unknown/nullability that initialization would refine. Reach actual consuming
+  boundaries without assertions masking them; guards follow current flow rules.
+- Exercise mutable/aggregate/adapted recursion and fresh escaped/catch/iteration
+  cells. Async subjects must invoke public completions, not merely main.
+- Host inputs preserve equivalent array intent/descriptors and malformed callable
+  subjects across backends. States/reflection unavailable in JVM typed storage
+  belong in focused integration suites. Do not weaken expectations during migration.

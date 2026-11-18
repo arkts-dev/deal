@@ -1,69 +1,102 @@
 # Semantics
 
-Construct coverage follows emitted operands: HAS_FIELD embeds a checked literal class field name, so it contributes no scalar-literal operand; computed Record keys retain their expression coverage.
-
-Own backend-neutral checked-project lowering/shared runtime meaning. Encode evaluation order, boundaries, failures, calls, classes, modules and stdlib once; complete changes through validated IR, Oracle and every emitter. No AST fallback. Evaluator boundary views include executable-body validity, not signature alone.
+Own backend-neutral lowering/shared runtime meaning. Encode evaluation order,
+boundaries, failures, calls, classes, modules and algorithms once; evolve IR,
+validation, Oracle and every emitter together. No AST fallback. Evaluator checks
+include executable body validity, not signature alone.
 
 ## Providers and admission
 
-Resolve construction/field layouts from checked declarations and defining providers, then project indexes. Never select a same-spelled local or first identity match. Valid nominal identities name defining files; defensive shared-identity ambiguity fails closed at the offending origin. Contextual JSON schemas include private descendants from the owned defining dependency units, not just exported construction entries. Keep dependency layouts out of transported consumer-local layouts; standalone admission rejects unavailable project links. Each contextual schema position retains its defining module: descendants resolve only within that provider's import closure, never through an unrelated consumer import or a relocated consumer-local declaration. Carry owned layouts and import visibility together in the temporary schema context. Declaration-seed layouts retain their interface owner; join external descriptor aliases through resolved import specifiers and targets, never infer ModuleId from ClassId text. A global registration seed does not grant unrelated providers schema visibility. Ambiguous declaring identities fail closed regardless of comment spelling; never choose a first/last schema owner.
+Resolve layouts from exact checked declarations/providers and project indexes.
+Canonical identities name defining files; ambiguity fails at the offending origin,
+never first/last match. Contextual schemas include private descendants only through
+the defining provider's import closure. Global seeds, relocated consumer layouts
+and unrelated consumer imports grant no visibility. External aliases join through
+resolved import targets, not ClassId text. Keep dependency layouts out of transported
+consumer-local inventories; standalone admission rejects unavailable project links.
 
-Implementation seeds agree with exact interface/module identity; declaration seeds agree with layout fields, optional-read descriptors and canonical annotations. Optional reads add undefined, including null|undefined for optional null; absence never fabricates null. Typed/raw/text admission consumes the same complete facts. Supplied companion views must match the unit's owned records; content-equal detached views resolve to those owned records.
+Seeds agree with interface/module identity, fields, optional reads and annotations.
+Optional absence becomes undefined, never null. Typed/raw/text surfaces consume
+identical complete facts; supplied companion views must match owned records.
+Carry active profiles through admission/comparisons/context hashes; update digests
+and serialization together. Canonical record, diagnostic table and JSON-plan tokens
+remain distinct dialects.
 
-Carry DEAL_V1_6_BINARY64/V1_6_ACTIVE through constructors/comparisons/admission/context hashes. Reject retired profiles/aliases. Evolve serialization, digests and independent pins together.
+## Bindings and control
 
-## Bindings, calls and adapters
+- Entry invokes the selected synchronous void main once through ordinary CALL and
+  ENTRY_INVOKE; void completion synthesizes no null/data projection.
+- Mutable function bindings use evaluated dynamic carriers, including await.
+  Declarations, recursion and fixed adapters retain recorded static callees.
+  Resolve by identity/execution class, not spelling or descriptor.
+- Expression parameters with omitted annotations keep exact checked signatures;
+  their parameter source spans anchor boundaries. Declaration annotations stay
+  fail-closed. HOST reads retain the originating import occurrence's alias cell;
+  validate exports in ascending-name order without reordering provider facts.
+- Adapters capture evaluated VALUE sources once, including immediate recursive let
+  initializers and awaited results. Assignment yields the original RHS identity/
+  type while storage may receive an adapter; later loads cannot justify captures.
+- NARROWED_READ publishes admitted operands for non-boundary consumers. Direct
+  fields retain declared FIELD_READ types, followed by explicit refined reads.
+  Preserve ordinary boundary projections and read origins; never narrow null tests
+  or rewrite unrefined storage descriptors.
+- Address-chain receiver/key/normalize/commit links use admitted operands in child
+  order. Slot-threaded logical results keep preallocated identities. For-of retains
+  once-evaluated live iterables and fresh captured iteration cells.
+- Conditionals own lazy blocks and explicit result links. Selected-arm adapters
+  wire to the owning join; void joins publish no data. Coalescing saves the left,
+  tests IS_NULLISH and uses matching NON_NULLISH projection in the alternate arm.
+  Optional chains nest these guards so skipped keys/arguments never execute.
+- Computed Record literals evaluate key then value once through ordinary shared
+  operations; duplicates throw Error and publish no partial destination. Traverse
+  keys for captures/dependencies. Static literals retain TABLE_NEW. HAS_FIELD
+  static names are payloads, not invented literal operands.
+- Throw/catch preserves Error identity/current fields and original facts/causes.
+  First throw binds diagnostic code from name; catch executions own fresh captured
+  cells. Bare assignment targets are not invented identifier reads.
 
-Selected main delegates once through an ordinary synchronous Void CALL and ENTRY_INVOKE; no null data result or discarded data projection is synthesized. Preserve bare-return/fallthrough completion and TypeChecker's rejection of explicit value returns.
+## Algorithms
 
-Each HOST import read records its source occurrence's alias cell; never reconstruct occurrence ownership from module/name. Declared-export validation uses shared ascending-name order without changing declaration-ordered provider facts.
+Direct-only builtins carry closed selectors/signatures, never fictitious source
+exports or callable catalog entries. String receivers precede admitted arguments.
+Omitted string end becomes +infinity; search defaults preserve indexOf/lastIndexOf
+rules. String/Number conversions are checked number/string-only; interpolation
+converts numbers before later fragment effects. Shared scalar rules live in
+NumberSemantics/StringSemantics; preserve binary64 specials and every UTF-16 unit.
 
-Function-valued variables assigned anywhere in their declaring body's nested traversal lack static allocation identity: reads materialize current values; calls/await use Dynamic dispatch. Declarations/imported exports are immutable; resolve signatures in their exact owner scope, excluding shadowing parameters. Declarations, recursion and fixed adapters retain recorded static callees. Classify runtime sources by recorded execution class, never spelling/descriptor. If conservative assignment analysis materializes a declared-name read as DynamicFunctionValue, its await invokes that evaluated carrier through dynamic dispatch just like its synchronous twin; sibling-scope spelling collisions must not produce a lowering rejection.
+Array lowering retains exact descriptors and ordinary boundary ownership:
 
-Contextually typed expression parameters retain ordinary checked signatures and parameter boundaries; when the annotation is omitted, anchor the boundary at the parameter's source span.
+| Operation | Lowering contract |
+|---|---|
+| push | Save receiver/value, capture live append position after effects, validate/adapt before commit, return new length |
+| slice | ARRAY_SLICE(receiver,start,end); omitted bounds become 0/+infinity; post-argument length, selected-position checks, fresh shallow result |
+| join/search | Saved operands, post-argument snapshot, ordered reached checks; preserve source indexes, holes and early exit |
+| map | Saved/admitted mapper, length snapshot, fresh array, strict ARRAY_ELEMENT_GET, indirect calls and checked append |
+| find/findIndex | Same strict reads/callback boundaries; stop with originally read value/index, else undefined/-1 |
+| filter/some/every | Presence-only ARRAY_HAS guards strict reads/calls; skip holes, not stored undefined; fresh selection or boolean early exit |
+| from | Saved/admitted source/mapper, fresh array, live FOR_EACH, indirect calls and checked append |
 
-A direct function-expression initializer captures its own mutable let cell, including through its immediate VALUE adapter and declaration boundary; unrelated later writes never justify an earlier load. Every adapter captures its source function value once at the source evaluation point, including awaited completion. Preserve genuine closure bindings and recorded sync/async completion cells.
-
-Assignment evaluates and yields the original RHS once. Storage may receive an adapter without changing the expression's type/identity. All adapters capture VALUE; validators require a preceding source producer. Address-chain validation preserves RHS parent/type/order and original publication. Later loads or enclosing assignments cannot justify earlier captures.
-
-## Consumption and control flow
-
-Lower checked refined binding reads through NARROWED_READ where no owning typed boundary already checks consumption: operators, conditions, index receiver/key, Record receivers, length, for-of and presence. Record the refined descriptor and read origin; consumers use the admitted result. Guarded direct fields retain the layout's declared FIELD_READ descriptor, then publish a separate NARROWED_READ result with the refined descriptor. Never rewrite unrefined declared-nullable reads, null tests or function-boundary reads. Preserve each owning boundary's projection, including E8003 array elements.
-
-Address-chain receiver/key/normalize/commit facts reference the admitted operands without changing child order. Slot-threaded logical operands republish the caller's preallocated condition identity. For-of evaluates once and preserves live traversal and fresh mutable captured iteration cells. String receiver calls lower to the existing closed string algorithm selectors, with the admitted receiver before left-to-right admitted arguments. One-argument substring/slice supplies a positive-infinity end constant after the evaluated start; slice has a direct-only selector with no callable std/string export and resolves truncated relative bounds without swapping; keep the canonical three-operand algorithm signature. Positional searches use direct-only three-operand selectors; indexOf defaults to zero and lastIndexOf to positive infinity after the explicit search argument. Preserve callable std/string two-argument signatures. Clamp positions after truncation; lastIndexOf treats NaN as positive infinity, other searches as zero. Import-free algorithms carry no invented source export-read or function binding. Internal JSON and direct-only Number/min/max/round algorithm signatures never populate module namespaces or callable catalog lookup; only ordinary stdlib exports do. Numeric predicates admit unknown without coercion or refinement; min/max retain NaN and signed-zero rules, and binary64 round breaks ties toward positive infinity without narrowing to an integer.
-
-Optional chains expand their receiver/callee spine into nested nullish conditionals, keeping remaining postfix operations, keys and arguments in alternate arms. Save projected receivers in internal bindings and emit fresh loads owned by each address chain; projection is not a new typed source boundary. Void calls execute/discard only on present arms; deletion uses ordinary terminal delete operations. Coalescing evaluates/saves its left once, tests IS_NULLISH and expands to ordinary lazy CONDITIONAL arms. NON_NULLISH preserves the saved identity in the matching guard's alternate arm, explicitly parented to that conditional even inside assignment chains. Contextual adapters remain selected-arm operations; nullish-only left operands still evaluate before the right.
-
-Conditional BRANCH operations own two lazy arm blocks and explicit arm result links. Evaluate/admit the boolean condition once before entering only the selected block; the join publishes that block's checked value. Contextual function adapters capture once within their selected arm and wire through its CONDITIONAL_BRANCH cell to the owning join, never through a runtime-read boundary. Joined function values register dynamic dispatch facts; discarded void joins publish no data representation.
-
-Array.push evaluates receiver then value once before capturing the live append position. Saved operands feed the closed ARRAY_SLOT assignment chain; validate before commit, preserve original receiver identity across argument mutation, adapt function elements over the saved source value, and publish the post-commit length. Preserve ordinary write failure projections; nested typed-array validation retains E8003 leaf causes.
-
-Array.slice carries once-evaluated receiver/start/end in ARRAY_SLICE with exact array/number/number descriptors. Omitted start/end lower to zero/positive infinity without changing IR arity. Normalize relative bounds against the saved receiver's length after argument effects, without swapping. Admit selected present elements in ascending source position, preserve missing positions where supported by storage, and publish fresh shallow typed storage only on success; never mutate the source or validate unselected elements.
-
-String-array join lowers to ARRAY_JOIN with exact string-array/string operands and string result under ARRAY_ELEMENT_DESCRIPTOR. Save the receiver before the required separator's effects, snapshot length afterward and admit live present strings in order. Missing positions contribute empty text; present undefined/null reject. Preserve source indexes, UTF-16 units and rollback without mutating the source.
-
-Array.includes/indexOf lower to ARRAY_SEARCH with exact array/element/number operands. Save the receiver before needle evaluation; admit and save the contextual/adapted needle before fromIndex. Binding-backed operands preserve this order inside assignment chains. Snapshot length only after arguments, clamp relative fromIndex, admit reached present elements in order and stop at the first match. Includes uses SameValueZero and reads holes as undefined; indexOf uses strict equality and skips holes. Preserve source-index failures and destination rollback.
-
-Array.map saves receiver then evaluates/adapts/admits mapper once, snapshots length afterward and expands into ordinary bindings, fresh ARRAY_NEW, indexed WHILE, indirect CALL and checked append chains. Strict ARRAY_ELEMENT_GET owns current bounds/presence E8002 followed by source-indexed element admission. Preserve ordinary callback parameter/return boundaries, including recursive source-array admission and discarded adapter arguments; do not bypass them to force reached-only behavior. Growth after the snapshot is excluded, current slots remain live and failures publish no partial destination.
-
-Array.find/findIndex share map's saved receiver, post-predicate length snapshot, strict live reads and ordinary callback boundaries. Expand early exit into shared branch/binding control flow; publish the originally read element or index at the first true result, otherwise undefined or -1. Do not inspect later slots or re-read a matched element after predicate effects; failures preserve the enclosing destination.
-
-Array.filter/some/every share saved receiver/predicate evaluation and post-argument length snapshots. Guard each reached strict read/call with presence-only ARRAY_HAS; skip missing positions, not stored undefined. Filter appends the already-read selected value into fresh storage; some/every stop on true/false respectively, with false/true empty defaults. Retain all ordinary callback boundaries, including recursive source-array checks before effects; failures preserve destination publication.
-
-Array.from expands into existing validated binding, ARRAY_NEW, live FOR_EACH, indirect CALL and checked append-chain operations. Evaluate/admit source then mapper once; create shorter-arity adapters at mapper evaluation and validate the saved function signature even for empty input. Preserve normal parameter/return boundaries and fresh iteration cells; do not add backend snapshot/map algorithms or publish partial results after failure.
-
-Computed Record literals evaluate each key then value once in source order, building private storage through ordinary bindings, HAS_FIELD, branch/throw and TABLE_SLOT assignment chains. Duplicate keys throw a fresh builtin Error; no enclosing destination publishes partial storage. Capture/reference/assignment traversal includes keys. Static-only literals retain TABLE_NEW. Computed-key construction claims the Error class capability without backend syntax fallback.
-
-Object.hasOwn consumes its receiver and dynamic string key through operand admission in receiver/key order, tests presence without reading values, and never narrows fields. Error owns name/message presence independently of stored values.
-
-Error has required mutable name/message fields. Throw/catch/rethrow keeps one reference identity and current fields; first throw binds the current name as diagnostic code, independently preserved with original facts and linked causes on rethrow. Catch bindings obey ordinary lexical shadowing and fresh per-execution cells; closures retain the captured incarnation. A bare assignment target owns ASSIGNMENT, not an invented identifier read.
+Callback boundaries include source-array checks and discarded adapter arguments
+before effects. Do not bypass them to force reached-only behavior. Preserve saved
+receiver identity, live rewrites, each operation's snapshot/growth rules, source/
+destination rollback and E8003 leaf causes. Expanded algorithms introduce no
+backend-specific callback payloads. Presence/key operations consume admitted
+receivers/keys without reading unrelated field values or refining them.
 
 ## Classes and JSON
 
-Register explicit structural class layouts and provider facts before body lowering. Comments synthesize no functions, signatures, exports or helper-specific call shapes; JSON provider functions are ordinary user declarations. Nonoptional fields, including nullable/Error, require presence. Provided fields own declaration-order boundaries; omitted optionals remain absent. No initializer operation, default publisher or host defaults hook exists. Decode rejects missing/extra keys and failed nested values without factories; parsed-tree conversions/validation are stack-safe. Direct raw reconstruction rejects path-local container cycles as producer defects; shared acyclic descendants remain valid and reconstruct fresh values per occurrence.
+Register structural layouts/provider facts before bodies. Class construction
+requires nonoptional fields and declaration-order boundaries; omitted optionals
+remain absent. No initializers, defaults hooks or generated helper exports.
+JSON parsing has explicit contextual schemas, syntax/duplicate errors, extras-first
+then declaration-order failures, fresh exact instances/arrays and no factories.
+Assertions never supply decoding targets. Preserve typed descriptors recursively,
+including empty arrays; operation-local reconstruction/checking stays stack-safe.
 
-Preserve persistent descriptors on decoded typed arrays recursively, including empty arrays. Function assertions register execution materializations while preserving identity; assertion failures always use E8001 without replacing ordinary signature/element diagnostics.
-
-Render canonical interfaces with Record<string, unknown>, Promise results and independent nullish flags ordered null then undefined. Do not reconstruct retired source/async spellings or conflate canonical record with diagnostic/JSON-plan table.
-
-Class stringify follows private presence/declaration order and original cycle identity; Error exposes name/message only. Generic/generated Records omit object undefined/missing/functions, null-substitute arrays/nonfinite numbers, order numeric keys first, encode nested classes. Declared nonfinite numbers likewise encode null. Every finite JSON numeric leaf shares NumberSemantics ECMAScript spelling, independent of container kind or numeric metadata. Reject malformed transport/cycles; preserve every UTF-16 unit. Case conversion lowers to direct-only one-string STDLIB_CALL selectors with no callable export. Unicode default casing uses pinned Unicode 17.0 mappings, expansions and contextual Final_Sigma, never ambient locale/JDK tables; retain lone UTF-16 units. Shared string algorithms use StringSemantics; retain no scalar-only search/trim implementation or lone-unit JSON rejection. Trace strings escape surrogate units losslessly across process transport; console sinks encode display-only U+FFFD for lone units, preserving valid pairs and language values. Parsed Record arrays retain unknown[] descriptors; declared fields retain declared descriptors.
+Stringify validates declared positions only when reached, preserves original
+cycle identity and class order/presence, and exposes Error name/message only.
+Records omit object undefined/functions, null-substitute arrays/nonfinite numbers
+and sort numeric keys before other creation-ordered keys. All finite numeric leaves
+share ECMAScript text. Preserve parameter/return crossings, operation origins and
+one terminal event per started parse/encode. Decode failures never become nullable
+successes; malformed transport and unsupported carriers retain their own arms.

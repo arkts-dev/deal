@@ -1,37 +1,68 @@
 # Code Generation
 
-Contextual JSON reconstruction emits plans for validated declaration registration layouts, including private recursive descendants reachable from host classes. An exported class value is not the complete declaration schema. Plans grant no source construction/export authority and never execute host hooks. JVM declaration plans instantiate the exact typed host records used by crossings; field writers qualify storage names so a field named value cannot shadow their input parameter.
+Render validated semantic IR only. `ProductionProjectEmission` lowers and
+renders once per project/target; no AST fallback or alternate purpose route.
+Renderers do not execute hosts or publish files. Unsupported facts fail with
+their operation's origin, never a raw exception.
 
-String.slice consumes a direct-only three-operand selector. Resolve truncated relative UTF-16 bounds, including negative fractions that truncate to zero, clamp before native casts, and return empty rather than swapping reversed bounds. No callable std/string export is introduced. Positional searches likewise use direct-only selectors with string/string/number arguments. Search and returned indices count UTF-16 units, never UTF-8 bytes; clamp before casts and distinguish lastIndexOf's NaN-as-infinity position from the other searches' NaN-as-zero.
+## Shared contracts
 
-String case conversion uses Unicode 17.0 default mappings and Case_Ignorable/Cased context for Final_Sigma on every backend. Combine valid surrogate pairs for mapping, preserve lone units, allow multi-code-point expansion and avoid ambient locale/version dependence. Regenerate backend-local tables with tools/generate-unicode-case.py; keep algorithms backend-specific.
+- Preserve evaluation order, lazy branches, admitted operand identities,
+  boundaries, ABI and failure origins. Assignment yields the original RHS even
+  when storage receives an adapter. Contextual adapters execute in their arm.
+- Resolve layouts and contextual JSON schemas through exact defining providers,
+  including private descendants. Same-named siblings stay distinct; ambiguous
+  ownership rejects. Schema registration grants no construction/export authority.
+- Construct from supplied fields with declaration-order checks; require every
+  nonoptional field, including nullable/Error fields. Omitted optionals stay
+  absent. No defaults hooks, generated JSON helpers or `C$fields` exports.
+- Preserve persistent array descriptors, aliases and null/undefined/absence.
+  Validate before mutation/publication. Array failures retain source-index
+  E8003 and the unwrapped leaf cause; assertions own E8001.
+- Pop validates before shrink; splice validates the entire removal range before
+  shifting. Slice checks selected positions only and returns fresh shallow
+  storage. Normalize/clamp numeric bounds before native casts.
+- Strict element reads check bounds/presence before descriptor admission;
+  missing yields E8002 even for undefined-admitting elements. Presence queries
+  do not read/admit values. Sparse-capable carriers distinguish holes from
+  stored undefined; native arrays remain dense.
+- Join/search snapshot after argument effects and visit reached slots in order.
+  Join preserves UTF-16; includes uses SameValueZero, indexOf strict equality.
+  Expanded callback builtins render ordinary shared control/call/append IR,
+  retaining all callback boundaries, including discarded adapter arguments.
+- `OBJECT_KEYS` snapshots presence/order without consuming unrelated values.
+  Use private declaration metadata; native presence-only readers accept NULL
+  value outputs. Nullish projections preserve identity, not unchecked narrowing.
 
-Numeric namespace algorithms stay backend-specific behind validated STDLIB_CALL selectors. Number predicates test the numeric kind without coercion. Min/max propagate NaN and preserve signed-zero selection; round keeps binary64, ties toward positive infinity, negative zero and nonfinite inputs, never a host integer-returning rounding routine. Direct-only selectors create no module export or dependency.
+## Scalars and errors
 
-STRING_TO_NUMBER admits only a checked string and implements whole-string ECMAScript conversion, not ambient host coercion/grammar. JVM shares NumberSemantics; Lua validates grammar and preserves negative zero before returning host conversion; native validates under its private numeric locale.
+Number conversion follows ECMAScript binary64 semantics, including signed zero,
+NaN and infinities. `NUMBER_TO_STRING` uses shortest decimal spelling and the
+specified exponent thresholds; finite JSON leaves reuse it. `STRING_TO_NUMBER`
+validates the whole string, never ambient coercion/grammar. JVM shares
+`NumberSemantics`; Lua preserves negative zero; native uses its private locale.
+Numeric predicates do not coerce; rounding is binary64 with ties toward +infinity.
+Direct-only selectors create no callable exports.
 
-Render NUMBER_TO_STRING with ECMAScript shortest decimal and exponent thresholds, never a host default formatter. Finite JSON leaves share this spelling; nonfinite JSON leaves substitute null. JavaScript uses primitive String(number); JVM shares NumberSemantics; Lua and native round exact decimal expansions with ties to even and round-trip interval checks. Conversion precedes later interpolation effects; concatenation consumes strings only.
+String operations count UTF-16 units; clamp positions before casts and preserve
+lone units. LastIndexOf treats NaN position as infinity. Casing uses pinned
+Unicode 17.0 default mappings, expansions and Final_Sigma context, not ambient
+locale/version tables. Regenerate data with `tools/generate-unicode-case.py`.
 
-Array-literal element admission preserves E8003 with the unwrapped leaf descriptor cause, both at the recorded element origin. Callback boundary projection preserves that cause and assigns the callback boundary origin to generated descriptor failures; do not discard it when rebuilding a transport error.
+Throw/catch/rethrow preserves Error identity, origin, frames and causes. First
+throw binds diagnostic code from the current name; later name writes do not
+rewrite it. Each catch execution publishes a fresh captured cell. Operation
+failures keep their own coordinates across direct/dynamic/adapted/imported calls;
+no ambient caller-origin substitution.
 
-ARRAY_POP checks the live tail before alias-visible shrink, returns the admitted value, preserves descriptors and clears removed-slot metadata/references. Preserve outer E8003 position/origin and the unwrapped leaf cause. Live host storage must shrink on the same carrier; never remove into a detached copy. ARRAY_SPLICE validates the entire removal range before shifting any slot, returns a fresh descriptor-preserving array, and shifts survivors plus private absence/numeric metadata without consuming unrelated invalid data.
+## Artifacts
 
-ARRAY_SLICE normalizes both relative bounds against the post-argument length of the saved receiver. Copy only selected present positions into fresh descriptor-preserving storage, retaining shallow reference identities and holes without materializing undefined. Unselected hostile elements remain unread; failure preserves source and destination publication, with source-index E8003 and the leaf cause at the operation origin. Native arrays have dense storage; do not invent a sparse representation for this operation.
+JS emits one CommonJS artifact and version-1 map per implementation unit;
+LuaJIT/JVM/LLVM emit one project artifact. LLVM stages the closed
+`NativeRuntime.FILES` set without invoking tools. Use the shared source-map
+recorder; mapping must not move effects or alter runtime locations.
+`--source-map` selects no alternate production behavior.
 
-ARRAY_ELEMENT_GET validates integrality, current bounds and presence before reading, with E8002 for a missing position even when the element admits undefined. Admit present storage at its original one-based source index before unboxing; preserve E8003 with its unwrapped leaf cause, operation origin and unchanged source. Expanded map loops use this operation with ordinary call/append boundaries, not a backend-local map algorithm.
-
-ARRAY_HAS observes current bounds/presence without descriptor admission or element reads. Invalid/nonintegral/nonfinite/negative positions are absent; negative zero addresses zero and stored undefined remains present. Filter/some/every render their expanded shared branch/call/append IR, never backend-local callback algorithms. Native arrays remain dense; current-bounds validation suffices there.
-
-ARRAY_JOIN consumes a saved string-array receiver and required string separator, snapshots length after argument effects and admits present strings in ascending source order. Holes contribute empty text, but stored undefined/null fail ordinary string admission. Preserve every UTF-16 unit and separator, source-index E8003/leaf causes and unchanged source/destination on failure. Native storage remains dense.
-
-ARRAY_SEARCH snapshots the saved receiver's post-argument length, normalizes relative fromIndex and visits ascending reached positions only. Admit present slots with original source-index E8003/leaf causes before comparison. Includes uses SameValueZero and holes as undefined; indexOf uses strict equality and skips holes. Return immediately on a match, preserving aggregate/function identities and source storage. Native storage remains dense.
-
-Nullish unary tests distinguish null/undefined from falsy data. NON_NULLISH is an identity-preserving representation projection authorized by shared structural admission, never an unchecked source narrowing or substitute for a typed boundary. Lua tests both nil and its private null sentinel; native unboxing retains managed roots.
-
-CONDITIONAL enters only the chosen arm after consuming its once-evaluated boolean condition. Publish the selected value explicitly, preserving false/null/undefined and reference identity. Contextual adapters execute only in that arm. Native joins convert actual to admitted joined representations and root managed results; void joins require no storage.
-
-OBJECT_KEYS snapshots presence/order without consuming unrelated values, including hostile callable fields and cycles. Use private class declaration metadata, not reflection or user-string tags; return fresh typed string arrays. Native emitted field readers accept a NULL value output for presence-only queries and must not load/classify those values.
-
-Operation failures use their recorded operation origin, including JSON parse/stringify inside direct, dynamic, adapted and cross-module calls. Do not retain ambient caller-origin stacks or let a caller replace the failing operation's coordinates.
-
-Translate validated semantic IR into target representation without redefining language semantics. A detached function missing its owning body-membership row rejects with the producing closure's exact origin, never a raw null dereference. Preserve boundaries, evaluation order, errors, and ABI behavior. The canonical class identity names the defining file, so two same-named sibling files are two identities and each emits its own layout, schema and carrier. Contextual JSON schemas resolve exact defining providers, including private descendants; multiple declaring providers for one identity are ambiguous, never selected by comments, helper operations or emission order. Construction metadata remains per declaring unit; schema registration grants no construction/export authority and publishes no generated JSON helper or `C$fields` export. Every production backend renders semantic IR; the AST-consuming emitters are retired and no fallback route exists. `JsSemanticEmitter` is the JavaScript semantic-IR renderer (one CommonJS artifact per implementation unit, coordinate-only maps recorded through the shared `SourceMapRecorder` with local/foreign placement and one version-1 sidecar per artifact). `ProductionProjectEmission.run` selects it for `Backend.JS` as the one rendering invocation over the one lowered project, so the JavaScript production artifacts of a compile come from that single call; `deal.codegen.llvm.LlvmSemanticEmitter` is the native renderer, invoked once for `Backend.LLVM` over the same lowered project and published as one textual module beside the closed `deal.toolchain.NativeRuntime.FILES` deployment set, with no sidecar, no per-module artifact and no external tool (its staged scalar subset, closed-set classifier and ABI mirror rules live in `llvm/AGENTS.md`); the public dispatch has one production arm for every backend: no AST emitter exists and no invocation purpose selects an alternate rendering (ISSUE-0805). The JavaScript renderer's `LOOP(FOR)` arm emits the body block's cell declarations, the body ops and the recorded update block inside one per-iteration scope, so the update block's carry transfer reads the very cell the finished iteration produced while a `let` cell stays a fresh live binding per iteration (a `continue` re-runs the recorded update block at its own transfer site, inside that same scope); the LuaJIT and JVM renderers need no such grouping because their cells are state slots rather than lexical locals. Class construction consumes provided values only, validates them in declaration order and publishes no instance on failure. Every nonoptional field must be provided, including nullable fields and both builtin Error fields. Host class metadata never requires, reads or executes a defaults hook; omitted optionals remain absent. JSON decoding follows the same presence contract and rejects missing required keys without invoking factories or evaluators. The recorded THROW keeps the thrown Error instance: a constructed Error's first throw materializes its own origin/frames on the identical value (the LuaJIT carrier's `o`/`f` fields, the JVM `JvmRuntime.raise` binding and the JS `$rt.throwValue` location write) and never allocates a replacement, an already-transported value is re-raised unchanged, and a handler's new failure keeps its own carrier as well — the JVM catch wrapper adopts the replacement's carried identity (`JvmRuntime.wrap`) and the LuaJIT wrapper commits the cause on the failing transport table, so the enclosing catch binds the instance the program threw. A captured catch binding is a shared cell whose catch entry publishes a fresh cell per catch execution (the LuaJIT cell table, the JVM Object[1] box, the JavaScript catch-clause let binding), so a closure created in an earlier catch keeps its own live cell and the next catch never rebinds it, while the catch binding's own BINDING_ALLOC never resets a live catch cell; the JVM try/catch arm names its caught-failure, replacement-failure, wrapped-failure and transfer locals by the op's own id, so a try/catch nested inside another handler's catch clause stays legal Java. Architectural direction never expands assigned task scope. Every production emission installs the project source-map recorder: source comments and per-source `.deal.map.json` sidecars are the default, and the accepted `--source-map` spelling selects nothing. Keep this file always synchronized with code.
+JS loop bodies and updates share the iteration's lexical cells, including
+continue transfers. JVM generated temporaries use operation-specific names;
+segmentation preserves captures, recursion, transfers and maps.

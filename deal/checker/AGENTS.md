@@ -1,51 +1,108 @@
 # Checker
 
-Own resolution, typing, narrowing and facts. Diagnostics are deterministic/target-neutral; downstream phases cannot rediscover meaning.
+Own target-neutral resolution, typing, narrowing and deterministic diagnostics.
+Publish exact checked facts; downstream phases must not rediscover meaning.
 
-- Require contextual types for every object literal, including nonempty literals inside inferred arrays/branches; nonempty fields do not authorize Record inference. Record assignment destinations supply context. Reject statically known duplicate decoded keys, require computed Record keys to be strings and forbid computed class keys; quoted class keys retain ordinary declared-field checking.
-- Resolve classes through exact declarations/providers in annotations, calls, arrays, fields and contextual literals. Same-spelled siblings remain nominally distinct; reject textual/first-identity substitution. Publish construction/per-expression facts.
-- Reject duplicate declared class field names during resolution, before default/layout planning; fields in distinct classes remain independent. Resolve even unused field annotations. Comments never grant schema/export authority or synthetic callable symbols. Reject $ in every user declaration, including declaration-file functions; string data and Record keys remain unrestricted. Recursive class declarations are legal; JSON schema restrictions apply only at contextual parse targets. Validate supplied literals against exact fields; require nonoptional fields, including nullable fields and Error name/message.
-- Own refinement facts by resolved binding identity, never name or structural symbol equality. Scope exit discards only exiting declarations; no shadow snapshot restoration. Assignment invalidates that binding and await invalidates all enclosing-function facts, including saved loop/exceptional-entry states. Both function-entry paths isolate those states.
-- Record scope-correct refined reads in `CheckResult.narrowedReads`. Build true/false states after condition effects; check &&/|| RHS under the selected left outcome and swap outcomes for negation. Join only branches reaching continuation, excluding return/throw/break/continue paths. Catch entry uses saved entry facts with assignment/await invalidations, never entry/normal-exit type equality; successful-path guards cannot update exceptional snapshots. Preserve post-try assignment resets. Calls preserve binding refinements; consuming boundaries validate stale values. Initialization/assignment replace binding read facts with RHS types, preserving adapted target signatures and declared write types. Direct declared fields use receiver-binding/field identity, never alias propagation; writes/deletions/calls clear property facts in evaluation order, including exceptional snapshots. Await/functions/back-edges retain specified invalidation; conditions/typed boundaries retain their projections.
-- Track null/undefined independently. Optional reads add undefined; presence never refines values. Write/delete context applies only to the outer storage target: receiver and key subexpressions remain reads, including asserted optional descendants. Record reads infer unknown; concrete consumption requires checked extraction or supported identifier refinement.
-- Record instanceof targets' resolved nominal types. Negation reverses nominal, typeof and nullish branch polarity. Never infer object/function types from typeof.
-- Void is result-only, never stored. Diagnose inferred void array elements before constructing array types, including nested literals and unknown destinations; arrays of functions returning void remain legal. TypeChecker alone diagnoses definite returns: only void permits fallthrough, including nested recursion. Null requires explicit return; no duplicate AST gate. A catch may fall through to a later return, and void bodies may fall through entirely; no independent try/catch return obligation exists.
-- Catch bindings are mutable local unknowns. Error access requires extraction/matching nominal branches. Preserve shadowing/captures; anchor binding diagnostics on identifiers.
-- Each while-body entry receives fresh true-guard refinement with ordinary invalidation; body refinements cannot cross back-edges. Repeated nullish/typeof/instanceof tests must read current values, not revalidate an assigned binding against its first-entry refinement. Unknown equality permits neither narrowing nor conversion.
-- Bindings reject eval/arguments and reserved words; async/as/from/of are contextual identifiers. Keyword properties remain legal. Reject duplicate surface nullish union members before unknown absorption.
-- Declarations/imports and const bindings are immutable; let-bound function values remain mutable. Preserve const through inference, closure resolution and for-of binding replacement; aggregates referenced by const remain mutable. Resolve signatures in their enclosing scope, excluding shadowing parameters.
-- Nested functions follow declaration order; modules hoist. Validate nested declaration names (reserved/builtin/$) and reject same-scope redeclaration without forbidding ordinary outer shadowing. Reject namespace/metadata data, duplicate properties and array deletion. Record keys remain string data; class members are declared-field accesses.
+## Types and declarations
 
-Record, Promise, Object, Array, String, JSON, Number, Math, Date, console and undefined cannot be rebound by user declarations/imports/parameters/iteration/catch names. Fixed Number, Math, Date, console and JSON.stringify namespace operations require direct calls and exact signatures; JSON.stringify accepts unknown without supplying an extraction context and returns string|undefined; ordinary class/Record callable fields remain distinct.
+- Object literals require a real contextual class/Record target; nonempty fields
+  do not authorize structural inference. Resolve exact declarations/providers
+  through annotations, arrays, calls, fields and literals; same-spelled siblings
+  never substitute. Reject duplicate decoded keys, nonstring computed Record keys
+  and computed class keys. Quoted class keys use ordinary field checks.
+- Resolve unused field annotations and reject duplicate declared fields before
+  layout planning. Recursive classes are legal. Require all nonoptional literal
+  fields, including nullable fields and Error name/message.
+- Void is result-only; reject inferred void array elements before type construction.
+  Functions returning void remain legal data. TypeChecker alone owns definite
+  returns: only void permits fallthrough; catch has no separate return obligation.
+- Preserve const/declaration/import immutability without freezing referenced
+  aggregates. Let-bound functions remain mutable. Resolve signatures in enclosing
+  scope, excluding shadowing parameters. Modules hoist; nested declarations follow
+  declaration order and reject same-scope collisions.
+- Reject reserved/eval/arguments/$ bindings and builtin rebinding everywhere,
+  including imports, parameters, iteration/catch and declaration files. Contextual
+  async/as/from/of identifiers and keyword properties remain legal. Comments grant
+  no symbols/exports. Reject namespace/metadata data and array deletion.
+- Null/undefined permissions are independent; reject duplicate union members before
+  unknown absorption. Optional reads add undefined; presence never refines values.
+  Record reads remain unknown until checked extraction/supported refinement.
 
-Number.isFinite/isNaN take exactly one unknown without coercion, contextual extraction or narrowing. Math.min/max take exactly two numbers; Math.round takes exactly one and retains binary64 results, including signed zero and nonfinite values. These operations grant no callable module exports.
+## Flow
 
-String and Number are unshadowable direct-call-only builtins taking exactly one checked number/string respectively; neither supplies contextual unknown extraction. String shares interpolation's NUMBER_TO_STRING; Number lowers through STRING_TO_NUMBER with no general coercion.
+Own facts by resolved binding identity, never name or structural equality. Scope
+exit removes only exiting declarations. Initialization/assignment refines reads to
+RHS types while preserving declared write envelopes and adapted signatures.
+Record scope-correct reads in `CheckResult.narrowedReads`.
 
-Template interpolations accept checked string or number values only; they grant no implicit contextual extraction from unknown or nullish values.
+Build condition states after effects; check &&/|| RHS under the selected outcome
+and reverse polarity for negation. Join only paths reaching continuation.
+Assignments invalidate binding and exceptional snapshots; await clears enclosing
+function/loop/exceptional facts. Both function-entry paths isolate these states.
+Catch entry uses saved entry facts with invalidations, not successful exit-type
+equality. Captured reads use declared types; calls preserve binding facts and
+consuming boundaries revalidate stale values.
 
-Function/arrow expression parameters may omit annotations only when a positional contextual signature supplies their exact types; array mapper/predicate contexts derive from the receiver/source, never callback bodies. Declaration parameters and all results remain explicit. Resolve omitted parameter bindings before checking bodies and preserve exact providers and ordinary arity adaptation.
+Direct declared fields use receiver-binding/field identity, not aliases or nested
+paths. Writes/deletions/calls clear property facts in evaluation order, including
+exceptional snapshots. Write/delete context affects only the outer storage target;
+receivers/keys/asserted descendants remain reads. While entries reapply fresh guards;
+body facts cannot cross back-edges or force stale first-entry admission.
 
-Expression-bodied arrows check their expression against the declared result, including requiring a void expression for void-result arrows. Their blocks, captures, recursion and async checks otherwise follow ordinary function expressions.
+Track exact instanceof targets and nullish/typeof polarity. Never infer object/
+function types from typeof or narrow/convert unknown equality. Catch bindings are
+mutable unknowns with ordinary shadowing/capture rules; diagnostics anchor identifiers.
 
-String receiver length is read-only and number-typed. Resolve receiver methods from the checked string type, not member spelling alone; require direct calls and exact declared argument types/arity. Substring and slice accept one or two number arguments; omitted end is distinct from an explicit undefined argument. Includes/startsWith/endsWith and indexOf/lastIndexOf take a string plus an optional number position; omitted position is not explicit undefined. ToLowerCase/toUpperCase take no arguments and return strings. IndexOf/lastIndexOf return numbers; includes/startsWith/endsWith return booleans without narrowing. Record/class function fields remain ordinary callable values.
+## Context
 
-Array push, pop, splice and slice are direct-call-only receiver intrinsics selected by checked array type. Push takes exactly one element-compatible argument and returns number, with contextual construction and ordinary function arity adaptation. Pop takes no arguments and returns the optional element type, including independent null/undefined flags. Splice takes exactly two numbers; slice takes zero, one or two numbers, never explicit undefined. Both return the same array element type in fresh storage. Class/Record callable fields with these names remain ordinary values.
+Function/arrow expression parameters may omit annotations only under an existing
+positional signature. Resolve their bindings and exact providers before body checks;
+never infer from bodies. Declaration parameters and all results stay explicit.
+Array callback contexts derive from receiver/source; ordinary shorter-arity
+adaptation remains. Void expression-bodied arrows require void expressions.
 
-Object.hasOwn accepts Record/class receivers and string keys without field narrowing; class keys must be literal declared-field names, including Error name/message. Reject detached or wrong-arity builtin calls.
+Conditional arms receive result context and their own guard states. Without an
+outer target, a literal arm uses its independently typed sibling's exact array/
+class/Record target/provider. Static checking order must not change branch facts.
+Context-free joins allow identical/nullish types or an actual unknown absorbing a
+non-void alternative, not arbitrary unions. Void joins require two void arms and
+cannot become data. Contextual adapters belong to selected arms.
 
-Object.keys is direct-call-only with exactly one checked Record/class argument and a string[] result; unknown, arrays, functions and nullish receivers require appropriate extraction/narrowing. It grants no contextual extraction and never narrows fields.
+Coalescing checks the left without outer context and contextualizes only fallback.
+Without an outer target, literal fallback uses the left's non-nullish array/class/
+Record target/provider. Nullish-only left uses the right type; void rejects.
+Optional chains check receivers/callees as reads, preserve exact declarations,
+add undefined to non-void results and merge skipped-path invalidations. Reject async
+optional calls; preserve direct-only/deletion restrictions.
 
-Optional guards check receivers/callees as reads without enclosing result context, remove only nullable envelopes and preserve exact declarations. Complete chains add undefined to non-void results, merge skipped-path invalidations and reject async calls; existing direct-only and deletion restrictions remain. Coalescing checks its left without enclosing context and propagates the contextual target only to its fallback. Without an outer target, array/object literal fallbacks receive the left's non-nullish array/class/Record type with its exact provider; other expressions gain no inferred context. Join the left's non-nullish type with the right through conditional rules; a nullish-only left uses the right's type. Reject void operands and merge fallback invalidations without granting post-expression refinement.
+## Builtins
 
-Conditional conditions require boolean and receive no outer result context. Both arms inherit the result context and their guard refinements; without context, an array/object literal arm receives the independently typed sibling's exact array/class/Record target and provider. Preserve each arm's guard state regardless of static checking order; merge invalidations at continuation. Context-free branches require identical types, permitted nullish joins, or an actual unknown branch absorbing a non-void alternative. Contextual function arity extension requires selected-arm adapters; void joins require two void results and cannot be stored as data.
+Record, Promise, Object, Array, String, JSON, Number, Math, Date, console and undefined
+are unshadowable. Resolve receiver intrinsics by checked type, not spelling;
+class/Record callable fields and namespace exports retain ordinary resolution.
+Builtin operations are direct-call-only with exact signatures, no callable exports
+or implicit extraction from unknown. Follow the specification/catalog for arities.
 
-Array.map is a direct-call-only array receiver intrinsic with exactly one synchronous data-result mapper. Infer R from the explicitly declared mapper result, not the enclosing context; require compatibility with (E,number,E[])=>R through ordinary function assignment and shorter-arity adaptation. Reject async/void/incompatible mappers; ordinary class/Record callable fields remain distinct.
+- String(number) and Number(string) lower to NUMBER_TO_STRING/STRING_TO_NUMBER;
+  neither performs general coercion. Numeric predicates accept unknown without
+  narrowing/coercion. Template interpolation admits checked string/number only.
+- String length is read-only. Omitted numeric positions/bounds differ from explicit
+  undefined; preserve each selector's result type and exact argument checks.
+- Array push checks/adapts one element; pop returns optional element; splice takes
+  two numbers; slice takes zero–two numbers. Results preserve exact element types.
+- Map/from infer output from the mapper's explicit synchronous data result, never
+  the destination/body. Predicates require synchronous boolean results with normal
+  `(E, number, E[])` adaptation; from uses `(E, number)`. Find adds undefined;
+  findIndex returns number, filter E[], some/every boolean.
+- Object.hasOwn tests presence without value refinement; class keys are literal
+  declared fields. Object.keys takes one checked class/Record and returns string[].
+- JSON.stringify accepts unknown without extraction context and returns
+  string|undefined. JSON.parse takes one checked string and uses genuine enclosing
+  context through parentheses/conditional arms, never assertions. No target means
+  unknown. Function bodies reset outer expression context.
 
-Array.find/findIndex/filter/some/every are direct-call-only array receiver intrinsics with one synchronous boolean predicate compatible with (E,number,E[])=>boolean under ordinary assignment/adaptation. Find returns E|undefined, retaining existing nullish flags; findIndex returns number, filter returns E[], and some/every return boolean. Detached methods and async/void/nonboolean predicates reject without changing ordinary class callable fields. Module namespace members with these names use ordinary export resolution, never early receiver probing.
-
-Array.from is direct-call-only with exactly an array source and synchronous data-result mapper. Infer E from the source and R from the mapper, never from an enclosing result context. Require mapper compatibility with (E,number)=>R, including ordinary shorter-arity adapters; async/void/nullable sources or incompatible index/element parameters reject.
-
-JSON.parse is direct-call-only and takes one checked string argument. Preserve a genuine enclosing contextual target through parentheses/conditional arms, but assertions only check a completed value and never supply a decoding target. Without context infer unknown. Function bodies start without their enclosing expression's expected type or construction declaration; nested expression statements are not decoding targets. Validate the complete reachable schema, including unread optional fields: reject function/void leaves, follow exact defining class declarations with nominal-identity-and-provider cycle guards, and stop at unknown/Record. Declaration resolvers may create fresh symbol wrappers; wrapper allocation identity must not control recursive-schema termination. Never select a same-spelled sibling or an exported factory in place of a private declaration.
-
-Test acceptance/rejection independently of emitters.
+Validate the complete contextual JSON schema, including unread optional fields.
+Follow exact defining declarations with identity-and-provider cycle guards; stop at
+unknown/Record and reject function/void leaves. Fresh symbol wrappers cannot control
+termination. No same-spelled sibling, private-layout relocation or exported factory
+may replace the owning declaration. Test acceptance/rejection independently of emitters.

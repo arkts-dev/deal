@@ -1,7 +1,19 @@
 # Toolchain
 
-The product-owned JDK-only seam between published native artifacts and the pinned external toolchain. `NativeRuntime` holds the closed ordered C11 runtime deployment set: it is the sole runtime file-list authority, every name resolves through `DistributionHome.resolveRuntimeSource` (never a project-local tier), and a missing file is the pinned `Runtime library not found: <path>` result. Keep this constant, `tools/build-release.sh`'s packaging list and the C files under `deal/native/` synchronized in one change; the generated scratch registry and driver units are never part of the set. The backend-local unicode_case.h data header is part of the matched deployment set.
+JDK-only seam between published native artifacts and the pinned external toolchain;
+no emitter/parser/orchestrator dependency. `deal.Main` drives it.
 
-`NativeToolchain` owns the pinned invocation (`PINNED_FLAGS`, the LLVM 14-16 window), the two build shapes, preflight, the build scratch, the generated `hosts_registry.c` (`HostsRegistry`), the transactional product lifetime and the one failure spelling (`NativeBuildException`). Product shape: the runtime set includes `deal/native/main.c`, no driver unit source. Driver shape: the runtime set omits exactly `main.c` and the request's `driverSource` is written to `<scratch>/driver.c` as the process entry. Both shapes compile `<scratch>/hosts_registry.c`, link `-lm` after all translation units for LLVM remainder lowering, and publish nothing. Scratch is `<java.io.tmpdir>/deal-native-<pid>-<nonce>/` and holds generated translation units only; the link writes `<productPath>.partial` beside the caller-owned product and one same-directory rename replaces it only after a successful link, so no failure path touches the product. The fixed suffix is internal: every build diagnostic renders the staging path as the caller's product path (`withoutStagingPath`), so the suffix never appears in user-visible output even when the tool's own message names the file it could not write or rename. The seam reads the publication root and never writes it, and `productPath` is never derived from it.
-
-The package name is `deal.toolchain` because `native` is a reserved Java keyword — the class names, the request/plan/result shapes and the closed runtime constant are the contract, not the package spelling. This package depends on the JDK and the distribution resolver only; it never depends on the emitter, orchestrator or parser (`deal.Main` drives it).
+- `NativeRuntime.FILES` is the ordered deployment authority. Resolve every file
+  through DistributionHome, never project-local runtime overrides. Missing files
+  report `Runtime library not found: <path>`. Synchronize headers/C sources,
+  unicode_case.h and release packaging. Generated registry/driver units are scratch,
+  not deployment resources.
+- `NativeToolchain` owns flags, LLVM 14–16 preflight, registry generation, scratch,
+  linking and NativeBuildException spelling. Product builds include runtime main.c;
+  driver builds omit exactly main.c and add the supplied driver. Both compile
+  hosts_registry.c and link -lm after translation units.
+- Scratch holds generated units only. Link to `<productPath>.partial`, then rename
+  beside the caller-owned product on success. Failures preserve the old product;
+  diagnostics replace staging paths with the caller's product path.
+- Read publication roots without writing them. Products are independent of those
+  roots; this seam publishes no compiler artifacts.

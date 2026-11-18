@@ -1,68 +1,161 @@
 # DEAL language guide
 
-DEAL: a strict TypeScript syntax subset with distinct semantics. Authority: [v1.6 specification](https://github.com/arkts-dev/deal/blob/master/docs/spec-v1.6.md) (online).
+DEAL uses a strict TypeScript syntax subset with distinct semantics.
+Authority: [v1.6 specification](https://github.com/arkts-dev/deal/blob/master/docs/spec-v1.6.md) (online).
 
 ## Syntax
 
-Imports precede module-level functions, classes and exports; executable statements stay inside functions. Use let or const, braces and semicolons. Const requires an initializer and forbids binding reassignment, including captured and for-of bindings; referenced arrays, Records and class instances remain mutable. Entry exports synchronous main(): void; use a bare return or fall through. No-result helpers also use void.
+Imports precede module-level functions/classes/exports; executable statements stay
+inside functions. Use let/const, braces and semicolons. Const requires initialization
+and forbids binding reassignment, not aggregate mutation. Entry exports synchronous
+main(): void; no-result functions use bare return or fallthrough.
 
-Comments: // or /* ... */. `$` bindings are compiler-owned. Property keys need explicit values. Assign with x = x + 1. Function expressions use function or explicitly typed arrows, such as (x: number): number => x * 2. Arrows admit block or expression bodies; a void expression body must itself produce void. Async arrows use Promise<T> results and await normally. Keep async with its parameter opening and the result annotation with => on the same line.
+Comments use // or /* ... */. `$` bindings are compiler-owned. Property keys need
+explicit values. Assign with x = x + 1. Arrows have parenthesized parameters and
+explicit results: `(x: number): number => x * 2`. Block/expression bodies are legal;
+a void expression body must produce void. Keep async with its parameter opening
+and the result annotation with => on the same line.
 
-Ordinary strings decode newline, carriage-return, tab, backspace (\\b), form-feed (\\f), vertical-tab (\\v), NUL (\\0, not followed by a digit), backslash and quote escapes, hexadecimal \\xHH/\\uHHHH units and \\u{H…} code points. Backslash plus LF/CR/CRLF continues a string without adding text. Strings retain UTF-16 lone surrogates across backends and host transport. Untagged templates admit multiline text, normalize physical CR/CRLF to LF and remove escaped line continuations.
+Strings support character, hexadecimal-unit and Unicode escapes, preserving lone
+UTF-16 units. \0 cannot precede a digit. Backslash plus LF/CR/CRLF contributes no
+text. Untagged templates allow multiline text and string/number interpolation;
+physical CR/CRLF normalizes to LF.
 
 ## Types
 
-Data: null, undefined, unknown, boolean, number, string, Record<string, unknown>, nominal classes, invariant arrays and function types. Nullish unions admit null/undefined independently. Void is result-only.
+Data types: null, undefined, unknown, boolean, number, string,
+Record<string, unknown>, nominal classes, invariant arrays and functions.
+Null/undefined permissions are independent; void is result-only. Extract unknown
+with checked `as` or typeof/instanceof refinement. Assertions preserve identity,
+do not coerce and throw E8001 on mismatch.
 
-Unknown requires checked extraction or typeof/instanceof refinement. Unlike TypeScript's erased as, DEAL assertions check once without coercion, preserving identity; mismatch raises E8001.
+Numbers are binary64 with signed zero, infinities, NaN and nontrapping division.
+Literals accept decimal fractions/exponents/trailing points, 0x/0b/0o prefixes and
+underscores between digits; radix integers round once. `%` is dividend-sign
+ECMAScript remainder. Indexes require finite whole numbers. Use Math.floor/ceil/
+round deliberately. Conditions require boolean; ===/!== require compatible types
+or admitted nullish comparisons. Concatenation requires strings; templates format
+numbers with ECMAScript text, rendering either zero as 0.
 
-Numbers are binary64, preserving signed zero, infinities and NaN; division is nontrapping. Literals admit decimal fractions/exponents, trailing decimal points, 0x/0b/0o radix prefixes and underscores between digits (for example 0xff, 0b10_01 and 1_234.5). Radix integers round once to binary64. The % operator is ECMAScript remainder, retaining the dividend's sign (including signed zero), not floor modulo. Array indexes require finite whole numbers. Round deliberately through Math.floor/ceil/round; use String(n) for ECMAScript decimal text. Conditions require boolean. String concatenation requires strings; template interpolations accept strings or numbers and format numbers with ECMAScript decimal conversion (including NaN and infinities, with either zero rendered as 0). Use ===/!== with compatible types or admitted nullish comparisons.
+`a ?? b` evaluates a once and b only when a is null/undefined, preserving other
+falsy values. Fallback inherits destination context; otherwise literal fallbacks
+use a's non-nullish exact array/class/Record type (`optionalArray ?? []`). Ternary
+literal arms may likewise use an independently typed sibling's exact target.
+Parenthesize mixing with &&/||.
 
-Use a ?? fallback to replace only null/undefined while preserving false, zero, NaN, empty strings and reference identity. The left evaluates once; the fallback runs only when selected and inherits the destination's contextual type. Without that context, array/object literal fallbacks use the left's non-nullish array/class/Record type: `optionalArray ?? []` needs no destination annotation. Ternary literal arms likewise use an independently typed sibling's exact array/class/Record type, in either order. Parenthesize combinations with &&/||. See the defaulted find result in [dynamic data](../examples/src/data.deal).
-
-Use receiver?.field, receiver?.[key] or callback?.(argument) to skip the remaining chain when that receiver/callee is null/undefined. Receivers evaluate once; skipped keys and arguments do not run. Non-void results add undefined; coalesce or extract before concrete use. Parentheses end a chain. Optional calls are synchronous; void calls remain result-only. Delete optional class fields or Record keys with delete receiver?.field. See [dynamic data](../examples/src/data.deal).
+`receiver?.field`, `receiver?.[key]` and `callback?.(arg)` skip the remaining chain
+on null/undefined, including keys/arguments. Non-void results add undefined;
+coalesce/extract before concrete use. Parentheses end chains. Optional calls are
+synchronous; void remains result-only. Optional deletion removes class fields or
+Record keys. See [dynamic data](../examples/src/data.deal).
 
 ## Classes
 
-Classes are module-level nominal schemas, unlike TypeScript's structural compatibility: same-shaped classes remain distinct. Annotate fields; ? marks optional presence. Literals supply every required field, including nullable fields, allocating fresh storage; supplied references preserve aliases. Use Records for dynamic keys and functions for behavior.
+Module-level classes are nominal schemas: same-shaped declarations stay distinct.
+Annotate fields; ? marks optional presence. Contextual literals allocate fresh
+instances and supply every required field, including nullable fields. Supplied
+references retain aliases. Use Records for dynamic keys and functions for behavior.
 
 ## Functions
 
-Annotate parameters/results; pass arrays for variable inputs. Closures capture bindings and observe assignments; loops create fresh iteration bindings. Function compatibility requires matching async marker and types. A shorter function may adapt to additional ignored target parameters when shared types/results match; direct calls retain declared arity.
+Annotate declaration parameters and every result. Function/arrow expression
+parameters may omit annotations when an existing positional context supplies their
+exact types, including array callbacks. No body-based inference. Pass arrays for
+variable inputs. Closures capture live bindings; iterations create fresh cells.
+Compatibility preserves async marker/types; shorter functions may adapt to ignored
+target parameters when shared types/results match. Direct calls keep declared arity.
 
 ## Field access
 
-Initialization/assignment refine local reads to the RHS type; annotated write types stay fixed. Guard direct declared fields through local/parameter receivers; writes, deletion and calls clear field facts. Await clears refinements; facts stay within their function/iteration. Closures see declared captured types.
+Initialization/assignment refines local reads while annotated write types stay
+fixed. Guard direct declared fields through local/parameter receivers; writes,
+deletion and calls clear field facts. Await clears refinements; closures see declared
+captured types. Facts remain within their function/iteration.
 
-Object.hasOwn tests presence, not value type. Class keys name literal declared fields; Record keys are strings. Optional absence reads undefined; present null remains null. Deletion removes presence rather than storing undefined.
+Object.hasOwn tests presence, not value type. Class keys must name literal declared
+fields; Record keys are strings. Absent optionals read undefined, present null stays
+null, and deletion removes presence rather than storing undefined.
 
 ## Tables
 
-Use Record<string, unknown>. Every read infers unknown; explicitly check intermediate Records, concrete leaves and callable signatures. String-keyed writes accept supported heterogeneous data. Null/undefined assignments preserve presence; deletion removes keys. See [dynamic data](../examples/src/data.deal).
+Use Record<string, unknown>. Reads infer unknown: check intermediate Records,
+leaves and callable signatures. String-keyed writes accept supported heterogeneous
+data; null/undefined preserve presence. See [dynamic data](../examples/src/data.deal).
 
 ## Arrays
 
-Arrays are zero-based with runtime-enforced invariant descriptors, unlike TypeScript arrays; emptiness cannot justify retagging. Supply context for empty literals. Use xs.push(value) to append one element and receive the new length, or assign at length; iterate with inferred for-of bindings or explicit while indexes. Push evaluates the receiver and value once, observes argument-driven growth before appending, and validates the stored element before mutation. Use xs.slice(start, end) for a fresh shallow range: negative bounds count from the end, bounds truncate and clamp without swapping, and referenced elements keep their identities. Omit both bounds to copy the array, or omit end to copy the remainder; explicit undefined is not accepted. Use xs.includes(value) for membership or xs.indexOf(value) for the first zero-based index (-1 when absent). An optional numeric fromIndex truncates and clamps; negative values count from the end. Includes matches NaN, while indexOf uses strict equality. References match by identity; each search stops at its first match. Use names.join(separator) on a string array to combine its elements into one string with the required string separator between positions; an empty array produces an empty string. Join reads current elements after evaluating the separator and leaves source storage unchanged. Use xs.map((value: E, index: number, array: E[]): R => ...) to build a fresh result array, with an explicit synchronous data result; contextual callback parameter annotations may be omitted. Shorter callbacks use ordinary arity adaptation. Map snapshots the source length after mapper evaluation, reads current elements in ascending order and ignores later growth; missing reached positions fail. Callback parameter and return checks remain ordinary typed boundaries, including the source-array parameter. Use xs.find(predicate) for the first matching value (E | undefined), or xs.findIndex(predicate) for its index (-1 when absent). Their synchronous boolean predicates receive the same value/index/source arguments, with ordinary shorter-arity adaptation. They snapshot after predicate evaluation, read current slots and stop at the first true result; missing reached positions fail. Narrow, assert or coalesce a found optional value before concrete use. Use xs.filter(predicate) to collect selected original values in fresh shallow storage. Use xs.some(predicate) to stop at the first true result, or xs.every(predicate) to stop at the first false result. Empty arrays yield false for some and true for every. These three methods snapshot after predicate evaluation, ignore later growth and skip missing positions; stored undefined is a present value and must fit the element type. Predicates retain ordinary parameter checks, including the source-array argument even when omitted from a shorter callback. Out-of-bounds reads fail. Without a decoding target, JSON arrays carry unknown elements. Annotate a JSON.parse destination to reconstruct fresh arrays with the requested element descriptor.
+Arrays are zero-based with persistent invariant descriptors; emptiness never
+justifies retagging. Contextualize empty literals. Out-of-bounds reads fail.
+Iterate with inferred for-of bindings or explicit while indexes.
+
+| Call | Result/behavior |
+|---|---|
+| xs.push(value) | Append one checked element after argument effects; return new length |
+| xs.pop() | Remove checked tail; empty returns undefined |
+| xs.splice(start, count) | Remove range atomically into a fresh typed array |
+| xs.slice(), xs.slice(start), xs.slice(start,end) | Fresh shallow copy/range; negative relative bounds truncate/clamp without swapping; explicit undefined rejects |
+| xs.includes(value, fromIndex), xs.indexOf(value, fromIndex) | Optional relative start; first match, SameValueZero versus strict equality; indexOf returns -1 if absent |
+| names.join(separator) | Required string separator; string elements join without source mutation |
+| xs.map(mapper) | Fresh result array; explicit synchronous data result |
+| xs.find(predicate), xs.findIndex(predicate) | First original matching value or undefined; index or -1 |
+| xs.filter(predicate) | Fresh shallow selection of original values |
+| xs.some(predicate), xs.every(predicate) | Early boolean result; empty defaults false/true |
+| Array.from(source, mapper) | Fresh mapped array using live array-source traversal |
+
+Map/predicates receive `(value: E, index: number, source: E[])`; from receives
+`(value: E, index: number)`. Context supplies omitted parameter annotations;
+results stay explicit. Shorter callbacks adapt normally. All declared parameter/
+return checks remain, including source-array arguments ignored by shorter callbacks.
+
+Map/find/findIndex snapshot length after callback evaluation, read live slots and
+ignore later growth; missing reached slots fail. Filter/some/every use that snapshot
+but skip holes, not stored undefined. From and ordinary for-of use live traversal.
+Join/search/slice observe post-argument length. References keep identity; returned
+arrays have fresh storage. Narrow/assert/coalesce optional found values before use.
 
 ## JSON
 
-Use import-free JSON.parse(text). Any JSON root is valid; malformed syntax, duplicate decoded keys and target mismatches throw Error. An annotated initializer, assignment destination, field, element, parameter or return supplies the reconstruction target, including through parentheses and conditional branches. An assertion checks the parsed value but never supplies a decoding target.
+Import-free JSON.parse(text) accepts any JSON root. Syntax, duplicate decoded keys
+and target mismatches throw Error. Annotated initializers, assignments, fields,
+elements, parameters and returns supply reconstruction targets through parentheses/
+conditional arms. Assertions check completed values, never supply decoding targets.
 
-Without a target, the result is unknown with ordinary Records and unknown-element arrays. Contextual arrays receive fresh typed storage; contextual classes receive fresh exact nominal instances. Required fields must be present, extras reject before declaration-ordered field decoding, and omitted optionals remain absent. Recursive class schemas are valid; a reachable function type rejects at compile time, even in an optional field. Unknown and Record stop schema traversal. No defaults or serialization hooks run.
+Without context, parse returns unknown containing Records and unknown[] arrays.
+Context reconstructs fresh exact typed arrays/nominal classes. Required fields must
+exist; extras reject before declaration-ordered fields; omitted optionals stay
+absent. Recursive schemas work; reachable function types reject even in optional
+fields. Unknown/Record stop schema traversal. No defaults/hooks run.
 
-JSON parses binary64, preserving negative zero; either zero sign serializes as 0. JSON.stringify returns string | undefined, omits object undefined/functions, substitutes null in arrays/nonfinite positions and rejects cycles without hooks. Shared acyclic children are valid. Record keys follow Object.keys order; class fields follow declaration order.
+JSON preserves parsed negative zero but serializes either zero as 0.
+JSON.stringify returns string|undefined, omits object undefined/functions,
+substitutes null for array undefined/functions and nonfinite numbers, and rejects
+cycles. Shared acyclic children work. Records follow Object.keys order; class fields
+follow declaration order.
 
 ## Modules
 
-Import namespaces and qualify exported classes; keep state inside function-owned storage. Imports initialize at most once; cycles reject. Preserve manifest roots, backend, output, languageVersion and external declarations. Keep ancestor manifests unambiguous.
+Import namespaces and qualify exported classes; keep state in function-owned
+storage. Imports initialize once; cycles reject. Preserve manifest roots/backend/
+output/languageVersion/externals and keep ancestor manifests unambiguous.
 
 ## String operations
 
-Use s.length (read-only UTF-16 unit count), s.substring(start) for the remaining suffix or s.substring(start, end), s.slice(start) or s.slice(start, end) for relative bounds (negative offsets count from the end), s.includes(part, position), s.startsWith(part, position), s.endsWith(part, endPosition), s.indexOf(search, position) and s.lastIndexOf(search, position) (each search position may be omitted), s.replace(search, replacement), s.split(separator), s.trim(), s.toLowerCase() and s.toUpperCase(). Casing uses locale-independent Unicode default mappings, including expansions such as "ß".toUpperCase() === "SS" and contextual final sigma. These receiver intrinsics require direct calls, not detached method values. Arguments follow ECMAScript string semantics; for-of combines valid surrogate pairs while length/slicing/splitting retain individual units.
+Use read-only s.length, substring(start[,end]), slice(start[,end]),
+includes/startsWith/endsWith/indexOf/lastIndexOf(search[,position]),
+replace(search,replacement), split(separator), trim(), toLowerCase(), toUpperCase().
+Methods require direct calls. Indices/length/slices count UTF-16 units; slice has
+relative bounds. For-of combines valid surrogate pairs and retains lone units.
+Casing uses locale-independent Unicode default mappings, expansions and final sigma.
 
 ## Builtin calls
 
-Math.floor(x), Math.ceil(x), Math.sqrt(x), Math.abs(x), Math.round(x), Math.min(a,b) and Math.max(a,b) take numbers and follow ECMAScript, including NaN and signed zero. Round breaks ties toward positive infinity and returns a number, not a bounded integer. Number(text) accepts only strings and follows ECMAScript whole-string conversion: malformed text yields NaN, whitespace/empty text yields zero, and exponents/radix prefixes/Infinity are supported. Number.isFinite(value) and Number.isNaN(value) accept unknown without coercion or type narrowing; nonnumbers return false. Date.now() returns epoch milliseconds. console.log(text) and console.error(text) write strings to the respective streams. These builtin namespaces require no imports and support direct calls only; builtin names cannot be shadowed.
+Math.floor/ceil/sqrt/abs/round take one number; Math.min/max take two. Preserve NaN
+and signed zero; round ties toward +infinity and returns binary64, not a bounded
+integer. String(number) uses ECMAScript decimal text. Number(string) uses whole-
+string conversion: malformed -> NaN, empty/whitespace -> zero; exponents, radix
+prefixes and Infinity work. Number.isFinite/isNaN accept unknown without coercion/
+narrowing. Date.now() returns epoch milliseconds. console.log/error take strings.
+Builtins need no imports, require direct calls and cannot be shadowed.
 
 ## Standard library declarations
 
@@ -71,16 +164,23 @@ Math.floor(x), Math.ceil(x), Math.sqrt(x), Math.abs(x), Math.round(x), Math.min(
 export function keys(t: Record<string, unknown>): string[];
 ```
 
-Use declared, implemented host APIs.
+Use declared, implemented APIs; do not invent host methods.
 
 ## Error handling
 
-Construct nominal Error values with required string name/message fields, for example { name: "InvalidInput", message: "count must be nonnegative" }, then throw the value. Both fields remain mutable; JSON.parse can reconstruct Error under an explicit contextual target. Catch binds unknown: extract Error or refine inside instanceof Error before reading members. Rethrow preserves identity. Translate expected failures only when the application contract requires it.
+Contextually construct Error with required string name/message fields, then throw.
+Fields remain mutable; contextual JSON.parse can reconstruct Error. Catch binds
+unknown: extract Error or use instanceof Error before member reads. Rethrow preserves
+identity. Translate failures only when the application contract requires it.
 
 ## Async/Await
 
-Promise<R> denotes async results, not first-class promises. External declarations omit async. Await each async call directly inside async bodies; the embedding owns scheduling/lifetime. See [client](../examples/host/client.deal).
+Promise<R> denotes async results, not first-class promises. External declarations
+omit async. Await calls directly inside async bodies; embedding owns scheduling/
+lifetime. See [client](../examples/host/client.deal).
 
 ## Host ABI and interoperability
 
-Host imports require declarations, manifest wiring and matching implementations. Declaration functions end with semicolons; boundary wrappers validate arguments/results. Invoke async exports through the embedding ABI, not a plain executable run.
+Host imports require declarations, manifest wiring and matching implementations.
+Declaration functions end with semicolons; wrappers validate arguments/results.
+Invoke async exports through the embedding ABI, not plain executable runs.

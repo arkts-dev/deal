@@ -1,16 +1,31 @@
 # Compiler
 
-Own compiler phases, runtimes and CLI integration. Production Java sources must compile with --release 21 for embedded packaging; release/test tooling remains Java 25. Preserve deterministic diagnostics and transactional publication. Lower checked facts into validated semantic IR; every backend renders that IR without AST fallback.
+Production Java supports `--release 21`; release/test tooling uses Java 25.
+Preserve deterministic diagnostics and transactional publication. Lower checked
+facts into validated semantic IR; backends never fall back to ASTs.
 
-- Use private carrier metadata; user string keys cannot forge runtime identities. Normalize documented host shapes at ingress. String length/order/slicing use UTF-16 units; iteration combines pairs and retains lone units. Keep no obsolete scalar-index substring helpers.
-- Preserve binary64 values, signed zero, NaN and infinities. Integral positions validate before access, never truncate. Render diagnostic numbers through the shared hexadecimal formatter; `int` and `number` are ordinary identifiers.
-- Validate call-preserved refinements at consumption using the read's checked descriptor and origin. Consumers use admitted operands, never stale raw values; typed boundaries retain their own failure projections.
-- Class construction uses supplied values in declaration order. Required-nullable fields require presence; omitted optionals remain absent. Never consult defaults hooks.
-- Runtime descriptor parsing carries data/result position through every recursive edge. Void is allowed only at result/completion roots and function results; callable ingress rejects malformed descendant signatures even under unknown. Arrays of void-returning functions remain legal.
-- Null, undefined and missing presence remain distinct. Missing reads normalize to undefined, not null. Sync host no-result admits void only.
-- Throw/catch/rethrow preserve Error identity, mutable name/message, facts and causes. First throw binds the current name as diagnostic code; later name writes do not rewrite that code. Catch native failures with backend-defined details; unknown Errors retain trace atoms.
-- Generated Records share generic JSON omission/substitution, numeric own-key order and nested-class rules; declared fields retain declaration order. Malformed Unicode/cycles reject. Validate whole Record/unknown ingress graphs before publication, preserving identities. Live host views reject incompatible reflection before mutating storage.
-- Deployed Lua JSON algorithms live in deal/json.lua as plain runtime operations, not language callable wrappers. The deployed and generated paths share one scanner with closed reasons and exact first-bad-byte offsets. Scanning accepts any root; explicit canonical targets reconstruct fresh graphs using artifact-local structural schemas, extras-first checks and required presence, without hooks. Preserve UTF-16, binary64, descriptors and parse-owned failures.
-- JSON runtime entry points implement contextual parse and builtin stringify only; keep no null-returning class decoder, helper encoder or helper-specific encoding mode. Class JSON reads private declaration-order storage, respects presence and detects cycles by original identity. Stringify checks declared positions as reached, not by prevalidating later descendants; only typed-position failures compose array E8003 with the unwrapped leaf cause at the stringify operation origin. Required absence is distinct from present undefined. Lua nominal instances carry private exact field plans as well as order across construction, contextual decoding and host projection. Error exposes name/message only. Preserve original identities and metadata across host crossings and both Lua runtime load orders.
-
-Keep implementation and affected policies synchronized; place regression details in executable tests, not policy inventories.
+- Private metadata owns identities/descriptors/presence/order, never user string
+  keys. Normalize documented host shapes at ingress and validate complete live
+  graphs before publication, preserving sharing/cycles and rollback.
+- Keep binary64 specials/signed zero. Integral positions validate before access,
+  never truncate. Diagnostic numbers use shared hexadecimal spelling.
+- Strings retain UTF-16 units: length/order/slicing count units; iteration combines
+  pairs and retains lone units. Reject malformed byte transport, not legal units.
+- Refined consumers use admitted results at the recorded read origin, not stale
+  raw values. Typed boundaries retain their own projections.
+- Descriptors enforce recursive data/result positions. Void is completion-only;
+  functions returning void are legal data. Null/undefined/absence stay distinct;
+  missing reads become undefined. Required nullable fields still require presence.
+- Class construction checks supplied values before publication, with omitted
+  optionals absent. No initializer/default hooks or synthetic helper exports.
+- Throw/catch/rethrow preserves Error identity/causes and mutable name/message.
+  First throw binds diagnostic code once; later name writes cannot rewrite it.
+- JSON uses exact contextual schemas, fresh typed reconstruction, extras-first
+  checks and no factories. Stringify validates reached positions, preserves cycle
+  identity and field presence/order, and retains E8003 leaf causes/origins.
+  Records use generic omission/substitution/numeric-key rules; Error exposes only
+  name/message. Finite numbers share ECMAScript spelling.
+- Lua deploys internal deal/json.lua algorithms with runtime resources, never
+  callable std/json wrappers. Scanner/reconstruction paths share grammar, failure
+  offsets and explicit canonical targets. Preserve class plans/host identities
+  across emitted/deployed runtime load orders.
