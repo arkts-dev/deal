@@ -108,6 +108,28 @@ public final class StrictManifestParserTest {
             check(facts.guidance().isEmpty() == sample[4].equals("languageVersion"), "required version has no invented default");
             if (!facts.guidance().isEmpty()) check(facts.guidance().getFirst().contains("never replaced"), "default is explanatory, not a fallback on error");
         }
+        for (String[] sample : new String[][] {
+                {"\"moduleRoots\":false", "config.value-kind", "false", "moduleRoots"},
+                {"\"moduleRoots\":[7]", "config.value-kind", "7", "moduleRoots"},
+                {"\"moduleRoots\":[\"/absolute\"]", "config.relative-path", "/absolute", "moduleRoots"},
+                {"\"output\":\"\"", "config.empty-path", "", "output"},
+                {"\"output\":null", "config.value-kind", "null", "output"},
+                {"\"output\":\"a\\u0000b\"", "config.path-nul", "a\u0000b", "output"},
+                {"\"dependencies\":[]", "config.value-kind", "array", "dependencies"},
+                {"\"externals\":[]", "config.value-kind", "array", "externals"},
+                {"\"externals\":{\"host.with.dot\":7}", "config.value-kind", "7", "externals/host.with.dot"},
+                {"\"externals\":{\"h\":{}}", "config.required-member", "absent", "externals/h/declaration"},
+                {"\"externals\":{\"h\":{\"declaration\":false}}", "config.value-kind", "false", "externals/h/declaration"},
+                {"\"externals\":{\"h\":{\"declaration\":\"bad.deal\"}}", "config.declaration-suffix", "bad.deal", "externals/h/declaration"}}) {
+            var invalid = parse("{" + valid + "," + sample[0] + "}");
+            check(invalid.manifest() == null && invalid.failure() != null, "invalid member never publishes " + sample[0]);
+            if (invalid.failure() == null) continue;
+            var facts = invalid.failure().facts();
+            check(facts.reason().equals(sample[1]) && facts.actual().equals(sample[2]) && !facts.expected().isEmpty(),
+                    "member constraint retains exact producer value " + sample[0]);
+            check(String.join("/", facts.path().stream().map(p -> p.name()).toList()).equals(sample[3]),
+                    "member route retains exact external key identity " + sample[0]);
+        }
         String duplicate = "{\"languageVersion\":\"1.6\",\"dependencies\":{\"😀\":1,\"\\uD83D\\uDE00\":2}}";
         var result = parse(duplicate);
         check(result.manifest() == null && result.failure() != null, "decoded duplicate rejects");

@@ -97,25 +97,26 @@ public final class ProjectConfigValidator {
         StrictJsonValue moduleRootsValue = rootMembers.get("moduleRoots");
         if (moduleRootsValue != null) {
             if (!(moduleRootsValue instanceof StrictJsonValue.ArrayVal moduleRootsArray)) {
-                return failure("deal.json: 'moduleRoots' must be an array of relative strings",
-                    rangeOf(document, moduleRootsValue));
+                return constraint("deal.json: 'moduleRoots' must be an array of relative strings",
+                    rangeOf(document, moduleRootsValue), "config.value-kind", "moduleRoots",
+                    "array of relative path strings", observed(moduleRootsValue), null);
             }
             List<ManifestString> entries = new ArrayList<>();
             for (StrictJsonValue element : moduleRootsArray.elements()) {
                 SourceScalarRange elementRange = rangeOf(document, element);
                 if (!(element instanceof StrictJsonValue.StringVal elementString)) {
-                    return failure("deal.json: 'moduleRoots' entries must be strings",
-                        elementRange);
+                    return constraint("deal.json: 'moduleRoots' entries must be strings",
+                        elementRange, "config.value-kind", "moduleRoots", "relative path string", observed(element), null);
                 }
                 Failure textFailure = pathTextFailure("'moduleRoots' entry",
-                    elementString.value(), elementRange);
+                    elementString.value(), elementRange, List.of("moduleRoots"));
                 if (textFailure != null) {
                     return new Outcome(null, textFailure);
                 }
                 if (elementString.value().startsWith("/")) {
-                    return failure("deal.json: 'moduleRoots' entries must be relative paths,"
+                    return constraint("deal.json: 'moduleRoots' entries must be relative paths,"
                             + " got: '" + elementString.value() + "'",
-                        elementRange);
+                        elementRange, "config.relative-path", "moduleRoots", "relative path", elementString.value(), null);
                 }
                 entries.add(new ManifestString(elementString.value(), elementRange));
             }
@@ -127,11 +128,12 @@ public final class ProjectConfigValidator {
         StrictJsonValue outputValue = rootMembers.get("output");
         if (outputValue != null) {
             if (!(outputValue instanceof StrictJsonValue.StringVal outputString)) {
-                return failure("deal.json: 'output' must be a non-empty string",
-                    rangeOf(document, outputValue));
+                return constraint("deal.json: 'output' must be a non-empty string",
+                    rangeOf(document, outputValue), "config.value-kind", "output", "non-empty path string",
+                    observed(outputValue), null);
             }
             Failure textFailure = pathTextFailure("'output'", outputString.value(),
-                rangeOf(document, outputValue));
+                rangeOf(document, outputValue), List.of("output"));
             if (textFailure != null) {
                 return new Outcome(null, textFailure);
             }
@@ -161,8 +163,9 @@ public final class ProjectConfigValidator {
         StrictJsonValue dependenciesValue = rootMembers.get("dependencies");
         if (dependenciesValue != null) {
             if (!(dependenciesValue instanceof StrictJsonValue.ObjectVal dependenciesObject)) {
-                return failure("deal.json: 'dependencies' must be a JSON object",
-                    rangeOf(document, dependenciesValue));
+                return constraint("deal.json: 'dependencies' must be a JSON object",
+                    rangeOf(document, dependenciesValue), "config.value-kind", "dependencies", "object",
+                    observed(dependenciesValue), null);
             }
             dependencies = dependenciesObject;
         }
@@ -172,44 +175,49 @@ public final class ProjectConfigValidator {
         StrictJsonValue externalsValue = rootMembers.get("externals");
         if (externalsValue != null) {
             if (!(externalsValue instanceof StrictJsonValue.ObjectVal externalsObject)) {
-                return failure("deal.json: 'externals' must be an object mapping import"
+                return constraint("deal.json: 'externals' must be an object mapping import"
                         + " specifiers to entry objects",
-                    rangeOf(document, externalsValue));
+                    rangeOf(document, externalsValue), "config.value-kind", "externals", "object of declaration entries",
+                    observed(externalsValue), null);
             }
             for (Map.Entry<String, StrictJsonValue> entry : externalsObject.members().entrySet()) {
                 String specifier = entry.getKey();
                 StrictJsonValue entryValue = entry.getValue();
                 SourceScalarRange entryRange = rangeOf(document, entryValue);
                 if (!(entryValue instanceof StrictJsonValue.ObjectVal entryObject)) {
-                    return failure("deal.json: externals entry '" + specifier
+                    return constraint("deal.json: externals entry '" + specifier
                             + "' must be an object with a 'declaration' string",
-                        entryRange);
+                        entryRange, "config.value-kind", List.of("externals", specifier), "object with declaration string",
+                        observed(entryValue));
                 }
                 Map<String, StrictJsonValue> entryMembers = entryObject.members();
 
                 StrictJsonValue declarationValue = entryMembers.get("declaration");
                 if (declarationValue == null) {
-                    return failure("deal.json: externals entry '" + specifier
+                    return constraint("deal.json: externals entry '" + specifier
                             + "' is missing required member 'declaration'",
-                        entryRange);
+                        entryRange, "config.required-member", List.of("externals", specifier, "declaration"),
+                        "host declaration path string", "absent");
                 }
                 SourceScalarRange declarationRange = rangeOf(document, declarationValue);
                 if (!(declarationValue instanceof StrictJsonValue.StringVal declarationString)) {
-                    return failure("deal.json: externals entry '" + specifier
+                    return constraint("deal.json: externals entry '" + specifier
                             + "': 'declaration' must be a string",
-                        declarationRange);
+                        declarationRange, "config.value-kind", List.of("externals", specifier, "declaration"),
+                        "host declaration path string", observed(declarationValue));
                 }
                 Failure declarationFailure = pathTextFailure("externals entry '"
                         + specifier + "' declaration",
-                    declarationString.value(), declarationRange);
+                    declarationString.value(), declarationRange, List.of("externals", specifier, "declaration"));
                 if (declarationFailure != null) {
                     return new Outcome(null, declarationFailure);
                 }
                 if (!declarationString.value().endsWith(".d.deal")) {
-                    return failure("deal.json: externals entry '" + specifier
+                    return constraint("deal.json: externals entry '" + specifier
                             + "': 'declaration' must be a host declaration file (.d.deal), got: '"
                             + declarationString.value() + "'",
-                        declarationRange);
+                        declarationRange, "config.declaration-suffix", List.of("externals", specifier, "declaration"),
+                        "path ending in .d.deal", declarationString.value());
                 }
 
                 externals.put(specifier, new ExternalEntrySpec(specifier,
@@ -251,16 +259,19 @@ public final class ProjectConfigValidator {
 
 
     private static Failure pathTextFailure(String what, String value,
-                                           SourceScalarRange range) {
+                                           SourceScalarRange range, List<String> path) {
         if (value.isEmpty()) {
-            return new Failure("deal.json: " + what + " must be a non-empty string", range);
+            return constraint("deal.json: " + what + " must be a non-empty string", range,
+                    "config.empty-path", path, "non-empty path string", value).failure();
         }
         if (hasUnpairedSurrogate(value)) {
-            return new Failure("deal.json: " + what
-                + " must be scalar-valid (no unpaired UTF-16 surrogates)", range);
+            return constraint("deal.json: " + what
+                + " must be scalar-valid (no unpaired UTF-16 surrogates)", range,
+                    "config.path-unicode", path, "scalar-valid path string", value).failure();
         }
         if (value.indexOf('\u0000') >= 0) {
-            return new Failure("deal.json: " + what + " must not contain NUL", range);
+            return constraint("deal.json: " + what + " must not contain NUL", range,
+                    "config.path-nul", path, "NUL-free path string", value).failure();
         }
         return null;
     }
@@ -312,7 +323,10 @@ public final class ProjectConfigValidator {
                 reason, "manifest.validate", expected, actual, guidance, path)));
     }
 
-    private static Outcome failure(String message, SourceScalarRange range) {
-        return new Outcome(null, new Failure(message, range));
+    private static Outcome constraint(String message, SourceScalarRange range, String reason, List<String> path,
+                                      String expected, String actual) {
+        return new Outcome(null, new Failure(message, range, new deal.diagnostics.DiagnosticFacts(
+                reason, "manifest.validate", expected, actual, List.of(), path.stream().map(name ->
+                        new deal.diagnostics.DiagnosticFacts.PathSegment(deal.diagnostics.DiagnosticFacts.PathKind.FIELD, name)).toList())));
     }
 }
