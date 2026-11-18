@@ -267,7 +267,7 @@ public final class DiagnosticStructuredOutput {
         sb.append(",\n");
         indent(sb, level + 1).append("\"resolution\": ");
         var resolution = facts.resolution();
-        if (resolution == null) sb.append("null\n");
+        if (resolution == null) sb.append("null");
         else {
             sb.append("{\n");
             indent(sb, level + 2).append("\"specifier\": ").append(jsonString(resolution.specifier())).append(",\n");
@@ -277,6 +277,30 @@ public final class DiagnosticStructuredOutput {
             sb.append(",\n");
             indent(sb, level + 2).append("\"attemptedCount\": ").append(resolution.attemptedCount()).append(",\n");
             indent(sb, level + 2).append("\"truncated\": ").append(resolution.truncated()).append('\n');
+            indent(sb, level + 1).append('}');
+        }
+        sb.append(",\n");
+        indent(sb, level + 1).append("\"cycle\": ");
+        var cycle = facts.cycle();
+        if (cycle == null) sb.append("null\n");
+        else {
+            sb.append("{\n");
+            indent(sb, level + 2).append("\"edges\": [");
+            for (int i = 0; i < cycle.edges().size(); i++) {
+                if (i > 0) sb.append(',');
+                var edge = cycle.edges().get(i);
+                sb.append('\n');
+                indent(sb, level + 3).append("{\n");
+                indent(sb, level + 4).append("\"from\": ").append(jsonString(edge.from())).append(",\n");
+                indent(sb, level + 4).append("\"to\": ").append(jsonString(edge.to())).append(",\n");
+                appendNullableRange(sb, edge.importRange(), level + 4, "importRange");
+                sb.append('\n');
+                indent(sb, level + 3).append('}');
+            }
+            if (!cycle.edges().isEmpty()) { sb.append('\n'); indent(sb, level + 2); }
+            sb.append("],\n");
+            indent(sb, level + 2).append("\"edgeCount\": ").append(cycle.edgeCount()).append(",\n");
+            indent(sb, level + 2).append("\"truncated\": ").append(cycle.truncated()).append('\n');
             indent(sb, level + 1).append("}\n");
         }
         indent(sb, level).append('}');

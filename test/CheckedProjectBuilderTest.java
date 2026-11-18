@@ -1098,6 +1098,17 @@ public class CheckedProjectBuilderTest {
                 check(diagnostic.range().origin() == RangeOrigin.SOURCE
                         && diagnostic.range().equals(firstImportSpan(cycle.get(0)).range()),
                     root + ": witness import range: " + diagnostic.range());
+                var context = diagnostic.facts().cycle();
+                check(context != null && context.edgeCount() == cycle.size() - 1 && !context.truncated(),
+                    root + ": complete structured cycle witness");
+                if (context != null) for (int edge = 0; edge < context.edges().size(); edge++) {
+                    var observed = context.edges().get(edge);
+                    check(observed.from().equals(cycle.get(edge).toString())
+                            && observed.to().equals(cycle.get(edge + 1).toString())
+                            && observed.importRange() != null
+                            && observed.importRange().origin() == RangeOrigin.SOURCE,
+                        root + ": exact structured witness edge " + edge);
+                }
             }
             if (first != null) {
                 check(first.equals(diagnostics), root + ": independent compile reproduces diagnostics");

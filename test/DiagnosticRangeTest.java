@@ -104,6 +104,7 @@ public class DiagnosticRangeTest {
         testTemplateInterpolationRebasing();
         testCheckerProducerRanges();
         testAwaitRefinementEvidence();
+        testCycleEvidence();
         testCatchVariableIdentifierRange();
         testProgramSpanAnchorsCombined();
         testV12CornerCaseScalarCoordinatePins();
@@ -1152,6 +1153,61 @@ public class DiagnosticRangeTest {
             check(checkerDiagnostics(prefix + "async function f(x:string|null):Promise<void>{" + body + "}",
                     "await.deal").isEmpty(), "guarded/repaired/nested-function positive: " + body);
         }
+    }
+
+    private static void testCycleEvidence() {
+        String a = "a😀.deal", b = "b\".deal";
+        String source = "// 😀\r\nimport * as B from \"./b\";";
+        var parsed = new Parser(new Lexer(source, a).tokenize().tokens(), a).parse();
+        Span importSpan = parsed.program().statements().getFirst().span();
+        var diagnostic = CompilationOrchestrator.e2005Diagnostic(List.of(a, b, a),
+                Map.of(a, Map.of(b, importSpan)), Map.of(), "unchanged cycle message");
+        checkEq("unchanged cycle message", diagnostic.message(), "cycle producer keeps prose");
+        checkEq(importSpan.range(), diagnostic.range(), "cycle producer keeps primary anchor");
+        checkEq("module.import-cycle", diagnostic.facts().reason(), "cycle reason");
+        var context = diagnostic.facts().cycle();
+        check(context != null && context.edgeCount() == 2 && !context.truncated(), "closed witness counts");
+        if (context != null) {
+            checkEq(a, context.edges().getFirst().from(), "witness source identity");
+            checkEq(b, context.edges().getFirst().to(), "witness target identity");
+            checkEq(importSpan.range(), context.edges().getFirst().importRange(), "exact import geometry");
+            check(context.edges().getLast().importRange() == null, "missing edge range stays unavailable");
+            var copiedEdges = new ArrayList<>(context.edges());
+            var copy = new deal.diagnostics.DiagnosticFacts.CycleContext(copiedEdges, 2, false);
+            copiedEdges.clear();
+            check(copy.edges().size() == 2, "cycle witness immutable");
+            var facts = diagnostic.facts().withCall(null).withOperator(null).withMismatch(null).withSyntax(null)
+                    .withNames(null).withConstruction(null).withExports(null).withResolution(null);
+            checkEq(context, facts.cycle(), "cycle retained through every independent context copy");
+            check(facts.withCycle(null).cycle() == null, "cycle can clear independently");
+        }
+        var json = DiagnosticStructuredOutput.toJson(List.of(diagnostic));
+        var document = deal.amend.CompilerProtocolJson.requireObject(deal.amend.CompilerProtocolJson.decode(json), "document");
+        var items = deal.amend.CompilerProtocolJson.requireArray(deal.amend.CompilerProtocolJson.field(document, "diagnostics"), "diagnostics");
+        var item = deal.amend.CompilerProtocolJson.requireObject(items.items().getFirst(), "diagnostic");
+        checkEq(deal.amend.CompilerProtocolJson.encode(diagnostic.facts()),
+                deal.semantic.ir.CanonicalJson.serializeText(deal.amend.CompilerProtocolJson.field(item, "facts")),
+                "cycle CLI/amendment facts match with escaped identities and full ranges");
+        var path = new ArrayList<String>();
+        for (int i = 0; i < 40; i++) path.add("module-" + i);
+        path.add(path.getFirst());
+        var bounded = CompilationOrchestrator.e2005Diagnostic(path, Map.of(), Map.of(), "large cycle");
+        check(bounded.facts().cycle().edges().size() == 32 && bounded.facts().cycle().edgeCount() == 40
+                && bounded.facts().cycle().truncated(), "bounded witness retains exact total and truncation");
+        check(bounded.range().origin() == RangeOrigin.SYNTHETIC && !bounded.notes().isEmpty(),
+                "cycle synthetic fallback keeps original anchor note");
+        for (var invalid : List.of(
+                List.of(new deal.diagnostics.DiagnosticFacts.CycleEdge("a", "b", null)),
+                List.of(new deal.diagnostics.DiagnosticFacts.CycleEdge("a", "b", null),
+                        new deal.diagnostics.DiagnosticFacts.CycleEdge("c", "a", null)))) {
+            boolean rejected = false;
+            try { new deal.diagnostics.DiagnosticFacts.CycleContext(invalid, invalid.size(), false); }
+            catch (IllegalArgumentException expected) { rejected = true; }
+            check(rejected, "invalid cycle geometry rejected");
+        }
+        check(deal.module.ModuleDependencyGraph.importCycleDiagnostics(List.of("a", "b"),
+                Map.of("a", List.of("b"), "b", List.of()), Map.of(), Map.of()).isEmpty(),
+                "acyclic graph remains admitted without cycle evidence");
     }
 
     /** Finds a diagnostic with the given code. */
@@ -3207,7 +3263,7 @@ public class DiagnosticRangeTest {
             + range.replace("\n", "\n      ") + ",\n      \"notes\": "
             + notes.replace("\n", "\n      ") + ",\n"
             + "      \"facts\": {\n        \"reason\": \"\",\n        \"operation\": \"\",\n"
-            + "        \"expected\": \"\",\n        \"actual\": \"\",\n        \"guidance\": [],\n        \"path\": [],\n        \"call\": null,\n        \"operator\": null,\n        \"mismatch\": null,\n        \"syntax\": null,\n        \"names\": null,\n        \"construction\": null,\n        \"exports\": null,\n        \"resolution\": null\n      },\n"
+            + "        \"expected\": \"\",\n        \"actual\": \"\",\n        \"guidance\": [],\n        \"path\": [],\n        \"call\": null,\n        \"operator\": null,\n        \"mismatch\": null,\n        \"syntax\": null,\n        \"names\": null,\n        \"construction\": null,\n        \"exports\": null,\n        \"resolution\": null,\n        \"cycle\": null\n      },\n"
             + "      \"missingSymbols\": []\n    }\n  ]\n}";
     }
 

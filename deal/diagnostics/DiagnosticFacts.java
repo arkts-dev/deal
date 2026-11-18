@@ -18,7 +18,28 @@ public record DiagnosticFacts(
         NameContext names,
         ConstructionContext construction,
         ExportContext exports,
-        ResolutionContext resolution) {
+        ResolutionContext resolution,
+        CycleContext cycle) {
+    /** One concrete closed import witness, not an inferred source rewrite. */
+    public record CycleEdge(String from, String to, DiagnosticRange importRange) {
+        public CycleEdge {
+            Objects.requireNonNull(from, "from");
+            Objects.requireNonNull(to, "to");
+        }
+    }
+    public record CycleContext(List<CycleEdge> edges, int edgeCount, boolean truncated) {
+        public CycleContext {
+            edges = List.copyOf(edges);
+            if (edgeCount < edges.size() || truncated != (edgeCount > edges.size()))
+                throw new IllegalArgumentException("Invalid cycle edge count");
+            for (int i = 1; i < edges.size(); i++)
+                if (!edges.get(i - 1).to().equals(edges.get(i).from()))
+                    throw new IllegalArgumentException("Disconnected cycle witness");
+            if (!truncated && !edges.isEmpty() && !edges.getLast().to().equals(edges.getFirst().from()))
+                throw new IllegalArgumentException("Unclosed cycle witness");
+        }
+    }
+
     /** Candidate paths actually visited, in search order; no filesystem re-probing. */
     public record ResolutionContext(String specifier, String mode, List<String> attempted,
                                     int attemptedCount, boolean truncated) {
@@ -198,36 +219,49 @@ public record DiagnosticFacts(
         this(reason, operation, expected, actual, guidance, path, call, operator, mismatch, syntax, names, construction, exports, null);
     }
 
+    public DiagnosticFacts(String reason, String operation, String expected, String actual,
+                           List<String> guidance, List<PathSegment> path, CallContext call,
+                           OperatorContext operator, TypeMismatch mismatch, SyntaxContext syntax,
+                           NameContext names, ConstructionContext construction, ExportContext exports,
+                           ResolutionContext resolution) {
+        this(reason, operation, expected, actual, guidance, path, call, operator, mismatch, syntax, names,
+                construction, exports, resolution, null);
+    }
+
+    public DiagnosticFacts withCycle(CycleContext context) {
+        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, mismatch, syntax, names, construction, exports, resolution, context);
+    }
+
     public DiagnosticFacts withResolution(ResolutionContext context) {
-        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, mismatch, syntax, names, construction, exports, context);
+        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, mismatch, syntax, names, construction, exports, context, cycle);
     }
 
     public DiagnosticFacts withExports(ExportContext context) {
-        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, mismatch, syntax, names, construction, context, resolution);
+        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, mismatch, syntax, names, construction, context, resolution, cycle);
     }
 
     public DiagnosticFacts withConstruction(ConstructionContext context) {
-        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, mismatch, syntax, names, context, exports, resolution);
+        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, mismatch, syntax, names, context, exports, resolution, cycle);
     }
 
     public DiagnosticFacts withNames(NameContext context) {
-        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, mismatch, syntax, context, construction, exports, resolution);
+        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, mismatch, syntax, context, construction, exports, resolution, cycle);
     }
 
     public DiagnosticFacts withCall(CallContext context) {
-        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, context, operator, mismatch, syntax, names, construction, exports, resolution);
+        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, context, operator, mismatch, syntax, names, construction, exports, resolution, cycle);
     }
 
     public DiagnosticFacts withOperator(OperatorContext context) {
-        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, context, mismatch, syntax, names, construction, exports, resolution);
+        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, context, mismatch, syntax, names, construction, exports, resolution, cycle);
     }
 
     public DiagnosticFacts withMismatch(TypeMismatch context) {
-        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, context, syntax, names, construction, exports, resolution);
+        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, context, syntax, names, construction, exports, resolution, cycle);
     }
 
     public DiagnosticFacts withSyntax(SyntaxContext context) {
-        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, mismatch, context, names, construction, exports, resolution);
+        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, mismatch, context, names, construction, exports, resolution, cycle);
     }
 
     public static final DiagnosticFacts EMPTY = new DiagnosticFacts("", "", "", "", List.of());

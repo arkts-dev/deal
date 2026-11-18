@@ -1258,15 +1258,26 @@ public final class CompilationOrchestrator {
             anchor = edgeSpan != null ? edgeSpan : programSpans.get(sourcePath);
             break;
         }
+        CompilerDiagnostic diagnostic;
         if (anchor != null) {
-            return CompilerDiagnostic.error(DiagnosticCode.E2005, message,
-                anchor);
+            diagnostic = CompilerDiagnostic.error(DiagnosticCode.E2005, message, anchor);
+        } else {
+            String file = cycle.isEmpty() ? "" : cycle.get(0);
+            diagnostic = CompilerDiagnostic.syntheticError(DiagnosticCode.E2005, message, file,
+                    "missing anchor: import declaration closing the module cycle " + String.join(" -> ", cycle));
         }
-        String file = cycle.isEmpty() ? "" : cycle.get(0);
-        return CompilerDiagnostic.syntheticError(DiagnosticCode.E2005, message,
-            file,
-            "missing anchor: import declaration closing the module cycle "
-                + String.join(" -> ", cycle));
+        var witness = new ArrayList<deal.diagnostics.DiagnosticFacts.CycleEdge>();
+        int edgeCount = Math.max(0, cycle.size() - 1);
+        for (int i = 0; i < Math.min(edgeCount, 32); i++) {
+            String from = cycle.get(i), to = cycle.get(i + 1);
+            Span span = edgeSpans.getOrDefault(from, Map.of()).get(to);
+            witness.add(new deal.diagnostics.DiagnosticFacts.CycleEdge(from, to,
+                    span == null ? null : span.range()));
+        }
+        return diagnostic.withFacts(new deal.diagnostics.DiagnosticFacts("module.import-cycle", "module.graph",
+                "acyclic import graph", "closed import cycle", List.of(
+                        "Inspect the witnessed imports and choose an intended dependency restructuring; no edge removal is authorized."))
+                .withCycle(new deal.diagnostics.DiagnosticFacts.CycleContext(witness, edgeCount, edgeCount > 32)));
     }
 
     /**
