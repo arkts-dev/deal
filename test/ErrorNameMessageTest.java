@@ -47,6 +47,8 @@ public final class ErrorNameMessageTest {
             const captured=runtime.runtimeDiagnostic(nested);
             WeakSet.prototype.has=savedHas;Object.prototype.hasOwnProperty=savedOwn;Number.isFinite=savedFinite;
             if(!captured.includes('Outer'))process.exit(7);
+            const boundary=JSON.parse(runtime.runtimeDiagnostic(runtime.errorValue('Boundary','x'.repeat(8191)+'😀tail'))).runtime;
+            if(boundary.message!=='x'.repeat(8191)||boundary.messageLength!==8197||!boundary.messageTruncated)process.exit(8);
             """), Path.of("").toAbsolutePath(), Map.of());
         if (getterControl.exitCode() != 0) throw new AssertionError("runtime export invoked mutable host metadata: " + getterControl);
         List<String> jvmProjection = List.of("java", "-cp", TestClasspath.absolute(TestClasspath.EmptyEntry.OMIT),
@@ -61,7 +63,7 @@ public final class ErrorNameMessageTest {
                 enabledProjection.stderr().strip().substring("DEAL_RUNTIME_DIAGNOSTIC: ".length())), "projection");
         var error = deal.amend.CompilerProtocolJson.requireObject(deal.amend.CompilerProtocolJson.field(projected, "runtime"), "runtime");
         var message = (CanonicalJson.Str) deal.amend.CompilerProtocolJson.field(error, "message");
-        if (!message.value().equals("x".repeat(8192))) throw new AssertionError("JVM diagnostic text limit");
+        if (!message.value().equals("x".repeat(8191))) throw new AssertionError("JVM diagnostic text limit");
         int depth = 1;
         while (error.entries().stream().anyMatch(e -> e.key().equals("cause"))) {
             error = deal.amend.CompilerProtocolJson.requireObject(deal.amend.CompilerProtocolJson.field(error, "cause"), "cause");
@@ -127,10 +129,10 @@ public final class ErrorNameMessageTest {
         if (args.length == 1 && args[0].equals("--diagnostic-projection")) {
             var cause = new deal.codegen.jvm.JvmRuntime.DealError("Leaf", "leaf", null, null, null, null, null);
             for (int i = 0; i < 10; i++) cause = new deal.codegen.jvm.JvmRuntime.DealError(
-                "Bound", "x".repeat(9000), null, null, null, null, cause);
+                "Bound", "x".repeat(8191) + "😀tail", null, null, null, null, cause);
             var originalCause = cause.cause;
             deal.codegen.jvm.JvmRuntime.reportRuntimeDiagnostic(cause);
-            if (cause.cause != originalCause || !cause.msg.equals("x".repeat(9000))) throw new AssertionError("transport mutated");
+            if (cause.cause != originalCause || !cause.msg.equals("x".repeat(8191) + "😀tail")) throw new AssertionError("transport mutated");
             System.out.println("projection identity unchanged");
             return;
         }

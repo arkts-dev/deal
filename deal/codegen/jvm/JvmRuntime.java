@@ -817,6 +817,8 @@ public final class JvmRuntime {
         appendJsonString(out, key);
         out.append(':');
         int take = Math.min(value.length(), 8192);
+        if (take < value.length() && Character.isHighSurrogate(value.charAt(take - 1))
+                && Character.isLowSurrogate(value.charAt(take))) take--;
         appendJsonString(out, value.substring(0, take));
         if (take < value.length()) {
             out.append(','); appendJsonString(out, key + "Length");

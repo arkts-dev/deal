@@ -1990,7 +1990,9 @@ const $rt = {
       for (const key of ["code", "message", "file", "expected", "actual", "frames"]) {
         const text = own(value, key);
         if (typeof text !== "string") continue;
-        const take = text.length > 8192 ? 8192 : text.length;
+        let take = text.length > 8192 ? 8192 : text.length;
+        if (take < text.length && text.charCodeAt(take - 1) >= 0xD800 && text.charCodeAt(take - 1) <= 0xDBFF
+            && text.charCodeAt(take) >= 0xDC00 && text.charCodeAt(take) <= 0xDFFF) take--;
         fields.push($jsonQuote(key) + ":" + $jsonQuote(text.slice(0, take)));
         if (take < text.length) fields.push($jsonQuote(key + "Length") + ":" + text.length,
           $jsonQuote(key + "Truncated") + ":true");
