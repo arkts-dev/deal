@@ -41,6 +41,7 @@ import deal.amend.CompilerProtocol.SemanticId;
 import deal.amend.CompilerProtocol.SemanticSlice;
 import deal.amend.CompilerProtocol.RevisionRef;
 import deal.diagnostics.DiagnosticRange;
+import deal.diagnostics.RangeOrigin;
 import deal.amend.CompilerProtocol.StructuredDiagnostic;
 import deal.amend.CompilerProtocol.SlotPatch;
 import deal.amend.CompilerProtocol.SymbolSnapshot;
@@ -1331,7 +1332,7 @@ public final class AmendWorkspace {
                 classesByName,
                 index);
         List<StructuredDiagnostic> diagnostics = rawDiagnostics.stream()
-                .map(value -> diagnostic(value, moduleId, functionsByName.values(), classesByName.values())
+                .map(value -> diagnostic(value, moduleId, functionsByName.values(), classesByName.values(), targets.values())
                         .withMissingSymbols(value.missingSymbols()))
                 .toList();
         Inspection inspection = new Inspection(
@@ -1496,7 +1497,8 @@ public final class AmendWorkspace {
             CompilerDiagnostic value,
             SemanticId moduleId,
             Iterable<FunctionInfo> functions,
-            Iterable<ClassInfo> classes) {
+            Iterable<ClassInfo> classes,
+            Iterable<Target> targets) {
         FunctionInfo owner = null;
         for (FunctionInfo function : functions) {
             if (contains(function.declarationSpan(), value.line(), value.column())) {
@@ -1518,6 +1520,21 @@ public final class AmendWorkspace {
                     break;
                 }
             }
+        }
+        // Semantic ownership is a declaration; the smallest editable block is a separate target.
+        if (owner != null && contains(owner.function().body().span(), value.line(), value.column())) {
+            Target smallest = null;
+            for (Target target : targets) {
+                if (!target.ownerId().equals(ownerId) || !target.kind().equals("block")) continue;
+                DiagnosticRange block = target.range();
+                DiagnosticRange failure = value.range();
+                if (block.origin() != RangeOrigin.SOURCE || failure.origin() != RangeOrigin.SOURCE
+                        || !block.file().equals(failure.file())
+                        || failure.startScalarOffset() < block.startScalarOffset()
+                        || failure.endScalarOffset() > block.endScalarOffset()) continue;
+                if (smallest == null || block.scalarLength() < smallest.range().scalarLength()) smallest = target;
+            }
+            if (smallest != null) scopes = List.of(new RepairScope(REPLACE_BLOCK_BODY, smallest.id()));
         }
         var compilerRange = value.range();
         return new StructuredDiagnostic(

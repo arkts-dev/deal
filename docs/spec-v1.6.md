@@ -1719,7 +1719,11 @@ The amendment transport is `compiler-protocol-v3`; diagnostics use these same
 complete ranges and nested facts. Exact repeats may collapse only when all
 carrier fields match; distinct occurrences remain. Semantic ownership does not
 itself authorize a repair: signature errors require declaration replacement,
-whereas errors inside a function body may use body replacement. A repair is a
+whereas errors inside a function body may use body replacement. When a complete
+source range is contained in a smaller compiler-issued editable block, the repair
+scope names that smallest block with `replaceBlockBody`, separately from the
+semantic declaration owner; no target is invented for unavailable geometry.
+A repair is a
 revision-pinned, fingerprint-checked, one-module frontend transaction. Invalid
 candidate source is never published; scoped repair rechecks the corrected
 candidate, including consumer validation, before committing. It does not certify

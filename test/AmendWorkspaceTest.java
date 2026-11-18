@@ -43,7 +43,36 @@ public final class AmendWorkspaceTest {
         syntaxDiagnosticsCarryCandidateEvidence();
         syntaxRecoveryCannotAuthorizeMissingDependencies();
         actionabilityFactsAndRepairScope();
+        smallestEditableBlockIsNotSemanticOwner();
         System.out.println("AmendWorkspaceTest: all tests passed");
+    }
+
+    private static void smallestEditableBlockIsNotSemanticOwner() {
+        String clean = "export function f():number{if(true){if(true){let x:number=1;}}return 7;}";
+        String invalid = clean.replace("x:number=1", "x:number=\"bad\"");
+        var inspection = AmendWorkspace.inspect(invalid, "probe.deal");
+        var diagnostic = inspection.diagnostics().stream().filter(d -> d.code().equals("E3001")).findFirst().orElseThrow();
+        var function = inspection.symbols().stream().filter(s -> s.kind().equals("function")).findFirst().orElseThrow();
+        var inner = inspection.nodes().stream().filter(n -> n.kind().equals("block"))
+                .min(java.util.Comparator.comparingInt(n -> n.range().scalarLength())).orElseThrow();
+        check(diagnostic.ownerId().equals(function.id())
+                        && diagnostic.repairScopes().equals(List.of(new CompilerProtocol.RepairScope(
+                                AmendWorkspace.REPLACE_BLOCK_BODY, inner.id()))),
+                "nested failure keeps semantic declaration owner and smallest valid editable block");
+        var base = AmendWorkspace.inspect(clean, "probe.deal");
+        var target = base.nodes().stream().filter(n -> n.kind().equals("block"))
+                .min(java.util.Comparator.comparingInt(n -> n.range().scalarLength())).orElseThrow();
+        var change = AmendWorkspace.inspectChange(clean, "probe.deal", base.sourceDigest(),
+                List.of(target.id()), List.of(AmendWorkspace.REPLACE_BLOCK_BODY));
+        var staged = AmendWorkspace.stageChange(clean, "probe.deal",
+                new CompilerProtocol.ChangeSetPrecondition(base.sourceDigest(), Map.of(target.id().value(), target.fingerprint())),
+                change, List.of(new AmendWorkspace.ReplaceBlockBody(target.id(), "let x:number=\"bad\";")));
+        check(!staged.accepted() && staged.source().equals(clean), "invalid nested block stays unpublished");
+        var repaired = AmendWorkspace.patchRepairWorkspace(clean, "probe.deal", staged.workspace(),
+                List.of(new CompilerProtocol.SlotPatch("R1", Map.of("body", "let x:number=2;"))));
+        check(repaired.accepted() && repaired.source().contains("return 7;")
+                        && AmendWorkspace.inspect(repaired.source(), "probe.deal").diagnostics().isEmpty(),
+                "smallest-block staged repair rechecks while retaining unrelated body code: " + repaired.diagnostics());
     }
 
     private static void actionabilityFactsAndRepairScope() {
