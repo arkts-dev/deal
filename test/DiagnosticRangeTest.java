@@ -3101,7 +3101,7 @@ public class DiagnosticRangeTest {
             + range.replace("\n", "\n      ") + ",\n      \"notes\": "
             + notes.replace("\n", "\n      ") + ",\n"
             + "      \"facts\": {\n        \"reason\": \"\",\n        \"operation\": \"\",\n"
-            + "        \"expected\": \"\",\n        \"actual\": \"\",\n        \"guidance\": [],\n        \"path\": [],\n        \"call\": null,\n        \"operator\": null\n      },\n"
+            + "        \"expected\": \"\",\n        \"actual\": \"\",\n        \"guidance\": [],\n        \"path\": [],\n        \"call\": null,\n        \"operator\": null,\n        \"mismatch\": null\n      },\n"
             + "      \"missingSymbols\": []\n    }\n  ]\n}";
     }
 
@@ -3243,6 +3243,20 @@ public class DiagnosticRangeTest {
                         && operatorFacts.withCall(null).operator().equals(operator)
                         && operatorFacts.call().equals(callContext),
                 "operator collections are immutable and fact copies preserve independent evidence");
+        var componentPath = new java.util.ArrayList<>(List.of(
+                new deal.diagnostics.DiagnosticFacts.TypeComponent(
+                        deal.diagnostics.DiagnosticFacts.TypeComponentKind.FUNCTION_PARAMETER, 2)));
+        var mismatch = new deal.diagnostics.DiagnosticFacts.TypeMismatch("type.exact", componentPath, "number", "string", false);
+        operatorFacts = operatorFacts.withMismatch(mismatch);
+        componentPath.clear();
+        check(mismatch.path().size() == 1 && operatorFacts.withCall(null).withOperator(null).mismatch().equals(mismatch)
+                        && operatorFacts.call().equals(callContext) && operatorFacts.operator().equals(operator),
+                "type constraint routes are immutable and independent contexts survive copies");
+        boolean invalidComponent = false;
+        try { new deal.diagnostics.DiagnosticFacts.TypeComponent(
+                deal.diagnostics.DiagnosticFacts.TypeComponentKind.ARRAY_ELEMENT, 0); }
+        catch (IllegalArgumentException expected) { invalidComponent = true; }
+        check(invalidComponent, "type routes cannot claim a concrete array index");
         String operatorJson = DiagnosticStructuredOutput.toJson(List.of(escaped.withFacts(operatorFacts)));
         var operatorDocument = deal.amend.CompilerProtocolJson.requireObject(
                 deal.amend.CompilerProtocolJson.decode(operatorJson), "document");
@@ -3251,7 +3265,9 @@ public class DiagnosticRangeTest {
         var operatorItem = deal.amend.CompilerProtocolJson.requireObject(operatorItems.items().getFirst(), "diagnostic");
         check(deal.amend.CompilerProtocolJson.encode(operatorFacts).equals(deal.semantic.ir.CanonicalJson.serializeText(
                         deal.amend.CompilerProtocolJson.field(operatorItem, "facts")))
-                        && operatorJson.contains("left\\\"\\ud800"),
+                        && operatorJson.contains("left\\\"\\ud800")
+                        && operatorJson.contains("\"kind\": \"FUNCTION_PARAMETER\", \"index\": 2")
+                        && operatorJson.contains("\"truncated\": false"),
                 "CLI and amendment operator facts agree with escaped roles, accepted combinations and complete ranges");
         var schemaFacts = new deal.diagnostics.DiagnosticFacts("schema", "decode", "number", "function", List.of(), schemaPath);
         schemaPath.clear();

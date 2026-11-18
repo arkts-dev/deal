@@ -141,7 +141,7 @@ public final class DiagnosticStructuredOutput {
         sb.append(",\n");
         indent(sb, level + 1).append("\"operator\": ");
         var operator = facts.operator();
-        if (operator == null) sb.append("null\n");
+        if (operator == null) sb.append("null");
         else {
             sb.append("{\n");
             indent(sb, level + 2).append("\"token\": ").append(jsonString(operator.token())).append(",\n");
@@ -162,6 +162,26 @@ public final class DiagnosticStructuredOutput {
             indent(sb, level + 2).append("\"acceptedCombinations\": ");
             appendStrings(sb, operator.acceptedCombinations());
             sb.append('\n');
+            indent(sb, level + 1).append('}');
+        }
+        sb.append(",\n");
+        indent(sb, level + 1).append("\"mismatch\": ");
+        var mismatch = facts.mismatch();
+        if (mismatch == null) sb.append("null\n");
+        else {
+            sb.append("{\n");
+            indent(sb, level + 2).append("\"rule\": ").append(jsonString(mismatch.rule())).append(",\n");
+            indent(sb, level + 2).append("\"path\": [");
+            for (int i = 0; i < mismatch.path().size(); i++) {
+                if (i > 0) sb.append(", ");
+                var component = mismatch.path().get(i);
+                sb.append("{\"kind\": ").append(jsonString(component.kind().name()))
+                        .append(", \"index\": ").append(component.index()).append('}');
+            }
+            sb.append("],\n");
+            indent(sb, level + 2).append("\"expected\": ").append(jsonString(mismatch.expected())).append(",\n");
+            indent(sb, level + 2).append("\"actual\": ").append(jsonString(mismatch.actual())).append(",\n");
+            indent(sb, level + 2).append("\"truncated\": ").append(mismatch.truncated()).append('\n');
             indent(sb, level + 1).append("}\n");
         }
         indent(sb, level).append('}');

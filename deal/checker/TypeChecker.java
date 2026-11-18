@@ -892,7 +892,8 @@ public final class TypeChecker {
                         "Return type mismatch: expected " + typeName(currentReturnType)
                         + ", got " + typeName(exprType), rs.expr().get().span()).withFacts(
                                 new deal.diagnostics.DiagnosticFacts("return.incompatible", "return",
-                                        typeName(currentReturnType), typeName(exprType), List.of()))
+                                        typeName(currentReturnType), typeName(exprType), List.of())
+                                        .withMismatch(typeMismatch(currentReturnType, exprType)))
                                 .withNote("Declared result annotation", currentReturnAnnotation.span().range()));
                 }
             }
@@ -2261,7 +2262,8 @@ public final class TypeChecker {
                         + ": expected " + typeName(paramType)
                         + ", got " + typeName(argType), call.args().get(i).span())
                         .withFacts(callFacts("call.argument-type", call, funcType, i,
-                                typeName(paramType), typeName(argType)));
+                                typeName(paramType), typeName(argType))
+                                .withMismatch(typeMismatch(paramType, argType)));
                     var parameterRange = diagnostic.facts().call().parameterRange();
                     if (parameterRange != null) diagnostic = diagnostic.withNote("Expected parameter annotation", parameterRange);
                     diagnostics.add(diagnostic);
@@ -2756,7 +2758,8 @@ public final class TypeChecker {
                     "Type mismatch for field '" + field.name() + "': expected "
                         + typeName(fieldType) + ", got " + typeName(valueType),
                     property.span()).withFacts(classFieldFacts("construction.field-type", field.name(),
-                            typeName(fieldType), typeName(valueType), "Choose a value satisfying the declared field type; no coercion is inferred."))
+                            typeName(fieldType), typeName(valueType), "Choose a value satisfying the declared field type; no coercion is inferred.")
+                            .withMismatch(typeMismatch(fieldType, valueType)))
                             .withNote("Expected field annotation", field.type().span().range()));
             }
         }
@@ -3521,9 +3524,77 @@ public final class TypeChecker {
         }
         CompilerDiagnostic diagnostic = diagnostics.get(diagnosticIndex).withFacts(
                 new deal.diagnostics.DiagnosticFacts("type.assignability", "assignment",
-                        typeName(targetType), typeName(actualType), List.of()));
+                        typeName(targetType), typeName(actualType), List.of())
+                        .withMismatch(typeMismatch(targetType, actualType)));
         if (annotation != null) diagnostic = diagnostic.withNote("Expected binding annotation", annotation.span().range());
         diagnostics.set(diagnosticIndex, diagnostic);
+    }
+
+    /** Describes an already rejected pair; never participates in the typing decision. */
+    private static deal.diagnostics.DiagnosticFacts.TypeMismatch typeMismatch(Type expected, Type actual) {
+        var path = new ArrayList<deal.diagnostics.DiagnosticFacts.TypeComponent>();
+        boolean exact = false;
+        String rule;
+        while (true) {
+            if (path.size() == 32) {
+                return new deal.diagnostics.DiagnosticFacts.TypeMismatch("type.detail-limit", path,
+                        typeName(expected), typeName(actual), true);
+            }
+            if (expected instanceof Type.Nullable target) {
+                if (actual instanceof Type.Nullable value) {
+                    // Nullable assignability compares the invariant inner type before presence flags;
+                    // nested exact equality checks presence flags first.
+                    if (exact || Types.equals(value.inner(), target.inner())) {
+                        if (exact ? target.admitsNull() != value.admitsNull()
+                                : value.admitsNull() && !target.admitsNull()) { rule = "type.null-presence"; break; }
+                        if (exact ? target.admitsUndefined() != value.admitsUndefined()
+                                : value.admitsUndefined() && !target.admitsUndefined()) { rule = "type.undefined-presence"; break; }
+                    }
+                    path.add(new deal.diagnostics.DiagnosticFacts.TypeComponent(
+                            deal.diagnostics.DiagnosticFacts.TypeComponentKind.NULLABLE_INNER, -1));
+                    expected = target.inner(); actual = value.inner(); exact = true; continue;
+                }
+                if (!exact && actual instanceof Type.Null) { rule = "type.null-presence"; break; }
+                if (!exact && actual instanceof Type.Undefined) { rule = "type.undefined-presence"; break; }
+                if (!exact) {
+                    path.add(new deal.diagnostics.DiagnosticFacts.TypeComponent(
+                            deal.diagnostics.DiagnosticFacts.TypeComponentKind.NULLABLE_INNER, -1));
+                    expected = target.inner(); exact = true; continue;
+                }
+            }
+            if (expected instanceof Type.Array target && actual instanceof Type.Array value) {
+                path.add(new deal.diagnostics.DiagnosticFacts.TypeComponent(
+                        deal.diagnostics.DiagnosticFacts.TypeComponentKind.ARRAY_ELEMENT, -1));
+                expected = target.element(); actual = value.element(); exact = true; continue;
+            }
+            if (expected instanceof Type.Func target && actual instanceof Type.Func value) {
+                if (target.isAsync() != value.isAsync()) { rule = "type.function-async"; break; }
+                if (!Types.equals(target.returnType(), value.returnType())) {
+                    path.add(new deal.diagnostics.DiagnosticFacts.TypeComponent(
+                            deal.diagnostics.DiagnosticFacts.TypeComponentKind.FUNCTION_RESULT, -1));
+                    expected = target.returnType(); actual = value.returnType(); exact = true; continue;
+                }
+                if (exact ? target.paramTypes().size() != value.paramTypes().size()
+                        : value.paramTypes().size() > target.paramTypes().size()) {
+                    rule = "type.function-arity"; break;
+                }
+                int index = -1;
+                for (int i = 0; i < value.paramTypes().size(); i++) {
+                    if (!Types.equals(target.paramTypes().get(i), value.paramTypes().get(i))) { index = i; break; }
+                }
+                if (index >= 0) {
+                    path.add(new deal.diagnostics.DiagnosticFacts.TypeComponent(
+                            deal.diagnostics.DiagnosticFacts.TypeComponentKind.FUNCTION_PARAMETER, index));
+                    expected = target.paramTypes().get(index); actual = value.paramTypes().get(index);
+                    exact = true; continue;
+                }
+            }
+            rule = expected instanceof Type.Class && actual instanceof Type.Class ? "type.nominal"
+                    : expected instanceof Type.Void ? "type.void-result" : "type.exact";
+            break;
+        }
+        return new deal.diagnostics.DiagnosticFacts.TypeMismatch(rule, path,
+                typeName(expected), typeName(actual), false);
     }
 
     private boolean isAssignable(Type expected, Type actual) {

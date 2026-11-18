@@ -123,6 +123,56 @@ public class CheckerTest {
     }
 
     private static void diagnosticActionability() {
+        String[][] mismatches = {
+            {"function run(value:number[][],other:string[][]):void{value=other;}", "type.exact", "number", "string", "ARRAY_ELEMENT,ARRAY_ELEMENT", "function run(value:number[][],other:number[][]):void{value=other;}"},
+            {"function run(value:(x:number)=>string,other:(x:number)=>boolean):void{value=other;}", "type.exact", "string", "boolean", "FUNCTION_RESULT", "function run(value:(x:number)=>string,other:(x:number)=>string):void{value=other;}"},
+            {"function run(value:(x:number,y:string)=>number,other:(x:number,y:boolean)=>number):void{value=other;}", "type.exact", "string", "boolean", "FUNCTION_PARAMETER", "function run(value:(x:number,y:string)=>number,other:(x:number,y:string)=>number):void{value=other;}"},
+            {"function run(value:((x:number)=>number)[],other:((x:number,y:string)=>number)[]):void{value=other;}", "type.function-arity", "(number) => number", "(number, string) => number", "ARRAY_ELEMENT", "function run(value:((x:number)=>number)[],other:((x:number)=>number)[]):void{value=other;}"},
+            {"function run(value:()=>number,other:()=>Promise<number>):void{value=other;}", "type.function-async", "() => number", "async () => number", "", "function run(value:()=>number,other:()=>number):void{value=other;}"},
+            {"function run(value:number|null,other:string|null):void{value=other;}", "type.exact", "number", "string", "NULLABLE_INNER", "function run(value:number|null,other:number|null):void{value=other;}"},
+            {"function run(value:number|null,other:number|undefined):void{value=other;}", "type.undefined-presence", "number | null", "number | undefined", "", "function run(value:number|null,other:number|null):void{value=other;}"},
+            {"function run(value:number|undefined,other:number|null):void{value=other;}", "type.null-presence", "number | undefined", "number | null", "", "function run(value:number|undefined,other:number|undefined):void{value=other;}"},
+            {"function use(value:number[]):void{}function run(other:string[]):void{use(other);}", "type.exact", "number", "string", "ARRAY_ELEMENT", "function use(value:number[]):void{}function run(other:number[]):void{use(other);}"},
+            {"function result(other:string[]):number[]{return other;}", "type.exact", "number", "string", "ARRAY_ELEMENT", "function result(other:number[]):number[]{return other;}"},
+            {"class C{value:number[];}function run(other:string[]):void{let value:C={value:other};}", "type.exact", "number", "string", "ARRAY_ELEMENT", "class C{value:number[];}function run(other:number[]):void{let value:C={value:other};}"}
+        };
+        for (String[] candidate : mismatches) {
+            var rejected = checkProgram(candidate[0]);
+            var diagnostic = rejected.result().diagnostics().stream().filter(d -> d.facts().mismatch() != null)
+                    .findFirst().orElseThrow(() -> new AssertionError(candidate[0] + ": " + rejected.result().diagnostics()));
+            var mismatch = diagnostic.facts().mismatch();
+            check(mismatch.rule().equals(candidate[1]) && mismatch.expected().equals(candidate[2])
+                            && mismatch.actual().equals(candidate[3]) && !mismatch.truncated()
+                            && mismatch.path().stream().map(p -> p.kind().name()).collect(java.util.stream.Collectors.joining(",")).equals(candidate[4])
+                            && mismatch.path().stream().allMatch(p -> p.index() == (p.kind() == deal.diagnostics.DiagnosticFacts.TypeComponentKind.FUNCTION_PARAMETER ? 1 : -1)),
+                    "first incompatible type constraint is explicit: " + candidate[0] + ": " + mismatch);
+            assertNoErrors(checkProgram(candidate[5]), "chosen type-compatible declaration repair");
+        }
+        for (String[] candidate : new String[][] {
+                {"function run(value:(x:number)=>number,other:(x:number,y:string)=>number):void{value=other;}", "E5004", ""},
+                {"function run(value:((x:number,y:string)=>number)[],other:((x:number)=>number)[]):void{value=other;}", "E3001", "ARRAY_ELEMENT"},
+                {"function run(value:((x:number,y:string)=>number)|null,other:(x:number)=>number):void{value=other;}", "E3001", "NULLABLE_INNER"}}) {
+            var rejected = checkProgram(candidate[0]).result().diagnostics().stream()
+                    .filter(d -> d.facts().mismatch() != null).findFirst().orElseThrow();
+            check(rejected.code().equals(candidate[1]) && rejected.facts().mismatch().rule().equals("type.function-arity")
+                            && rejected.facts().mismatch().path().stream().map(p -> p.kind().name())
+                                .collect(java.util.stream.Collectors.joining(",")).equals(candidate[2]),
+                    "arity constraint evidence distinguishes extension from invariant inner equality: " + candidate[0]);
+        }
+        String deepExpected = "number" + "[]".repeat(40);
+        String deepActual = "string" + "[]".repeat(40);
+        var deepMismatch = checkProgram("function run(value:" + deepExpected + ",other:" + deepActual
+                + "):void{value=other;}").result().diagnostics().stream()
+                .filter(d -> d.facts().mismatch() != null).findFirst().orElseThrow().facts().mismatch();
+        check(deepMismatch.truncated() && deepMismatch.path().size() == 32
+                        && deepMismatch.rule().equals("type.detail-limit"),
+                "deep incompatible constraints explicitly truncate without claiming an unseen leaf");
+        var orderedMismatch = checkProgram("function run(value:(x:number)=>string,other:(x:boolean)=>number):void{value=other;}")
+                .result().diagnostics().stream().filter(d -> d.facts().mismatch() != null).findFirst().orElseThrow().facts().mismatch();
+        check(orderedMismatch.path().getFirst().kind() == deal.diagnostics.DiagnosticFacts.TypeComponentKind.FUNCTION_RESULT,
+                "function constraint evidence retains result-before-parameter comparison order");
+        assertNoErrors(checkProgram("function run(value:(x:number,y:string)=>number,other:(x:number)=>number):void{value=other;}"),
+                "first-component evidence does not reject ordinary shorter-function assignment");
         var missing = checkProgram("let value = nowhere;").result().diagnostics().stream()
                 .filter(d -> d.code().equals("E2001")).findFirst().orElseThrow();
         check(missing.missingSymbols().size() == 1

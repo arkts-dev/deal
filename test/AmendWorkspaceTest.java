@@ -153,6 +153,26 @@ public final class AmendWorkspaceTest {
                         && operator.operands().get(1).range().startScalarOffset() == repairedOperator.source().indexOf("1+7") + 2
                         && AmendWorkspace.inspect(repairedOperator.source(), "probe.deal").diagnostics().isEmpty(),
                 "chosen data operand repair publishes only after clean recheck");
+        String constraintBase = "export function run(value:number[],other:string[]):void{}";
+        var constraintInspection = AmendWorkspace.inspect(constraintBase, "probe.deal");
+        var constraintBody = constraintInspection.nodes().stream().filter(n -> n.kind().equals("function-body"))
+                .findFirst().orElseThrow();
+        var constraintPrecondition = new CompilerProtocol.ChangeSetPrecondition(constraintInspection.sourceDigest(),
+                Map.of(constraintBody.id().value(), constraintBody.fingerprint()));
+        var rejectedConstraint = AmendWorkspace.applyChecked(constraintBase, "probe.deal", constraintPrecondition,
+                List.of(new AmendWorkspace.ReplaceFunctionBody(constraintBody.id(), "value=other;")));
+        var constraintDiagnostic = rejectedConstraint.diagnostics().stream().filter(d -> d.code().equals("E3001"))
+                .findFirst().orElseThrow();
+        var constraint = constraintDiagnostic.facts().mismatch();
+        check(!rejectedConstraint.accepted() && rejectedConstraint.source().equals(constraintBase)
+                        && constraint.path().getFirst().kind() == deal.diagnostics.DiagnosticFacts.TypeComponentKind.ARRAY_ELEMENT
+                        && constraint.expected().equals("number") && constraint.actual().equals("string")
+                        && constraintDiagnostic.withOperationIndex(0).facts().mismatch().equals(constraint),
+                "rejected amendment carries the actual nested constraint without publication or invented attribution");
+        var repairedConstraint = AmendWorkspace.applyChecked(constraintBase, "probe.deal", constraintPrecondition,
+                List.of(new AmendWorkspace.ReplaceFunctionBody(constraintBody.id(), "value=[7];")));
+        check(repairedConstraint.accepted() && AmendWorkspace.inspect(repairedConstraint.source(), "probe.deal").diagnostics().isEmpty(),
+                "explicitly chosen compatible operand repair rechecks before publication");
         String calls = "// 😀\r\nfunction f(value:number):void{} export function run():void{f(\"bad\");}";
         var callDiagnostic = AmendWorkspace.inspect(calls, "probe.deal").diagnostics().stream()
                 .filter(d -> d.code().equals("E5001")).findFirst().orElseThrow();

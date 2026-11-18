@@ -1688,7 +1688,23 @@ JSON scanner offsets, which are one-based UTF-8 byte positions.
 
 `facts` separates producer-owned `reason`, failed `operation`, `expected`,
 `actual`, ordered `guidance`, a typed `path`, nullable typed `call` context
-and nullable typed `operator` context from explanatory message text. Arithmetic,
+and nullable typed `operator` and `mismatch` contexts from explanatory message text.
+Assignment, ordinary call-argument, expression-return and supplied class-field
+type failures retain the first incompatible type constraint in `mismatch`:
+`rule`, ordered typed `path`, component `expected`/`actual`, and `truncated`.
+This path is separate from declared-field/schema paths and concrete runtime
+paths. Its component kinds are `ARRAY_ELEMENT`, `NULLABLE_INNER`,
+`FUNCTION_RESULT`, and `FUNCTION_PARAMETER`; only the last has a zero-based
+parameter `index`, with `-1` on other kinds. Traversal follows existing type
+comparison order: async marker, result, arity, then overlapping parameters for
+functions; invariant array elements and nullable inner types retain exact
+comparison rather than gaining function arity adaptation or widening. Nullable
+presence failures distinguish null from undefined. Rules distinguish exact,
+nominal, function-async, function-arity, null-presence, undefined-presence and
+void-result constraints (`type.` prefix). At 32 path components,
+`type.detail-limit` with `truncated: true` reports the remaining compared types
+without claiming an unseen leaf. Absent mismatch evidence is `null`; it neither
+changes typing nor selects a repair or a new declaration. Arithmetic,
 relational, equality, logical and unary rejection facts retain the exact operator
 `token`, source-ordered `operands` (`role`, checked `type`, complete expression
 `range`), and ordered `acceptedCombinations`. Binary roles are `left`/`right`;
