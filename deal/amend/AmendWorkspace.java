@@ -563,10 +563,10 @@ public final class AmendWorkspace {
         Objects.requireNonNull(workspace, "workspace");
         Objects.requireNonNull(validator, "validator");
         if (!digest(source).equals(workspace.baseRevision().sourceDigest())) {
-            return rejectedWorkspace(source, workspace, "CP1021", "Repair workspace base source is stale");
+            return rejectedWorkspace(source, modulePath, resolver, adapter, workspace, "CP1021", "Repair workspace base source is stale");
         }
         if (!workspaceDigest(workspace).equals(workspace.workspaceDigest())) {
-            return rejectedWorkspace(source, workspace, "CP1022", "Repair workspace digest is invalid");
+            return rejectedWorkspace(source, modulePath, resolver, adapter, workspace, "CP1022", "Repair workspace digest is invalid");
         }
         List<AddDeclaration> additions;
         try {
@@ -574,29 +574,29 @@ public final class AmendWorkspace {
             additions = grant == null ? List.of()
                     : RepairWorkspaceProtocol.validateDependencies(workspace, grant, dependencies, modulePath, registry);
         } catch (IllegalArgumentException failure) {
-            return rejectedWorkspace(source, workspace, "CP1030", failure.getMessage());
+            return rejectedWorkspace(source, modulePath, resolver, adapter, workspace, "CP1030", failure.getMessage());
         }
         Map<String, SlotPatch> bySlot = new LinkedHashMap<>();
         for (SlotPatch patch : patches) {
             if (bySlot.put(patch.slotId(), patch) != null) {
-                return rejectedWorkspace(source, workspace, "CP1023", "Repair slot was patched more than once");
+                return rejectedWorkspace(source, modulePath, resolver, adapter, workspace, "CP1023", "Repair slot was patched more than once");
             }
         }
         List<Operation> operations = new ArrayList<>();
         for (RepairSlot slot : workspace.slots()) {
             SlotPatch patch = bySlot.remove(slot.slotId());
             if (patch != null && (grant == null ? slot.status() != RepairSlotStatus.REJECTED : !grant.slots().contains(slot.slotId()))) {
-                return rejectedWorkspace(source, workspace, "CP1024", grant == null
+                return rejectedWorkspace(source, modulePath, resolver, adapter, workspace, "CP1024", grant == null
                         ? "Only rejected repair slots are writable"
                         : "Repair slot is outside the compiler-issued grant: " + slot.slotId());
             }
             if (patch != null && patch.drop()) {
                 if (!slot.operation().equals(ADD_DECLARATION)) {
-                    return rejectedWorkspace(source, workspace, "CP1027",
+                    return rejectedWorkspace(source, modulePath, resolver, adapter, workspace, "CP1027",
                             "Only a rejected addDeclaration slot may be dropped");
                 }
                 if (!patch.payload().isEmpty()) {
-                    return rejectedWorkspace(source, workspace, "CP1028",
+                    return rejectedWorkspace(source, modulePath, resolver, adapter, workspace, "CP1028",
                             "A dropped repair slot must not contain a replacement payload");
                 }
                 continue;
@@ -604,14 +604,14 @@ public final class AmendWorkspace {
             Map<String, String> payload = new LinkedHashMap<>(slot.payload());
             if (patch != null) {
                 if (!payload.keySet().equals(patch.payload().keySet())) {
-                    return rejectedWorkspace(source, workspace, "CP1025", "Repair patch fields do not match the slot contract");
+                    return rejectedWorkspace(source, modulePath, resolver, adapter, workspace, "CP1025", "Repair patch fields do not match the slot contract");
                 }
                 payload.putAll(patch.payload());
             }
             operations.add(operation(slot.operation(), slot.targetId(), payload));
         }
         if (!bySlot.isEmpty()) {
-            return rejectedWorkspace(source, workspace, "CP1026", "Unknown repair slot " + bySlot.keySet().iterator().next());
+            return rejectedWorkspace(source, modulePath, resolver, adapter, workspace, "CP1026", "Unknown repair slot " + bySlot.keySet().iterator().next());
         }
         operations.addAll(additions);
         ChangeInspection inspection = inspectChange(
@@ -1053,11 +1053,30 @@ public final class AmendWorkspace {
     }
 
     private static RepairWorkspaceResult rejectedWorkspace(
-            String source, RepairWorkspaceSnapshot workspace, String code, String message) {
-        StructuredDiagnostic diagnostic = new StructuredDiagnostic(
-                code, "error", message, null, workspace.slots().isEmpty()
-                        ? new SemanticId("deal:module:app.deal") : workspace.slots().get(0).targetId(),
-                "valid repair workspace", "invalid repair request", List.of(), List.of(), null);
+            String source, String modulePath, ModuleResolver resolver, SourceAdapter adapter,
+            RepairWorkspaceSnapshot workspace, String code, String message) {
+        Analysis current = analyze(source, modulePath, resolver, adapter);
+        String reason = switch (code) {
+            case "CP1021" -> "repair.stale-base";
+            case "CP1022" -> "repair.invalid-workspace-digest";
+            case "CP1023" -> "repair.duplicate-slot-patch";
+            case "CP1024" -> "repair.ungranted-slot";
+            case "CP1025" -> "repair.payload-fields";
+            case "CP1026" -> "repair.unknown-slot";
+            case "CP1027" -> "repair.drop-operation";
+            case "CP1028" -> "repair.drop-payload";
+            case "CP1030" -> "repair.grant-or-dependency";
+            default -> throw new IllegalArgumentException("Unknown repair rejection code " + code);
+        };
+        String expected = code.equals("CP1021") ? current.inspection().sourceDigest()
+            : code.equals("CP1022") ? workspaceDigest(workspace) : "";
+        String actual = code.equals("CP1021") ? workspace.baseRevision().sourceDigest()
+            : code.equals("CP1022") ? workspace.workspaceDigest() : "";
+        StructuredDiagnostic diagnostic = diagnostic(code, message, current.moduleId(), null,
+                expected, actual, List.of(), contextRequest(current, current.moduleId()))
+                .withFacts(new deal.diagnostics.DiagnosticFacts(reason, "repair.transaction", expected, actual, List.of(
+                    "Inspect the current module revision, then inspect the change and stage a fresh repair workspace. "
+                    + "Use only current compiler-issued slots, grants and dependency obligations; reinspection does not authorize an edit.")));
         return new RepairWorkspaceResult(false, source, digest(source), workspace, null, List.of(diagnostic));
     }
 

@@ -14,6 +14,7 @@ public final class RepairWorkspaceTest {
         unsupportedPreconditionDoesNotOfferPatch(baseline);
         dependenciesUseSyntaxAndScopes(baseline);
         dependentProviderCanBeReopened(baseline);
+        rejectedTransactionsOfferCurrentReinspection(baseline);
         System.out.println("RepairWorkspaceTest: all tests passed");
     }
     private static RepairWorkspaceSnapshot stage(String source, List<AmendWorkspace.Operation> operations) {
@@ -121,6 +122,43 @@ public final class RepairWorkspaceTest {
         var result = apply(workspace, grant, List.of(), "export function helper(value: number): number { return value; }");
         check(result.accepted(), "new function repairs existing body: " + result.diagnostics());
     }
+    private static void rejectedTransactionsOfferCurrentReinspection(Inspection baseline) {
+        String modulePath = "actual-module.deal";
+        var inspected = AmendWorkspace.inspect(BASE, modulePath);
+        var body = inspected.nodes().stream().filter(n -> n.kind().equals("function-body")).findFirst().orElseThrow();
+        var change = AmendWorkspace.inspectChange(BASE, modulePath, inspected.sourceDigest(),
+            List.of(body.id()), List.of(AmendWorkspace.REPLACE_FUNCTION_BODY));
+        var fingerprints = new LinkedHashMap<String, String>();
+        change.allowedOperations().forEach(op -> fingerprints.put(op.targetId().value(), op.targetFingerprint()));
+        var staged = AmendWorkspace.stageChange(BASE, modulePath,
+            new ChangeSetPrecondition(inspected.sourceDigest(), fingerprints), change,
+            List.of(new AmendWorkspace.ReplaceFunctionBody(body.id(), "return missing;")));
+        var workspace = staged.workspace();
+        String changed = BASE.replace("return 0", "return 1");
+        var stale = AmendWorkspace.applyRepairTransaction(changed, modulePath, workspace, null, List.of(), List.of());
+        var unknown = AmendWorkspace.applyRepairTransaction(BASE, modulePath, workspace, null,
+            List.of(new SlotPatch("invented", Map.of("body", "return 2;"))), List.of());
+        for (var result : List.of(stale, unknown)) {
+            String current = result == stale ? changed : BASE;
+            check(!result.accepted() && result.source().equals(current) && result.workspace().equals(workspace),
+                "rejected request preserves current committed source and staged workspace");
+            var diagnostic = result.diagnostics().getFirst();
+            var request = diagnostic.contextRequest();
+            check(diagnostic.ownerId().equals(inspected.moduleId()) && diagnostic.repairScopes().isEmpty(),
+                "protocol rejection owns actual module, never arbitrary first slot or invented app.deal");
+            check(request != null && request.kind() == ContextKind.MODULE
+                    && request.revision().sourceDigest().equals(AmendWorkspace.digest(current))
+                    && AmendWorkspace.queryContext(current, modulePath, request).accepted(),
+                "typed reinspection request is issued against current source rather than stale workspace");
+            check(diagnostic.facts().reason().equals(result == stale ? "repair.stale-base" : "repair.unknown-slot")
+                    && diagnostic.facts().guidance().getFirst().contains("does not authorize an edit"),
+                "producer rejection supplies reason and required reinspection without repair authorization");
+        }
+        check(stale.diagnostics().getFirst().expected().equals(AmendWorkspace.digest(changed))
+                && stale.diagnostics().getFirst().actual().equals(workspace.baseRevision().sourceDigest()),
+            "stale base records actual current and submitted revisions");
+    }
+
     private static RepairWorkspaceResult apply(RepairWorkspaceSnapshot workspace, RepairWorkspaceProtocol.Grant grant,
             List<SlotPatch> patches, String declaration) {
         return AmendWorkspace.applyRepairTransaction(BASE, MODULE, workspace, grant, patches,
