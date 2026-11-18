@@ -1916,6 +1916,27 @@ public class ParserTest {
     static void testTemplateInterpolationRangeAnchors() {
         System.out.println("-- Template Literal: interpolation range anchors (ISSUE-0224) --");
 
+        String numericSource = "let value = `😀${0b102}`;";
+        var numeric = findDiag(parse(numericSource).diagnostics(), "E1002");
+        check(numeric != null && numeric.facts().reason().equals("syntax.number.radix")
+                        && numeric.facts().actual().equals("U+0032"),
+                "interpolation rebasing retains numeric producer facts");
+        if (numeric != null) {
+            int rejected = numericSource.indexOf('2');
+            var range = numeric.notes().getFirst().range();
+            check(range.startScalarOffset() == rejected && range.endScalarOffset() == rejected + 1
+                            && range.startColumn() == rejected + 1,
+                    "numeric secondary component rebases after supplementary template text");
+        }
+        check(parse("let value = `😀${0b101}`;").diagnostics().isEmpty(),
+                "chosen numeric interpolation repair parses cleanly");
+        String characterSource = "let value = `${😀}`;";
+        var character = findDiag(parse(characterSource).diagnostics(), "E1001");
+        check(character != null && character.facts().actual().equals("U+1F600")
+                        && character.range().scalarLength() == 2
+                        && character.range().startScalarOffset() == characterSource.indexOf("😀"),
+                "unrecognized supplementary interpolation character rebases its complete consumed range");
+
         // 1. End-of-input E1037 inside a terminated interpolation anchors at
         //    the closing '}' position with SOURCE origin and exact offsets.
         String src1 = "let x = `${foo +}`;";

@@ -171,6 +171,7 @@ public class LexerTest {
     public static void main(String[] args) {
         System.out.println("=== Running Lexer Tests ===");
 
+        testNumberAndCharacterFacts();
         testLiteralDiagnosticFacts();
         testKeywords();
         testOperators();
@@ -214,6 +215,58 @@ public class LexerTest {
     // =========================================================================
     // Keyword tests
     // =========================================================================
+
+    static void testNumberAndCharacterFacts() {
+        String prefix = "// 😀\r\n\t";
+        for (String[] candidate : new String[][] {
+                {"0x", "radix", "2", "end of input", "0xA"},
+                {"0x_1", "radix", "2", "U+005F", "0x1"},
+                {"0b102", "radix", "4", "U+0032", "0b101"},
+                {"0o8", "radix", "2", "U+0038", "0o7"},
+                {"0x1g", "radix", "3", "U+0067", "0x1f"},
+                {"1__0", "component", "1", "U+005F", "1_0"},
+                {"1._0", "component", "2", "U+005F", "1.0"},
+                {"123abc", "component", "3", "U+0061", "123"},
+                {"1.2.3", "decimal-point", "3", "U+002E", "1.23"},
+                {"01", "leading-zero", "0", "U+0030", "1"},
+                {"1e+", "exponent", "3", "end of input", "1e+2"},
+                {"1e_2", "exponent", "2", "U+005F", "1e2"},
+                {"1e2_", "exponent", "3", "U+005F", "1e2"}}) {
+            var diagnostic = findDiag(tokenize(prefix + candidate[0]), "E1002");
+            check(diagnostic != null && diagnostic.facts().reason().equals("syntax.number." + candidate[1])
+                            && diagnostic.facts().actual().equals(candidate[3]),
+                    "numeric producer retains active component rule and first rejection: " + candidate[0]);
+            if (diagnostic != null) {
+                int relative = Integer.parseInt(candidate[2]);
+                var range = diagnostic.notes().getFirst().range();
+                check(range.startScalarOffset() == prefix.length() + relative && range.startLine() == 2
+                                && range.startColumn() == relative + 2
+                                && range.scalarLength() == (candidate[3].equals("end of input") ? 0 : 1),
+                        "numeric component has exact UTF-16 range or truthful EOF insertion point");
+            }
+            assertNoDiagnostics(tokenize(prefix + candidate[4]).diagnostics(), "explicit numeric spelling repair");
+            var recovered = tokenize(prefix + candidate[0] + ";let later=1;");
+            check(recovered.tokens().stream().anyMatch(t -> t.lexeme().equals("later")),
+                    "numeric facts preserve later declaration recovery");
+        }
+        var multiple = tokenize("1e+a;").diagnostics();
+        check(multiple.size() == 2 && multiple.get(0).facts().reason().equals("syntax.number.exponent")
+                        && multiple.get(1).facts().reason().equals("syntax.number.component"),
+                "exponent and suffix diagnostics retain original independent order");
+        for (String[] unit : new String[][] {{"😀", "U+1F600"}, {"\uD800", "UTF-16 unit U+D800"},
+                {"\uDC00", "UTF-16 unit U+DC00"}, {"\0", "U+0000"}, {"@", "U+0040"}}) {
+            var result = tokenize(prefix + unit[0] + ";let later=1;");
+            var diagnostic = result.diagnostics().getFirst();
+            check(result.diagnostics().size() == 1 && diagnostic.facts().reason().equals("syntax.unrecognized-character")
+                            && diagnostic.facts().actual().equals(unit[1]) && diagnostic.range().scalarLength() == unit[0].length()
+                            && diagnostic.range().startScalarOffset() == prefix.length()
+                            && diagnostic.range().endColumn() == 2 + unit[0].length(),
+                    "unrecognized code point versus lone UTF-16 unit with complete consumed range");
+            var json = deal.diagnostics.DiagnosticStructuredOutput.toJson(List.of(diagnostic));
+            check(json.contains(unit[1]), "sole transport retains escaped character identity");
+            assertNoDiagnostics(tokenize(prefix + "let later=1;").diagnostics(), "explicit invalid token removal rechecks");
+        }
+    }
 
     static void testLiteralDiagnosticFacts() {
         String prefix = "// 😀\r\n";
@@ -1551,7 +1604,7 @@ public class LexerTest {
         System.out.println("-- Diagnostic Ranges --");
 
         // E1001 with an astral scalar: the second diagnostic covers exactly
-        // the one supplementary scalar at (1,2) — never two columns.
+        // the complete supplementary code point at (1,2), two UTF-16 units.
         LexResult r = tokenize("@\uD83D\uDE00");
         List<CompilerDiagnostic> e1001s = r.diagnostics().stream()
             .filter(x -> x.code().equals("E1001")).toList();
@@ -1560,8 +1613,8 @@ public class LexerTest {
         if (e1001s.size() == 2) {
             assertRange(e1001s.get(0), "test.deal", 1, 1, 1, 2, 0, 1,
                 "E1001 '@' of astral fixture");
-            assertRange(e1001s.get(1), "test.deal", 1, 2, 1, 3, 1, 2,
-                "E1001 astral single scalar");
+            assertRange(e1001s.get(1), "test.deal", 1, 2, 1, 4, 1, 3,
+                "E1001 complete astral code point in UTF-16 coordinates");
         }
 
         // E1003 = token start through the first unconsumed scalar (the

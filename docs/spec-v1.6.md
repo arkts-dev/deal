@@ -1725,7 +1725,20 @@ condition, and exact opening-delimiter notes without changing primary ranges
 or recovery. Interpolation EOF labels both the template and its own `${`
 opener. `syntax.invalid-string-escape` retains the rejected UTF-16 unit as
 `UTF-16 unit U+HHHH` and its component-start note; this is not an invented
-Unicode code point, decoded replacement or automatic content repair. Arithmetic,
+Unicode code point, decoded replacement or automatic content repair.
+Numeric E1002 facts distinguish `syntax.number.radix`, `.leading-zero`,
+`.decimal-point`, `.exponent`, and `.component` (all under `syntax.number`).
+They retain the active radix/component requirement and the first rejected
+component's code point or EOF condition with an exact secondary range; EOF
+uses a zero-length insertion point. Primary token ranges, token consumption,
+and independent diagnostic order remain unchanged. E1001 uses
+`syntax.unrecognized-character` / `lex.character`, naming the full consumed
+code point as `U+HHHH` (at least four hex digits), or an unpaired surrogate as
+`UTF-16 unit U+HHHH`; its primary range covers all consumed UTF-16 units,
+including both units of a supplementary pair. Neither numeric nor character
+facts choose a replacement spelling or infer an intended value. Template
+rebasing preserves these facts and maps primary and secondary ranges.
+Arithmetic,
 relational, equality, logical and unary rejection facts retain the exact operator
 `token`, source-ordered `operands` (`role`, checked `type`, complete expression
 `range`), and ordered `acceptedCombinations`. Binary roles are `left`/`right`;

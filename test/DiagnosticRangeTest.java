@@ -3194,6 +3194,21 @@ public class DiagnosticRangeTest {
                     + "\\" + "u0007bell\""),
             "JSON string escaping, got: " + escapedJson);
 
+        for (var lexical : new deal.lexer.Lexer("// 😀\r\n0b102;😀", "lex.deal").tokenize().diagnostics()) {
+            String lexicalJson = DiagnosticStructuredOutput.toJson(List.of(lexical));
+            var lexicalDocument = deal.amend.CompilerProtocolJson.requireObject(
+                    deal.amend.CompilerProtocolJson.decode(lexicalJson), "document");
+            var lexicalItems = deal.amend.CompilerProtocolJson.requireArray(
+                    deal.amend.CompilerProtocolJson.field(lexicalDocument, "diagnostics"), "diagnostics");
+            var lexicalItem = deal.amend.CompilerProtocolJson.requireObject(lexicalItems.items().getFirst(), "diagnostic");
+            check(deal.amend.CompilerProtocolJson.encode(lexical.facts()).equals(deal.semantic.ir.CanonicalJson.serializeText(
+                            deal.amend.CompilerProtocolJson.field(lexicalItem, "facts"))),
+                    "CLI and amendment retain identical producer numeric/character facts");
+            check(lexical.withMissingSymbol("VALUE", "later", "", List.of()).facts().equals(lexical.facts())
+                            && lexical.withMissingSymbol("VALUE", "later", "", List.of()).notes().equals(lexical.notes()),
+                    "lexical component evidence survives independent metadata copies");
+        }
+
         var facts = new deal.diagnostics.DiagnosticFacts("name.unresolved", "read", "binding", "missing",
                 List.of("Check spelling \"first\".", "Check scope."));
         CompilerDiagnostic rich = escaped.withFacts(facts)

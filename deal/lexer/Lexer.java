@@ -23,8 +23,8 @@ import java.util.Map;
  * metadata or diagnostics. Unterminated block comments remain lexical errors.</p>
  *
  * <p>Position tracking is owned by a {@link ScalarSourceCursor}: every
- * position and scalar offset is measured in decoded Unicode scalars (a
- * supplementary character counts one column; CRLF counts two scalars and
+ * position and scalar-named offset is measured in UTF-16 units (a
+ * supplementary character counts two columns; CRLF counts two units and
  * one line break; a tab counts one). The lexer retains a UTF-16
  * {@code pos} index, kept in lockstep with the cursor, for lexeme
  * substring extraction. Every emitted token carries its computed scalar
@@ -316,69 +316,104 @@ public final class Lexer {
             if (radix != 0) {
                 bump();
                 bump();
-                boolean valid = readNumberDigits(radix);
+                DiagnosticRange rejected = readNumberDigits(radix);
                 if (pos < source.length() && isIdentifierPart(source.charAt(pos))) {
-                    valid = false;
+                    if (rejected == null) rejected = currentComponentRange();
                     while (pos < source.length() && isIdentifierPart(source.charAt(pos))) bump();
                 }
-                if (!valid) error(DiagnosticCode.E1002,
-                    "Malformed number literal: invalid radix digits or separators", tokenStartRange());
+                if (rejected != null) numberError(
+                        "Malformed number literal: invalid radix digits or separators", "syntax.number.radix",
+                        "lex.number.radix", "base-" + radix + " digits; separators only between digits", rejected);
                 return makeToken(TokenType.NUMBER_LITERAL, source.substring(startPos, pos));
             }
         }
 
-        boolean valid = true;
+        DiagnosticRange rejected = null;
         if (source.charAt(pos) != '.') {
-            valid = readNumberDigits(10);
+            DiagnosticRange firstDigit = currentComponentRange();
+            rejected = readNumberDigits(10);
             if (pos - startPos > 1 && source.charAt(startPos) == '0') {
-                error(DiagnosticCode.E1002, "Leading-zero decimal literals are not supported", tokenStartRange());
+                numberError("Leading-zero decimal literals are not supported", "syntax.number.leading-zero",
+                        "lex.number.integer", "decimal integer without a leading zero", firstDigit);
             }
         }
         boolean hasDot = pos < source.length() && source.charAt(pos) == '.';
         if (hasDot) {
             bump();
             if (pos < source.length() && (isDigit(source.charAt(pos)) || source.charAt(pos) == '_')) {
-                valid &= readNumberDigits(10);
+                var fraction = readNumberDigits(10);
+                if (rejected == null) rejected = fraction;
             }
         }
         if (hasDot && pos < source.length() && source.charAt(pos) == '.'
                 && pos + 1 < source.length() && isDigit(source.charAt(pos + 1))
                 && source.charAt(pos - 1) != '.') {
-            error(DiagnosticCode.E1002, "Malformed number literal: multiple decimal points", tokenStartRange());
+            numberError("Malformed number literal: multiple decimal points", "syntax.number.decimal-point",
+                    "lex.number.fraction", "one decimal point per literal", currentComponentRange());
         }
         if (pos < source.length() && (source.charAt(pos) == 'e' || source.charAt(pos) == 'E')) {
             bump();
             if (pos < source.length() && (source.charAt(pos) == '+' || source.charAt(pos) == '-')) bump();
-            if (!readNumberDigits(10)) {
-                error(DiagnosticCode.E1002, "Malformed number literal: exponent without digits or invalid separators", tokenStartRange());
+            var exponent = readNumberDigits(10);
+            if (exponent != null) {
+                numberError("Malformed number literal: exponent without digits or invalid separators",
+                        "syntax.number.exponent", "lex.number.exponent",
+                        "decimal exponent digits; separators only between digits", exponent);
             }
         }
         if (pos < source.length() && isIdentifierPart(source.charAt(pos))) {
-            valid = false;
+            if (rejected == null) rejected = currentComponentRange();
             while (pos < source.length() && isIdentifierPart(source.charAt(pos))) bump();
         }
-        if (!valid) error(DiagnosticCode.E1002,
-            "Malformed number literal: invalid digits or separators", tokenStartRange());
+        if (rejected != null) numberError("Malformed number literal: invalid digits or separators",
+                "syntax.number.component", "lex.number", "decimal digits; separators only between digits; no identifier suffix", rejected);
         return makeToken(TokenType.NUMBER_LITERAL, source.substring(startPos, pos));
     }
 
-    /** Consumes one digit sequence, admitting separators only between radix digits. */
-    private boolean readNumberDigits(int radix) {
+    /** Consumes one digit sequence; returns its first rejected component, or null when valid. */
+    private DiagnosticRange readNumberDigits(int radix) {
         boolean previousDigit = false;
-        boolean valid = true;
+        DiagnosticRange rejected = null;
         while (pos < source.length()) {
             char c = source.charAt(pos);
             if (numberDigit(c, radix)) {
                 previousDigit = true;
             } else if (c == '_') {
-                valid &= previousDigit && pos + 1 < source.length() && numberDigit(source.charAt(pos + 1), radix);
+                if (rejected == null && !(previousDigit && pos + 1 < source.length()
+                        && numberDigit(source.charAt(pos + 1), radix))) rejected = currentComponentRange();
                 previousDigit = false;
             } else {
                 break;
             }
             bump();
         }
-        return valid && previousDigit;
+        if (!previousDigit && rejected == null) rejected = currentComponentRange();
+        return rejected;
+    }
+
+    /** Non-consuming lookahead; EOF is an insertion point, not a fabricated character. */
+    private DiagnosticRange currentComponentRange() {
+        var start = cursor.mark();
+        cursor.advance();
+        var range = rangeBetween(start, cursor.mark());
+        cursor.reset(start);
+        return range;
+    }
+
+    private String componentText(DiagnosticRange range) {
+        int index = range.startScalarOffset();
+        if (index == source.length()) return "end of input";
+        int point = source.codePointAt(index);
+        String kind = point >= 0xd800 && point <= 0xdfff ? "UTF-16 unit U+" : "U+";
+        return kind + String.format(java.util.Locale.ROOT, "%04X", point);
+    }
+
+    private void numberError(String message, String reason, String operation, String expected,
+                             DiagnosticRange rejected) {
+        diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E1002, message, tokenStartRange())
+                .withFacts(new deal.diagnostics.DiagnosticFacts(reason, operation, expected, componentText(rejected),
+                        List.of("Choose the intended numeric spelling; no value, radix conversion or separator repair is inferred.")))
+                .withNote("Rejected numeric component starts here", rejected));
     }
 
     private static boolean numberDigit(char c, int radix) {
@@ -738,8 +773,11 @@ public final class Lexer {
                 // E1001 = the offending single scalar (D5): the range covers
                 // exactly the scalar at the current cursor position, before
                 // it is consumed.
-                error(DiagnosticCode.E1001, "Unrecognized character: '" + ch + "'",
-                    singleScalarRange(cursor.line(), cursor.column(), cursor.scalarOffset()));
+                DiagnosticRange offending = currentComponentRange();
+                diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E1001, "Unrecognized character: '" + ch + "'", offending)
+                        .withFacts(new deal.diagnostics.DiagnosticFacts("syntax.unrecognized-character", "lex.character",
+                                "admitted DEAL token", componentText(offending),
+                                List.of("Choose an admitted token spelling for the intended syntax; no replacement is inferred."))));
                 bump();
                 yield null;
             }
