@@ -211,13 +211,19 @@ public class PublicationStagerTest {
     private static boolean compileProject(Path srcDir, Path outputDir,
             Backend backend, boolean dumpIr, boolean sourceMap,
             StringBuilder capturedErr) throws IOException {
+        return compileProject(srcDir, outputDir, backend, dumpIr, sourceMap, capturedErr, null);
+    }
+
+    private static boolean compileProject(Path srcDir, Path outputDir,
+            Backend backend, boolean dumpIr, boolean sourceMap,
+            StringBuilder capturedErr, Path report) throws IOException {
         Path entry = srcDir.resolve("main.deal");
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             entry.toAbsolutePath().normalize(),
             outputDir.toAbsolutePath().normalize(),
             false, dumpIr, sourceMap, sourceMap, backend,
             (Map<String, String>) null,
-            List.of(srcDir.toAbsolutePath().normalize()), null, null,
+            List.of(srcDir.toAbsolutePath().normalize()), null, report,
             ConformanceHarnessMetadata.invocation());
         if (capturedErr != null) {
             PrintStream originalErr = System.err;
@@ -884,6 +890,7 @@ public class PublicationStagerTest {
             check(first, "the initial compile publishes the prior set");
             Map<String, byte[]> v1 = treeBytes(out);
 
+            Path report = base.resolve("diagnostics.json");
             // Injected second-move (S -> live) failure: the prior set
             // is restored and the pinned diagnostic reports exit 1.
             PublicationStager.installPublishFault(step -> {
@@ -896,10 +903,18 @@ public class PublicationStagerTest {
             boolean second;
             try {
                 second = compileProject(src, out, Backend.LUAJIT,
-                    false, false, capturedErr);
+                    false, false, capturedErr, report);
             } finally {
                 PublicationStager.clearPublishFault();
             }
+            String json = Files.readString(report);
+            check(json.contains("\"reason\": \"publication.replace-failed\"")
+                            && json.contains("\"phase\": \"publication\"") && json.contains("\"diagnostics\": []")
+                            && json.contains("injected move failure"),
+                    "failed atomic replacement has a nonempty operational report, not an empty language success");
+            check(!json.contains(PublicationStager.STAGE_TREE_MARKER)
+                            && !json.contains(PublicationStager.RETIRED_TREE_MARKER),
+                    "operational report invents no final staging artifact");
             check(!second, "the injected second-move failure fails the "
                 + "compile (exit 1 through Main)");
             check(capturedErr.toString().contains(
@@ -998,10 +1013,15 @@ public class PublicationStagerTest {
             boolean second;
             try {
                 second = compileProject(src, out, Backend.LUAJIT,
-                    false, false, capturedErr);
+                    false, false, capturedErr, base.resolve("diagnostics.json"));
             } finally {
                 PublicationStager.clearPublishFault();
             }
+            String json = Files.readString(base.resolve("diagnostics.json"));
+            check(json.contains("\"reason\": \"publication.stage-failed\"")
+                            && json.contains("\"operation\": \"publication.stage\"")
+                            && json.contains("injected staging failure"),
+                    "staging failure classified at actual producer without invented tool execution");
             check(!second, "the injected staging failure fails the "
                 + "compile");
             check(capturedErr.toString().contains(
@@ -1014,6 +1034,10 @@ public class PublicationStagerTest {
                     + "failure");
             check(staleSiblings(out).isEmpty(),
                 "no stage/retired residue after the staging failure");
+            check(compileProject(src, out, Backend.LUAJIT, false, false, null, base.resolve("diagnostics.json")),
+                    "removing the actual filesystem fault allows a full recompile");
+            check(Files.readString(base.resolve("diagnostics.json")).contains("\"operations\": []"),
+                    "successful recompilation clears previous publication failure");
         } finally {
             deleteTree(base);
         }

@@ -145,6 +145,7 @@ public final class CompilationOrchestrator {
 
     private final Map<String, ModuleInfo> modules = new LinkedHashMap<>();
     private final List<CompilerDiagnostic> diagnostics = new ArrayList<>();
+    private final List<deal.diagnostics.OperationalDiagnostic> operations = new ArrayList<>();
     private boolean hasErrors = false;
 
     private List<String> dependencyOrder = List.of();
@@ -588,6 +589,7 @@ public final class CompilationOrchestrator {
         // dumps are discarded with the rest of the stage tree.
         stager = PublicationStager.forRoot(outputRoot);
         pendingStageFailure = null;
+        operations.clear();
         pendingIrDumps.clear();
         // Per-compilation production-arm state: a second compile() on the
         // same orchestrator observes its own one produced project and its
@@ -606,8 +608,10 @@ public final class CompilationOrchestrator {
                     // restored/cleaned per D2; report the pinned
                     // deterministic compiler I/O diagnostic on stderr
                     // with exit 1.
-                    System.err.println("deal: cannot publish artifacts to '"
-                        + outputRoot + "': " + publishFailure.getMessage());
+                    String message = "deal: cannot publish artifacts to '"
+                        + outputRoot + "': " + publishFailure.getMessage();
+                    System.err.println(message);
+                    operations.add(publicationFailure("publication.replace", message));
                     success = false;
                 }
             }
@@ -625,8 +629,10 @@ public final class CompilationOrchestrator {
             // Staging write failure (D4): nothing published, diagnostics
             // report unchanged, pinned deterministic compiler I/O
             // diagnostic on stderr with exit 1.
-            System.err.println("deal: cannot publish artifacts to '"
-                + outputRoot + "': " + pendingStageFailure.getMessage());
+            String message = "deal: cannot publish artifacts to '"
+                + outputRoot + "': " + pendingStageFailure.getMessage();
+            System.err.println(message);
+            operations.add(publicationFailure("publication.stage", message));
             success = false;
         }
 
@@ -644,7 +650,7 @@ public final class CompilationOrchestrator {
                 // emission-order collection is unchanged.
                 Files.writeString(diagnosticsJsonPath,
                     DiagnosticStructuredOutput.toJson(
-                        DiagnosticOrder.canonical(diagnostics)));
+                        DiagnosticOrder.canonical(diagnostics), operations));
             } catch (IOException e) {
                 System.err.println("deal: cannot write diagnostics JSON to '"
                     + diagnosticsJsonPath + "': " + e.getMessage());
@@ -758,6 +764,18 @@ public final class CompilationOrchestrator {
 
     public List<CompilerDiagnostic> diagnostics() {
         return Collections.unmodifiableList(diagnostics);
+    }
+
+    public List<deal.diagnostics.OperationalDiagnostic> operations() {
+        return List.copyOf(operations);
+    }
+
+    private deal.diagnostics.OperationalDiagnostic publicationFailure(String operation, String message) {
+        return new deal.diagnostics.OperationalDiagnostic(operation + "-failed", "publication", "filesystem",
+                "build-environment", message, new deal.diagnostics.DiagnosticFacts(operation + "-failed", operation,
+                        "atomic whole-project artifact publication", "", List.of(
+                                "No artifact set from this failed compilation was published. "
+                                        + "Inspect the output directory and filesystem condition before recompiling.")));
     }
 
     // =========================================================================
