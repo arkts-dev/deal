@@ -5582,7 +5582,7 @@ public final class SemanticLowerer {
         private static List<Span> parameterTypeSpans(List<Parameter> parameters) {
             List<Span> spans = new ArrayList<>();
             for (Parameter parameter : parameters) {
-                spans.add(parameter.type() == null ? parameter.span() : parameter.type().span());
+                spans.add(parameter.type() == null ? null : parameter.type().span());
             }
             return spans;
         }
@@ -12324,7 +12324,8 @@ public final class SemanticLowerer {
                     reservedClosureContext = new FunctionContext(functionId, bodyBlock,
                         signature, ids.nextOpId(module, nextOrdinal++, 0),
                         ids.nextOpId(module, nextOrdinal++, 0),
-                        parameterTypeSpans(functionExpr.params()));
+                        functionExpr.params().stream().map(parameter -> parameter.type() == null
+                            ? parameter.span() : parameter.type().span()).toList());
                     contextsByFunctionId.put(functionId, reservedClosureContext);
                     functionStack.push(reservedClosureContext);
                 }
