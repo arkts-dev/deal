@@ -42,6 +42,7 @@ public final class AmendWorkspaceTest {
         numericStringDiagnosticPublishesRepairContract();
         syntaxDiagnosticsCarryCandidateEvidence();
         syntaxRecoveryCannotAuthorizeMissingDependencies();
+        malformedListsRemainStagedUntilRechecked();
         actionabilityFactsAndRepairScope();
         smallestEditableBlockIsNotSemanticOwner();
         System.out.println("AmendWorkspaceTest: all tests passed");
@@ -217,6 +218,30 @@ public final class AmendWorkspaceTest {
                         + "export class Entry { text: string; }", "app.deal");
         check(repaired.diagnostics().stream().noneMatch(d -> d.severity().equals("error")),
                 "ordinary resolution resumes after syntax repair");
+    }
+
+    private static void malformedListsRemainStagedUntilRechecked() {
+        String clean = "// 😀\r\nfunction take(a:number,b:number):number{return a+b;} export function run():number{return take(1,2);}";
+        var base = AmendWorkspace.inspect(clean, "probe.deal");
+        var run = base.symbols().stream().filter(s -> s.name().equals("run")).findFirst().orElseThrow();
+        var body = base.nodes().stream().filter(n -> n.kind().equals("function-body") && n.ownerId().equals(run.id()))
+                .findFirst().orElseThrow();
+        var change = AmendWorkspace.inspectChange(clean, "probe.deal", base.sourceDigest(), List.of(body.id()),
+                List.of(AmendWorkspace.REPLACE_FUNCTION_BODY));
+        for (String invalid : List.of("return take(,Missing);", "let values:number[]=[,Missing];return 1;")) {
+            var staged = AmendWorkspace.stageChange(clean, "probe.deal",
+                    new CompilerProtocol.ChangeSetPrecondition(base.sourceDigest(), Map.of(body.id().value(), body.fingerprint())),
+                    change, List.of(new AmendWorkspace.ReplaceFunctionBody(body.id(), invalid)));
+            check(!staged.accepted() && staged.source().equals(clean)
+                            && staged.diagnostics().stream().anyMatch(d -> d.facts().reason().equals("syntax.expression-required"))
+                            && staged.diagnostics().stream().allMatch(d -> d.missingSymbols().isEmpty() && !d.code().equals("E2001")),
+                    "recovered later list values never authorize resolution or candidate publication: " + staged.diagnostics());
+            var repaired = AmendWorkspace.patchRepairWorkspace(clean, "probe.deal", staged.workspace(),
+                    List.of(new CompilerProtocol.SlotPatch("R1", Map.of("body", "return take(3,4);"))));
+            check(repaired.accepted() && repaired.source().contains("return a+b;")
+                            && AmendWorkspace.inspect(repaired.source(), "probe.deal").diagnostics().isEmpty(),
+                    "revision-pinned list repair rechecks before publication and preserves unrelated function");
+        }
     }
 
     private static void syntaxDiagnosticsCarryCandidateEvidence() {

@@ -3209,6 +3209,22 @@ public class DiagnosticRangeTest {
                     "lexical component evidence survives independent metadata copies");
         }
 
+        for (String syntax : List.of("function f(...values:number[]):void{}", "let values=[,2];",
+                "let value=1", "function f(x:):void{}")) {
+            var lex = new deal.lexer.Lexer("// 😀\r\n" + syntax, "syntax.deal").tokenize();
+            var diagnostics = new deal.parser.Parser(lex.tokens(), "syntax.deal").parse().diagnostics();
+            for (var diagnostic : diagnostics) {
+                var document = deal.amend.CompilerProtocolJson.requireObject(deal.amend.CompilerProtocolJson.decode(
+                        DiagnosticStructuredOutput.toJson(List.of(diagnostic))), "document");
+                var entries = deal.amend.CompilerProtocolJson.requireArray(
+                        deal.amend.CompilerProtocolJson.field(document, "diagnostics"), "diagnostics");
+                var entry = deal.amend.CompilerProtocolJson.requireObject(entries.items().getFirst(), "diagnostic");
+                check(deal.amend.CompilerProtocolJson.encode(diagnostic.facts()).equals(deal.semantic.ir.CanonicalJson.serializeText(
+                                deal.amend.CompilerProtocolJson.field(entry, "facts"))),
+                        "parser-produced facts agree across sole CLI and amendment serializers");
+            }
+        }
+
         var facts = new deal.diagnostics.DiagnosticFacts("name.unresolved", "read", "binding", "missing",
                 List.of("Check spelling \"first\".", "Check scope."));
         CompilerDiagnostic rich = escaped.withFacts(facts)

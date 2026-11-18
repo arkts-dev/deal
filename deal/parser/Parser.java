@@ -123,7 +123,7 @@ public final class Parser {
                         && tokens.get(pos + 2).type() == TokenType.LPAREN) {
                     yield parseFunctionDeclaration();
                 }
-                error(DiagnosticCode.E1042, "Function expression statements require parentheses", peek());
+                functionExpressionStatementError();
                 yield parseExpressionStatement();
             }
             case ASYNC  -> {
@@ -136,7 +136,7 @@ public final class Parser {
                     yield parseFunctionDeclaration();
                 }
                 if (pos + 1 < tokens.size() && tokens.get(pos + 1).type() == TokenType.FUNCTION) {
-                    error(DiagnosticCode.E1042, "Function expression statements require parentheses", peek());
+                    functionExpressionStatementError();
                 }
                 yield parseExpressionStatement();
             }
@@ -188,7 +188,9 @@ public final class Parser {
             StatementNode stmt = parseStatement();
             if (stmt != null) {
                 if (stmt instanceof FunctionDeclaration || stmt instanceof ExportDeclaration) {
-                    error(DiagnosticCode.E1042, "Function declarations and exports are module-level only", statementStart);
+                    subsetError(DiagnosticCode.E1042, "Function declarations and exports are module-level only", statementStart,
+                            "declaration-placement", "module-level function declaration or export",
+                            "Choose an intended module-level declaration or a local function-valued binding; moving code may change captures and is not an automatic repair.");
                 }
                 checkStatementTerminator(stmt, diagCountBefore);
                 statements.add(stmt);
@@ -245,12 +247,14 @@ public final class Parser {
         }
         Token nameToken = advance();
         if (nameToken.lexeme().equals("constructor")) {
-            error(DiagnosticCode.E1042, "Class fields cannot be named 'constructor'", nameToken);
+            subsetError(DiagnosticCode.E1042, "Class fields cannot be named 'constructor'", nameToken,
+                    "constructor-field", "class field name other than constructor",
+                    "DEAL classes declare nominal record fields, not constructors or methods; choose the intended data field name.");
         }
         boolean optional = match(TokenType.QUESTION);
 
         if (!match(TokenType.COLON)) {
-            error(DiagnosticCode.E1008, "Expected ':' after field name", peek());
+            expectedToken(DiagnosticCode.E1008, "Expected ':' after field name", TokenType.COLON);
             return null;
         }
         TypeNode type = parseType();
@@ -260,7 +264,9 @@ public final class Parser {
 
         int diagCountBefore = diagnostics.size();
         if (match(TokenType.EQ_SIGN)) {
-            error(DiagnosticCode.E1007, "Class field initializers are not supported", previous());
+            subsetError(DiagnosticCode.E1007, "Class field initializers are not supported", previous(),
+                    "field-initializer", "class field type and presence declaration without an initializer",
+                    "Supply intended field values at construction sites; deleting or relocating an initializer may change behavior and is not inferred.");
             // Recover at the field terminator without admitting an initializer AST.
             parseExpression();
         }
@@ -634,28 +640,25 @@ public final class Parser {
         if (peek().type() != TokenType.RPAREN) {
             if (peek().type() == TokenType.ELLIPSIS) {
                 // function types have no rest arm.
-                error(DiagnosticCode.E1047,
-                    "Rest parameters are not supported (function types carry no rest arm)",
-                    peek());
+                restParameterError("Rest parameters are not supported (function types carry no rest arm)");
                 skipRestArmTokens();
             } else {
                 FunctionTypeParam first = parseFunctionTypeParam();
                 if (first != null) params.add(first);
+                else recoverParameter();
 
                 while (match(TokenType.COMMA)) {
                     if (peek().type() == TokenType.RPAREN) {
                         break;
                     }
                     if (peek().type() == TokenType.ELLIPSIS) {
-                        error(DiagnosticCode.E1047,
-                            "Rest parameters are not supported (function types carry no rest arm)",
-                            peek());
+                        restParameterError("Rest parameters are not supported (function types carry no rest arm)");
                         skipRestArmTokens();
                         break;
                     }
                     FunctionTypeParam param = parseFunctionTypeParam();
                     if (param != null) params.add(param);
-                    else break;
+                    else recoverParameter();
                 }
             }
         }
@@ -685,7 +688,7 @@ public final class Parser {
         if (nameToken == null) return null;
 
         if (!match(TokenType.COLON)) {
-            error(DiagnosticCode.E1008, "Expected ':' after parameter name in function type", peek());
+            expectedToken(DiagnosticCode.E1008, "Expected ':' after parameter name in function type", TokenType.COLON);
             return null;
         }
         TypeNode type = parseType();
@@ -776,9 +779,8 @@ public final class Parser {
     private TypeNode parseArraySuffixes(TypeNode primary) {
         TypeNode type = primary;
         while (match(TokenType.LBRACKET)) {
-            if (!match(TokenType.RBRACKET)) {
-                error(DiagnosticCode.E1031, "Expected ']' in array type", peek());
-            }
+            Token opener = previous();
+            expectCloser(TokenType.RBRACKET, DiagnosticCode.E1031, "Expected ']' in array type", opener);
             type = new ArrayType(spanBetween(tokenSpanStart(type), previousOrCurrent()), type);
         }
         return type;
@@ -798,9 +800,7 @@ public final class Parser {
             if (inner instanceof NamedType named && named.name().equals("void")) {
                 error(DiagnosticCode.E1032, "Parenthesized void is not a data type", lparen);
             }
-            if (!match(TokenType.RPAREN)) {
-                error(DiagnosticCode.E1015, "Expected ')' after type", peek());
-            }
+            expectCloser(TokenType.RPAREN, DiagnosticCode.E1015, "Expected ')' after type", lparen);
             return inner;
         }
 
@@ -839,10 +839,10 @@ public final class Parser {
                 // grammar: reject at the second '.' and consume the
                 // remaining qualifier segments for recovery.
                 if (peek().type() == TokenType.DOT) {
-                    error(DiagnosticCode.E1058,
-                        "Type names admit at most one module or class qualifier"
-                            + " component",
-                        peek());
+                    subsetError(DiagnosticCode.E1058,
+                        "Type names admit at most one module or class qualifier component", peek(),
+                        "type-qualifier", "unqualified type or one module/class qualifier",
+                        "Select the intended visible type and exact provider; no import or provider substitution is inferred.");
                     while (peek().type() == TokenType.DOT) {
                         advance();
                         if (peek().type() == TokenType.IDENTIFIER) {
@@ -874,7 +874,10 @@ public final class Parser {
             return new NamedType(spanOf(t), t.lexeme());
         }
 
-        error(DiagnosticCode.E1032, "Expected type name", peek());
+        diagnostics.add(fromTokenAnchor(DiagnosticCode.E1032, "error", "Expected type name", peek())
+                .withFacts(new deal.diagnostics.DiagnosticFacts("syntax.type-required", "parse.type",
+                        "DEAL type", peek().type().name(),
+                        List.of("Provide the intended admitted type annotation; no type is inferred from recovery."))));
         return null;
     }
 
@@ -893,8 +896,7 @@ public final class Parser {
 
         if (peek().type() == TokenType.ELLIPSIS) {
             // Rest parameters were removed from the language.
-            error(DiagnosticCode.E1047,
-                "Rest parameters are not supported", peek());
+            restParameterError("Rest parameters are not supported");
             skipRestParameterTokens();
             return new ParamListResult(params);
         }
@@ -908,8 +910,7 @@ public final class Parser {
                 break;
             }
             if (peek().type() == TokenType.ELLIPSIS) {
-                error(DiagnosticCode.E1047,
-                    "Rest parameters are not supported", peek());
+                restParameterError("Rest parameters are not supported");
                 skipRestParameterTokens();
                 break;
             }
@@ -1081,7 +1082,9 @@ public final class Parser {
             ExpressionNode expr = parsePostfix();
             if (expr == null) return null;
             if (!(expr instanceof CallExpr)) {
-                error(DiagnosticCode.E1042, "'await' must be followed by a function call", awaitToken);
+                subsetError(DiagnosticCode.E1042, "'await' must be followed by a function call", awaitToken,
+                        "await-call", "direct awaited call expression",
+                        "DEAL await syntax requires a call; choose the intended async callable rather than inventing a call or Promise value.");
             }
             Span sp = spanBetween(spanOf(awaitToken), expr.span());
             return new AwaitExpression(sp, expr);
@@ -1140,16 +1143,11 @@ public final class Parser {
                 Token opener = previous();
                 List<ExpressionNode> args = new ArrayList<>();
                 if (peek().type() != TokenType.RPAREN) {
-                    ExpressionNode first = parseExpression();
-                    if (first != null) args.add(first);
-                    while (match(TokenType.COMMA)) {
-                        if (peek().type() == TokenType.RPAREN) {
-                            break;
-                        }
-                        ExpressionNode arg = parseExpression();
+                    do {
+                        ExpressionNode arg = parseListElement();
                         if (arg != null) args.add(arg);
-                        else break;
-                    }
+                        else recoverExpressionList(TokenType.RPAREN);
+                    } while (match(TokenType.COMMA) && peek().type() != TokenType.RPAREN);
                 }
                 Token rparen = expectCloser(TokenType.RPAREN, DiagnosticCode.E1010,
                         "Expected ')' after arguments", opener);
@@ -1239,7 +1237,7 @@ public final class Parser {
                     synchronize();
                     return new LiteralExpr(spanOf(token), new LiteralValue.NullLiteral());
                 }
-                expect(TokenType.RPAREN, DiagnosticCode.E1015, "Expected ')' after expression");
+                expectCloser(TokenType.RPAREN, DiagnosticCode.E1015, "Expected ')' after expression", token);
                 return inner;
             }
             case LBRACKET -> { return parseArrayLiteral(); }
@@ -1254,7 +1252,7 @@ public final class Parser {
                 return new IdentifierExpr(spanOf(token), token.lexeme());
             }
             default -> {
-                error(DiagnosticCode.E1037, "Expected expression", token);
+                expressionRequired(token);
                 if (!isStatementBoundary(token.type())) {
                     advance();
                 }
@@ -1708,15 +1706,11 @@ public final class Parser {
         List<ExpressionNode> elements = new ArrayList<>();
 
         if (peek().type() != TokenType.RBRACKET) {
-            ExpressionNode first = parseExpression();
-            if (first != null) elements.add(first);
-
-            while (match(TokenType.COMMA)) {
-                if (peek().type() == TokenType.RBRACKET) break;
-                ExpressionNode elem = parseExpression();
+            do {
+                ExpressionNode elem = parseListElement();
                 if (elem != null) elements.add(elem);
-                else break;
-            }
+                else recoverExpressionList(TokenType.RBRACKET);
+            } while (match(TokenType.COMMA) && peek().type() != TokenType.RBRACKET);
         }
 
         Token rbracket;
@@ -1888,6 +1882,24 @@ public final class Parser {
         return null;
     }
 
+    private void subsetError(DiagnosticCode code, String message, Token token, String rule,
+                             String expected, String guidance) {
+        diagnostics.add(fromTokenAnchor(code, "error", message, token).withFacts(
+                new deal.diagnostics.DiagnosticFacts("syntax.subset." + rule, "parse.subset",
+                        expected, token.type().name(), List.of(guidance))));
+    }
+
+    private void functionExpressionStatementError() {
+        subsetError(DiagnosticCode.E1042, "Function expression statements require parentheses", peek(),
+                "function-expression-statement", "parenthesized function expression statement",
+                "Parenthesize an intended function expression statement; a declaration is a different form.");
+    }
+
+    private void restParameterError(String message) {
+        subsetError(DiagnosticCode.E1047, message, peek(), "rest-parameter", "fixed annotated parameters",
+                "DEAL has no rest parameter syntax; choose the intended fixed signature or an explicitly typed collection parameter and update callers consistently.");
+    }
+
     private void expectedToken(DiagnosticCode code, String message, TokenType expected) {
         diagnostics.add(fromTokenAnchor(code, "error", message, peek()).withFacts(
                 new deal.diagnostics.DiagnosticFacts("syntax.expected-token", "parse.token",
@@ -1920,7 +1932,10 @@ public final class Parser {
     private void checkTerminator(int diagCountBefore) {
         if (diagnostics.size() > diagCountBefore) return;
         if (pos > 0 && tokens.get(pos - 1).type() == TokenType.SEMICOLON) return;
-        error(DiagnosticCode.E1053, missingTerminatorMessage(), peek());
+        diagnostics.add(fromTokenAnchor(DiagnosticCode.E1053, "error", missingTerminatorMessage(), peek())
+                .withFacts(new deal.diagnostics.DiagnosticFacts("syntax.missing-terminator", "parse.terminator",
+                        TokenType.SEMICOLON.name(), peek().type().name(),
+                        List.of("Terminate the preceding statement with ';' at this boundary."))));
     }
 
     /** The E1053 message for the current (missing-terminator) position. */
@@ -2091,6 +2106,40 @@ public final class Parser {
     // =======================================================================
     // Helper methods — error recovery
     // =======================================================================
+
+    private void expressionRequired(Token token) {
+        diagnostics.add(fromTokenAnchor(DiagnosticCode.E1037, "error", "Expected expression", token)
+                .withFacts(new deal.diagnostics.DiagnosticFacts("syntax.expression-required", "parse.expression",
+                        "DEAL expression", token.type().name(),
+                        List.of("Provide the intended expression; no value or execution path is inferred from recovery."))));
+    }
+
+    private ExpressionNode parseListElement() {
+        if (peek().type() == TokenType.COMMA) {
+            expressionRequired(peek());
+            return null;
+        }
+        return parseExpression();
+    }
+
+    /** Resume only at this expression list's separator/closer, not nested list separators. */
+    private void recoverExpressionList(TokenType closer) {
+        int parentheses = 0;
+        int brackets = 0;
+        int braces = 0;
+        while (!isAtEnd()) {
+            TokenType kind = peek().type();
+            if (parentheses == 0 && brackets == 0 && braces == 0
+                    && (kind == TokenType.COMMA || kind == closer || isStatementBoundary(kind))) return;
+            if (kind == TokenType.LPAREN) parentheses++;
+            else if (kind == TokenType.RPAREN) { if (parentheses == 0) return; parentheses--; }
+            else if (kind == TokenType.LBRACKET) brackets++;
+            else if (kind == TokenType.RBRACKET) { if (brackets == 0) return; brackets--; }
+            else if (kind == TokenType.LBRACE) braces++;
+            else if (kind == TokenType.RBRACE) { if (braces == 0) return; braces--; }
+            advance();
+        }
+    }
 
     private void synchronize() {
         while (!isAtEnd()) {

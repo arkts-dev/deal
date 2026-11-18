@@ -1815,13 +1815,28 @@ nominal/provider guard and existing first-rejection order. Duplicate field,
 parameter and binding diagnostics retain the first known declaration as an
 ordered ranged note. Import-shadowing diagnostics locate the conflicting import
 and declaration without changing source-order code selection. Parser expectation
-failures record expected/found token kinds at the failing token. Missing block,
+failures record expected/found token kinds at the failing token. Missing type
+and expression forms use `syntax.type-required` / `parse.type` and
+`syntax.expression-required` / `parse.expression`, never inferred recovery
+values. Missing statement terminators use `syntax.missing-terminator` /
+`parse.terminator`, expected `SEMICOLON` and the actual next token kind or
+`EOF`, preserving existing messages and causal suppression.
+Subset facts use `syntax.subset.` reasons `declaration-placement`,
+`function-expression-statement`, `constructor-field`, `field-initializer`,
+`rest-parameter`, `type-qualifier`, and `await-call`, with operation
+`parse.subset`, the admitted form and actual token kind. Guidance distinguishes
+legal alternatives without promising TypeScript support or choosing an
+intent-dependent code move, collection parameter, provider or value.
+Missing block, expression/type grouping and array-type suffix,
 class/object/array literal, signature and postfix delimiters retain their exact
 opener as an ordered secondary note, so independent openers at one EOF remain
-distinct diagnostics. Malformed function parameters recover locally at the next
-comma or closing parenthesis without consuming body boundaries; independent
-parameter errors remain visible and later declarations remain parseable. These
-recovery nodes never bypass frontend syntax phase gates.
+distinct diagnostics. Malformed declaration and function-type parameters recover
+locally at the next comma or closing parenthesis without consuming body
+boundaries. Missing call arguments and array elements retain independent
+errors and resume locally; nested-list commas are not outer separators.
+Independent errors remain visible and later elements/declarations remain
+parseable; comma-only lists and omitted elements remain invalid. These recovery
+nodes never bypass frontend syntax phase gates or authorize publication.
 
 The amendment transport is `compiler-protocol-v3`; diagnostics use these same
 complete ranges and nested facts. Exact repeats may collapse only when all

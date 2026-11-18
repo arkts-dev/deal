@@ -35,6 +35,7 @@ public class ParserTest {
     // =========================================================================
 
     private static void testDiagnosticActionability() {
+        testSubsetAndListRecoveryFacts();
         String source = "// 🌍\r\nfunction f():void{if(true){";
         var unclosed = parse(source).diagnostics().stream().filter(d -> d.code().equals("E1006")).toList();
         check(unclosed.size() == 2 && unclosed.get(0).range().equals(unclosed.get(1).range())
@@ -61,6 +62,88 @@ public class ParserTest {
         var close = diagOf(literal, "E1006");
         check(close != null && close.notes().getFirst().range().startScalarOffset() == 12,
                 "object literal rejection identifies its own opener");
+    }
+
+    private static void testSubsetAndListRecoveryFacts() {
+        String prefix = "// 😀\r\n";
+        for (String[] sample : new String[][] {
+                {"function outer():void{function inner():void{}}", "declaration-placement",
+                        "function outer():void{let inner=():void=>{};}"},
+                {"class Model{constructor:number;}", "constructor-field", "class Model{value:number;}"},
+                {"class Model{value:number=1;}", "field-initializer", "class Model{value:number;}"},
+                {"function f(...values:number[]):void{}", "rest-parameter", "function f(values:number[]):void{}"},
+                {"let f:(...values:number[])=>void=():void=>{};", "rest-parameter", "let f:(values:number[])=>void=():void=>{};"},
+                {"let value:A.B.C={};", "type-qualifier", "let value:A.B={};"},
+                {"async function f():Promise<void>{await 42;}", "await-call", "async function f():Promise<void>{await g();}"},
+                {"function():void{}", "function-expression-statement", "(function():void{});"},
+                {"async function():Promise<void>{}", "function-expression-statement", "(async function():Promise<void>{});"}}) {
+            var result = parse(prefix + sample[0]);
+            var diagnostic = result.diagnostics().stream()
+                    .filter(d -> d.facts().reason().equals("syntax.subset." + sample[1])).findFirst().orElse(null);
+            check(diagnostic != null && diagnostic.facts().operation().equals("parse.subset")
+                            && !diagnostic.facts().expected().isEmpty() && !diagnostic.facts().actual().isEmpty()
+                            && !diagnostic.facts().guidance().isEmpty() && diagnostic.range().startLine() == 2,
+                    "subset rejection supplies its own rule and bounded intent-dependent guidance: " + sample[1]);
+            assertNoParseErrors(parse(prefix + sample[2]), "chosen legal subset alternative: " + sample[1]);
+        }
+        for (String[] sample : new String[][] {
+                {"let value = 1", "EOF"}, {"let value = 1 let later=2;", "LET"}}) {
+            var diagnostic = diagOf(parse(prefix + sample[0]), "E1053");
+            check(diagnostic != null && diagnostic.facts().reason().equals("syntax.missing-terminator")
+                            && diagnostic.facts().expected().equals("SEMICOLON")
+                            && diagnostic.facts().actual().equals(sample[1]), "terminator producer distinguishes next token from EOF");
+        }
+        for (String[] sample : new String[][] {{"f(,2,,4);", "f(1,2,3,4);"},
+                {"let values=[,2,,4];", "let values=[1,2,3,4];"},
+                {"f(else [1,2],4);", "f([1,2],4);"}}) {
+            var result = parse(prefix + sample[0] + "let later=7;");
+            check(result.diagnostics().stream().allMatch(d -> d.code().equals("E1037")
+                            && d.facts().reason().equals("syntax.expression-required"))
+                            && result.diagnostics().size() == (sample[0].contains("else") ? 1 : 2)
+                            && result.program().statements().size() == 2,
+                    "argument/array recovery retains independent omissions and later declaration without closer cascades: " + sample[0]);
+            ExpressionNode recovered = result.program().statements().getFirst() instanceof VariableDeclaration variable
+                    ? variable.initializer() : ((ExpressionStatement) result.program().statements().getFirst()).expr();
+            int count = recovered instanceof CallExpr call ? call.args().size() : ((ArrayLiteralExpr) recovered).elements().size();
+            check(count == (sample[0].contains("else") ? 1 : 2), "recovery retains later list elements, never nested commas as outer separators");
+            assertNoParseErrors(parse(prefix + sample[1] + "let later=7;"), "explicit list repair rechecks");
+        }
+        String template = prefix + "let value=`😀${take(,2)}`;";
+        var embedded = diagOf(parse(template), "E1037");
+        check(embedded != null && embedded.facts().reason().equals("syntax.expression-required")
+                        && embedded.facts().actual().equals("COMMA")
+                        && embedded.range().startScalarOffset() == template.indexOf(',')
+                        && embedded.range().scalarLength() == 1,
+                "template list omission retains producer facts and full-candidate UTF-16 token coordinates");
+        assertNoParseErrors(parse(template.replace("take(,2)", "take(1,2)")), "chosen embedded argument repair");
+        for (String sample : List.of("take(,);", "let values=[,];", "take(,", "let values=[,")) {
+            var rejected = parse(prefix + sample);
+            check(!rejected.diagnostics().isEmpty()
+                            && rejected.diagnostics().getFirst().facts().reason().equals("syntax.expression-required"),
+                    "comma-only and EOF-terminated malformed lists remain rejected and terminate: " + sample);
+        }
+        var typeRequired = parse(prefix + "function f(x:,y:number):void{}");
+        check(typeRequired.diagnostics().size() == 1
+                        && typeRequired.diagnostics().getFirst().facts().reason().equals("syntax.type-required")
+                        && typeRequired.diagnostics().getFirst().facts().actual().equals("COMMA")
+                        && ((FunctionDeclaration)typeRequired.program().statements().getFirst()).params().size() == 1,
+                "missing parameter type retains its exact token kind without fabricating a type");
+        var functionType = parse(prefix + "let f:(x number,y:string)=>void=():void=>{};");
+        check(functionType.diagnostics().size() == 1 && functionType.diagnostics().getFirst().facts().expected().equals("COLON")
+                        && ((FunctionType)((VariableDeclaration)functionType.program().statements().getFirst()).typeAnnotation().orElseThrow()).params().size() == 1,
+                "function-type parameter recovery preserves later named annotation and original colon error");
+        assertNoParseErrors(parse(prefix + "let f:(x:number,y:string)=>void=():void=>{};"), "chosen function-type annotation repair");
+        var independentTypes = parse("let f:(x number,y string)=>void=():void=>{};");
+        check(independentTypes.diagnostics().size() == 2
+                        && independentTypes.diagnostics().stream().allMatch(d -> d.code().equals("E1008")),
+                "independent malformed function-type parameters retain separate causal errors");
+        for (String[] sample : new String[][] {{"let value=(1;", "(", "E1015"},
+                {"let value:number[=[];", "[", "E1031"}, {"let value:(number=1;", "(", "E1015"}}) {
+            var diagnostic = diagOf(parse(prefix + sample[0]), sample[2]);
+            check(diagnostic != null && diagnostic.facts().reason().equals("syntax.unclosed-delimiter")
+                            && diagnostic.notes().getFirst().range().startScalarOffset() == prefix.length() + sample[0].indexOf(sample[1]),
+                    "type/expression delimiter facts preserve exact opener after UTF-16 prefix");
+        }
     }
 
     private static ParseResult parse(String source) {
