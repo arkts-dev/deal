@@ -109,6 +109,7 @@ public class DiagnosticRangeTest {
         testRawRecordReadEvidence();
         testMissingReturnObligations();
         testIntrinsicPreSignatureEvidence();
+        testRuleReferencesAndIntentDependentExamples();
         testCatchVariableIdentifierRange();
         testProgramSpanAnchorsCombined();
         testV12CornerCaseScalarCoordinatePins();
@@ -1217,6 +1218,47 @@ public class DiagnosticRangeTest {
         for (String source : List.of("let a=[1];let r=a.map((n:number):number=>n+1);",
                 "let r=Array.from([1],(n:number):string=>\"chosen\");"))
             check(checkerDiagnostics(source, "intrinsic.deal").isEmpty(), "explicit intended mapper repair rechecks");
+    }
+
+    private static void testRuleReferencesAndIntentDependentExamples() throws IOException {
+        String spec = Files.readString(Path.of("docs/spec-v1.6.md"));
+        var anchors = spec.lines().filter(line -> line.startsWith("#"))
+                .map(line -> line.replaceFirst("^#+\\s+", "").toLowerCase(java.util.Locale.ROOT)
+                        .replaceAll("[^a-z0-9 _-]", "").replace(' ', '-'))
+                .collect(java.util.stream.Collectors.toSet());
+        var link = java.util.regex.Pattern.compile("(?:docs/spec-v1\\.6\\.md)?#([a-z0-9-]+)");
+        for (String[] sample : new String[][] {
+                {"function f():void{let items=[];}", "E3002"},
+                {"function f(x:number):void{let y=x as string;}", "E3001"},
+                {"function f():number{}", "E5002"},
+                {"function f(x:unknown):void{let n=x.length;}", "E3003"},
+                {"function f(x:string|null|undefined):void{let n=x.length;}", "E3003"}}) {
+            var diagnostic = checkerDiag(checkerDiagnostics(sample[0], "help.deal"), sample[1]);
+            check(diagnostic != null, "help retains existing rejection " + sample[1]);
+            if (diagnostic == null) continue;
+            String guidance = String.join(" ", diagnostic.facts().guidance());
+            check(guidance.contains("docs/spec-v1.6.md#") && guidance.contains("example")
+                            && (guidance.contains("Choose") || guidance.contains("explicit intent")),
+                    "help includes actual rule references and an intent-dependent schematic example");
+            var matcher = link.matcher(guidance);
+            while (matcher.find()) check(anchors.contains(matcher.group(1)), "help fragment resolves to unchanged spec heading " + matcher.group(1));
+            check(DiagnosticStructuredOutput.toJson(List.of(diagnostic)).contains("docs/spec-v1.6.md#")
+                            && deal.amend.CompilerProtocolJson.encode(diagnostic.facts()).contains("docs/spec-v1.6.md#"),
+                    "canonical transports preserve producer help without a compatibility serializer");
+        }
+        for (String source : List.of(
+                "function f():void{let values:number[]=[];}",
+                "function f():void{let fields:Record<string,unknown>={};}",
+                "function f(value:unknown):void{let text=value as string;}",
+                "function consume(value:string):void{}function f(value:unknown):void{if(typeof value===\"string\"){consume(value);}}",
+                "function consume(value:string):void{}function f(value:string|null|undefined):void{if(value!==null&&value!==undefined){consume(value);}}",
+                "function f(condition:boolean,chosen:number,other:number):number{if(condition){return chosen;}else{return other;}}")) {
+            check(checkerDiagnostics(source, "help.deal").isEmpty(), "explicitly chosen help example parses and rechecks: " + source);
+        }
+        var unknown = checkerDiag(checkerDiagnostics("function f(x:unknown):void{let n=x.length;}", "help.deal"), "E3003");
+        check(unknown.facts().guidance().getFirst().contains("typeof object/function does not infer")
+                        && unknown.facts().guidance().getFirst().contains("presence alone never narrows"),
+                "guard help does not promise structural inference or presence-based value narrowing");
     }
 
     private static void testMissingReturnObligations() {

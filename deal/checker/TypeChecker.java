@@ -861,7 +861,10 @@ public final class TypeChecker {
         CompilerDiagnostic diagnostic = CompilerDiagnostic.error(DiagnosticCode.E5002, message, span).withFacts(
                 new deal.diagnostics.DiagnosticFacts("return.not-definite", "return.flow",
                         typeName(result), "not all paths return or throw",
-                        List.of("Implement the intended result on all required paths; no dummy return or result widening is inferred.")))
+                        List.of("Implement the intended result on all required paths; no dummy return or result widening is inferred. "
+                                + "See docs/spec-v1.6.md#definite-return-analysis and #return-type-requirements; "
+                                + "schematic examples: if (condition) { return chosen; } else { return other; }, "
+                                + "or throw an explicitly chosen Error. Choose result values and failure semantics yourself.")))
                 .withNote("Declared result annotation", annotation.span().range());
         ReturnAnalysis.ReturnObligation obligation = ReturnAnalysis.unmetObligation(body);
         return obligation == null ? diagnostic
@@ -2500,7 +2503,8 @@ public final class TypeChecker {
                 && typeMap.get(expression) instanceof Type.Unknown) {
             diagnostic = diagnostic.withNote(
                     "This raw Record read has type unknown; an expected type does not extract it. "
-                            + "Choose a checked assertion or store and narrow the value with a supported guard. "
+                            + "Choose a checked assertion or store and narrow the value with a supported guard: "
+                            + "typeof for undefined/boolean/number/string, nullish equality, or a nominal instanceof test. "
                             + "Presence alone does not distinguish a missing key from a present undefined value or narrow its type. "
                             + "See docs/spec-v1.6.md#reading-and-writing-fields and #narrowing-and-checked-assertions.",
                     expression.span().range());
@@ -2510,9 +2514,17 @@ public final class TypeChecker {
 
     private static List<String> receiverReadGuidance(Type receiver) {
         if (receiver instanceof Type.Unknown) return List.of(
-                "Unknown requires checked extraction or supported binding narrowing; an expected result type does not extract a raw Record read.");
+                "Unknown requires checked extraction or supported binding narrowing; an expected result type does not extract a raw Record read. "
+                    + "Direct typeof tests narrow undefined/boolean/number/string; nominal instanceof tests narrow to the selected class. "
+                    + "typeof object/function does not infer a structural type, and presence alone never narrows a value. "
+                    + "See docs/spec-v1.6.md#narrowing-and-checked-assertions; schematic example: "
+                    + "if (typeof value === \"string\") { consume(value); }. Choose the intended consumer contract explicitly.");
         if (receiver instanceof Type.Nullable || receiver instanceof Type.Null || receiver instanceof Type.Undefined)
-            return List.of("Establish a non-nullish receiver with a supported guard or choose optional chaining when skipped access is intended; presence alone does not refine a field value.");
+            return List.of("Establish a non-nullish receiver with a supported guard or choose optional chaining when skipped access is intended; presence alone does not refine a field value. "
+                    + "See docs/spec-v1.6.md#narrowing-and-checked-assertions and #nullish-coalescing-and-optional-chaining; "
+                    + "schematic example: if (value !== null && value !== undefined) { consume(value); }. "
+                    + "Choose the intended guard or skipped-access behavior explicitly. Guard each admitted nullish member; "
+                    + "optional access deliberately adds undefined for skipped non-void results.");
         return List.of("Choose a receiver supporting this access; no conversion or replacement declaration is inferred.");
     }
 
@@ -3073,7 +3085,10 @@ public final class TypeChecker {
                             + ": void is not data; otherwise one type must be assignable to the other",
                     assertion.span()).withFacts(new deal.diagnostics.DiagnosticFacts(
                             "assertion.incompatible", "assertion", typeName(target), typeName(source),
-                            List.of("Use compatible types; a checked assertion does not perform a conversion."))
+                            List.of("Use compatible types; a checked assertion does not perform a conversion. "
+                                    + "See docs/spec-v1.6.md#narrowing-and-checked-assertions; schematic example: "
+                                    + "let text = value as string; checks an unknown value at runtime and may raise E8001. "
+                                    + "Choose the intended target explicitly; an assertion supplies no JSON reconstruction context."))
                             .withMismatch(typeMismatch(target, source)))
                     .withNote("Checked assertion target annotation", assertion.target().span().range()));
             return Type.Error.INSTANCE;
@@ -3997,7 +4012,10 @@ public final class TypeChecker {
         if (code == DiagnosticCode.E3002) {
             diagnostic = diagnostic.withFacts(new deal.diagnostics.DiagnosticFacts(
                     "context.required", "inference", "explicit contextual type", "no usable contextual type",
-                    List.of("For an empty array, annotate the intended element type; for an object, supply the intended class or Record construction context.")));
+                    List.of("For an empty array, annotate the intended element type; for an object, supply the intended class or Record construction context. "
+                            + "See docs/spec-v1.6.md#inference-rules, #array-literals and #record-type-and-semantics; "
+                            + "schematic examples: `let values: number[] = [];` and `let fields: Record<string, unknown> = {};`. "
+                            + "These annotations are alternatives requiring explicit intent, not inferred types or authorized edits.")));
         }
         diagnostics.add(diagnostic);
     }
