@@ -132,6 +132,21 @@ public class ParserTest {
 
     private static void testSubsetAndListRecoveryFacts() {
         testLineAndResultFacts();
+        for (String[] sample : new String[][] {
+                {"for(let i=0;i<3;i=i+1){}", "E1013", "c-style-for", "for(let item of values){}", "#for-of"},
+                {"for(let item:number of values){}", "E1013", "for-of-annotation", "for(let item of values){}", "#for-of"},
+                {"import {value} from \"./m\";", "E1019", "namespace-import", "import * as api from \"./m\";", "#import-forms-and-import-typing"},
+                {"import api from \"./m\";", "E1019", "namespace-import", "import * as api from \"./m\";", "#import-forms-and-import-typing"}}) {
+            var diagnostic = diagOf(parse("// 😀\r\n" + sample[0]), sample[1]);
+            check(diagnostic != null && diagnostic.facts().reason().equals("syntax.subset." + sample[2]),
+                    "wrong-language form has producer-owned subset rule " + sample[2]);
+            check(diagnostic != null && diagnostic.facts().guidance().stream().anyMatch(text ->
+                            text.contains("docs/spec-v1.6.md" + sample[4]) && text.contains("example")),
+                    "subset guidance has existing spec reference and schematic example " + sample[2]);
+            check(diagnostic != null && diagnostic.facts().syntax() != null
+                            && diagnostic.range().startLine() == 2, "subset retains exact rejected token evidence");
+            assertNoParseErrors(parse(sample[3]), "explicitly selected legal alternative " + sample[2]);
+        }
         String prefix = "// 😀\r\n";
         for (String[] spelling : new String[][] {{"\"next\"", "\"next\""},
                 {"\"a\\n\\\"b\"", "\"a\\n\\\"b\""},

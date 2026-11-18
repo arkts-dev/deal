@@ -469,11 +469,15 @@ public final class Parser {
         if (name == null) { synchronize(); return null; }
         TypeNode type = null;
         if (match(TokenType.COLON)) {
-            error(DiagnosticCode.E1013, "For-of bindings must not have a type annotation", previous());
+            subsetError(DiagnosticCode.E1013, "For-of bindings must not have a type annotation", previous(),
+                    "for-of-annotation", "unannotated iteration binding",
+                    "DEAL derives the iteration binding type from the checked iterable. See docs/spec-v1.6.md#for-of; example: for (let item of values) { consume(item); }. Choose the intended iterable; no element type is invented.");
             parseType();
         }
         if (!match(TokenType.OF)) {
-            error(DiagnosticCode.E1013, "Expected 'of'; C-style for loops are not supported", peek());
+            subsetError(DiagnosticCode.E1013, "Expected 'of'; C-style for loops are not supported", peek(),
+                    "c-style-for", "for (let name of iterable) or for (const name of iterable)",
+                    "DEAL supports for-of and while, not C-style for headers. See docs/spec-v1.6.md#for-of and #while; example shapes: for (let item of values) { consume(item); } and while (condition) { step(); }. Choose iteration semantics explicitly; initialization, update and continue behavior are not rewritten.");
             synchronize(); return null;
         }
         ExpressionNode iterable = parseExpression();
@@ -502,7 +506,9 @@ public final class Parser {
         Token importToken = advance();
 
         if (!match(TokenType.STAR)) {
-            error(DiagnosticCode.E1019, "Expected '*' after 'import' (only namespace imports supported)", peek());
+            subsetError(DiagnosticCode.E1019, "Expected '*' after 'import' (only namespace imports supported)", peek(),
+                    "namespace-import", "import * as alias from a module path string",
+                    "DEAL supports namespace imports, not named/default imports. See docs/spec-v1.6.md#import-forms-and-import-typing; example: import * as api from \"./module\";. Choose the intended alias and module explicitly; no replacement import or exported name is inferred.");
             synchronize(); return null;
         }
         if (!match(TokenType.AS)) {
