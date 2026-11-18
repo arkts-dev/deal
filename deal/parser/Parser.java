@@ -1606,7 +1606,21 @@ public final class Parser {
             TokenType type = tokens.get(index).type();
             if (type == TokenType.LPAREN) depth++;
             if (type == TokenType.RPAREN && --depth == 0) {
-                return index + 1 < tokens.size() && tokens.get(index + 1).type() == TokenType.COLON;
+                if (index + 1 >= tokens.size() || tokens.get(index + 1).type() != TokenType.COLON) return false;
+                if (tokens.get(start + 1).type() == TokenType.RPAREN
+                        || tokens.get(start + 2).type() == TokenType.COLON) return true;
+                // An unannotated head also looks like a grouped ternary arm.
+                // Require a complete result annotation followed by the arrow.
+                int savedPos = pos;
+                int savedDiagnostics = diagnostics.size();
+                pos = index + 2;
+                try {
+                    ResultAnnotation result = parseResultAnnotation();
+                    return result.type() != null && peek().type() == TokenType.ARROW;
+                } finally {
+                    pos = savedPos;
+                    diagnostics.subList(savedDiagnostics, diagnostics.size()).clear();
+                }
             }
         }
         return false;

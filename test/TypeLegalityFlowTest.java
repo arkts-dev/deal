@@ -187,6 +187,8 @@ public final class TypeLegalityFlowTest {
     }
 
     private static void contextualParameters() {
+        check("function f(b:boolean,a:number,c:number):number{return b ? (a) : c;}", null);
+        check("function f(b:boolean,a:number,c:number):number{return b ? (a) : (c);}", null);
         for (String body : List.of(
                 "let g:(x:number)=>number=(x):number=>x+1;",
                 "let g:(x:number)=>number=function(x):number{return x+1;};",
