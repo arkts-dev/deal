@@ -3101,7 +3101,7 @@ public class DiagnosticRangeTest {
             + range.replace("\n", "\n      ") + ",\n      \"notes\": "
             + notes.replace("\n", "\n      ") + ",\n"
             + "      \"facts\": {\n        \"reason\": \"\",\n        \"operation\": \"\",\n"
-            + "        \"expected\": \"\",\n        \"actual\": \"\",\n        \"guidance\": [],\n        \"path\": [],\n        \"call\": null,\n        \"operator\": null,\n        \"mismatch\": null,\n        \"syntax\": null\n      },\n"
+            + "        \"expected\": \"\",\n        \"actual\": \"\",\n        \"guidance\": [],\n        \"path\": [],\n        \"call\": null,\n        \"operator\": null,\n        \"mismatch\": null,\n        \"syntax\": null,\n        \"names\": null\n      },\n"
             + "      \"missingSymbols\": []\n    }\n  ]\n}";
     }
 
@@ -3226,6 +3226,51 @@ public class DiagnosticRangeTest {
             }
         }
 
+        for (String source : List.of("let count:number=7;let result:number=coun;",
+                "function count(x:number):number{return x;}let result=coun(7);")) {
+            String text = "// 😀\r\n" + source;
+            var lex = new Lexer(text, "names.deal").tokenize();
+            var parse = new Parser(lex.tokens(), "names.deal").parse();
+            var resolver = new NameResolver("names.deal", new StubModuleResolver());
+            var scope = resolver.resolve(parse.program());
+            var diagnostic = TypeChecker.check("names.deal", scope, resolver, parse.program()).diagnostics().stream()
+                    .filter(d -> d.code().equals("E2001")).findFirst().orElseThrow();
+            var inspection = deal.amend.AmendWorkspace.inspect(text, "names.deal").diagnostics().stream()
+                    .filter(d -> d.code().equals("E2001")).findFirst().orElseThrow();
+            var document = deal.amend.CompilerProtocolJson.requireObject(deal.amend.CompilerProtocolJson.decode(
+                    DiagnosticStructuredOutput.toJson(List.of(diagnostic))), "document");
+            var entries = deal.amend.CompilerProtocolJson.requireArray(
+                    deal.amend.CompilerProtocolJson.field(document, "diagnostics"), "diagnostics");
+            var entry = deal.amend.CompilerProtocolJson.requireObject(entries.items().getFirst(), "diagnostic");
+            check(inspection.facts().equals(diagnostic.facts()) && diagnostic.facts().names().candidates().size() == 1
+                            && deal.amend.CompilerProtocolJson.encode(inspection.facts()).equals(
+                                deal.semantic.ir.CanonicalJson.serializeText(deal.amend.CompilerProtocolJson.field(entry, "facts"))),
+                    "producer name alternatives agree across CLI and amendment with UTF-16 coordinates");
+            check(diagnostic.withNote("related", null).withMissingSymbol("VALUE", "other", "", List.of()).facts()
+                            .equals(diagnostic.facts()), "producer alternatives survive diagnostic metadata copies");
+        }
+        var nameCandidates = new java.util.ArrayList<>(List.of(
+                new deal.diagnostics.DiagnosticFacts.NameCandidate("a\"\uD800😀", "VALUE", "number", escaped.range(), 1, 0),
+                new deal.diagnostics.DiagnosticFacts.NameCandidate("other", "FUNCTION", "() => number", null, 2, 1)));
+        var nameContext = new deal.diagnostics.DiagnosticFacts.NameContext(nameCandidates, 3, true);
+        nameCandidates.clear();
+        var nameFacts = deal.diagnostics.DiagnosticFacts.EMPTY.withNames(nameContext);
+        check(nameFacts.withCall(null).withOperator(null).withMismatch(null).withSyntax(null).names().equals(nameContext)
+                        && nameContext.candidates().size() == 2 && nameFacts.withNames(null).names() == null,
+                "name alternatives defensively copy lists and survive independent context changes");
+        var nameDocument = deal.amend.CompilerProtocolJson.requireObject(deal.amend.CompilerProtocolJson.decode(
+                DiagnosticStructuredOutput.toJson(List.of(escaped.withFacts(nameFacts)))), "document");
+        var nameEntries = deal.amend.CompilerProtocolJson.requireArray(
+                deal.amend.CompilerProtocolJson.field(nameDocument, "diagnostics"), "diagnostics");
+        var nameEntry = deal.amend.CompilerProtocolJson.requireObject(nameEntries.items().getFirst(), "diagnostic");
+        check(deal.amend.CompilerProtocolJson.encode(nameFacts).equals(deal.semantic.ir.CanonicalJson.serializeText(
+                        deal.amend.CompilerProtocolJson.field(nameEntry, "facts"))),
+                "name alternatives retain exact nullable declaration ranges and raw Unicode across sole transports");
+        boolean invalidNames = false;
+        try { new deal.diagnostics.DiagnosticFacts.NameContext(nameContext.candidates(), 1, false); }
+        catch (IllegalArgumentException expected) { invalidNames = true; }
+        check(invalidNames, "inconsistent alternative counts fail closed");
+
         var syntaxKinds = new java.util.ArrayList<>(List.of("COLON"));
         var syntaxContext = new deal.diagnostics.DiagnosticFacts.SyntaxContext("token", syntaxKinds,
                 "STRING_LITERAL", "\"\u0000\uD800😀\"", 6, false);
@@ -3301,7 +3346,10 @@ public class DiagnosticRangeTest {
                 new deal.diagnostics.DiagnosticFacts.TypeComponent(
                         deal.diagnostics.DiagnosticFacts.TypeComponentKind.FUNCTION_PARAMETER, 2)));
         var mismatch = new deal.diagnostics.DiagnosticFacts.TypeMismatch("type.exact", componentPath, "number", "string", false);
-        operatorFacts = operatorFacts.withMismatch(mismatch).withSyntax(syntaxContext);
+        operatorFacts = operatorFacts.withMismatch(mismatch).withSyntax(syntaxContext).withNames(nameContext);
+        check(operatorFacts.withNames(null).call().equals(callContext)
+                        && operatorFacts.withCall(null).withOperator(null).withMismatch(null).withSyntax(null).names().equals(nameContext),
+                "adding and clearing name alternatives preserve all independent evidence");
         check(operatorFacts.call().equals(callContext) && operatorFacts.operator().equals(operator)
                         && operatorFacts.mismatch().equals(mismatch) && operatorFacts.withSyntax(null).syntax() == null,
                 "adding and clearing syntax facts preserve unrelated call, operator and mismatch evidence");

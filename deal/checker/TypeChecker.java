@@ -1579,7 +1579,10 @@ public final class TypeChecker {
                     "Undeclared identifier '" + id.name() + "'", id.span())
                     .withMissingSymbol("VALUE", id.name(), id.span().file(), List.of())
                     .withFacts(new deal.diagnostics.DiagnosticFacts("name.unresolved", "read",
-                            "visible value binding", id.name(), List.of("Check the binding's spelling, scope and imports."))));
+                            "visible value binding", id.name(), List.of("Check the binding's spelling, scope and imports.",
+                                    "Listed alternatives are visible, kind/context-compatible bindings, not authorized edits."))
+                            .withNames(nameAlternatives(id.name(),
+                                    directBuiltinCall != null && directBuiltinCall.callee() == id ? directBuiltinCall : null))));
             return Type.Error.INSTANCE;
         }
 
@@ -1859,7 +1862,9 @@ public final class TypeChecker {
                             List.of("arity=" + call.args().size()))
                     .withFacts(new deal.diagnostics.DiagnosticFacts("name.unresolved-call", "call",
                             "visible callable binding", id.name(),
-                            List.of("Check spelling, lexical scope, and intended imports; no callable declaration is inferred."))));
+                            List.of("Check spelling, lexical scope, and intended imports; no callable declaration is inferred.",
+                                    "Listed call alternatives match arity, async form and known result context; argument compatibility is not established."))
+                            .withNames(nameAlternatives(id.name(), call))));
             for (ExpressionNode arg : call.args()) checkExpression(arg);
             return Type.Error.INSTANCE;
         }
@@ -3741,6 +3746,61 @@ public final class TypeChecker {
             }
         }
         return sym;
+    }
+
+    /** Observe only existing scope/type facts; never evaluate arguments to rank a misspelling. */
+    private deal.diagnostics.DiagnosticFacts.NameContext nameAlternatives(String missing, CallExpr call) {
+        var candidates = new ArrayList<deal.diagnostics.DiagnosticFacts.NameCandidate>();
+        var rank = java.util.Comparator.comparingInt(deal.diagnostics.DiagnosticFacts.NameCandidate::distance)
+                .thenComparingInt(deal.diagnostics.DiagnosticFacts.NameCandidate::scopeDepth)
+                .thenComparing(deal.diagnostics.DiagnosticFacts.NameCandidate::name);
+        int count = 0;
+        var seen = new java.util.HashSet<String>();
+        for (SymbolTable scope = currentScope; scope != null; scope = scope.parent()) {
+            for (String name : scope.symbols().keySet()) {
+                if (!seen.add(name)) continue;
+                Symbol symbol = resolveVisibleBinding(name);
+                if (!(symbol instanceof Symbol.VariableSymbol || symbol instanceof Symbol.FunctionSymbol)) continue;
+                int distance = nearbyNameDistance(missing, name);
+                if (distance > 2) continue;
+                Type type = getDeclaredType(symbol);
+                if (type instanceof Type.Error || type instanceof Type.Void) continue;
+                Type valueType = type;
+                if (call != null) {
+                    if (!(type instanceof Type.Func function)
+                            || function.paramTypes().size() != call.args().size()
+                            || function.isAsync() != (call == directAwaitCallee)) continue;
+                    valueType = function.returnType();
+                }
+                if (expectedType != null && !Types.isAssignable(valueType, expectedType)) continue;
+                int visibleDepth = 0;
+                for (SymbolTable owner = currentScope; owner != null && owner.resolveLocal(name) != symbol;
+                        owner = owner.parent()) visibleDepth++;
+                candidates.add(new deal.diagnostics.DiagnosticFacts.NameCandidate(name,
+                        type instanceof Type.Func ? "FUNCTION" : "VALUE", typeName(type),
+                        bindingDeclarationRange(symbol), distance, visibleDepth));
+                count++;
+                candidates.sort(rank);
+                if (candidates.size() > 5) candidates.removeLast();
+            }
+        }
+        return new deal.diagnostics.DiagnosticFacts.NameContext(candidates, count, count > candidates.size());
+    }
+
+    /** Levenshtein over at most 64 UTF-16 units; longer spellings have no fuzzy alternatives. */
+    private static int nearbyNameDistance(String left, String right) {
+        if (left.length() > 64 || right.length() > 64 || Math.abs(left.length() - right.length()) > 2) return 3;
+        int[] previous = new int[right.length() + 1];
+        for (int j = 0; j < previous.length; j++) previous[j] = j;
+        for (int i = 1; i <= left.length(); i++) {
+            int[] next = new int[right.length() + 1];
+            next[0] = i;
+            for (int j = 1; j < next.length; j++)
+                next[j] = Math.min(Math.min(previous[j] + 1, next[j - 1] + 1),
+                        previous[j - 1] + (left.charAt(i - 1) == right.charAt(j - 1) ? 0 : 1));
+            previous = next;
+        }
+        return previous[right.length()];
     }
 
     private Type getDeclaredType(Symbol sym) {

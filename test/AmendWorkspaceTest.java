@@ -43,6 +43,7 @@ public final class AmendWorkspaceTest {
         syntaxDiagnosticsCarryCandidateEvidence();
         syntaxRecoveryCannotAuthorizeMissingDependencies();
         malformedListsRemainStagedUntilRechecked();
+        nameAlternativesRemainIntentDependent();
         actionabilityFactsAndRepairScope();
         smallestEditableBlockIsNotSemanticOwner();
         System.out.println("AmendWorkspaceTest: all tests passed");
@@ -218,6 +219,38 @@ public final class AmendWorkspaceTest {
                         + "export class Entry { text: string; }", "app.deal");
         check(repaired.diagnostics().stream().noneMatch(d -> d.severity().equals("error")),
                 "ordinary resolution resumes after syntax repair");
+    }
+
+    private static void nameAlternativesRemainIntentDependent() {
+        String clean = "// 😀\r\nfunction count(x:number):number{return x+1;}\r\n"
+                + "export function run():number{return count(7);}";
+        var base = AmendWorkspace.inspect(clean, "probe.deal");
+        var run = base.symbols().stream().filter(s -> s.name().equals("run")).findFirst().orElseThrow();
+        var body = base.nodes().stream().filter(n -> n.kind().equals("function-body") && n.ownerId().equals(run.id()))
+                .findFirst().orElseThrow();
+        var change = AmendWorkspace.inspectChange(clean, "probe.deal", base.sourceDigest(), List.of(body.id()),
+                List.of(AmendWorkspace.REPLACE_FUNCTION_BODY));
+        var staged = AmendWorkspace.stageChange(clean, "probe.deal",
+                new CompilerProtocol.ChangeSetPrecondition(base.sourceDigest(), Map.of(body.id().value(), body.fingerprint())),
+                change, List.of(new AmendWorkspace.ReplaceFunctionBody(body.id(), "return coun(42);")));
+        var rejected = staged.diagnostics().stream().filter(d -> d.code().equals("E2001")).findFirst().orElseThrow();
+        var candidates = rejected.facts().names().candidates();
+        String candidate = clean.replace("return count(7);", "\n    return coun(42);\n  ");
+        check(!staged.accepted() && staged.source().equals(clean) && candidates.size() == 1
+                        && candidates.getFirst().name().equals("count")
+                        && candidates.getFirst().declarationRange().startScalarOffset() == clean.indexOf("function count")
+                        && rejected.range().startScalarOffset() == candidate.indexOf("coun(42)")
+                        && rejected.facts().equals(AmendWorkspace.inspect(candidate, "probe.deal").diagnostics().stream()
+                            .filter(d -> d.code().equals("E2001")).findFirst().orElseThrow().facts()),
+                "unpublished assembled candidate retains exact existing alternatives and coordinates: " + rejected);
+        var unchanged = AmendWorkspace.patchRepairWorkspace(clean, "probe.deal", staged.workspace(),
+                List.of(new CompilerProtocol.SlotPatch("R1", Map.of("body", "return coun(42);"))));
+        check(!unchanged.accepted() && unchanged.source().equals(clean), "listing a name alternative never authorizes publication");
+        var repaired = AmendWorkspace.patchRepairWorkspace(clean, "probe.deal", staged.workspace(),
+                List.of(new CompilerProtocol.SlotPatch("R1", Map.of("body", "return count(42);"))));
+        check(repaired.accepted() && repaired.source().contains("return x+1;")
+                        && AmendWorkspace.inspect(repaired.source(), "probe.deal").diagnostics().isEmpty(),
+                "explicitly selected revision-pinned name repair rechecks and preserves unrelated code");
     }
 
     private static void malformedListsRemainStagedUntilRechecked() {

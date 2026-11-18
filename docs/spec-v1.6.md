@@ -1688,7 +1688,25 @@ JSON scanner offsets, which are one-based UTF-8 byte positions.
 
 `facts` separates producer-owned `reason`, failed `operation`, `expected`,
 `actual`, ordered `guidance`, a typed `path`, nullable typed `call` context
-and nullable typed `operator`, `mismatch`, and `syntax` contexts from explanatory message text.
+and nullable typed `operator`, `mismatch`, `syntax`, and `names` contexts from explanatory message text.
+Unresolved value/direct-call names retain E2001 and missing-symbol contracts and
+may carry `names`: ordered `candidates`, `matchingCount`, and `truncated`.
+Each candidate contains `name`, `kind` (`VALUE` or `FUNCTION`), its declared
+`type`, nullable exact `declarationRange`, `distance`, and `scopeDepth` (zero
+for the current scope). Candidates are existing declaration-order-visible
+variable/function bindings, respecting shadowing and pending declarations;
+namespace/class metadata and direct-only intrinsics are excluded. Matching uses
+case-sensitive Levenshtein distance over UTF-16 units, at most two edits and only
+spellings of at most 64 units. Rank by distance, visible scope depth, then Java
+String spelling order. Retain at most five candidates and the total eligible
+matching count; `truncated` means eligible matches were omitted. No match yields
+an empty list, not an invented import. Unavailable name evidence is `null`.
+Known enclosing type context filters declared values (or direct-call results)
+through ordinary assignability. Direct calls additionally require exact arity
+and async/await form; nullable callables are not direct-call alternatives.
+Argument compatibility is not established: candidates never cause argument
+rechecking, semantic changes or automatic edits. They claim neither a uniquely
+intended name nor a complete valid repair; any chosen edit requires rechecking.
 Enriched parser token/delimiter/subset/type/expression/terminator diagnostics carry
 `syntax.context`, ordered `expectedKinds`, `foundKind`, `lexeme`,
 `lexemeLength`, and `truncated`. Concrete token expectations list admitted kinds;

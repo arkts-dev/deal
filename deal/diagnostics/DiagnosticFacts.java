@@ -14,7 +14,28 @@ public record DiagnosticFacts(
         CallContext call,
         OperatorContext operator,
         TypeMismatch mismatch,
-        SyntaxContext syntax) {
+        SyntaxContext syntax,
+        NameContext names) {
+    /** Alternatives are observed eligible bindings, not authorized edits or inferred imports. */
+    public record NameCandidate(String name, String kind, String type, DiagnosticRange declarationRange,
+                                int distance, int scopeDepth) {
+        public NameCandidate {
+            Objects.requireNonNull(name, "name");
+            Objects.requireNonNull(kind, "kind");
+            Objects.requireNonNull(type, "type");
+            if (distance < 0 || scopeDepth < 0)
+                throw new IllegalArgumentException("Invalid name candidate rank");
+        }
+    }
+
+    public record NameContext(List<NameCandidate> candidates, int matchingCount, boolean truncated) {
+        public NameContext {
+            candidates = List.copyOf(candidates);
+            if (matchingCount < candidates.size() || truncated != (matchingCount > candidates.size()))
+                throw new IllegalArgumentException("Invalid name candidate count");
+        }
+    }
+
     /** Token spelling is a bounded raw-lexeme prefix in UTF-16 units, escaped only by transport. */
     public record SyntaxContext(String context, List<String> expectedKinds, String foundKind,
                                 String lexeme, int lexemeLength, boolean truncated) {
@@ -114,20 +135,30 @@ public record DiagnosticFacts(
         this(reason, operation, expected, actual, guidance, path, call, operator, mismatch, null);
     }
 
+    public DiagnosticFacts(String reason, String operation, String expected, String actual,
+                           List<String> guidance, List<PathSegment> path, CallContext call,
+                           OperatorContext operator, TypeMismatch mismatch, SyntaxContext syntax) {
+        this(reason, operation, expected, actual, guidance, path, call, operator, mismatch, syntax, null);
+    }
+
+    public DiagnosticFacts withNames(NameContext context) {
+        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, mismatch, syntax, context);
+    }
+
     public DiagnosticFacts withCall(CallContext context) {
-        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, context, operator, mismatch, syntax);
+        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, context, operator, mismatch, syntax, names);
     }
 
     public DiagnosticFacts withOperator(OperatorContext context) {
-        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, context, mismatch, syntax);
+        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, context, mismatch, syntax, names);
     }
 
     public DiagnosticFacts withMismatch(TypeMismatch context) {
-        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, context, syntax);
+        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, context, syntax, names);
     }
 
     public DiagnosticFacts withSyntax(SyntaxContext context) {
-        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, mismatch, context);
+        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, mismatch, context, names);
     }
 
     public static final DiagnosticFacts EMPTY = new DiagnosticFacts("", "", "", "", List.of());

@@ -187,7 +187,7 @@ public final class DiagnosticStructuredOutput {
         sb.append(",\n");
         indent(sb, level + 1).append("\"syntax\": ");
         var syntax = facts.syntax();
-        if (syntax == null) sb.append("null\n");
+        if (syntax == null) sb.append("null");
         else {
             sb.append("{\n");
             indent(sb, level + 2).append("\"context\": ").append(jsonString(syntax.context())).append(",\n");
@@ -198,6 +198,35 @@ public final class DiagnosticStructuredOutput {
             indent(sb, level + 2).append("\"lexeme\": ").append(jsonString(syntax.lexeme())).append(",\n");
             indent(sb, level + 2).append("\"lexemeLength\": ").append(syntax.lexemeLength()).append(",\n");
             indent(sb, level + 2).append("\"truncated\": ").append(syntax.truncated()).append('\n');
+            indent(sb, level + 1).append('}');
+        }
+        sb.append(",\n");
+        indent(sb, level + 1).append("\"names\": ");
+        var names = facts.names();
+        if (names == null) sb.append("null\n");
+        else {
+            sb.append("{\n");
+            indent(sb, level + 2).append("\"candidates\": [");
+            for (int i = 0; i < names.candidates().size(); i++) {
+                if (i > 0) sb.append(',');
+                var candidate = names.candidates().get(i);
+                sb.append('\n');
+                indent(sb, level + 3).append("{\n");
+                indent(sb, level + 4).append("\"name\": ").append(jsonString(candidate.name())).append(",\n");
+                indent(sb, level + 4).append("\"kind\": ").append(jsonString(candidate.kind())).append(",\n");
+                indent(sb, level + 4).append("\"type\": ").append(jsonString(candidate.type())).append(",\n");
+                if (candidate.declarationRange() == null)
+                    indent(sb, level + 4).append("\"declarationRange\": null");
+                else appendRange(sb, candidate.declarationRange(), level + 4, "declarationRange");
+                sb.append(",\n");
+                indent(sb, level + 4).append("\"distance\": ").append(candidate.distance()).append(",\n");
+                indent(sb, level + 4).append("\"scopeDepth\": ").append(candidate.scopeDepth()).append('\n');
+                indent(sb, level + 3).append('}');
+            }
+            if (!names.candidates().isEmpty()) { sb.append('\n'); indent(sb, level + 2); }
+            sb.append("],\n");
+            indent(sb, level + 2).append("\"matchingCount\": ").append(names.matchingCount()).append(",\n");
+            indent(sb, level + 2).append("\"truncated\": ").append(names.truncated()).append('\n');
             indent(sb, level + 1).append("}\n");
         }
         indent(sb, level).append('}');

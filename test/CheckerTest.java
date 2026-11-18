@@ -122,7 +122,92 @@ public class CheckerTest {
         );
     }
 
+    private static List<deal.diagnostics.DiagnosticFacts.NameCandidate> alternatives(String source) {
+        return checkProgram(source).result().diagnostics().stream()
+                .filter(d -> d.code().equals("E2001")).findFirst().orElseThrow().facts().names().candidates();
+    }
+
+    private static void nameAlternatives() {
+        String prefix = "// 😀\r\n";
+        String source = prefix + "let count:number=7;let counter:string=\"bad\";let result:number=coun;";
+        var names = alternatives(source);
+        check(names.size() == 1 && names.getFirst().name().equals("count")
+                        && names.getFirst().type().equals("number") && names.getFirst().kind().equals("VALUE")
+                        && names.getFirst().distance() == 1 && names.getFirst().scopeDepth() == 0
+                        && names.getFirst().declarationRange().startScalarOffset() == prefix.length(),
+                "name alternatives retain visible typed binding and exact UTF-16 declaration");
+        assertNoErrors(checkProgram(source.replace("=coun;", "=count;")), "explicitly selected name repair rechecks");
+        check(alternatives("let result:number=coun;let count:number=7;").isEmpty(),
+                "not-yet-visible bindings are never suggested");
+        check(alternatives("{let count:number=7;}let result:number=coun;").isEmpty(),
+                "exited scopes are never suggested");
+        check(alternatives("let count:number=7;{let count:string=\"bad\";let result:number=coun;}").isEmpty(),
+                "incompatible shadow does not expose a hidden outer alternative");
+        var outer = alternatives("let count:number=7;{let result:number=coun;let count:string=\"bad\";}");
+        check(outer.size() == 1 && outer.getFirst().scopeDepth() == 1 && outer.getFirst().type().equals("number"),
+                "pending local shadow retains the actually visible outer binding");
+        check(alternatives("class Count{}let result=Coun;").isEmpty(), "class metadata is not a data alternative");
+        check(alternatives("let count:number=coun;").isEmpty(), "a binding does not suggest itself during initialization");
+        check(alternatives("let count:number=7;let result=coun();let coun:number=1;").isEmpty(),
+                "pending exact call names still filter alternatives by callable kind");
+        var hoisted = alternatives("let result=coun(7);function count(x:number):number{return x;}");
+        check(hoisted.size() == 1 && hoisted.getFirst().name().equals("count"),
+                "module-hoisted function alternatives are visible before declaration");
+        check(alternatives("let count:((x:number)=>number)|null=null;let result=coun(7);").isEmpty(),
+                "nullable callable bindings are not direct call alternatives");
+        var functionValue = alternatives("let count=(x:number):number=>x;let result=coun(7);");
+        check(functionValue.size() == 1 && functionValue.getFirst().kind().equals("FUNCTION"),
+                "ordinary function-valued bindings remain callable alternatives");
+        var resolver = new StubModuleResolver();
+        resolver.register("counter", Map.of("count", Type.Number.INSTANCE));
+        var namespace = checkProgramWithModule("import * as count from \"counter\";let result=coun;", resolver);
+        check(namespace.result().diagnostics().stream().filter(d -> d.code().equals("E2001"))
+                        .findFirst().orElseThrow().facts().names().candidates().isEmpty(),
+                "module namespaces never masquerade as value alternatives");
+        String calls = "function count(x:number):number{return x;}"
+                + "function counts():number{return 1;}function counter(x:number):string{return \"bad\";}"
+                + "async function county(x:number):Promise<number>{return x;}let result:number=coun(7);";
+        var callable = alternatives(calls);
+        check(callable.size() == 1 && callable.getFirst().name().equals("count")
+                        && callable.getFirst().kind().equals("FUNCTION")
+                        && callable.getFirst().type().equals("(number) => number"),
+                "call alternatives exclude wrong arity, async form and result types without checking arguments twice");
+        assertNoErrors(checkProgram(calls.replace("=coun(7)", "=count(7)")), "selected callable repair rechecks");
+        var awaited = alternatives("async function count(x:number):Promise<number>{return x;}"
+                + "function counts(x:number):number{return x;}"
+                + "async function run():Promise<number>{return await coun(7);}");
+        check(awaited.size() == 1 && awaited.getFirst().name().equals("count"), "awaited alternatives retain async form");
+        String many = "let cat:number=1;let car:number=2;let can:number=3;let cap:number=4;"
+                + "let cab:number=5;let cam:number=6;let result:number=cax;";
+        var diagnostic = checkProgram(many).result().diagnostics().stream()
+                .filter(d -> d.code().equals("E2001")).findFirst().orElseThrow();
+        check(diagnostic.facts().names().matchingCount() == 6 && diagnostic.facts().names().truncated()
+                        && diagnostic.facts().names().candidates().stream().map(c -> c.name()).toList()
+                            .equals(List.of("cab", "cam", "can", "cap", "car")),
+                "alternatives rank deterministically and report omitted eligible matches");
+        check(alternatives("let " + "a".repeat(65) + ":number=1;let result=" + "a".repeat(64) + "b;").isEmpty(),
+                "long names do not trigger unbounded fuzzy comparison");
+        check(alternatives(many).equals(alternatives(many)), "repeated checking produces identical ranked candidates");
+        check(alternatives("let cat:number=1;let cot:number=2;let result=cotx;").stream()
+                        .map(c -> c.name()).toList().equals(List.of("cot", "cat")),
+                "edit distance precedes spelling independently of declaration order");
+        check(alternatives("let cot:number=1;let cat:number=2;let result=cut;").stream()
+                        .map(c -> c.name()).toList().equals(List.of("cat", "cot")),
+                "spelling breaks equal-distance ties independently of declaration order");
+        var uncheckedArguments = alternatives("function count(x:string):number{return 7;}let result=coun(42);");
+        check(uncheckedArguments.size() == 1 && uncheckedArguments.getFirst().name().equals("count"),
+                "call alternatives do not claim or test argument compatibility");
+        check(hasErrors(checkProgram("function count(x:string):number{return 7;}let result=count(42);").result().diagnostics()),
+                "an explicitly chosen alternative still requires ordinary argument checking");
+        var ranked = alternatives("let cat:number=1;{let car:number=2;let result=cax;}");
+        check(ranked.stream().map(c -> c.name()).toList().equals(List.of("car", "cat")),
+                "nearer lexical scope breaks equal-distance ties before spelling");
+        check(alternatives("let count:string=\"bad\";let result:boolean=coun;").isEmpty(),
+                "incompatible expected value types are not suggested");
+    }
+
     private static void diagnosticActionability() {
+        nameAlternatives();
         for (String[] candidate : new String[][] {
                 {"let value:Record<string,unknown>={};let result=value.child.name;", "access.field-receiver", "field.read", "unknown", "let value:Record<string,unknown>={};let result=(value.child as Record<string,unknown>).name;"},
                 {"function run(value:Record<string,unknown>|null):void{let result=value.name;}", "access.field-receiver", "field.read", "Record<string, unknown> | null", "function run(value:Record<string,unknown>|null):void{let result=value?.name;}"},
