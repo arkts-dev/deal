@@ -2468,6 +2468,7 @@ case "NUMBER_ADD" -> {
                     return deal.semantic.ir.StringSemantics.slice((String) args[0],
                         ((Number) args[1]).doubleValue(), ((Number) args[2]).doubleValue());
                 }
+                case "STRING_TO_NUMBER" -> { return deal.semantic.ir.NumberSemantics.fromString((String) args[0]); }
                 case "STRING_TO_LOWER_CASE", "STRING_TO_UPPER_CASE" -> {
                     return deal.semantic.ir.StringSemantics.changeCase((String) args[0], fn.equals("STRING_TO_UPPER_CASE"));
                 }

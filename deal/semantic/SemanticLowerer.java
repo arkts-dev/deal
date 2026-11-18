@@ -8308,6 +8308,11 @@ public final class SemanticLowerer {
                     return emitStdlibAlgorithm(entry, arguments, call.span(), slot);
                 }
             }
+            if (call.callee() instanceof IdentifierExpr id && id.name().equals("Number")
+                    && siteCheckerScope().resolve(id.name()) instanceof Symbol.IntrinsicSymbol) {
+                return emitStdlibAlgorithm(StdlibFunctionCatalog.entries().stream().filter(e -> e.function() == StdlibFunctionId.STRING_TO_NUMBER).findFirst().orElseThrow(),
+                    List.of(lowerOperand(call.args().getFirst())), call.span(), slot);
+            }
             if (call.callee() instanceof IdentifierExpr id && id.name().equals("String")
                     && siteCheckerScope().resolve(id.name()) instanceof Symbol.IntrinsicSymbol) {
                 ExpressionNode argument = call.args().getFirst();

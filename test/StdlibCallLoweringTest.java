@@ -329,8 +329,8 @@ public class StdlibCallLoweringTest {
     static void testPolicyTableSingleSource() {
         System.out.println("-- Single source: SemanticIrValidator.stdlibPolicy --");
 
-        check(StdlibFunctionId.values().length == 31,
-            "the closed StdlibFunctionId enum has exactly 31 values");
+        check(StdlibFunctionId.values().length == 32,
+            "the closed StdlibFunctionId enum has exactly 32 values");
         for (StdlibFunctionId function : StdlibFunctionId.values()) {
             check(SemanticIrValidator.stdlibPolicy(function) == expectedPolicy(function),
                 "stdlibPolicy(" + function + ") = "
@@ -432,6 +432,7 @@ public class StdlibCallLoweringTest {
                       let last: number = "abc".lastIndexOf("b",2);
                       let lower: string = "ΟΣ".toLowerCase();
                       let upper: string = "ß".toUpperCase();
+                      let converted: number = Number("42");
                       return null;
                     }
 
@@ -498,8 +499,8 @@ public class StdlibCallLoweringTest {
             }
 
             List<SemanticOp> stdlibOps = stdlibOps(unit);
-            check(stdlibOps.size() == 30,
-                "one STDLIB_CALL per algorithm except contextual parse: 30 ops; got "
+            check(stdlibOps.size() == 31,
+                "one STDLIB_CALL per algorithm except contextual parse: 31 ops; got "
                     + stdlibOps.size());
             EnumSet<StdlibFunctionId> produced = EnumSet.noneOf(StdlibFunctionId.class);
             for (SemanticOp op : stdlibOps) {

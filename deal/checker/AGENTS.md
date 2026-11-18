@@ -20,7 +20,7 @@ Record, Promise, Object, Array, String, JSON, Number, Math, Date, console and un
 
 Number.isFinite/isNaN take exactly one unknown without coercion, contextual extraction or narrowing. Math.min/max take exactly two numbers; Math.round takes exactly one and retains binary64 results, including signed zero and nonfinite values. These operations grant no callable module exports.
 
-String is an unshadowable direct-call-only builtin with exactly one checked number argument; it supplies no contextual unknown extraction. Lower calls through the same NUMBER_TO_STRING contract as numeric interpolation.
+String and Number are unshadowable direct-call-only builtins taking exactly one checked number/string respectively; neither supplies contextual unknown extraction. String shares interpolation's NUMBER_TO_STRING; Number lowers through STRING_TO_NUMBER with no general coercion.
 
 Template interpolations accept checked string or number values only; they grant no implicit contextual extraction from unknown or nullish values.
 

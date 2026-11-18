@@ -8,6 +8,8 @@ String case conversion uses Unicode 17.0 default mappings and Case_Ignorable/Cas
 
 Numeric namespace algorithms stay backend-specific behind validated STDLIB_CALL selectors. Number predicates test the numeric kind without coercion. Min/max propagate NaN and preserve signed-zero selection; round keeps binary64, ties toward positive infinity, negative zero and nonfinite inputs, never a host integer-returning rounding routine. Direct-only selectors create no module export or dependency.
 
+STRING_TO_NUMBER admits only a checked string and implements whole-string ECMAScript conversion, not ambient host coercion/grammar. JVM shares NumberSemantics; Lua validates grammar and preserves negative zero before returning host conversion; native validates under its private numeric locale.
+
 Render NUMBER_TO_STRING with ECMAScript shortest decimal and exponent thresholds, never a host default formatter. Finite JSON leaves share this spelling; nonfinite JSON leaves substitute null. JavaScript uses primitive String(number); JVM shares NumberSemantics; Lua and native round exact decimal expansions with ties to even and round-trip interval checks. Conversion precedes later interpolation effects; concatenation consumes strings only.
 
 Array-literal element admission preserves E8003 with the unwrapped leaf descriptor cause, both at the recorded element origin. Callback boundary projection preserves that cause and assigns the callback boundary origin to generated descriptor failures; do not discard it when rebuilding a transport error.

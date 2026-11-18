@@ -441,6 +441,7 @@ public final class SharedStdlibSemantics {
                 consoleLog(origin, validTextOf(argv, 0, function), sink);
             case CONSOLE_ERROR ->
                 consoleError(origin, validTextOf(argv, 0, function), sink);
+            case STRING_TO_NUMBER -> new Outcome.Success<>(new Value.Number(deal.semantic.ir.NumberSemantics.fromString(validTextOf(argv, 0, function).carrier())));
             case STRING_LENGTH ->
                 stringLength(origin, validTextOf(argv, 0, function));
             case STRING_SUBSTRING -> stringSubstring(origin,
@@ -506,7 +507,7 @@ public final class SharedStdlibSemantics {
     private static int declaredArity(StdlibFunctionId function) {
         return switch (function) {
             case TIME_NOW_MILLIS -> 0;
-            case CONSOLE_LOG, CONSOLE_ERROR, STRING_TO_LOWER_CASE, STRING_TO_UPPER_CASE, STRING_LENGTH, STRING_TRIM, TABLE_KEYS, JSON_PARSE, JSON_STRINGIFY, MATH_FLOOR, MATH_CEIL, MATH_SQRT, MATH_ABS_NUMBER, MATH_ROUND, NUMBER_IS_FINITE, NUMBER_IS_NAN -> 1;
+            case STRING_TO_NUMBER, CONSOLE_LOG, CONSOLE_ERROR, STRING_TO_LOWER_CASE, STRING_TO_UPPER_CASE, STRING_LENGTH, STRING_TRIM, TABLE_KEYS, JSON_PARSE, JSON_STRINGIFY, MATH_FLOOR, MATH_CEIL, MATH_SQRT, MATH_ABS_NUMBER, MATH_ROUND, NUMBER_IS_FINITE, NUMBER_IS_NAN -> 1;
             case STRING_CONTAINS, STRING_STARTS_WITH, STRING_ENDS_WITH, STRING_SPLIT, MATH_MIN, MATH_MAX -> 2;
             case STRING_SUBSTRING, STRING_SLICE, STRING_REPLACE, STRING_INCLUDES_POSITION,
                  STRING_STARTS_WITH_POSITION, STRING_ENDS_WITH_POSITION, STRING_INDEX_OF, STRING_LAST_INDEX_OF -> 3;

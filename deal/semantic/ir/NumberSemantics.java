@@ -8,6 +8,19 @@ import java.math.RoundingMode;
 public final class NumberSemantics {
     private NumberSemantics() {}
 
+    /** Whole-string ECMAScript StringToNumber, not Java's wider numeric grammar. */
+    public static double fromString(String text) {
+        String s = StringSemantics.trim(text);
+        if (s.isEmpty()) return 0;
+        if (s.equals("Infinity") || s.equals("+Infinity")) return Double.POSITIVE_INFINITY;
+        if (s.equals("-Infinity")) return Double.NEGATIVE_INFINITY;
+        if (s.matches("0[xX][0-9a-fA-F]+")) return new java.math.BigInteger(s.substring(2), 16).doubleValue();
+        if (s.matches("0[bB][01]+")) return new java.math.BigInteger(s.substring(2), 2).doubleValue();
+        if (s.matches("0[oO][0-7]+")) return new java.math.BigInteger(s.substring(2), 8).doubleValue();
+        if (!s.matches("[+-]?(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?")) return Double.NaN;
+        return Double.parseDouble(s);
+    }
+
     /** ECMAScript ToIntegerOrInfinity, clamped before any host integer cast. */
     public static int spliceStart(double value, int length) {
         if (Double.isNaN(value) || value == 0) return 0;

@@ -236,6 +236,9 @@ public final class NameResolver {
         root.define("String", new Symbol.IntrinsicSymbol("String",
             new Type.Func(List.of(Type.Number.INSTANCE), Type.String.INSTANCE),
             (call, args, ctx) -> Type.String.INSTANCE));
+        root.define("Number", new Symbol.IntrinsicSymbol("Number",
+            new Type.Func(List.of(Type.String.INSTANCE), Type.Number.INSTANCE),
+            (call, args, ctx) -> Type.Number.INSTANCE));
         root.define("Error", new Symbol.ClassSymbol("Error", errorFields, "",
             builtinError.identity()));
     }

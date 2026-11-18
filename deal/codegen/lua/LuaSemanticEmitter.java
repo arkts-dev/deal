@@ -10879,6 +10879,7 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
     local first, last = relative(__args[2]), relative(__args[3])
     return strings.substring.f(__args[1], first, math.max(first, last))
   end
+  if fn == "STRING_TO_NUMBER" then return require("deal.runtime").string_to_number(__args[1]) end
   if fn == "STRING_TO_LOWER_CASE" or fn == "STRING_TO_UPPER_CASE" then
     return require("deal.runtime").string_change_case(__args[1], fn == "STRING_TO_UPPER_CASE")
   end

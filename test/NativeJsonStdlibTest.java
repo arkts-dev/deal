@@ -131,8 +131,8 @@ public final class NativeJsonStdlibTest {
             StandardCharsets.UTF_8);
         deal.semantic.ir.StdlibFunctionId[] operations =
             deal.semantic.ir.StdlibFunctionId.values();
-        checkEq(31, operations.length,
-            "the merged registry carries the closed thirty-one operations");
+        checkEq(32, operations.length,
+            "the merged registry carries the closed thirty-two operations");
         Map<String, Integer> published = new LinkedHashMap<>();
         java.util.regex.Matcher matcher = java.util.regex.Pattern.compile(
             "#define\\s+DEAL_STDLIB_([A-Z0-9_]+)\\s+(\\d+)[uU]").matcher(header);

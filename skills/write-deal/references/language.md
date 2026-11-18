@@ -62,7 +62,7 @@ Use s.length (read-only UTF-16 unit count), s.substring(start) for the remaining
 
 ## Builtin calls
 
-Math.floor(x), Math.ceil(x), Math.sqrt(x), Math.abs(x), Math.round(x), Math.min(a,b) and Math.max(a,b) take numbers and follow ECMAScript, including NaN and signed zero. Round breaks ties toward positive infinity and returns a number, not a bounded integer. Number.isFinite(value) and Number.isNaN(value) accept unknown without coercion or type narrowing; nonnumbers return false. Date.now() returns epoch milliseconds. console.log(text) and console.error(text) write strings to the respective streams. These builtin namespaces require no imports and support direct calls only; builtin names cannot be shadowed.
+Math.floor(x), Math.ceil(x), Math.sqrt(x), Math.abs(x), Math.round(x), Math.min(a,b) and Math.max(a,b) take numbers and follow ECMAScript, including NaN and signed zero. Round breaks ties toward positive infinity and returns a number, not a bounded integer. Number(text) accepts only strings and follows ECMAScript whole-string conversion: malformed text yields NaN, whitespace/empty text yields zero, and exponents/radix prefixes/Infinity are supported. Number.isFinite(value) and Number.isNaN(value) accept unknown without coercion or type narrowing; nonnumbers return false. Date.now() returns epoch milliseconds. console.log(text) and console.error(text) write strings to the respective streams. These builtin namespaces require no imports and support direct calls only; builtin names cannot be shadowed.
 
 ## Standard library declarations
 

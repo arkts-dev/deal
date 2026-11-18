@@ -8,6 +8,18 @@ function check(ok:boolean):void {
 }
 
 export function main():void {
+  check(Number("")===0 && Number(" \t\n\uFEFF\u00A0\u2000\u2029")===0);
+  check(Number(" +.5 ")===0.5 && Number("1.")===1 && Number("001.25e+2")===125);
+  check(Number("0xFF")===255 && Number("0B101")===5 && Number("0o17")===15);
+  check(Number("Infinity")===1/0 && Number("+Infinity")===1/0 && Number("-Infinity")===-1/0);
+  check(1/Number("-0")===-1/0 && 1/Number("-1e-9999")===-1/0);
+  check(Number("9007199254740993")===9007199254740992 && Number("5e-324")===5e-324);
+  check(Number("1e309")===1/0 && Number("1e-310")===1e-310);
+  for(let bad of ["1x","1e","0x","0b2","0o8","+0x1","-0b1","1_0","1n","inf","infinity","0x1p2","1f","1\u0000","\uD800","\u0085","\u180E","1 2"]){check(Number.isNaN(Number(bad)));}
+  let decimal="0.";let zeros="0.";let k=0;while(k<310){decimal=decimal+"1";if(k<309){zeros=zeros+"0";}k=k+1;}
+  check(Number(decimal)===0.1111111111111111 && Number(zeros+"1")===1e-310);
+  let once=0;let text=():string=>{once=once+1;return "42";};check(Number(text())===42 && once===1);
+  let destination=9;try{destination=Number((():string=>{throw {name:"STOP",message:"conversion"};})());}catch(e){}check(destination===9);
   let nan = 0/0;
   let inf = 1/0;
   check(Number.isFinite(1) && Number.isFinite(-0) && Number.isFinite(5e-324));

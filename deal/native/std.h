@@ -67,7 +67,8 @@
 #define DEAL_STDLIB_STRING_LAST_INDEX_OF 28u
 #define DEAL_STDLIB_STRING_TO_LOWER_CASE 29u
 #define DEAL_STDLIB_STRING_TO_UPPER_CASE 30u
-#define DEAL_STDLIB_OPERATION_COUNT   31u
+#define DEAL_STDLIB_STRING_TO_NUMBER  31u
+#define DEAL_STDLIB_OPERATION_COUNT   32u
 
 /*
  * One `STDLIB_CALL`: the closed operation id, the already evaluated argument

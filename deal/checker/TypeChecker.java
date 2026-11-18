@@ -1556,7 +1556,7 @@ public final class TypeChecker {
             return Type.Error.INSTANCE;
         }
 
-        if (sym instanceof Symbol.IntrinsicSymbol && id.name().equals("String")) {
+        if (sym instanceof Symbol.IntrinsicSymbol && List.of("String", "Number").contains(id.name())) {
             error(DiagnosticCode.E3001, "Builtin operations support direct calls only", id.span());
             return Type.Error.INSTANCE;
         }
@@ -1803,7 +1803,7 @@ public final class TypeChecker {
             if (receiver instanceof Type.Array array) return member.field().equals("map")
                 ? checkArrayMap(call, member, array) : checkArrayPredicate(call, member, array);
         }
-        if (call.callee() instanceof IdentifierExpr id && id.name().equals("String")
+        if (call.callee() instanceof IdentifierExpr id && List.of("String", "Number").contains(id.name())
                 && resolveVisibleBinding(id.name()) instanceof Symbol.IntrinsicSymbol builtin) {
             typeMap.put(id, builtin.type());
             List<Type> arguments = new ArrayList<>();

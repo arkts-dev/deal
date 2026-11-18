@@ -83,6 +83,35 @@ public final class NumberProductionTest {
         return result;
     }
 
+    private static String conversionReference(Path cwd) throws Exception {
+        var inputs = new java.util.ArrayList<String>(List.of("-0", "1e309", "-1e-9999", "2.4703282292062327e-324", "2.4703282292062328e-324"));
+        var random = new java.util.Random(0x570aL);
+        for (int radix : new int[]{2, 8, 16}) for (int i = 0; i < 30; i++) {
+            String prefix = radix == 2 ? "0b" : radix == 8 ? "0o" : "0x";
+            inputs.add(prefix + new java.math.BigInteger(1 + random.nextInt(1300), random).toString(radix));
+        }
+        for (int i = 0; i < 60; i++) inputs.add((i % 2 == 0 ? "-" : "")
+            + new java.math.BigInteger(1 + random.nextInt(1400), random).toString() + "e" + (random.nextInt(900) - 600));
+        var command = new java.util.ArrayList<String>(List.of("node", "-e",
+            "for(const s of process.argv.slice(1)){const n=Number(s);console.log(Object.is(n,-0)?'-0':String(n));}", "--"));
+        command.addAll(inputs);
+        var expected = run(command, cwd).stdout().lines().toList();
+        require(expected.size() == inputs.size(), "complete Node StringToNumber reference");
+        StringBuilder source = new StringBuilder("function conversionReference():void{\n");
+        for (int i = 0; i < inputs.size(); i++) {
+            String text = inputs.get(i), value = expected.get(i);
+            double number = value.equals("Infinity") ? Double.POSITIVE_INFINITY : value.equals("-Infinity")
+                ? Double.NEGATIVE_INFINITY : Double.parseDouble(value);
+            require(Double.doubleToRawLongBits(deal.semantic.ir.NumberSemantics.fromString(text))
+                == Double.doubleToRawLongBits(number), "shared StringToNumber differs from Node: " + text);
+            String expression = value.equals("Infinity") ? "1/0" : value.equals("-Infinity") ? "-1/0" : value;
+            source.append("check(Number(\"").append(text).append("\")===").append(expression).append(");\n");
+            if (number == 0) source.append("check(1/Number(\"").append(text).append("\")===")
+                .append(value.startsWith("-") ? "-1/0" : "1/0").append(");\n");
+        }
+        return source.append("}\n").toString();
+    }
+
     private static void numericBuiltins() throws Exception {
         Path fixture = Path.of("test/conformance/backend-runtime/arithmetic/number-predicates-math.deal");
         Path corpus = Path.of("test/conformance");
@@ -99,7 +128,8 @@ public final class NumberProductionTest {
         Path root = Files.createTempDirectory("deal-numeric-builtins-");
         try {
             String source = ConformanceHarnessMetadata.productionCorpusSource(
-                Files.readString(fixture), fixture.toString());
+                Files.readString(fixture), fixture.toString()).replace("export function main():void {",
+                    "export function main():void {conversionReference();") + conversionReference(root);
             Path entry = Files.createDirectories(root.resolve("oracle/src")).resolve("main.deal");
             Files.writeString(entry, source.replace("export function main()", "export function run()")
                 + "\nexport function main():void{return ;}\n");

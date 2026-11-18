@@ -42,6 +42,7 @@
 #include "deal/native/json.h"
 
 #include <locale.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -91,6 +92,60 @@ static double deal_json_decode_number(const unsigned char *token,
         deal_platform_fault("json: numeric conversion stopped inside the token");
     }
     return value;
+}
+
+/* ASCII numeric grammar after ECMAScript whitespace removal by std.c. */
+double deal_number_from_trimmed_string(deal_string *text) {
+    size_t length = deal_text_byte_length(text);
+    const unsigned char *s = deal_text_bytes(text);
+    if (length == 0u) return 0.0;
+    if ((length == 8u && memcmp(s, "Infinity", 8u) == 0)
+            || (length == 9u && memcmp(s, "+Infinity", 9u) == 0)) return INFINITY;
+    if (length == 9u && memcmp(s, "-Infinity", 9u) == 0) return -INFINITY;
+    size_t capacity = deal_platform_checked_add(deal_platform_checked_multiply(length, 3u), 8u);
+    unsigned char *token = deal_platform_allocate(capacity);
+    size_t used = 0u;
+    int valid = 1;
+    if (length > 2u && s[0] == '0' && (s[1] == 'x' || s[1] == 'X'
+            || s[1] == 'b' || s[1] == 'B' || s[1] == 'o' || s[1] == 'O')) {
+        int bits = s[1] == 'x' || s[1] == 'X' ? 4 : s[1] == 'o' || s[1] == 'O' ? 3 : 1;
+        token[used++] = '0'; token[used++] = 'x';
+        unsigned group = 0u;
+        size_t count = (4u - ((length - 2u) % 4u * (size_t)bits) % 4u) % 4u;
+        for (size_t i = 2u; i < length; i += 1u) {
+            unsigned digit = s[i] >= '0' && s[i] <= '9' ? (unsigned)(s[i] - '0')
+                : s[i] >= 'a' && s[i] <= 'f' ? (unsigned)(s[i] - 'a' + 10)
+                : s[i] >= 'A' && s[i] <= 'F' ? (unsigned)(s[i] - 'A' + 10) : 16u;
+            if (digit >= (1u << bits)) { valid = 0; break; }
+            for (int b = bits - 1; b >= 0; b -= 1) {
+                group = group * 2u + ((digit >> b) & 1u); count += 1u;
+                if (count == 4u) { token[used++] = (unsigned char)"0123456789abcdef"[group]; group = 0u; count = 0u; }
+            }
+        }
+        token[used++] = 'p'; token[used++] = '0';
+    } else {
+        size_t i = s[0] == '+' || s[0] == '-' ? 1u : 0u;
+        size_t digits = 0u;
+        while (i < length && s[i] >= '0' && s[i] <= '9') { i += 1u; digits += 1u; }
+        if (i < length && s[i] == '.') {
+            i += 1u;
+            while (i < length && s[i] >= '0' && s[i] <= '9') { i += 1u; digits += 1u; }
+        }
+        if (digits == 0u) valid = 0;
+        if (i < length && (s[i] == 'e' || s[i] == 'E')) {
+            i += 1u;
+            if (i < length && (s[i] == '+' || s[i] == '-')) i += 1u;
+            size_t first = i;
+            while (i < length && s[i] >= '0' && s[i] <= '9') i += 1u;
+            if (first == i) valid = 0;
+        }
+        if (i != length) valid = 0;
+        memcpy(token, s, length); used = length;
+    }
+    token[used] = 0u;
+    double result = valid ? deal_json_decode_number(token, used) : NAN;
+    deal_platform_release(token);
+    return result;
 }
 
 /* Exact binary64 expansion makes shortest-decimal rounding independent of

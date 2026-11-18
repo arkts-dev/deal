@@ -136,7 +136,8 @@ public final class StdlibFunctionCatalog {
         new Entry(StdlibFunctionId.STRING_INDEX_OF, "builtin.string", "indexOf", List.of(STRING, STRING, NUMBER), NUMBER),
         new Entry(StdlibFunctionId.STRING_LAST_INDEX_OF, "builtin.string", "lastIndexOf", List.of(STRING, STRING, NUMBER), NUMBER),
         new Entry(StdlibFunctionId.STRING_TO_LOWER_CASE, "builtin.string", "toLowerCase", List.of(STRING), STRING),
-        new Entry(StdlibFunctionId.STRING_TO_UPPER_CASE, "builtin.string", "toUpperCase", List.of(STRING), STRING)
+        new Entry(StdlibFunctionId.STRING_TO_UPPER_CASE, "builtin.string", "toUpperCase", List.of(STRING), STRING),
+        new Entry(StdlibFunctionId.STRING_TO_NUMBER, "builtin.number", "Number", List.of(STRING), NUMBER)
     );
 
     /** The ordinary callable subset of the closed algorithm signatures. */

@@ -98,7 +98,8 @@ static const deal_std_operation deal_std_operations[DEAL_STDLIB_OPERATION_COUNT]
     { deal_std_parameters_search, 3u, "number" },            /* STRING_INDEX_OF */
     { deal_std_parameters_search, 3u, "number" },            /* STRING_LAST_INDEX_OF */
     { deal_std_parameters_string, 1u, "string" },            /* STRING_TO_LOWER_CASE */
-    { deal_std_parameters_string, 1u, "string" }             /* STRING_TO_UPPER_CASE */
+    { deal_std_parameters_string, 1u, "string" },            /* STRING_TO_UPPER_CASE */
+    { deal_std_parameters_string, 1u, "number" }             /* STRING_TO_NUMBER */
 };
 
 /* =========================================================================
@@ -716,6 +717,10 @@ static deal_data deal_std_evaluate(uint32_t operation_id,
                               deal_std_string_argument(&arguments[1]));
     case DEAL_STDLIB_STRING_TRIM:
         return deal_std_trim(deal_std_string_argument(&arguments[0]));
+    case DEAL_STDLIB_STRING_TO_NUMBER: {
+        deal_data trimmed = deal_std_trim(deal_std_string_argument(&arguments[0]));
+        return deal_data_of_number(deal_number_from_trimmed_string((deal_string *)trimmed.reference));
+    }
     case DEAL_STDLIB_TABLE_KEYS:
         return deal_std_table_keys((deal_table *)arguments[0].datum.reference);
     case DEAL_STDLIB_JSON_PARSE: {

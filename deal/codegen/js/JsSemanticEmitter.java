@@ -3115,6 +3115,8 @@ private void emitBindingLoad(SemanticOp op) {
                     || payload.function() == StdlibFunctionId.STRING_TO_UPPER_CASE) {
                 emit(slotOf(op) + " = $rt.stringChangeCase(" + callArguments.getFirst() + ", "
                     + (payload.function() == StdlibFunctionId.STRING_TO_UPPER_CASE) + ");");
+            } else if (payload.function() == StdlibFunctionId.STRING_TO_NUMBER) {
+                emit(slotOf(op) + " = Number(" + callArguments.getFirst() + ");");
             } else if (payload.function() == StdlibFunctionId.STRING_SLICE) {
                 emit(slotOf(op) + " = " + callArguments.getFirst() + ".slice("
                     + callArguments.get(1) + ", " + callArguments.get(2) + ");");

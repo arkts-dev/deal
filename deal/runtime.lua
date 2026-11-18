@@ -9,6 +9,46 @@
 
 local __rt = {}
 
+-- Whole-string ECMAScript StringToNumber; validate before host conversion.
+function __rt.string_to_number(text)
+  local units = __rt.string_units(text)
+  local function space(u)
+    return u and (u >= 9 and u <= 13 or u == 32 or u == 160 or u == 5760
+      or u >= 8192 and u <= 8202 or u == 8232 or u == 8233 or u == 8239
+      or u == 8287 or u == 12288 or u == 65279)
+  end
+  local first, last = 1, #units
+  while first <= last and space(units[first]) do first = first + 1 end
+  while last >= first and space(units[last]) do last = last - 1 end
+  local s = __rt.string_from_units(units, first, last)
+  if s == "" then return 0 end
+  if s == "Infinity" or s == "+Infinity" then return math.huge end
+  if s == "-Infinity" then return -math.huge end
+  local prefix = s:sub(1,2):lower()
+  if prefix == "0x" or prefix == "0b" or prefix == "0o" then
+    local bits = prefix == "0x" and 4 or prefix == "0o" and 3 or 1
+    local digits, group, count = {"0x"}, 0, (4 - ((#s - 2) * bits) % 4) % 4
+    if #s == 2 then return 0/0 end
+    for i = 3, #s do
+      local digit = ("0123456789abcdef"):find(s:sub(i,i):lower(),1,true)
+      if not digit or digit - 1 >= 2^bits then return 0/0 end
+      digit = digit - 1
+      for b = bits - 1, 0, -1 do
+        group = group * 2 + math.floor(digit / 2^b) % 2; count = count + 1
+        if count == 4 then digits[#digits+1] = ("0123456789abcdef"):sub(group+1,group+1); group,count = 0,0 end
+      end
+    end
+    return tonumber(table.concat(digits).."p0") or 0/0
+  end
+  local body = s:gsub("^[+-]", "")
+  local mantissa, exponent = body:match("^(.-)[eE]([+-]?%d+)$")
+  if not mantissa then mantissa = body end
+  if not (mantissa:match("^%d+%.?%d*$") or mantissa:match("^%.%d+$")) then return 0/0 end
+  local value = tonumber(s)
+  if value == 0 and s:sub(1,1) == "-" then return -1/math.huge end
+  return value or 0/0
+end
+
 -- ECMAScript Number::toString: exact decimal expansion followed by the
 -- shortest round-tripping, ties-to-even candidate. Shared by emitted numeric
 -- conversion and deployed/emitted JSON encoders.
