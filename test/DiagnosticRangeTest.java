@@ -107,6 +107,7 @@ public class DiagnosticRangeTest {
         testCycleEvidence();
         testAssertionConstraintEvidence();
         testRawRecordReadEvidence();
+        testMissingReturnObligations();
         testCatchVariableIdentifierRange();
         testProgramSpanAnchorsCombined();
         testV12CornerCaseScalarCoordinatePins();
@@ -1184,6 +1185,48 @@ public class DiagnosticRangeTest {
                 "record.deal"), "E3001");
         check(unrelated != null && unrelated.notes().stream().noneMatch(n -> n.message().contains("raw Record read")),
                 "unknown binding gets no invented Record origin");
+    }
+
+    private static void testMissingReturnObligations() {
+        for (String[] sample : new String[][] {
+                {"function f():number{}", "{}", "Empty body"},
+                {"function f(flag:boolean):number{if(flag){return 1;}}", "flag)", "without an else"},
+                {"function f(flag:boolean):number{if(flag){return 1;}else{let n=2;}}", "{let n=2;}", "final reachable"},
+                {"function f(a:boolean,b:boolean):number{if(a){return 1;}else if(b){return 2;}}", "b)", "without an else"},
+                {"function f():number{try{return 1;}catch(e){let n=2;}}", "{let n=2;}", "final reachable"},
+                {"function f():number{try{let n=2;}catch(e){return 1;}}", "{let n=2;}", "final reachable"},
+                {"function f(flag:boolean):number{while(flag){return 1;}}", "flag)", "no iteration is assumed"},
+                {"function f():number{while(true){continue;}}", "true", "no iteration is assumed"},
+                {"function f(xs:number[]):number{for(let x of xs){return x;}}", "xs)", "no iteration is assumed"},
+                {"let f=function():number{let nested=function():number{return 1;};};", "{let nested=function():number{return 1;};}", "final reachable"},
+                {"let f=():number=>{};", "{}", "Empty body"}}) {
+            String source = "// 😀\r\n" + sample[0];
+            var errors = checkerDiagnostics(source, "returns.deal");
+            var failures = errors.stream().filter(d -> d.code().equals("E5002")).toList();
+            check(failures.size() == 1, "one existing missing-return rejection: " + sample[0]);
+            if (failures.size() != 1) continue;
+            var failure = failures.getFirst();
+            check(failure.facts().reason().equals("return.not-definite") && failure.notes().size() == 2,
+                "missing return retains reason and annotation before representative obligation");
+            var note = failure.notes().get(1);
+            int start = source.indexOf(sample[1]);
+            int length = sample[1].endsWith(")") ? sample[1].length() - 1 : sample[1].length();
+            check(note.range().startScalarOffset() == start && note.range().scalarLength() == length,
+                "unmet obligation exact UTF-16/CRLF geometry: " + note + " expected " + start + ":" + length);
+            check(note.message().contains(sample[2]) && !note.message().contains("will execute"),
+                "evidence describes analysis rather than a feasible execution witness");
+            check(failure.facts().guidance().stream().allMatch(g -> g.contains("no dummy return")),
+                "obligation supplies no guessed result");
+        }
+        for (String source : List.of(
+                "function f(flag:boolean):number{if(flag){return 1;}return 2;}",
+                "function f():number{try{let n=1;}catch(e){}return 2;}",
+                "function f():number{while(true){return 1;break;}let n=2;}",
+                "function f():number{throw {name:\"Failure\",message:\"stop\"};let n=2;}",
+                "function f():void{}", "let f=():number=>1;")) {
+            check(checkerDiagnostics(source, "returns.deal").isEmpty(),
+                "explicit intended result/throw and void controls remain accepted: " + source);
+        }
     }
 
     private static void testAssertionConstraintEvidence() {

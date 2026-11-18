@@ -843,7 +843,7 @@ public final class TypeChecker {
                     && !ReturnAnalysis.definitelyReturns(fd.body())) {
                 diagnostics.add(missingReturnDiagnostic(
                     "Function '" + fd.name() + "' must return a value on all paths",
-                    fd.span(), retType, fd.returnType()));
+                    fd.span(), retType, fd.returnType(), fd.body()));
             }
         }
 
@@ -857,12 +857,15 @@ public final class TypeChecker {
     // Return statement
     // =======================================================================
 
-    private CompilerDiagnostic missingReturnDiagnostic(String message, Span span, Type result, TypeNode annotation) {
-        return CompilerDiagnostic.error(DiagnosticCode.E5002, message, span).withFacts(
+    private CompilerDiagnostic missingReturnDiagnostic(String message, Span span, Type result, TypeNode annotation, Block body) {
+        CompilerDiagnostic diagnostic = CompilerDiagnostic.error(DiagnosticCode.E5002, message, span).withFacts(
                 new deal.diagnostics.DiagnosticFacts("return.not-definite", "return.flow",
                         typeName(result), "not all paths return or throw",
                         List.of("Implement the intended result on all required paths; no dummy return or result widening is inferred.")))
                 .withNote("Declared result annotation", annotation.span().range());
+        ReturnAnalysis.ReturnObligation obligation = ReturnAnalysis.unmetObligation(body);
+        return obligation == null ? diagnostic
+            : diagnostic.withNote(obligation.explanation(), obligation.span().range());
     }
 
     private void checkReturnStatement(ReturnStatement rs) {
@@ -3011,7 +3014,7 @@ public final class TypeChecker {
         if (!(returnType instanceof Type.Void)
                 && !ReturnAnalysis.definitelyReturns(fe.body())) {
             diagnostics.add(missingReturnDiagnostic(
-                "Function expression must return a value on all paths", fe.span(), returnType, fe.returnType()));
+                "Function expression must return a value on all paths", fe.span(), returnType, fe.returnType(), fe.body()));
         }
 
         currentReturnType = savedReturnType;

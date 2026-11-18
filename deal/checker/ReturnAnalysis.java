@@ -47,6 +47,57 @@ public final class ReturnAnalysis {
         return blockReturns(block.statements());
     }
 
+    /** Diagnostic-only unmet obligation; it is not a feasible execution witness. */
+    public record ReturnObligation(Span span, String explanation) {}
+
+    /**
+     * Labels one representative construct rejected by the existing return rule.
+     * Never evaluates conditions or claims that an arm/loop is executable. A
+     * later definite return discharges an earlier conditional obligation.
+     */
+    public static ReturnObligation unmetObligation(Block block) {
+        if (definitelyReturns(block)) return null;
+        StatementNode representative = block;
+        for (StatementNode statement : block.statements()) {
+            representative = statement;
+            if (cannotCompleteNormally(statement)) break;
+        }
+        ReturnObligation obligation = unmetStatementObligation(representative);
+        return obligation != null ? obligation : new ReturnObligation(block.span(),
+            "Body's final reachable statement does not establish the required return or throw");
+    }
+
+    private static ReturnObligation unmetStatementObligation(StatementNode statement) {
+        if (statement instanceof Block block) {
+            if (block.statements().isEmpty())
+                return new ReturnObligation(block.span(), "Empty body has no required return or throw");
+            return unmetObligation(block);
+        }
+        if (statement instanceof IfStatement conditional) {
+            if (conditional.elseBranch().isEmpty())
+                return new ReturnObligation(conditional.condition().span(),
+                    "Conditional without an else does not establish return or throw on all paths");
+            if (!returnsOnAllPaths(conditional.thenBlock())) return unmetObligation(conditional.thenBlock());
+            return switch (conditional.elseBranch().get()) {
+                case Either.Left<IfStatement, Block> left -> unmetStatementObligation(left.value());
+                case Either.Right<IfStatement, Block> right -> unmetObligation(right.value());
+            };
+        }
+        if (statement instanceof TryStatement attempt) {
+            return unmetObligation(!returnsOnAllPaths(attempt.tryBlock())
+                ? attempt.tryBlock() : attempt.catchBlock());
+        }
+        if (statement instanceof WhileStatement loop)
+            return new ReturnObligation(loop.condition().span(),
+                "Loop does not satisfy the unconditional-return-before-any-possible-break rule; no iteration is assumed");
+        if (statement instanceof ForOfStatement loop)
+            return new ReturnObligation(loop.iterable().span(),
+                "Iteration does not establish a required return; no iteration is assumed");
+        if (statement instanceof BreakStatement || statement instanceof ContinueStatement)
+            return new ReturnObligation(statement.span(), "Loop transfer is not a return or throw");
+        return null;
+    }
+
     /**
      * Checks whether a statement definitely returns.
      */
