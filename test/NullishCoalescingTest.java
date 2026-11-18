@@ -71,12 +71,38 @@ public final class NullishCoalescingTest {
             CompositionProductionTest.execute(source, "", root.resolve("production"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             asyncProduction(source,root.resolve("async"),invocation);
+            providerLiteralFallbacks(root.resolve("providers"));
             var corpus = Path.of("test/conformance").toAbsolutePath().normalize();
             var fixture = CorpusConformanceTest.nativeCorpusFixtures(corpus).stream()
                 .filter(f -> f.corpusPath().equals(PATH)).findFirst().orElseThrow();
             LlvmConformanceTest.runInstrumented(corpus, fixture);
             System.out.println("Nullish coalescing: admission, transported Oracle and all production backends passed");
         } finally {CompositionProductionTest.remove(root);}
+    }
+
+    private static void providerLiteralFallbacks(Path root) throws Exception {
+        String source = """
+            import * as a from "./a";
+            import * as b from "./b";
+            class Item { wrong: boolean; }
+            function check(ok:boolean):void { if(!ok){throw {name:"PROVIDER",message:"fallback provider"};} }
+            function first(x:a.Item|null, rows:a.Item[]|null):void {
+              const item=x??{value:17};check(item.value===(x===null?17:x.value));
+              const items=rows??[{value:18}];check(items[0].value===(rows===null?18:rows[0].value));
+              if(x!==null){check(item===x);}if(rows!==null){check(items===rows);}
+            }
+            function second(x:b.Item|undefined):void {
+              const item=x??{value:"right"};check(item.value===(x===undefined?"right":x.value));
+            }
+            export function main():void {
+              first(null,null);first({value:21},[{value:22}]);
+              second(undefined);second({value:"existing"});
+            }
+            """;
+        CompositionProductionTest.execute(source,"","",root,null,
+            List.of(Backend.JS,Backend.LUAJIT,Backend.JVM,Backend.LLVM),
+            Map.of("a.deal","export class Item{value:number;}",
+                   "b.deal","export class Item{value:string;}"));
     }
 
     private static void mutations(LoweredModuleUnit unit, SemanticIrValidator.ComparisonFacts facts) {

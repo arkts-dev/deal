@@ -139,8 +139,43 @@ public final class TypeLegalityFlowTest {
         check("function v():void{}function f(b:boolean,u:unknown):void{let x=b?u:v();}", "E3006");
     }
 
+    private static void coalescingLiteralContext() {
+        String classes = "class Item{value:number;child?:Item;}class Other{value:number;}";
+        for (String body : List.of(
+                "let x=a??[];let n:number[]=x;",
+                "let x=a??([]);let n:number[]=x;",
+                "let x=a??[1];let n:number[]=x;",
+                "let x=c??{value:1};let n:Item=x;",
+                "let x=cs??[{value:1}];let n:Item[]=x;",
+                "let x=ns??[[]];let n:number[][]=x;",
+                "let x=r??{};let n:Record<string,unknown>=x;",
+                "let x=r??{value:1};let n:Record<string,unknown>=x;",
+                "let x:unknown=c??{};",
+                "let x:Other=c??{value:1};")) {
+            // The last case must not retag the existing left value as the outer target.
+            check(classes + "function f(a:number[]|null|undefined,c:Item|null,cs:Item[]|undefined,ns:number[][]|null,r:Record<string,unknown>|undefined):void{" + body + "}",
+                body.startsWith("let x:Other") ? "E3006" : null);
+        }
+        for (String body : List.of(
+                "let x=a??[\"bad\"];",
+                "let x=c??{value:\"bad\"};",
+                "let x=c??{};",
+                "let x=c??{value:1,extra:2};",
+                "let strings:string[]=[];let x=a??strings;",
+                "let other:Other={value:1};let x=c??other;"))
+            check(classes + "function f(a:number[]|null,c:Item|null):void{" + body + "}",
+                body.contains("extra:") ? "E4002" : body.equals("let x=c??{};") ? "E4001"
+                : body.contains("value:\"bad\"") ? "E4003"
+                : body.contains("??[\"bad\"]") ? "E3011" : "E3006");
+        for (String expression : List.of("null??[]", "undefined??{}", "u??[]", "n??[]", "b?a:[]", "a??(b?[]:[])", "[[1],[]]"))
+            check("function f(a:number[]|null,u:unknown,n:number,b:boolean):void{let x=" + expression + ";}", "E3002");
+        check("function f(a:number[]|null):void{let x=a??JSON.parse(\"[]\");let y:number[]=x;}", "E3001");
+        check("function f(a:number[]|null):void{let x:unknown=a??[\"s\"];}", null);
+    }
+
     public static void main(String[] args) throws Exception {
         bindingOwnership();
+        coalescingLiteralContext();
         boundedNarrowing();
         for (String expression : List.of("x!==null && x>0", "x===null || x>0", "!(x===null) && x>0"))
             check("function f(x:number|null):boolean{return " + expression + ";}", null);

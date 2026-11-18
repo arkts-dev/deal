@@ -5,6 +5,18 @@ class Item {x:number;}
 function check(ok:boolean,label:string):void{if(!ok){throw {name:label,message:label};}}
 function assertionFallback():number{let bad:unknown=opaque("wrong");return bad as number;}
 function opaque(value:unknown):unknown{return value;}
+function literalFallbacks(xs:Item[]|null,item:Item|undefined,record:Record<string,unknown>|null,nested:number[][]|undefined):void{
+  let empty=xs??([]);check(empty.length===(xs===null?0:xs.length),"inferred empty array");
+  let populated=xs??[{x:31}];check(populated[0].x===(xs===null?31:xs[0].x),"inferred nominal elements");
+  let selected=item??{x:32};check(selected.x===(item===undefined?32:item.x),"inferred nominal fallback");
+  let fields=record??{x:33};check((fields.x as number)===(record===null?33:(record.x as number)),"inferred Record fallback");
+  let rows=nested??[[]];check(rows[0].length===(nested===undefined?0:nested[0].length),"nested literal context");
+  if(xs!==null){check(empty===xs && populated===xs,"existing array identity");}
+  if(item!==undefined){check(selected===item,"existing nominal identity");}
+  if(record!==null){check(fields===record,"existing Record identity");}
+  if(nested!==undefined){check(rows===nested,"existing nested identity");}
+  let fresh=xs??[];if(xs===null){check(fresh!==empty,"fresh empty fallback");}
+}
 function badSelection():number{let absent:number|null=null;return absent??assertionFallback();}
 export async function asyncCoalescing():Promise<number>{
   let effects="";
@@ -17,6 +29,8 @@ export async function asyncCoalescing():Promise<number>{
   return a+b+c;
 }
 export function main():void {
+  literalFallbacks(null,undefined,null,undefined);
+  literalFallbacks([{x:41}],{x:42},{x:43},[[44]]);
   let calls=0;let effects="";
   const rhs=():number=>{calls=calls+1;effects=effects+"r";return 7;};
   const source=(value:number|null|undefined):number|null|undefined=>{effects=effects+"l";return value;};

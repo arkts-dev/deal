@@ -2907,6 +2907,13 @@ public final class TypeChecker {
             NullNarrowing skipped = narrowing.branch();
             expectedType = context;
             contextualClassDecl = classContext;
+            Type base = left instanceof Type.Nullable nullable ? nullable.inner() : left;
+            if (context == null
+                    && (binary.right() instanceof ArrayLiteralExpr || binary.right() instanceof ObjectLiteralExpr)
+                    && (base instanceof Type.Array || base instanceof Type.Class || base instanceof Type.Table)) {
+                expectedType = base;
+                contextualClassDecl = exactClassDecls.get(binary.left());
+            }
             right = checkExpression(binary.right());
             skipped.merge(narrowing);
             narrowing = skipped;
