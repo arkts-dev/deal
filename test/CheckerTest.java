@@ -135,6 +135,55 @@ public class CheckerTest {
                         && assertion.facts().operation().equals("assertion")
                         && assertion.message().contains("one type must be assignable to the other"),
                 "assertion publishes source, target and failed rule without inventing a conversion");
+        for (String source : List.of("// 😀\r\nlet value:number=\"bad\";",
+                "// 😀\r\nlet value:number=1;value=\"bad\";",
+                "let value:number=1;{let value:string=\"ok\";value=1;}")) {
+            var constraint = checkProgram(source).result().diagnostics().stream()
+                    .filter(d -> d.facts().reason().equals("type.assignability")).findFirst().orElseThrow();
+            String annotation = source.contains("{let") ? "string" : "number";
+            check(constraint.notes().getFirst().message().equals("Expected binding annotation")
+                            && constraint.notes().getFirst().range().startScalarOffset() == source.indexOf(annotation),
+                    "assignment constraint locates exact binding annotation, including shadowing and UTF-16 text");
+        }
+        var inferred = checkProgram("let value=1;value=\"bad\";").result().diagnostics().stream()
+                .filter(d -> d.code().equals("E3001")).findFirst().orElseThrow();
+        check(inferred.notes().isEmpty(), "inferred binding does not invent an annotation location");
+        String fields = "// 😀\r\nclass C{value:number;maybe?:string;} class Other{value:string;}";
+        var required = checkProgram(fields + "let c:C={};").result().diagnostics().stream()
+                .filter(d -> d.code().equals("E4001")).findFirst().orElseThrow();
+        check(required.facts().reason().equals("construction.missing-field")
+                        && required.facts().expected().equals("number") && required.facts().actual().equals("<absent>")
+                        && required.facts().path().getFirst().name().equals("value")
+                        && required.notes().getFirst().range().startScalarOffset() == fields.indexOf("value:number"),
+                "missing class field identifies required declaration, type and absence without a dummy value");
+        var wrongField = checkProgram(fields + "let c:C={value:\"bad\"};").result().diagnostics().stream()
+                .filter(d -> d.code().equals("E4003")).findFirst().orElseThrow();
+        check(wrongField.facts().reason().equals("construction.field-type")
+                        && wrongField.facts().expected().equals("number") && wrongField.facts().actual().equals("string")
+                        && wrongField.notes().getFirst().range().startScalarOffset() == fields.indexOf("number"),
+                "class field mismatch selects exact declaration's constraint, not same-spelled sibling field");
+        var extraField = checkProgram(fields + "let c:C={value:1,typo:2};").result().diagnostics().stream()
+                .filter(d -> d.code().equals("E4002")).findFirst().orElseThrow();
+        check(extraField.facts().reason().equals("construction.extra-field")
+                        && extraField.facts().path().getFirst().name().equals("typo"),
+                "extra class field retains the rejected field name as a typed route");
+        String fieldProviderSource = "// 😀\r\nexport class C{value:number;}";
+        var fieldProvider = (Symbol.ClassSymbol) checkProgram(fieldProviderSource, "provider.deal")
+                .result().symbolTable().resolve("C");
+        StubModuleResolver fieldResolver = new StubModuleResolver();
+        fieldResolver.registerClassSymbol("./provider", fieldProvider);
+        fieldResolver.register("./provider", Map.of("C", new Type.Class("C", fieldProvider.identity(), fieldProvider.modulePath())));
+        String fieldConsumer = "import * as P from \"./provider\";class C{value:string;}let c:P.C={};";
+        var importedField = checkProgramWithModule(fieldConsumer, fieldResolver).result().diagnostics().stream()
+                .filter(d -> d.code().equals("E4001")).findFirst().orElseThrow();
+        check(importedField.facts().expected().equals("number")
+                        && importedField.notes().getFirst().range().file().equals("provider.deal")
+                        && importedField.notes().getFirst().range().startScalarOffset() == fieldProviderSource.indexOf("value"),
+                "imported required-field evidence retains provider file and annotation beside same-named local class");
+        assertNoErrors(checkProgramWithModule(fieldConsumer.replace("P.C={}", "P.C={value:1}"), fieldResolver),
+                "explicit imported field repair checks against provider");
+        assertNoErrors(checkProgram(fields + "let c:C={value:1};"), "explicit intended field value repairs required/type failures");
+        assertNoErrors(checkProgram("let value:number=1;value=2;"), "explicit intended number repairs binding assignment");
         var assignment = checkProgram("let f: (x:number)=>number = function(x:string):number{return 1;};")
                 .result().diagnostics().stream().filter(d -> d.code().equals("E3001")).findFirst().orElseThrow();
         check(assignment.facts().expected().equals("(number) => number")

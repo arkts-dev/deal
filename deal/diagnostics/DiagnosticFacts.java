@@ -26,7 +26,7 @@ public record DiagnosticFacts(
     }
     public enum PathKind { FIELD, ARRAY_ELEMENT }
 
-    /** Schema routes describe types, not a guessed runtime array index. */
+    /** Declared-field/schema routes describe types, not a guessed runtime array index. */
     public record PathSegment(PathKind kind, String name) {
         public PathSegment {
             Objects.requireNonNull(kind, "kind");

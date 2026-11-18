@@ -704,7 +704,7 @@ public final class TypeChecker {
                 }
             }
             if (targetType != null) {
-                checkAssignment(targetType, exprType, vd.initializer().span());
+                checkAssignment(targetType, exprType, vd.initializer().span(), vd.typeAnnotation().orElse(null));
                 // Initialization assigns a value to the new binding: a
                 // value that names a different declaration of the same
                 // canonical class identity crosses the two runtime
@@ -2708,9 +2708,11 @@ public final class TypeChecker {
 
         for (String propName : provided.keySet()) {
             if (!classFieldNames.contains(propName)) {
-                error(DiagnosticCode.E4002,
+                diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E4002,
                     "Extra field '" + propName + "' in class literal for '" + cls.name() + "'",
-                    provided.get(propName).span());
+                    provided.get(propName).span()).withFacts(classFieldFacts(
+                            "construction.extra-field", propName, "a declared field of " + cls.name(), propName,
+                            "Choose the intended declared field or revise the intended class contract; no field is inferred.")));
             }
         }
 
@@ -2719,10 +2721,13 @@ public final class TypeChecker {
             Type fieldType = resolveFieldTypeInClassModule(cs, field.type());
             if (property == null) {
                 if (!field.optional()) {
-                    error(DiagnosticCode.E4001,
+                    diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E4001,
                         "Missing required field '" + field.name()
                             + "' in class literal for '" + cls.name() + "'",
-                        obj.span());
+                        obj.span()).withFacts(classFieldFacts("construction.missing-field", field.name(),
+                                typeName(fieldType), "<absent>",
+                                "Provide the intended field value; required presence is distinct from null or undefined."))
+                                .withNote("Required field declaration", field.span().range()));
                 }
                 continue;
             }
@@ -2735,10 +2740,12 @@ public final class TypeChecker {
             contextualClassDecl = savedContextualClass;
             if (valueType != Type.Error.INSTANCE && !isAssignable(fieldType, valueType)
                     && !reportClassProviderCrossing(fieldType, valueType, property.span())) {
-                error(DiagnosticCode.E4003,
+                diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E4003,
                     "Type mismatch for field '" + field.name() + "': expected "
                         + typeName(fieldType) + ", got " + typeName(valueType),
-                    property.span());
+                    property.span()).withFacts(classFieldFacts("construction.field-type", field.name(),
+                            typeName(fieldType), typeName(valueType), "Choose a value satisfying the declared field type; no coercion is inferred."))
+                            .withNote("Expected field annotation", field.type().span().range()));
             }
         }
 
@@ -3243,7 +3250,10 @@ public final class TypeChecker {
         } else if (!isAssignable(declaredTarget, valueType)) {
             if (!reportClassProviderCrossing(declaredTarget, valueType,
                     assign.span())) {
-                reportAssignabilityError(declaredTarget, valueType, assign.span());
+                TypeNode annotation = assign.target() instanceof IdentifierExpr id
+                        && resolveVisibleBinding(id.name()) instanceof Symbol.VariableSymbol variable
+                        ? variable.declaredType() : null;
+                reportAssignabilityError(declaredTarget, valueType, assign.span(), annotation);
             }
         }
 
@@ -3278,14 +3288,21 @@ public final class TypeChecker {
     // Assignment compatibility
     // =======================================================================
 
-    private void checkAssignment(Type targetType, Type exprType, Span span) {
+    private static deal.diagnostics.DiagnosticFacts classFieldFacts(String reason, String field,
+            String expected, String actual, String guidance) {
+        return new deal.diagnostics.DiagnosticFacts(reason, "construction.field", expected, actual,
+                List.of(guidance), List.of(new deal.diagnostics.DiagnosticFacts.PathSegment(
+                        deal.diagnostics.DiagnosticFacts.PathKind.FIELD, field)));
+    }
+
+    private void checkAssignment(Type targetType, Type exprType, Span span, TypeNode annotation) {
         if (targetType == null || exprType == null) return;
         if (targetType == Type.Error.INSTANCE || exprType == Type.Error.INSTANCE) return;
         if (!isAssignable(targetType, exprType)) {
             if (reportClassProviderCrossing(targetType, exprType, span)) {
                 return;
             }
-            reportAssignabilityError(targetType, exprType, span);
+            reportAssignabilityError(targetType, exprType, span, annotation);
         }
     }
 
@@ -3396,7 +3413,7 @@ public final class TypeChecker {
      * The pinned assignability failure at {@code span}: E5004 for the
      * reverse-arity extension case (F10), E3001 otherwise.
      */
-    private void reportAssignabilityError(Type targetType, Type actualType, Span span) {
+    private void reportAssignabilityError(Type targetType, Type actualType, Span span, TypeNode annotation) {
         int diagnosticIndex = diagnostics.size();
         // F10: Detect reverse arity for E5004
         if (targetType instanceof Type.Func tf && actualType instanceof Type.Func af
@@ -3411,9 +3428,11 @@ public final class TypeChecker {
                 "Cannot assign " + typeName(actualType) + " to " + typeName(targetType),
                 span);
         }
-        diagnostics.set(diagnosticIndex, diagnostics.get(diagnosticIndex).withFacts(
+        CompilerDiagnostic diagnostic = diagnostics.get(diagnosticIndex).withFacts(
                 new deal.diagnostics.DiagnosticFacts("type.assignability", "assignment",
-                        typeName(targetType), typeName(actualType), List.of())));
+                        typeName(targetType), typeName(actualType), List.of()));
+        if (annotation != null) diagnostic = diagnostic.withNote("Expected binding annotation", annotation.span().range());
+        diagnostics.set(diagnosticIndex, diagnostic);
     }
 
     private boolean isAssignable(Type expected, Type actual) {

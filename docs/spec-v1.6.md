@@ -1705,7 +1705,16 @@ Async diagnostics distinguish await outside an async body, await of a non-async
 call, an unawaited async call, and an async call inside an optional chain using
 separate reason identifiers. Async call failures retain the same known call
 context; guidance does not silently change a caller's asynchronous API contract.
-Schema paths are root-to-leaf segments with `kind` (`FIELD` or `ARRAY_ELEMENT`)
+Assignment failures with an explicit binding type label its exact annotation;
+inferred bindings do not invent one. Class-literal failures distinguish missing,
+extra and incompatible fields using `construction.missing-field`,
+`construction.extra-field` and `construction.field-type` reasons, the
+`construction.field` operation and an exact `FIELD` path. Missing required fields
+report expected type versus `<absent>` and locate the required declaration;
+incompatible values locate the field annotation. Imported fields retain the
+selected provider's locations, never a same-spelled local field. Guidance does
+not invent values, coercions or field declarations.
+Paths are root-to-leaf segments with `kind` (`FIELD` or `ARRAY_ELEMENT`)
 and `name` (the exact field name, or empty for an array schema element). They
 never invent a concrete runtime index. Empty strings or
 arrays mean unavailable evidence, not a license to reconstruct it from prose.
