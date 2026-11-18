@@ -70,15 +70,10 @@ assertions enabled, including the TypeScript compiler's syntactic/grammar
 diagnostics and real JS/LuaJIT/JVM runtime records. `--jobs` bounds suites
 (default four); nested work/coverage stay serial.
 No alternate full-suite profile exists. The native corpus and composition suite
-use the exact LLVM-only omissions in [`test/llvm-known-skips.tsv`](test/llvm-known-skips.tsv):
-the list is currently empty because upstream native completion covers the former
-omissions. Any future skip is printed with its reason; case totals and requirement
-denominators remain visible and skipped work earns no execution credit. Unknown
-cases, stale requirement entries and unlisted failures fail. JS/LuaJIT/JVM
-conformance is unchanged and has no exclusions. A successful selected gate is
-not full LLVM certification.
+run without exclusions, as does JS/LuaJIT/JVM conformance. Missing native hosts,
+unevidenced runtime requirements and test failures fail the gate.
 
-Run the strict native corpus without this list (after building tests):
+Run the native corpus independently (after building tests):
 
 ```bash
 java -ea -cp build:build/test-classes deal.test.LlvmConformanceTest

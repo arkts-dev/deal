@@ -49,9 +49,8 @@ public final class GateRunnerTest {
                 check(passed.stdout().contains("executed:" + name), "every suite executes: " + name);
             }
             check(passed.stdout().contains("Selected Tests Passed"), "selected success is explicit");
-            check(passed.stdout().contains("known LLVM skips: test/llvm-known-skips.tsv")
-                    && passed.stdout().contains("not full LLVM certification"),
-                "selected success discloses LLVM omissions");
+            check(passed.stdout().lines().anyMatch(line -> line.equals("=== Selected Tests Passed ===")),
+                "success reports the executed selection without obsolete omission warnings");
             var serial = BoundedProcess.runCaptured(
                 List.of("/bin/bash", "run_tests.sh", "--jobs", "1"), scratch, env);
             check(serial.exitCode() == 0 && !serial.stdout().contains("active=2"),

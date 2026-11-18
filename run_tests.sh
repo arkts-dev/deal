@@ -139,4 +139,4 @@ while [ "${#active[@]}" -gt 0 ]; do finish_suite; done
 set +m
 trap - EXIT INT TERM
 
-echo "=== Selected Tests Passed (known LLVM skips: test/llvm-known-skips.tsv; not full LLVM certification) ==="
+echo "=== Selected Tests Passed ==="

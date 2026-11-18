@@ -1,2 +1,0 @@
-# Exact LLVM-only skips: kind<TAB>key<TAB>reason. No globs or common-lane exclusions.
-# Direct LlvmConformanceTest and CompositionProductionTest without arguments remain strict.

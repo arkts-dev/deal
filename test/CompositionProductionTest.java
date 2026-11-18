@@ -18,8 +18,6 @@ import java.util.Map;
 public final class CompositionProductionTest {
     private static final List<Backend> BACKENDS = List.of(Backend.JS, Backend.LUAJIT, Backend.JVM);
     private static int executions;
-    private static NativeKnownSkips knownSkips = NativeKnownSkips.none();
-    private static final java.util.Set<String> skippedCompositions = new java.util.LinkedHashSet<>();
     private static final java.util.Set<Path> subjects = new java.util.LinkedHashSet<>();
 
     static void execute(String source, String expected, Path root, Path host) throws Exception {
@@ -71,12 +69,6 @@ public final class CompositionProductionTest {
             if (!compiler.diagnostics().isEmpty() || compiler.semanticEmissionCount() != 1)
                 throw new AssertionError("SOURCE_REJECTION " + backend + ": " + compiler.diagnostics());
             if (backend == Backend.LLVM) {
-                String subject = root.getFileName().toString();
-                if (knownSkips.contains("composition", subject)) {
-                    knownSkips.report("composition", subject);
-                    skippedCompositions.add(subject);
-                    continue; // No native execution or pass credit; common lanes already ran.
-                }
                 List<Path> hostUnits = new ArrayList<>();
                 if (host != null) {
                     Path nativeHost = project.resolve("hosts");
@@ -197,13 +189,9 @@ public final class CompositionProductionTest {
             finally { remove(root); }
             return;
         }
-        if (args.length == 0) knownSkips = NativeKnownSkips.none();
-        else if (args.length == 2 && args[0].equals("--known-skips"))
-            knownSkips = NativeKnownSkips.load(Path.of(args[1]));
-        else throw new IllegalArgumentException("expected no arguments or --known-skips <path>");
+        if (args.length != 0) throw new IllegalArgumentException("expected no arguments or <source> <transcript> <host>");
         executions = 0;
         subjects.clear();
-        skippedCompositions.clear();
         Path root = Files.createTempDirectory("deal-compositions-");
         try {
             String fixture = "control-flow/for-of-nested-compositions.deal";
@@ -624,10 +612,8 @@ public final class CompositionProductionTest {
                     + "){throw {name:\"TEST\",message:\"value\"};}c.log(\"COMPOSE_OK\");return ;}";
                 execute(source, "COMPOSE_OK\n", root.resolve("seed" + seed), null);
             }
-            knownSkips.remaining("composition", skippedCompositions);
             System.out.println("Composition production: " + subjects.size()
-                + " source subjects and " + executions + " verdict-checked executions passed; "
-                + skippedCompositions.size() + " LLVM compositions omitted (no execution credit)");
+                + " source subjects and " + executions + " verdict-checked executions passed");
         } finally { remove(root); }
     }
 }

@@ -150,7 +150,7 @@ final class NativeCorpusAccounting {
             throw new AssertionError("ABI materialization substituted for a source failure-site pin");
     }
 
-    void verify(NativeKnownSkips skips) {
+    void verify() {
         Set<SemanticOpKind> missingOps = EnumSet.allOf(SemanticOpKind.class); missingOps.removeAll(operations);
         Set<BoundaryKind> missingBoundaries = EnumSet.allOf(BoundaryKind.class);
         missingBoundaries.removeAll(boundaries); missingBoundaries.removeAll(runtimeBoundaries);
@@ -169,9 +169,7 @@ final class NativeCorpusAccounting {
         System.out.println("Native accounting missing: ops=" + missingOps + "; boundaries=" + missingBoundaries
             + "; stdlib=" + missingStdlib + "; binary=" + missingBinary + "; unary=" + missingUnary + "; arms=" + missingArms);
         System.out.println("Native accounting selectors: binary=" + binary + "; unary=" + unary);
-        Set<SemanticOpKind> unexpectedOps = skips.remaining("operation", missingOps);
-        Set<BoundaryKind> unexpectedBoundaries = skips.remaining("boundary", missingBoundaries);
-        if (cases == 0 || !unexpectedOps.isEmpty() || !unexpectedBoundaries.isEmpty()
+        if (cases == 0 || !missingOps.isEmpty() || !missingBoundaries.isEmpty()
                 || !missingStdlib.isEmpty() || !missingBinary.isEmpty() || !missingUnary.isEmpty() || !missingArms.isEmpty())
             throw new AssertionError("HARNESS_DEFECT: unevidenced native runtime requirements");
     }

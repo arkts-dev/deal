@@ -20,18 +20,10 @@ public final class LlvmConformanceTest {
         }
         Path corpus = Path.of("test/conformance").toAbsolutePath().normalize();
         var fixtures = CorpusConformanceTest.nativeCorpusFixtures(corpus);
-        boolean knownSkips = args.length == 2 && args[0].equals("--known-skips");
-        if (args.length > 1 && !knownSkips)
-            throw new IllegalArgumentException("usage: LlvmConformanceTest [filter | --known-skips file]");
-        boolean fullPopulation = args.length == 0 || knownSkips;
-        NativeKnownSkips skips = knownSkips ? NativeKnownSkips.load(Path.of(args[1])) : NativeKnownSkips.none();
-        Set<String> discovered = new HashSet<>();
-        for (var fixture : fixtures)
-            if (fixture.classification().kind() != CorpusDiscovery.Kind.COMPANION)
-                discovered.add(fixture.corpusPath());
-        skips.validateCases(discovered);
+        if (args.length > 1 || args.length == 1 && args[0].startsWith("--"))
+            throw new IllegalArgumentException("usage: LlvmConformanceTest [filter | --requirements]");
+        boolean fullPopulation = args.length == 0;
         accounting = fullPopulation ? new NativeCorpusAccounting() : null;
-        NativeKnownSkips.controls();
         CorpusExecution.controls();
         NativeCorpusAccounting.controls();
         expectationControls();
@@ -43,17 +35,11 @@ public final class LlvmConformanceTest {
             nativeNumericCases();
             NativeRequirementCases.run(accounting);
         }
-        int passed = 0, failed = 0, skipped = 0;
+        int passed = 0, failed = 0;
         for (var fixture : fixtures) {
             if (fixture.classification().kind() == CorpusDiscovery.Kind.COMPANION) continue;
-            // A developer filter is diagnostic only. Gate omissions are exact,
-            // LLVM-only entries; no skipped case earns a verdict or fact.
+            // A developer filter is diagnostic only; the gate runs the full population.
             if (!fullPopulation && !fixture.corpusPath().contains(args[0])) continue;
-            if (skips.contains("case", fixture.corpusPath())) {
-                skips.report("case", fixture.corpusPath());
-                skipped++;
-                continue;
-            }
             try {
                 if (fixture.runtimeClassified()) run(corpus, fixture);
                 else runFrontend(fixture);
@@ -65,14 +51,13 @@ public final class LlvmConformanceTest {
             }
         }
         System.out.println("Native corpus: " + passed + " passed, " + failed
-            + " failed, " + skipped + " skipped; total=" + (passed + failed + skipped)
+            + " failed; total=" + (passed + failed)
             + " (runtime O0/O2; frontend diagnostics only)");
-        if (knownSkips) System.out.println("LLVM KNOWN SKIPS ENABLED: this is not full LLVM certification");
         if (fullPopulation) {
             List<String> defects = new ArrayList<>();
-            try { validateNativeHosts(corpus.resolve("host-fixtures"), skips); }
+            try { validateNativeHosts(corpus.resolve("host-fixtures")); }
             catch (AssertionError failure) { defects.add(failure.getMessage()); }
-            try { accounting.verify(skips); }
+            try { accounting.verify(); }
             catch (AssertionError failure) { defects.add(failure.getMessage()); }
             if (!defects.isEmpty()) throw new AssertionError(String.join("; ", defects));
         }
@@ -756,10 +741,6 @@ public final class LlvmConformanceTest {
     }
 
     static void validateNativeHosts(Path root) throws Exception {
-        validateNativeHosts(root, NativeKnownSkips.none());
-    }
-
-    private static void validateNativeHosts(Path root, NativeKnownSkips skips) throws Exception {
         Set<String> declarations = new TreeSet<>(), implementations = new TreeSet<>();
         List<String> malformed = new ArrayList<>();
         // Selected companions deploy under host/probe regardless of their file
@@ -806,9 +787,8 @@ public final class LlvmConformanceTest {
         Set<String> extra = new TreeSet<>(implementations); extra.removeAll(declarations);
         System.out.println("Native hosts: " + declarations.size() + " declarations, "
             + implementations.size() + " companions (file presence is not execution coverage)");
-        Set<String> unexpectedMissing = skips.remaining("host", missing);
-        if (!unexpectedMissing.isEmpty() || !extra.isEmpty() || !malformed.isEmpty())
-            throw new AssertionError("HARNESS_DEFECT: native hosts missing=" + unexpectedMissing
+        if (!missing.isEmpty() || !extra.isEmpty() || !malformed.isEmpty())
+            throw new AssertionError("HARNESS_DEFECT: native hosts missing=" + missing
                 + "; unmatched=" + extra + "; malformed=" + malformed);
     }
 
