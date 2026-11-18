@@ -994,7 +994,10 @@ let result = condition ? a : b;
 
 Evaluation follows ECMAScript [coalescing](https://262.ecma-international.org/16.0/#sec-binary-logical-operators), [optional chaining](https://262.ecma-international.org/16.0/#sec-optional-chains) and [deletion](https://262.ecma-international.org/16.0/#sec-delete-operator).
 
-For `a ?? b`, propagate the contextual target to b. Combine a's non-nullish type with b's type using [conditional](#conditional) rules; if a is nullish-only, use b's type.
+For `a ?? b`:
+
+- Propagate the contextual target to b; otherwise, a's non-nullish array/class/Record type supplies the target for array/object literals.
+- Combine a's non-nullish type with b's type using [conditional](#conditional) rules; if a is nullish-only, use b's type.
 
 Check each optional access, call or deletion on its receiver/callee's non-nullish type. Add undefined only to the completed chain's non-void result. Reject async calls in optional chains.
 
