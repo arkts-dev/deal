@@ -7,6 +7,9 @@ export function main():void{
   let xs:number[]=[1,2,3,4];let copy=xs.slice(0,4);
   check(copy!==xs && copy.length===4 && copy[0]===1 && copy[3]===4);
   copy[0]=9;check(xs[0]===1);
+  let full=xs.slice();check(full!==xs && full.length===4 && full[3]===4);
+  let suffix=xs.slice(-2);check(suffix.length===2 && suffix[0]===3 && suffix[1]===4);
+  check(xs.slice(1/0).length===0 && xs.slice(0/0).length===4);
   let tail=xs.slice(-2,1/0);check(tail.length===2 && tail[0]===3 && tail[1]===4);
   check(xs.slice(3,1).length===0 && xs.slice(-1/0,0/0).length===0);
   check(xs.slice(-0.9,1.9)[0]===1 && xs.slice(0/0,-0.9).length===0);
@@ -22,6 +25,8 @@ export function main():void{
   let start=():number=>{log=log+"s";xs.push(5);return 3;};
   let end=():number=>{log=log+"e";xs.push(6);return 6;};
   let live=receiver().slice(start(),end());check(log==="rse" && live.length===3 && live[0]===4 && live[2]===6);
+  log="";let one=receiver().slice(start());check(log==="rs" && one.length===4 && one[3]===5);
+  xs.pop();
   let saved=xs;let replace=():number=>{xs=[99];return 2;};
   let selected=xs.slice(0,replace());check(selected[0]===1 && selected[1]===2 && saved.length===6 && xs[0]===99);
   let item:Item={x:7};let items:Item[]=[item];let aliases=items.slice(0,1);

@@ -8184,8 +8184,14 @@ public final class SemanticLowerer {
                     && checkedType(member.object()) instanceof Type.Array array
                     && member.field().equals("slice")) {
                 ValueId receiver = lowerOperand(member.object());
-                ValueId start = lowerOperand(call.args().get(0));
-                ValueId end = lowerOperand(call.args().get(1));
+                ValueId start = call.args().isEmpty()
+                    ? emitValueOp(SemanticOpKind.CONST, new KindPayload.ConstPayload(new ScalarValue.Number(0)),
+                        call.span(), RuntimeDescriptor.Number.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE)
+                    : lowerOperand(call.args().get(0));
+                ValueId end = call.args().size() < 2
+                    ? emitValueOp(SemanticOpKind.CONST, new KindPayload.ConstPayload(new ScalarValue.Number(Double.POSITIVE_INFINITY)),
+                        call.span(), RuntimeDescriptor.Number.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE)
+                    : lowerOperand(call.args().get(1));
                 RuntimeDescriptor descriptor = ContainerPayloadDescriptors.resultDescriptorOf(array);
                 return emitOperandOp(SemanticOpKind.ARRAY_SLICE,
                     new KindPayload.ArraySlicePayload(receiver, start, end), List.of(receiver, start, end),

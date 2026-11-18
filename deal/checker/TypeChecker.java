@@ -2246,6 +2246,9 @@ public final class TypeChecker {
                 }
                 case "push" -> new Type.Func(List.of(array.element()), Type.Number.INSTANCE, false);
                 case "pop" -> new Type.Func(List.of(), Types.optionalRead(array.element()), false);
+                case "slice" -> new Type.Func(directBuiltinCall.args().size() == 0 ? List.of()
+                    : directBuiltinCall.args().size() == 1 ? List.of(Type.Number.INSTANCE)
+                    : List.of(Type.Number.INSTANCE, Type.Number.INSTANCE), array, false);
                 case "includes", "indexOf" -> new Type.Func(
                     directBuiltinCall.args().size() == 1 ? List.of(array.element())
                         : List.of(array.element(), Type.Number.INSTANCE),

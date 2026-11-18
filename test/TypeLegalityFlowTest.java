@@ -209,6 +209,9 @@ public final class TypeLegalityFlowTest {
         coalescingLiteralContext();
         ternaryLiteralContext();
         contextualParameters();
+        check("function f(xs:number[]):void{let a=xs.slice();let b=xs.slice(1);}", null);
+        check("function f(xs:number[]):void{let a=xs.slice(undefined);}", "E5001");
+        check("function f(xs:number[]):void{let a=xs.slice(1,2,3);}", "E3009");
         boundedNarrowing();
         for (String expression : List.of("x!==null && x>0", "x===null || x>0", "!(x===null) && x>0"))
             check("function f(x:number|null):boolean{return " + expression + ";}", null);
