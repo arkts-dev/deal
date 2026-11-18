@@ -1716,7 +1716,16 @@ an enclosing expected result type is not extraction. Guidance distinguishes
 checked extraction, supported binding narrowing, nullish receiver guards and
 optional skipped access without equating field presence with a value guard.
 Array key facts require `number`, while integrality and bounds remain runtime
-checks with no implicit truncation. Arithmetic,
+checks with no implicit truncation.
+Lexer literal failures distinguish `syntax.unterminated-comment`,
+`syntax.unterminated-string`, `syntax.unterminated-string-escape`,
+`syntax.unterminated-template`, and `syntax.unterminated-interpolation`.
+They retain the expected delimiter or escape component, line-break versus EOF
+condition, and exact opening-delimiter notes without changing primary ranges
+or recovery. Interpolation EOF labels both the template and its own `${`
+opener. `syntax.invalid-string-escape` retains the rejected UTF-16 unit as
+`UTF-16 unit U+HHHH` and its component-start note; this is not an invented
+Unicode code point, decoded replacement or automatic content repair. Arithmetic,
 relational, equality, logical and unary rejection facts retain the exact operator
 `token`, source-ordered `operands` (`role`, checked `type`, complete expression
 `range`), and ordered `acceptedCombinations`. Binary roles are `left`/`right`;

@@ -258,8 +258,10 @@ public final class Lexer {
         int startLine = cursor.line();
         int startCol = cursor.column();
         int startOffset = cursor.scalarOffset();
+        ScalarSourceCursor.Mark openerStart = cursor.mark();
         bump(); // skip first /
         bump(); // skip *
+        DiagnosticRange opener = rangeBetween(openerStart, cursor.mark());
 
         while (pos < source.length()) {
             char c = source.charAt(pos);
@@ -288,8 +290,9 @@ public final class Lexer {
         }
 
         // Unterminated block comment: comment start through EOF (D5).
-        error(DiagnosticCode.E1004, "Unterminated multi-line comment",
-            rangeFromStart(startLine, startCol, startOffset));
+        literalError(DiagnosticCode.E1004, "Unterminated multi-line comment",
+                rangeFromStart(startLine, startCol, startOffset), "syntax.unterminated-comment",
+                "*/", "end of input", opener);
     }
 
     // =========================================================================
@@ -397,21 +400,23 @@ public final class Lexer {
     private Token readString() {
         int startPos = pos;
         char quote = source.charAt(pos);
+        ScalarSourceCursor.Mark openerStart = cursor.mark();
         bump(); // opening quote
+        DiagnosticRange opener = rangeBetween(openerStart, cursor.mark());
 
         while (pos < source.length()) {
             char c = source.charAt(pos);
 
             if (c == '\n') {
-                error(DiagnosticCode.E1003, "Unterminated string literal: missing closing " + quote,
-                    tokenStartRange());
+                literalError(DiagnosticCode.E1003, "Unterminated string literal: missing closing " + quote,
+                        tokenStartRange(), "syntax.unterminated-string", String.valueOf(quote), "line break", opener);
                 String lexeme = source.substring(startPos, pos);
                 newline();
                 return makeToken(TokenType.STRING_LITERAL, lexeme);
             }
             if (c == '\r') {
-                error(DiagnosticCode.E1003, "Unterminated string literal: missing closing " + quote,
-                    tokenStartRange());
+                literalError(DiagnosticCode.E1003, "Unterminated string literal: missing closing " + quote,
+                        tokenStartRange(), "syntax.unterminated-string", String.valueOf(quote), "line break", opener);
                 String lexeme = source.substring(startPos, pos);
                 newline();
                 if (pos < source.length() && source.charAt(pos) == '\n') {
@@ -423,16 +428,24 @@ public final class Lexer {
             if (c == '\\') {
                 bump(); // backslash
                 if (pos >= source.length()) {
-                    error(DiagnosticCode.E1003, "Unterminated string literal: escape at end of file",
-                        tokenStartRange());
+                    literalError(DiagnosticCode.E1003, "Unterminated string literal: escape at end of file",
+                            tokenStartRange(), "syntax.unterminated-string-escape", "escape component",
+                            "end of input", opener);
                     String lexeme = source.substring(startPos, pos);
                     return makeToken(TokenType.STRING_LITERAL, lexeme);
                 }
                 char escaped = source.charAt(pos);
                 if (!TemplateScanner.validStringEscape(source, pos)) {
-                    error(DiagnosticCode.E1052,
-                        "Unsupported string escape: \\" + escaped,
-                        tokenStartRange());
+                    var diagnostic = CompilerDiagnostic.error(DiagnosticCode.E1052,
+                            "Unsupported string escape: \\" + escaped, tokenStartRange())
+                            .withFacts(new deal.diagnostics.DiagnosticFacts("syntax.invalid-string-escape", "lex.string",
+                                    "admitted character, hexadecimal-unit, Unicode or line-continuation escape",
+                                    "UTF-16 unit U+" + String.format(java.util.Locale.ROOT, "%04X", (int) escaped),
+                                    List.of("Choose the intended admitted escape spelling; no replacement character is inferred.")))
+                            .withNote("String literal opened here", opener)
+                            .withNote("Rejected escape component starts here",
+                                    singleScalarRange(cursor.line(), cursor.column(), cursor.scalarOffset()));
+                    diagnostics.add(diagnostic);
                 }
                 bump(); // the escaped character, including a continued line
                 if (escaped == '\r' && pos < source.length() && source.charAt(pos) == '\n') {
@@ -448,8 +461,8 @@ public final class Lexer {
         }
 
         // Reached EOF without closing quote
-        error(DiagnosticCode.E1003, "Unterminated string literal: missing closing " + quote,
-            tokenStartRange());
+        literalError(DiagnosticCode.E1003, "Unterminated string literal: missing closing " + quote,
+                tokenStartRange(), "syntax.unterminated-string", String.valueOf(quote), "end of input", opener);
         String lexeme = source.substring(startPos, pos);
         return makeToken(TokenType.STRING_LITERAL, lexeme);
     }
@@ -486,7 +499,9 @@ public final class Lexer {
      * Physical CRLF counts as one line break while retaining both units.</p>
      */
     private Token readTemplateLiteral() {
+        ScalarSourceCursor.Mark openerStart = cursor.mark();
         bump(); // opening backtick
+        DiagnosticRange opener = rangeBetween(openerStart, cursor.mark());
         int contentStart = pos;
 
         TemplateScanner.Scan scan = TemplateScanner.scan(source, contentStart);
@@ -501,9 +516,22 @@ public final class Lexer {
             }
             case EOF, UNTERMINATED_INTERPOLATION -> {
                 int stop = scan.endIndex();
-                error(DiagnosticCode.E1003,
-                    "Unterminated template literal: missing closing backtick",
-                    tokenStartRange());
+                literalError(DiagnosticCode.E1003,
+                        "Unterminated template literal: missing closing backtick", tokenStartRange(),
+                        scan.status() == TemplateScanner.Status.UNTERMINATED_INTERPOLATION
+                                ? "syntax.unterminated-interpolation" : "syntax.unterminated-template",
+                        scan.status() == TemplateScanner.Status.UNTERMINATED_INTERPOLATION ? "}" : "`",
+                        "end of input", opener);
+                if (scan.status() == TemplateScanner.Status.UNTERMINATED_INTERPOLATION) {
+                    for (var segment : scan.segments()) {
+                        if (!segment.interpolation() || !segment.unterminated()) continue;
+                        ScalarSourceCursor.Mark entry = cursor.mark();
+                        DiagnosticRange interpolationOpener = rangeBetween(markAt(segment.start()), markAt(segment.start() + 2));
+                        resetCursor(entry);
+                        int last = diagnostics.size() - 1;
+                        diagnostics.set(last, diagnostics.get(last).withNote("Interpolation opened here", interpolationOpener));
+                    }
+                }
                 String lexeme = source.substring(contentStart, stop);
                 advanceTo(stop);
                 return makeToken(TokenType.TEMPLATE_LITERAL, lexeme);
@@ -802,6 +830,14 @@ public final class Lexer {
      * SOURCE range built from cursor positions (D5). Codes, messages, and
      * severities are unchanged.
      */
+    private void literalError(DiagnosticCode code, String message, DiagnosticRange range,
+                              String reason, String expected, String actual, DiagnosticRange opener) {
+        diagnostics.add(CompilerDiagnostic.error(code, message, range).withFacts(
+                new deal.diagnostics.DiagnosticFacts(reason, "lex.literal", expected, actual,
+                        List.of("Complete the intended literal or comment without changing its data; no content repair is inferred.")))
+                .withNote("Literal or comment opened here", opener));
+    }
+
     private void error(DiagnosticCode code, String message, DiagnosticRange range) {
         diagnostics.add(CompilerDiagnostic.error(code, message, range));
     }

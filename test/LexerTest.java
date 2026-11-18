@@ -171,6 +171,7 @@ public class LexerTest {
     public static void main(String[] args) {
         System.out.println("=== Running Lexer Tests ===");
 
+        testLiteralDiagnosticFacts();
         testKeywords();
         testOperators();
         testPunctuation();
@@ -213,6 +214,58 @@ public class LexerTest {
     // =========================================================================
     // Keyword tests
     // =========================================================================
+
+    static void testLiteralDiagnosticFacts() {
+        String prefix = "// 😀\r\n";
+        for (String[] candidate : new String[][] {
+                {"/* open", "E1004", "syntax.unterminated-comment", "*/", "end of input", "2", "/* open */"},
+                {"\"open", "E1003", "syntax.unterminated-string", "\"", "end of input", "1", "\"open\""},
+                {"'open\n", "E1003", "syntax.unterminated-string", "'", "line break", "1", "'open'\n"},
+                {"\"open\\", "E1003", "syntax.unterminated-string-escape", "escape component", "end of input", "1", "\"open\\\\\""},
+                {"`open", "E1003", "syntax.unterminated-template", "`", "end of input", "1", "`open`"},
+                {"`value ${1", "E1003", "syntax.unterminated-interpolation", "}", "end of input", "1", "`value ${1}`"}}) {
+            var result = tokenize(prefix + candidate[0]);
+            var diagnostic = result.diagnostics().stream().filter(d -> d.code().equals(candidate[1])).findFirst().orElseThrow();
+            check(diagnostic.facts().reason().equals(candidate[2]) && diagnostic.facts().expected().equals(candidate[3])
+                            && diagnostic.facts().actual().equals(candidate[4]),
+                    "literal producer retains termination cause and expected delimiter: " + diagnostic);
+            var opener = diagnostic.notes().getFirst().range();
+            check(opener.startScalarOffset() == prefix.length() && opener.startLine() == 2
+                            && opener.startColumn() == 1 && opener.scalarLength() == Integer.parseInt(candidate[5]),
+                    "literal opener uses complete UTF-16 coordinates after supplementary/CRLF prefix");
+            if (candidate[2].equals("syntax.unterminated-interpolation")) {
+                var interpolation = diagnostic.notes().get(1).range();
+                check(interpolation.startScalarOffset() == (prefix + candidate[0]).indexOf("${")
+                                && interpolation.scalarLength() == 2,
+                        "interpolation and containing template retain separate truthful openers");
+            }
+            check(deal.diagnostics.DiagnosticStructuredOutput.toJson(List.of(diagnostic)).contains(candidate[2]),
+                    "sole structured transport retains literal facts");
+            assertNoDiagnostics(tokenize(prefix + candidate[6]).diagnostics(), "explicit chosen delimiter repair");
+        }
+        var invalidEscape = tokenize(prefix + "\"bad\\q\"").diagnostics().getFirst();
+        check(invalidEscape.code().equals("E1052")
+                        && invalidEscape.facts().reason().equals("syntax.invalid-string-escape")
+                        && invalidEscape.facts().actual().equals("UTF-16 unit U+0071")
+                        && invalidEscape.notes().get(1).range().startScalarOffset() == prefix.length() + 5,
+                "invalid escape evidence names exact source unit and component start without guessing replacement");
+        assertNoDiagnostics(tokenize(prefix + "\"bad\\n\"").diagnostics(), "chosen admitted escape spelling rechecks");
+        for (String[] escape : new String[][] {{"xG0", "0078", "x41"}, {"u{110000}", "0075", "u{1F600}"},
+                {"01", "0030", "0"}, {"u123", "0075", "u1234"}}) {
+            var result = tokenize(prefix + "\"\\" + escape[0] + "\";let later=1;");
+            var diagnostic = result.diagnostics().getFirst();
+            check(diagnostic.facts().actual().equals("UTF-16 unit U+" + escape[1])
+                            && diagnostic.notes().get(1).range().startScalarOffset() == prefix.length() + 2
+                            && result.tokens().stream().anyMatch(t -> t.lexeme().equals("later")),
+                    "malformed numeric/Unicode escape retains component start and later token recovery");
+            assertNoDiagnostics(tokenize(prefix + "\"\\" + escape[2] + "\";let later=1;").diagnostics(),
+                    "explicit admitted numeric/Unicode escape repair");
+        }
+        var crTermination = tokenize(prefix + "'open\r\nlet later=1;");
+        check(crTermination.diagnostics().getFirst().facts().actual().equals("line break")
+                        && crTermination.tokens().stream().anyMatch(t -> t.lexeme().equals("later") && t.line() == 3),
+                "CRLF failure recovery retains the next declaration and one physical line break");
+    }
 
     static void testKeywords() {
         System.out.println("-- Keywords --");
