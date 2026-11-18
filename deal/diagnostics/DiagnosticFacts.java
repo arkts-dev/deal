@@ -20,7 +20,21 @@ public record DiagnosticFacts(
         ExportContext exports,
         ResolutionContext resolution,
         CycleContext cycle,
-        ToolContext tool) {
+        ToolContext tool,
+        LoweringContext lowering) {
+    /** Already classified common-lowering failure, not reconstructed from its message. */
+    public record LoweringContext(String module, String capability, String validatorRule,
+                                   String semanticProfile, String irVersion, String origin) {
+        public LoweringContext {
+            Objects.requireNonNull(module, "module");
+            Objects.requireNonNull(capability, "capability");
+            Objects.requireNonNull(validatorRule, "validatorRule");
+            Objects.requireNonNull(semanticProfile, "semanticProfile");
+            Objects.requireNonNull(irVersion, "irVersion");
+            Objects.requireNonNull(origin, "origin");
+        }
+    }
+
     /** A bounded UTF-8-decoded prefix from one drained child stream, with exact observed bytes. */
     public record ToolOutput(String text, long byteCount, int retainedByteCount, boolean truncated) {
         public ToolOutput {
@@ -261,44 +275,57 @@ public record DiagnosticFacts(
                 construction, exports, resolution, cycle, null);
     }
 
+    public DiagnosticFacts(String reason, String operation, String expected, String actual,
+                           List<String> guidance, List<PathSegment> path, CallContext call,
+                           OperatorContext operator, TypeMismatch mismatch, SyntaxContext syntax,
+                           NameContext names, ConstructionContext construction, ExportContext exports,
+                           ResolutionContext resolution, CycleContext cycle, ToolContext tool) {
+        this(reason, operation, expected, actual, guidance, path, call, operator, mismatch, syntax, names,
+                construction, exports, resolution, cycle, tool, null);
+    }
+
+    public DiagnosticFacts withLowering(LoweringContext context) {
+        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, mismatch, syntax, names, construction, exports, resolution, cycle, tool, context);
+    }
+
     public DiagnosticFacts withTool(ToolContext context) {
-        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, mismatch, syntax, names, construction, exports, resolution, cycle, context);
+        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, mismatch, syntax, names, construction, exports, resolution, cycle, context, lowering);
     }
 
     public DiagnosticFacts withCycle(CycleContext context) {
-        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, mismatch, syntax, names, construction, exports, resolution, context, tool);
+        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, mismatch, syntax, names, construction, exports, resolution, context, tool, lowering);
     }
 
     public DiagnosticFacts withResolution(ResolutionContext context) {
-        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, mismatch, syntax, names, construction, exports, context, cycle, tool);
+        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, mismatch, syntax, names, construction, exports, context, cycle, tool, lowering);
     }
 
     public DiagnosticFacts withExports(ExportContext context) {
-        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, mismatch, syntax, names, construction, context, resolution, cycle, tool);
+        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, mismatch, syntax, names, construction, context, resolution, cycle, tool, lowering);
     }
 
     public DiagnosticFacts withConstruction(ConstructionContext context) {
-        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, mismatch, syntax, names, context, exports, resolution, cycle, tool);
+        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, mismatch, syntax, names, context, exports, resolution, cycle, tool, lowering);
     }
 
     public DiagnosticFacts withNames(NameContext context) {
-        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, mismatch, syntax, context, construction, exports, resolution, cycle, tool);
+        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, mismatch, syntax, context, construction, exports, resolution, cycle, tool, lowering);
     }
 
     public DiagnosticFacts withCall(CallContext context) {
-        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, context, operator, mismatch, syntax, names, construction, exports, resolution, cycle, tool);
+        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, context, operator, mismatch, syntax, names, construction, exports, resolution, cycle, tool, lowering);
     }
 
     public DiagnosticFacts withOperator(OperatorContext context) {
-        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, context, mismatch, syntax, names, construction, exports, resolution, cycle, tool);
+        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, context, mismatch, syntax, names, construction, exports, resolution, cycle, tool, lowering);
     }
 
     public DiagnosticFacts withMismatch(TypeMismatch context) {
-        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, context, syntax, names, construction, exports, resolution, cycle, tool);
+        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, context, syntax, names, construction, exports, resolution, cycle, tool, lowering);
     }
 
     public DiagnosticFacts withSyntax(SyntaxContext context) {
-        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, mismatch, context, names, construction, exports, resolution, cycle, tool);
+        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, mismatch, context, names, construction, exports, resolution, cycle, tool, lowering);
     }
 
     public static final DiagnosticFacts EMPTY = new DiagnosticFacts("", "", "", "", List.of());

@@ -1615,6 +1615,11 @@ declared.add(arm(FailureArmId.ARRAY_ELEMENT_KIND,
                                            DiagnosticRange offendingRange) {
         Objects.requireNonNull(detail, "detail must not be null");
         return CompilerDiagnostic.error(DiagnosticCode.E6005, instantiateMessage(detail),
-            offendingRange == null ? DiagnosticRange.synthetic("") : offendingRange);
+            offendingRange == null ? DiagnosticRange.synthetic("") : offendingRange)
+            .withFacts(new deal.diagnostics.DiagnosticFacts(
+                "lowering.contract-violation", "lowering", "", "", java.util.List.of())
+                .withLowering(new deal.diagnostics.DiagnosticFacts.LoweringContext(
+                    detail.module(), detail.capability().name(), detail.validatorRule(),
+                    detail.semanticProfile().name(), detail.irVersion(), detail.origin())));
     }
 }

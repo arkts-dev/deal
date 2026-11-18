@@ -94,6 +94,28 @@ public class FailureContractRegistryTest {
             "E6005 uses the canonical synthetic range (the detail names a producer, "
                 + "not a source span)");
         check(diagnostic.notes().isEmpty(), "no notes attached");
+        var context = new deal.diagnostics.DiagnosticFacts.LoweringContext(detail.module(),
+            detail.capability().name(), detail.validatorRule(), detail.semanticProfile().name(),
+            detail.irVersion(), detail.origin());
+        checkEq(context, diagnostic.facts().lowering(), "E6005 retains producer-owned lowering detail");
+        checkEq("lowering.contract-violation", diagnostic.facts().reason(), "stable lowering reason");
+        checkEq(context, diagnostic.facts().withCall(null).withOperator(null).withMismatch(null)
+            .withSyntax(null).withNames(null).withConstruction(null).withExports(null)
+            .withResolution(null).withCycle(null).withTool(null).lowering(),
+            "every independent context copy preserves lowering detail");
+        check(diagnostic.facts().withLowering(null).lowering() == null,
+            "lowering context can be cleared independently");
+        String report = deal.diagnostics.DiagnosticStructuredOutput.toJson(java.util.List.of(diagnostic));
+        var root = deal.amend.CompilerProtocolJson.requireObject(deal.amend.CompilerProtocolJson.decode(report), "report");
+        var items = (deal.semantic.ir.CanonicalJson.Arr) deal.amend.CompilerProtocolJson.field(root, "diagnostics");
+        var projected = deal.amend.CompilerProtocolJson.requireObject(items.items().getFirst(), "diagnostic");
+        checkEq(deal.amend.CompilerProtocolJson.encode(diagnostic.facts()),
+            deal.semantic.ir.CanonicalJson.serializeText(deal.amend.CompilerProtocolJson.field(projected, "facts")),
+            "CLI and amendment retain identical typed lowering facts");
+        checkEq(context, diagnostic.withNote("copy", null).withMissingSymbol("VALUE", "x", "", java.util.List.of())
+            .facts().lowering(), "diagnostic copies preserve lowering evidence");
+        check(deal.diagnostics.DiagnosticFacts.EMPTY.lowering() == null,
+            "ordinary diagnostics do not invent lowering facts");
 
         // The range-aware E6005 factory (ISSUE-0750): a producer that
         // identifies the offending file/span supplies it, and the
@@ -107,6 +129,7 @@ public class FailureContractRegistryTest {
         check("E6005".equals(ranged.code()) && ranged.diagnosticCode() == DiagnosticCode.E6005
                 && "error".equals(ranged.severity()),
             "the ranged E6005 keeps code, diagnosticCode, and severity");
+        checkEq(context, ranged.facts().lowering(), "source-bearing E6005 has the same structured detail");
         check(offending.equals(ranged.range()),
             "the ranged E6005 carries the producer-identified offending range; got "
                 + ranged.range());

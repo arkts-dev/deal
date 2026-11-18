@@ -350,7 +350,7 @@ public final class DiagnosticStructuredOutput {
         sb.append(",\n");
         indent(sb, level + 1).append("\"tool\": ");
         var tool = facts.tool();
-        if (tool == null) sb.append("null\n");
+        if (tool == null) sb.append("null");
         else {
             sb.append("{\n");
             indent(sb, level + 2).append("\"operation\": ").append(jsonString(tool.operation())).append(",\n");
@@ -362,6 +362,20 @@ public final class DiagnosticStructuredOutput {
             sb.append(",\n");
             appendToolOutput(sb, tool.stderr(), level + 2, "stderr");
             sb.append('\n');
+            indent(sb, level + 1).append('}');
+        }
+        sb.append(",\n");
+        indent(sb, level + 1).append("\"lowering\": ");
+        var lowering = facts.lowering();
+        if (lowering == null) sb.append("null\n");
+        else {
+            sb.append("{\n");
+            indent(sb, level + 2).append("\"module\": ").append(jsonString(lowering.module())).append(",\n");
+            indent(sb, level + 2).append("\"capability\": ").append(jsonString(lowering.capability())).append(",\n");
+            indent(sb, level + 2).append("\"validatorRule\": ").append(jsonString(lowering.validatorRule())).append(",\n");
+            indent(sb, level + 2).append("\"semanticProfile\": ").append(jsonString(lowering.semanticProfile())).append(",\n");
+            indent(sb, level + 2).append("\"irVersion\": ").append(jsonString(lowering.irVersion())).append(",\n");
+            indent(sb, level + 2).append("\"origin\": ").append(jsonString(lowering.origin())).append('\n');
             indent(sb, level + 1).append("}\n");
         }
         indent(sb, level).append('}');
