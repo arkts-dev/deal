@@ -103,6 +103,7 @@ public final class NativeRuntimeAbiTest {
             testTypeOpacity();
             testFailureArmTableTransport();
             testOriginTerminalAndAccessors();
+            testBoundedRuntimeDiagnostics();
             testFrameAndRootInvariants();
             testCompletionQueue();
             testCompletionQueueRaceProbe();
@@ -648,6 +649,65 @@ public final class NativeRuntimeAbiTest {
                     checkEq((driver ? "load:start\nload:done\nmain:start\n" : "") + expected,
                         run.stdout(), "terminal raw code and escaped snapshot retain post-NUL text" + configuration);
                     checkEq("", run.stderr(), "lossless terminal stderr" + configuration);
+                    if (!driver) {
+                        environment.put("DEAL_DIAGNOSTICS_JSON", "1");
+                        var enabled = sanitized
+                            ? NativeCompiler.runSanitized(executable, scratch, environment).result()
+                            : NativeCompiler.execute(executable, scratch, environment);
+                        checkEq(run.exitCode(), enabled.exitCode(), "opt-in preserves terminal exit" + configuration);
+                        checkEq(run.stdout(), enabled.stdout(), "opt-in preserves lossless terminal stdout" + configuration);
+                        check(enabled.stderr().startsWith("DEAL_RUNTIME_DIAGNOSTIC: ")
+                                && enabled.stderr().lines().count() == 1
+                                && enabled.stderr().contains("A\\u0000B")
+                                && enabled.stderr().contains("C\\u0000D\\uD800")
+                                && enabled.stderr().contains("E\\u0000\\uDFFF"),
+                            "opt-in preserves NUL/lone-unit fields and existing causes without sanitizer output" + configuration);
+                    }
+                }
+            }
+        }
+    }
+
+    private static void testBoundedRuntimeDiagnostics() throws IOException {
+        for (int level : LEVELS) for (boolean sanitized : new boolean[] {false, true}) {
+            Path executable = scratch.resolve("error-diagnostic-o" + level + "-san" + sanitized);
+            var units = List.of(fixture("module_stub.c"), fixture("registry_empty.c"));
+            var link = NativeCompiler.link(published, level,
+                NativeCompiler.driverSources(published, units, fixture("error_diagnostic_driver.c")),
+                sanitized ? NativeCompiler.SANITIZER_FLAGS : List.of(), executable);
+            check(link.succeeded(), "bounded runtime diagnostic driver builds: " + link.describe());
+            if (!link.succeeded()) continue;
+            for (String stress : List.of("0", "1")) {
+                var environment = new java.util.HashMap<String, String>();
+                environment.put("DEAL_GC_STRESS", stress);
+                if (sanitized) environment.putAll(NativeCompiler.sanitizerEnvironment());
+                var run = sanitized ? NativeCompiler.runSanitized(executable, scratch, environment).result()
+                    : NativeCompiler.execute(executable, scratch, environment);
+                checkEq(0, run.exitCode(), "bounded/cyclic diagnostic exits normally: " + run.describe());
+                checkEq("", run.stderr(), "bounded/cyclic projection has no sanitizer findings");
+                var lines = run.stdout().lines().toList();
+                checkEq(2, lines.size(), "one line per independent projection");
+                for (String line : lines) {
+                    var document = deal.amend.CompilerProtocolJson.requireObject(
+                        deal.amend.CompilerProtocolJson.decode(line), "diagnostic");
+                    var runtime = deal.amend.CompilerProtocolJson.requireObject(
+                        deal.amend.CompilerProtocolJson.field(document, "runtime"), "runtime");
+                    var message = (deal.semantic.ir.CanonicalJson.Str) deal.amend.CompilerProtocolJson.field(runtime, "message");
+                    checkEq("x".repeat(8190), message.value(), "UTF-8 prefix ends before partial supplementary scalar");
+                    check(line.contains("\"messageByteCount\":8194") && line.contains("\"messageTruncated\":true")
+                        && line.contains("\"frameCount\":40") && line.contains("\"framesTruncated\":true"),
+                        "observed text/frame totals and omission markers are exact");
+                    var frames = (deal.semantic.ir.CanonicalJson.Arr) deal.amend.CompilerProtocolJson.field(runtime, "frames");
+                    checkEq(32, frames.items().size(), "frame projection retains the first 32 innermost labels");
+                    int depth = 1;
+                    while (runtime.entries().stream().anyMatch(e -> e.key().equals("cause"))) {
+                        runtime = deal.amend.CompilerProtocolJson.requireObject(
+                            deal.amend.CompilerProtocolJson.field(runtime, "cause"), "cause");
+                        depth++;
+                    }
+                    checkEq(8, depth, "long and cyclic causes both stop at eight levels");
+                    check(deal.amend.CompilerProtocolJson.field(runtime, "causeTruncated")
+                        .equals(new deal.semantic.ir.CanonicalJson.Bool(true)), "omitted causes remain explicit");
                 }
             }
         }
