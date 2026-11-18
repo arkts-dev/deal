@@ -1706,7 +1706,14 @@ annotation as a secondary range; recursive traversal keeps its exact
 nominal/provider guard and existing first-rejection order. Duplicate field,
 parameter and binding diagnostics retain the first known declaration as an
 ordered ranged note. Import-shadowing diagnostics locate the conflicting import
-and declaration without changing source-order code selection.
+and declaration without changing source-order code selection. Parser expectation
+failures record expected/found token kinds at the failing token. Missing block,
+class/object/array literal, signature and postfix delimiters retain their exact
+opener as an ordered secondary note, so independent openers at one EOF remain
+distinct diagnostics. Malformed function parameters recover locally at the next
+comma or closing parenthesis without consuming body boundaries; independent
+parameter errors remain visible and later declarations remain parseable. These
+recovery nodes never bypass frontend syntax phase gates.
 
 The amendment transport is `compiler-protocol-v3`; diagnostics use these same
 complete ranges and nested facts. Exact repeats may collapse only when all

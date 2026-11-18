@@ -199,7 +199,7 @@ public final class Parser {
         if (match(TokenType.RBRACE)) {
             rbrace = previous();
         } else {
-            error(DiagnosticCode.E1006, "Expected '}'", peek());
+            expectedCloser(DiagnosticCode.E1006, "Expected '}'", TokenType.RBRACE, lbrace);
             rbrace = previousOrCurrent();
         }
         return new Block(spanBetween(lbrace, rbrace), List.copyOf(statements));
@@ -230,7 +230,7 @@ public final class Parser {
         if (match(TokenType.RBRACE)) {
             rbrace = previous();
         } else {
-            error(DiagnosticCode.E1006, "Expected '}' at end of class body", peek());
+            expectedCloser(DiagnosticCode.E1006, "Expected '}' at end of class body", TokenType.RBRACE, lbrace);
             rbrace = previousOrCurrent();
         }
         return new ClassDeclaration(spanBetween(classToken, rbrace),
@@ -309,13 +309,14 @@ public final class Parser {
     private FunctionSuffix parseFunctionSuffix(String lparenMessage,
                                                String returnTypeMessage,
                                                boolean allowExternal) {
-        expect(TokenType.LPAREN, DiagnosticCode.E1009, lparenMessage);
+        Token lparen = expect(TokenType.LPAREN, DiagnosticCode.E1009, lparenMessage);
+        if (lparen == null) { synchronize(); return null; }
         ParamListResult paramResult = parseParameterList();
         if (allowExternal) for (Parameter parameter : paramResult.params()) {
             if (parameter.type() == null) error(DiagnosticCode.E1008,
                 "Function declarations require parameter annotations", peek());
         }
-        expect(TokenType.RPAREN, DiagnosticCode.E1010, "Expected ')' after function parameters");
+        expectCloser(TokenType.RPAREN, DiagnosticCode.E1010, "Expected ')' after function parameters", lparen);
 
         if (!match(TokenType.COLON)) {
             error(DiagnosticCode.E1011, returnTypeMessage, peek());
@@ -900,6 +901,7 @@ public final class Parser {
 
         Parameter first = parseParameter();
         if (first != null) params.add(first);
+        else recoverParameter();
 
         while (match(TokenType.COMMA)) {
             if (peek().type() == TokenType.RPAREN) {
@@ -913,10 +915,26 @@ public final class Parser {
             }
             Parameter param = parseParameter();
             if (param != null) params.add(param);
-            else break;
+            else recoverParameter();
         }
 
         return new ParamListResult(params);
+    }
+
+    /** Resume at this list's next parameter or closer, never consume a body/declaration boundary. */
+    private void recoverParameter() {
+        int parentheses = 0;
+        int brackets = 0;
+        while (!isAtEnd()) {
+            TokenType kind = peek().type();
+            if (kind == TokenType.LBRACE || kind == TokenType.RBRACE || kind == TokenType.SEMICOLON) return;
+            if (parentheses == 0 && brackets == 0 && (kind == TokenType.COMMA || kind == TokenType.RPAREN)) return;
+            if (kind == TokenType.LPAREN) parentheses++;
+            else if (kind == TokenType.RPAREN) { if (parentheses == 0) return; parentheses--; }
+            else if (kind == TokenType.LBRACKET) brackets++;
+            else if (kind == TokenType.RBRACKET && brackets > 0) brackets--;
+            advance();
+        }
     }
 
     private Parameter parseParameter() {
@@ -1107,9 +1125,10 @@ public final class Parser {
                 Span sp = spanBetween(expr.span(), spanOf(fieldToken));
                 expr = new MemberAccessExpr(sp, expr, fieldToken.lexeme());
             } else if (match(TokenType.LBRACKET)) {
+                Token opener = previous();
                 ExpressionNode index = parseExpression();
                 if (index == null) { synchronize(); break; }
-                Token rbracket = expect(TokenType.RBRACKET, DiagnosticCode.E1035, "Expected ']'");
+                Token rbracket = expectCloser(TokenType.RBRACKET, DiagnosticCode.E1035, "Expected ']'", opener);
                 Span sp;
                 if (rbracket != null) {
                     sp = spanBetween(expr.span(), spanOf(rbracket));
@@ -1118,6 +1137,7 @@ public final class Parser {
                 }
                 expr = new IndexExpr(sp, expr, index);
             } else if (match(TokenType.LPAREN)) {
+                Token opener = previous();
                 List<ExpressionNode> args = new ArrayList<>();
                 if (peek().type() != TokenType.RPAREN) {
                     ExpressionNode first = parseExpression();
@@ -1131,8 +1151,8 @@ public final class Parser {
                         else break;
                     }
                 }
-                Token rparen = expect(TokenType.RPAREN, DiagnosticCode.E1010,
-                        "Expected ')' after arguments");
+                Token rparen = expectCloser(TokenType.RPAREN, DiagnosticCode.E1010,
+                        "Expected ')' after arguments", opener);
                 Span sp;
                 if (rparen != null) {
                     sp = spanBetween(expr.span(), spanOf(rparen));
@@ -1703,7 +1723,7 @@ public final class Parser {
         if (match(TokenType.RBRACKET)) {
             rbracket = previous();
         } else {
-            error(DiagnosticCode.E1035, "Expected ']' to close array literal", peek());
+            expectedCloser(DiagnosticCode.E1035, "Expected ']' to close array literal", TokenType.RBRACKET, lbracket);
             rbracket = previousOrCurrent();
         }
 
@@ -1737,7 +1757,7 @@ public final class Parser {
         if (match(TokenType.RBRACE)) {
             rbrace = previous();
         } else {
-            error(DiagnosticCode.E1006, "Expected '}' to close object literal", peek());
+            expectedCloser(DiagnosticCode.E1006, "Expected '}' to close object literal", TokenType.RBRACE, lbrace);
             rbrace = previousOrCurrent();
         }
 
@@ -1771,7 +1791,7 @@ public final class Parser {
         if (nameToken.type() == TokenType.LBRACKET) {
             key = parseExpression();
             if (key == null) return null;
-            expect(TokenType.RBRACKET, DiagnosticCode.E1035, "Expected ']' after computed key");
+            expectCloser(TokenType.RBRACKET, DiagnosticCode.E1035, "Expected ']' after computed key", nameToken);
             name = null;
         } else if (nameToken.type() == TokenType.STRING_LITERAL) {
             name = unescapeString(name);
@@ -1864,8 +1884,27 @@ public final class Parser {
         if (peek().type() == type || type == TokenType.IDENTIFIER && isIdentifier(peek().type())) {
             return advance();
         }
-        error(code, message, peek());
+        expectedToken(code, message, type);
         return null;
+    }
+
+    private void expectedToken(DiagnosticCode code, String message, TokenType expected) {
+        diagnostics.add(fromTokenAnchor(code, "error", message, peek()).withFacts(
+                new deal.diagnostics.DiagnosticFacts("syntax.expected-token", "parse.token",
+                        expected.name(), peek().type().name(), List.of())));
+    }
+
+    private Token expectCloser(TokenType kind, DiagnosticCode code, String message, Token opener) {
+        if (peek().type() == kind) return advance();
+        expectedCloser(code, message, kind, opener);
+        return null;
+    }
+
+    private void expectedCloser(DiagnosticCode code, String message, TokenType kind, Token opener) {
+        diagnostics.add(fromTokenAnchor(code, "error", message, peek())
+                .withFacts(new deal.diagnostics.DiagnosticFacts("syntax.unclosed-delimiter", "parse.delimiter",
+                        kind.name(), peek().type().name(), List.of("Close the delimiter opened at the related location.")))
+                .withNote("Unclosed delimiter opened here", opener.range(file)));
     }
 
     private void optionalSemicolon() {
@@ -1934,7 +1973,7 @@ public final class Parser {
     /**
      * Inclusive end column of a token on its line (tokens never span line
      * breaks). Uses the token's scalar length when known — columns count
-     * decoded Unicode scalars — and falls back to the UTF-16 length for
+     * UTF-16 code units — and falls back to the token length for
      * column display only when no offset information is available.
      */
     private int tokenEndColumn(Token token) {

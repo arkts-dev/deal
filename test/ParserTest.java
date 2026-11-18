@@ -34,6 +34,35 @@ public class ParserTest {
     // Helpers
     // =========================================================================
 
+    private static void testDiagnosticActionability() {
+        String source = "// 🌍\r\nfunction f():void{if(true){";
+        var unclosed = parse(source).diagnostics().stream().filter(d -> d.code().equals("E1006")).toList();
+        check(unclosed.size() == 2 && unclosed.get(0).range().equals(unclosed.get(1).range())
+                        && unclosed.get(0).notes().getFirst().range().startScalarOffset() == source.lastIndexOf('{')
+                        && unclosed.get(1).notes().getFirst().range().startScalarOffset() == source.indexOf('{')
+                        && !unclosed.get(0).equals(unclosed.get(1)),
+                "independent unmatched braces retain distinct UTF-16 opener notes at the same EOF");
+        for (var diagnostic : unclosed) check(diagnostic.facts().expected().equals("RBRACE")
+                        && diagnostic.facts().actual().equals("EOF"), "unmatched delimiter publishes exact token kinds");
+        assertNoParseErrors(parse(source + "}}"), "closing the indicated delimiters repairs the parse");
+        String malformed = "function f(x number,y:string):void{} function after():void{}";
+        var recovered = parse(malformed);
+        check(recovered.diagnostics().size() == 1 && recovered.diagnostics().getFirst().code().equals("E1008"),
+                "malformed parameter annotation has one causal error rather than signature/body cascades: " + recovered.diagnostics());
+        check(recovered.program().statements().size() == 2
+                        && ((FunctionDeclaration) recovered.program().statements().getFirst()).params().size() == 1
+                        && ((FunctionDeclaration) recovered.program().statements().getFirst()).params().getFirst().name().equals("y"),
+                "local recovery preserves the next parameter and independent declaration");
+        assertNoParseErrors(parse(malformed.replace("x number", "x:number")), "providing the missing colon repairs the signature");
+        var independent = parse("function f(x number,y string):void{}");
+        check(independent.diagnostics().size() == 2 && independent.diagnostics().stream().allMatch(d -> d.code().equals("E1008")),
+                "independent malformed parameters remain separate errors");
+        var literal = parse("let value = {a:1;");
+        var close = diagOf(literal, "E1006");
+        check(close != null && close.notes().getFirst().range().startScalarOffset() == 12,
+                "object literal rejection identifies its own opener");
+    }
+
     private static ParseResult parse(String source) {
         LexResult lex = new Lexer(source, "test.deal").tokenize();
 
@@ -187,6 +216,7 @@ public class ParserTest {
         testFuncExprInCall();
 
         // Error recovery
+        testDiagnosticActionability();
         testErrorRecoveryMissingBrace();
         testErrorRecoveryMidFile();
         testErrorRecoveryMultipleErrors();
