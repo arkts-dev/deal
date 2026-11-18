@@ -33,8 +33,37 @@ public final class ErrorNameMessageTest {
             error.cause=new Proxy({},{getOwnPropertyDescriptor(){reads++;throw Error('proxy');}});
             const text=runtime.runtimeDiagnostic(error);
             if(reads!==0||!text.includes('causeTruncated')||error.code!=='Bound')process.exit(3);
+            error.cause=error;
+            const cyclic=JSON.parse(runtime.runtimeDiagnostic(error)).runtime;
+            if(!cyclic.causeTruncated||cyclic.cause!==undefined)process.exit(4);
+            let nested=runtime.errorValue('Leaf','leaf');
+            for(let i=0;i<10;i++)nested=runtime.errorValue('Outer','outer',undefined,undefined,undefined,undefined,undefined,undefined,nested);
+            let chain=JSON.parse(runtime.runtimeDiagnostic(nested)).runtime, depth=1;
+            while(chain.cause){chain=chain.cause;depth++;}
+            if(depth!==8||!chain.causeTruncated)process.exit(5);
+            if(JSON.parse(runtime.runtimeDiagnostic({code:'Forged',message:'not an Error'})).runtime!==null)process.exit(6);
             """), Path.of("").toAbsolutePath(), Map.of());
         if (getterControl.exitCode() != 0) throw new AssertionError("runtime export invoked mutable host metadata: " + getterControl);
+        List<String> jvmProjection = List.of("java", "-cp", TestClasspath.absolute(TestClasspath.EmptyEntry.OMIT),
+                ErrorNameMessageTest.class.getName(), "--diagnostic-projection");
+        var disabledProjection = BoundedProcess.runCaptured(jvmProjection, Path.of("").toAbsolutePath(), Map.of("DEAL_DIAGNOSTICS_JSON", "0"));
+        var enabledProjection = BoundedProcess.runCaptured(jvmProjection, Path.of("").toAbsolutePath(), Map.of("DEAL_DIAGNOSTICS_JSON", "1"));
+        if (disabledProjection.exitCode() != 0 || enabledProjection.exitCode() != 0
+                || !disabledProjection.stdout().equals("projection identity unchanged\n")
+                || !enabledProjection.stdout().equals(disabledProjection.stdout()) || !disabledProjection.stderr().isEmpty())
+            throw new AssertionError("JVM diagnostic projection changed transport identity/defaults");
+        var projected = deal.amend.CompilerProtocolJson.requireObject(deal.amend.CompilerProtocolJson.decode(
+                enabledProjection.stderr().strip().substring("DEAL_RUNTIME_DIAGNOSTIC: ".length())), "projection");
+        var error = deal.amend.CompilerProtocolJson.requireObject(deal.amend.CompilerProtocolJson.field(projected, "runtime"), "runtime");
+        var message = (CanonicalJson.Str) deal.amend.CompilerProtocolJson.field(error, "message");
+        if (!message.value().equals("x".repeat(8192))) throw new AssertionError("JVM diagnostic text limit");
+        int depth = 1;
+        while (error.entries().stream().anyMatch(e -> e.key().equals("cause"))) {
+            error = deal.amend.CompilerProtocolJson.requireObject(deal.amend.CompilerProtocolJson.field(error, "cause"), "cause");
+            depth++;
+        }
+        if (depth != 8 || !deal.amend.CompilerProtocolJson.field(error, "causeTruncated").equals(new CanonicalJson.Bool(true)))
+            throw new AssertionError("JVM diagnostic cause limit");
         for (Backend backend : List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM)) {
             Path project = Files.createDirectories(root.resolve(backend.name()));
             Path src = Files.createDirectories(project.resolve("src")), out = project.resolve("out");
@@ -90,6 +119,16 @@ public final class ErrorNameMessageTest {
     }
 
     public static void main(String[] args) throws Exception {
+        if (args.length == 1 && args[0].equals("--diagnostic-projection")) {
+            var cause = new deal.codegen.jvm.JvmRuntime.DealError("Leaf", "leaf", null, null, null, null, null);
+            for (int i = 0; i < 10; i++) cause = new deal.codegen.jvm.JvmRuntime.DealError(
+                "Bound", "x".repeat(9000), null, null, null, null, cause);
+            var originalCause = cause.cause;
+            deal.codegen.jvm.JvmRuntime.reportRuntimeDiagnostic(cause);
+            if (cause.cause != originalCause || !cause.msg.equals("x".repeat(9000))) throw new AssertionError("transport mutated");
+            System.out.println("projection identity unchanged");
+            return;
+        }
         Path root=Files.createTempDirectory("deal-error-name-");
         try {
             String source=ConformanceHarnessMetadata.productionCorpusSource(
