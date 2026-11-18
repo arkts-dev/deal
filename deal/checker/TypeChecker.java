@@ -709,7 +709,7 @@ public final class TypeChecker {
                 int index = diagnostics.size();
                 checkAssignment(targetType, exprType, vd.initializer().span(), vd.typeAnnotation().orElse(null));
                 if (diagnostics.size() > index)
-                    diagnostics.set(index, withLostRefinement(diagnostics.get(index), vd.initializer()));
+                    diagnostics.set(index, withReadEvidence(diagnostics.get(index), vd.initializer()));
                 // Initialization assigns a value to the new binding: a
                 // value that names a different declaration of the same
                 // canonical class identity crosses the two runtime
@@ -892,7 +892,7 @@ public final class TypeChecker {
             if (currentReturnType instanceof Type.Void || !isAssignable(currentReturnType, exprType)) {
                 if (!reportClassProviderCrossing(currentReturnType, exprType,
                         rs.expr().get().span())) {
-                    diagnostics.add(withLostRefinement(CompilerDiagnostic.error(DiagnosticCode.E5003,
+                    diagnostics.add(withReadEvidence(CompilerDiagnostic.error(DiagnosticCode.E5003,
                         "Return type mismatch: expected " + typeName(currentReturnType)
                         + ", got " + typeName(exprType), rs.expr().get().span()).withFacts(
                                 new deal.diagnostics.DiagnosticFacts("return.incompatible", "return",
@@ -2276,7 +2276,7 @@ public final class TypeChecker {
                                 .withMismatch(typeMismatch(paramType, argType)));
                     var parameterRange = diagnostic.facts().call().parameterRange();
                     if (parameterRange != null) diagnostic = diagnostic.withNote("Expected parameter annotation", parameterRange);
-                    diagnostics.add(withLostRefinement(diagnostic, call.args().get(i)));
+                    diagnostics.add(withReadEvidence(diagnostic, call.args().get(i)));
                 }
             }
         }
@@ -2443,7 +2443,7 @@ public final class TypeChecker {
             return Type.Unknown.INSTANCE;
         }
 
-        diagnostics.add(withLostRefinement(CompilerDiagnostic.error(DiagnosticCode.E3003,
+        diagnostics.add(withReadEvidence(CompilerDiagnostic.error(DiagnosticCode.E3003,
             "Cannot access field '" + field + "' on type " + typeName(objType), mae.span())
                 .withFacts(new deal.diagnostics.DiagnosticFacts("access.field-receiver",
                         assignmentTargetMode ? "field.target" : "field.read",
@@ -2460,12 +2460,24 @@ public final class TypeChecker {
         else lostRefinementReads.put(expression, lost);
     }
 
-    private CompilerDiagnostic withLostRefinement(CompilerDiagnostic diagnostic, ExpressionNode expression) {
+    private CompilerDiagnostic withReadEvidence(CompilerDiagnostic diagnostic, ExpressionNode expression) {
         var lost = lostRefinementReads.get(expression);
-        return lost == null ? diagnostic : diagnostic.withNote(
+        if (lost != null) diagnostic = diagnostic.withNote(
                 "Earlier refinement to " + typeName(lost.previous())
                         + " was invalidated by this await; inspect or guard the current value again before use",
                 lost.awaitRange());
+        ExpressionNode receiver = expression instanceof MemberAccessExpr member ? member.object()
+                : expression instanceof IndexExpr index ? index.array() : null;
+        if (receiver != null && typeMap.get(receiver) instanceof Type.Table
+                && typeMap.get(expression) instanceof Type.Unknown) {
+            diagnostic = diagnostic.withNote(
+                    "This raw Record read has type unknown; an expected type does not extract it. "
+                            + "Choose a checked assertion or store and narrow the value with a supported guard. "
+                            + "Presence alone does not distinguish a missing key from a present undefined value or narrow its type. "
+                            + "See docs/spec-v1.6.md#reading-and-writing-fields and #narrowing-and-checked-assertions.",
+                    expression.span().range());
+        }
+        return diagnostic;
     }
 
     private static List<String> receiverReadGuidance(Type receiver) {
@@ -2533,7 +2545,7 @@ public final class TypeChecker {
             return arr.element();
         }
 
-        diagnostics.add(withLostRefinement(CompilerDiagnostic.error(DiagnosticCode.E3007,
+        diagnostics.add(withReadEvidence(CompilerDiagnostic.error(DiagnosticCode.E3007,
                 "Cannot index type " + typeName(arrayType), idx.array().span()).withFacts(
                         new deal.diagnostics.DiagnosticFacts("index.receiver", "index",
                                 "array or Record", typeName(arrayType), receiverReadGuidance(arrayType))), idx.array()));
@@ -3361,7 +3373,7 @@ public final class TypeChecker {
                         ? variable.declaredType() : null;
                 int index = diagnostics.size();
                 reportAssignabilityError(declaredTarget, valueType, assign.span(), annotation);
-                diagnostics.set(index, withLostRefinement(diagnostics.get(index), assign.value()));
+                diagnostics.set(index, withReadEvidence(diagnostics.get(index), assign.value()));
             }
         }
 

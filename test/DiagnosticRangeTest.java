@@ -106,6 +106,7 @@ public class DiagnosticRangeTest {
         testAwaitRefinementEvidence();
         testCycleEvidence();
         testAssertionConstraintEvidence();
+        testRawRecordReadEvidence();
         testCatchVariableIdentifierRange();
         testProgramSpanAnchorsCombined();
         testV12CornerCaseScalarCoordinatePins();
@@ -1154,6 +1155,35 @@ public class DiagnosticRangeTest {
             check(checkerDiagnostics(prefix + "async function f(x:string|null):Promise<void>{" + body + "}",
                     "await.deal").isEmpty(), "guarded/repaired/nested-function positive: " + body);
         }
+    }
+
+    private static void testRawRecordReadEvidence() {
+        for (String[] sample : new String[][] {
+                {"let value:string=r.key;", "E3001", "r.key"},
+                {"let value:string=\"\";value=r[\"key\"];", "E3001", "r[\"key\"]"},
+                {"consume(r.key);", "E5001", "r.key"},
+                {"return r.key;", "E5003", "r.key"},
+                {"let value=r.key.child;", "E3003", "r.key"}}) {
+            String source = "// 😀\r\nfunction consume(x:string):void{}function f(r:Record<string,unknown>):string{"
+                    + sample[0] + "return \"\";}";
+            var diagnostic = checkerDiag(checkerDiagnostics(source, "record.deal"), sample[1]);
+            check(diagnostic != null, "raw read still rejects at existing boundary " + sample[1]);
+            if (diagnostic == null) continue;
+            var note = diagnostic.notes().stream().filter(n -> n.message().contains("raw Record read"))
+                    .findFirst().orElse(null);
+            check(note != null && note.range().startScalarOffset() == source.indexOf(sample[2])
+                            && note.range().scalarLength() == sample[2].length(), "raw read identifies exact checked expression");
+            check(note != null && note.message().contains("expected type does not extract")
+                            && note.message().contains("missing key") && note.message().contains("present undefined"),
+                    "raw read explains extraction versus presence without guessed values");
+        }
+        for (String body : List.of("let value=r.key as string;", "let value=r.key;if(typeof value===\"string\"){consume(value);}"))
+            check(checkerDiagnostics("function consume(x:string):void{}function f(r:Record<string,unknown>):void{"
+                    + body + "}", "record.deal").isEmpty(), "explicit extraction/guard repairs recheck");
+        var unrelated = checkerDiag(checkerDiagnostics("function f(x:unknown):void{let value:string=x;}",
+                "record.deal"), "E3001");
+        check(unrelated != null && unrelated.notes().stream().noneMatch(n -> n.message().contains("raw Record read")),
+                "unknown binding gets no invented Record origin");
     }
 
     private static void testAssertionConstraintEvidence() {
