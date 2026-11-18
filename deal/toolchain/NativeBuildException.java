@@ -104,6 +104,23 @@ public final class NativeBuildException extends Exception {
                 tool == null ? "native.build" : tool.operation(), "", "", java.util.List.of()).withTool(tool);
     }
 
+    public deal.diagnostics.OperationalDiagnostic structuredDiagnostic() {
+        String phase = switch (kind) {
+            case LINK_FAILED -> "native.link";
+            case TOOL_FAILURE -> tool == null ? "native.build" : tool.operation();
+            case IO_FAILURE -> "native.build";
+            default -> "native.preflight";
+        };
+        String category = switch (kind) {
+            case TOOLCHAIN_MISSING, TOOLCHAIN_UNVERSIONED, TOOLCHAIN_UNSUPPORTED, TOOL_FAILURE -> "toolchain";
+            case IO_FAILURE -> "filesystem";
+            case LINK_FAILED -> "link";
+            default -> "build-input";
+        };
+        return new deal.diagnostics.OperationalDiagnostic(facts().reason(), phase, category,
+                category.equals("toolchain") ? "toolchain" : "build-environment", diagnostic(), facts());
+    }
+
     /** The one rendered diagnostic line of this failure. */
     public String diagnostic() {
         return getMessage();

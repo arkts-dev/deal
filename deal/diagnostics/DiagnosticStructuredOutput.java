@@ -65,22 +65,41 @@ public final class DiagnosticStructuredOutput {
      *
      */
     public static String toJson(List<CompilerDiagnostic> diagnostics) {
+        return toJson(diagnostics, List.of());
+    }
+
+    public static String toJson(List<CompilerDiagnostic> diagnostics, List<OperationalDiagnostic> operations) {
         List<CompilerDiagnostic> list = diagnostics == null ? List.of() : diagnostics;
+        List<OperationalDiagnostic> failures = List.copyOf(operations);
         StringBuilder sb = new StringBuilder();
         sb.append("{\n")
             .append("  \"version\": 2,\n")
             .append("  \"diagnostics\": ");
-        if (list.isEmpty()) {
-            sb.append("[]\n")
-                .append('}');
-            return sb.toString();
+        if (list.isEmpty()) sb.append("[]");
+        else {
+            sb.append("[\n");
+            for (int i = 0; i < list.size(); i++) {
+                appendDiagnostic(sb, list.get(i), i == list.size() - 1);
+            }
+            sb.append("  ]");
         }
-        sb.append("[\n");
-        for (int i = 0; i < list.size(); i++) {
-            appendDiagnostic(sb, list.get(i), i == list.size() - 1);
+        sb.append(",\n  \"operations\": [");
+        for (int i = 0; i < failures.size(); i++) {
+            var failure = failures.get(i);
+            if (i > 0) sb.append(',');
+            sb.append('\n');
+            indent(sb, 2).append("{\n");
+            indent(sb, 3).append("\"reason\": ").append(jsonString(failure.reason())).append(",\n");
+            indent(sb, 3).append("\"phase\": ").append(jsonString(failure.phase())).append(",\n");
+            indent(sb, 3).append("\"category\": ").append(jsonString(failure.category())).append(",\n");
+            indent(sb, 3).append("\"responsibility\": ").append(jsonString(failure.responsibility())).append(",\n");
+            indent(sb, 3).append("\"message\": ").append(jsonString(failure.message())).append(",\n");
+            appendFacts(sb, failure.facts(), 3);
+            sb.append('\n');
+            indent(sb, 2).append('}');
         }
-        sb.append("  ]\n")
-            .append('}');
+        if (!failures.isEmpty()) sb.append("\n  ");
+        sb.append("]\n}");
         return sb.toString();
     }
 

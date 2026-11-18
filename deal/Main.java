@@ -247,6 +247,7 @@ public final class Main {
         int optLevel = 2;
         boolean verbose = false;
         List<Path> hostUnits = new ArrayList<>();
+        Path diagnosticsJsonPath = null;
 
         int i = 1;
         while (i < args.length) {
@@ -259,6 +260,13 @@ public final class Main {
                         return 1;
                     }
                     outputOverride = args[++i];
+                }
+                case "--diagnostics-json" -> {
+                    if (i + 1 >= args.length) {
+                        System.err.println("deal: --diagnostics-json requires a path argument");
+                        return 1;
+                    }
+                    diagnosticsJsonPath = Path.of(args[++i]);
                 }
                 case "--product" -> {
                     if (i + 1 >= args.length) {
@@ -320,7 +328,7 @@ public final class Main {
             new CliOverrides(Backend.LLVM.cliName(), outputOverride));
         if (located.e2010() != null) {
             System.err.println(DiagnosticFormatter.format(located.e2010()));
-            return 1;
+            return writeDiagnosticsJson(List.of(located.e2010()), diagnosticsJsonPath);
         }
         if (located.cliDiagnostic() != null) {
             System.err.println(located.cliDiagnostic().message());
@@ -345,7 +353,7 @@ public final class Main {
             ReleaseConfiguration.CURRENT_RELEASE_STATE,
             ReleaseConfiguration.releaseCapabilityRegistry());
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
-            context, entryFile, verbose, false, false, false, null, invocation);
+            context, entryFile, verbose, false, false, false, diagnosticsJsonPath, invocation);
         boolean compiled;
         try {
             compiled = orchestrator.compile();
@@ -371,6 +379,16 @@ public final class Main {
             product = NativeToolchain.build(plan);
         } catch (NativeBuildException failure) {
             System.err.println(failure.diagnostic());
+            if (diagnosticsJsonPath != null) {
+                try {
+                    Files.writeString(diagnosticsJsonPath, DiagnosticStructuredOutput.toJson(
+                            deal.diagnostics.DiagnosticOrder.canonical(orchestrator.diagnostics()),
+                            List.of(failure.structuredDiagnostic())));
+                } catch (IOException e) {
+                    System.err.println("deal: cannot write diagnostics JSON to '"
+                            + diagnosticsJsonPath + "': " + e.getMessage());
+                }
+            }
             return 1;
         }
 
@@ -457,7 +475,7 @@ public final class Main {
 
     private static void printUsage() {
         System.err.println("Usage: deal compile <entry.deal> [--output <dir>] [--backend <lua|luajit|jvm|js|llvm>] [--verbose] [--dump-ir] [--source-map] [--diagnostics-json <path>]");
-        System.err.println("       deal native <build|run> <entry.deal> [--output <artifactsDir>] [--product <productDir>] [--opt-level 0|2] [--host <file.c>]... [--verbose]");
+        System.err.println("       deal native <build|run> <entry.deal> [--output <artifactsDir>] [--product <productDir>] [--opt-level 0|2] [--host <file.c>]... [--verbose] [--diagnostics-json <path>]");
         System.err.println();
         System.err.println("Options:");
         System.err.println("  --output, -o <dir>   Output directory (CWD-relative; default: build/lua, build/jvm, build/js, or build/llvm per the effective backend)");
@@ -473,8 +491,8 @@ public final class Main {
     }
 
     private static void printNativeUsage() {
-        System.err.println("Usage: deal native build <entry.deal> [--output <artifactsDir>] [--product <productDir>] [--opt-level 0|2] [--host <file.c>]... [--verbose]");
-        System.err.println("       deal native run <entry.deal> [--output <artifactsDir>] [--product <productDir>] [--opt-level 0|2] [--host <file.c>]... [--verbose]");
+        System.err.println("Usage: deal native build <entry.deal> [--output <artifactsDir>] [--product <productDir>] [--opt-level 0|2] [--host <file.c>]... [--verbose] [--diagnostics-json <path>]");
+        System.err.println("       deal native run <entry.deal> [--output <artifactsDir>] [--product <productDir>] [--opt-level 0|2] [--host <file.c>]... [--verbose] [--diagnostics-json <path>]");
         System.err.println();
         System.err.println("Options:");
         System.err.println("  --output, -o <dir>   Publication root (default: build/llvm under the manifest directory)");

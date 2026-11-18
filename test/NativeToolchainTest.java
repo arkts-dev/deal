@@ -182,6 +182,7 @@ public final class NativeToolchainTest {
             testPublicationIsReadOnly(scratch, published);
             testCliDefaultsAndOptions(scratch);
             testCliRejections(scratch);
+            testCliStructuredDiagnostics(scratch);
             testCliMissingTool(scratch);
             testCliUnsupportedMajor(scratch);
             testUsageText();
@@ -1193,6 +1194,45 @@ public final class NativeToolchainTest {
     // 9. The CLI with no compiler on PATH (a real child process)
     // =========================================================================
 
+    private static void testCliStructuredDiagnostics(Path scratch) throws Exception {
+        Path root = scratch.resolve("cli-structured-project");
+        writeProject(root, Map.of("src/main.deal", "export function main():void{}"), Map.of());
+        Path entry = root.resolve("src/main.deal");
+        Path report = scratch.resolve("native-report.json");
+        Path unmatched = scratch.resolve("structured-host/absent.c");
+        writeFile(unmatched, "int absent(void){return 0;}");
+        var rejected = capture(() -> Main.run(new String[] {"native", "build", entry.toString(),
+                "--host", unmatched.toString(), "--diagnostics-json", report.toString()}));
+        checkEq(1, rejected.exitCode(), "structured native failure retains exit");
+        String json = Files.readString(report);
+        var document = deal.amend.CompilerProtocolJson.requireObject(deal.amend.CompilerProtocolJson.decode(json), "report");
+        var operations = deal.amend.CompilerProtocolJson.requireArray(deal.amend.CompilerProtocolJson.field(document, "operations"), "operations");
+        checkEq(1, operations.items().size(), "native failure is not an empty success report");
+        check(json.contains("\"reason\": \"native.host-unit-unmatched\"")
+                        && json.contains("\"phase\": \"native.preflight\"")
+                        && json.contains("\"category\": \"build-input\"")
+                        && json.contains("\"tool\": null"),
+                "native input failure retains classification without invented child");
+        check(!json.contains(".partial") && rejected.stderr().contains("deal: native host unit unmatched:"),
+                "structured export leaves terminal failure unchanged and hides staging");
+        var repaired = capture(() -> Main.run(new String[] {"native", "build", entry.toString(),
+                "--diagnostics-json", report.toString()}));
+        checkEq(0, repaired.exitCode(), "selected repair removes unmatched host and rebuilds");
+        check(Files.isExecutable(root.resolve("build/native/native/main")), "successful recheck publishes real executable");
+        check(Files.readString(report).contains("\"operations\": []"), "successful recheck clears prior operational failures");
+        writeFile(entry, "export function main():number{return 1;}");
+        var frontend = capture(() -> Main.run(new String[] {"native", "build", entry.toString(),
+                "--diagnostics-json", report.toString()}));
+        checkEq(1, frontend.exitCode(), "frontend still blocks native workflow");
+        check(Files.readString(report).contains("E2011") && Files.readString(report).contains("\"operations\": []"),
+                "blocked native phase is not an invented tool failure");
+        writeFile(root.resolve("deal.json"), "{\"languageVersion\":\"invalid\"}");
+        var manifest = capture(() -> Main.run(new String[] {"native", "build", entry.toString(),
+                "--diagnostics-json", report.toString()}));
+        checkEq(1, manifest.exitCode(), "manifest failure preserves exit");
+        check(Files.readString(report).contains("E2010"), "native manifest failure exports existing structured config facts");
+    }
+
     private static void testCliMissingTool(Path scratch) throws Exception {
         System.out.println("-- the CLI fails closed with no clang on PATH --");
         Path root = scratch.resolve("cli-no-tool-project");
@@ -1234,12 +1274,13 @@ public final class NativeToolchainTest {
         Path directory = Files.createDirectories(
             scratch.resolve("cli-major-path"));
         writeWrapper(directory.resolve("clang"), 13);
+        Path report = scratch.resolve("unsupported-tool.json");
         List<String> command = List.of(
             Path.of(System.getProperty("java.home"), "bin", "java").toString(),
             "-cp", absoluteClasspath(),
             Main.class.getName(),
             "native", "build",
-            root.resolve("src/main.deal").toString());
+            root.resolve("src/main.deal").toString(), "--diagnostics-json", report.toString());
         NativeCompiler.Result probe = NativeCompiler.run(command, REPO,
             Map.of("PATH", directory.toString()));
         checkEq(1, probe.exitCode(),
@@ -1250,6 +1291,11 @@ public final class NativeToolchainTest {
             "the CLI diagnostic names the observed major: " + probe.stderr());
         check(Files.notExists(root.resolve("build/native/native/main")),
             "no product exists after the unsupported-compiler failure");
+        String json = Files.readString(report);
+        check(json.contains("\"reason\": \"native.toolchain-unsupported\"")
+                        && json.contains("\"operation\": \"native.version\"")
+                        && json.contains("\"exitCode\": 0") && json.contains("clang version 13"),
+                "CLI carries native producer evidence instead of empty diagnostics success");
     }
 
     // =========================================================================
