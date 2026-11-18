@@ -2854,19 +2854,40 @@ public final class TypeChecker {
         if (condition != Type.Error.INSTANCE && !(condition instanceof Type.Boolean))
             error(DiagnosticCode.E3007, "Conditional condition must be boolean, got " + typeName(condition), conditional.condition().span());
         NullNarrowing entry = narrowing.branch();
+        Symbol.ClassSymbol declaration = contextualClassDecl;
+        boolean reverse = context == null
+            && (conditional.consequent() instanceof ArrayLiteralExpr || conditional.consequent() instanceof ObjectLiteralExpr)
+            && (!(conditional.alternate() instanceof ArrayLiteralExpr || conditional.alternate() instanceof ObjectLiteralExpr)
+                || literalNeedsContext(conditional.consequent()) && !literalNeedsContext(conditional.alternate()));
+        ExpressionNode first = reverse ? conditional.alternate() : conditional.consequent();
+        ExpressionNode second = reverse ? conditional.consequent() : conditional.alternate();
         narrowing = entry.branch();
-        narrowCondition(conditional.condition(), true);
+        narrowCondition(conditional.condition(), !reverse);
         expectedType = context;
-        Type consequent = checkExpression(conditional.consequent());
+        Type firstType = checkExpression(first);
         NullNarrowing selected = narrowing;
         narrowing = entry.branch();
-        narrowCondition(conditional.condition(), false);
+        narrowCondition(conditional.condition(), reverse);
         expectedType = context;
-        Type alternate = checkExpression(conditional.alternate());
+        contextualClassDecl = declaration;
+        if (context == null && (second instanceof ArrayLiteralExpr || second instanceof ObjectLiteralExpr)
+                && (firstType instanceof Type.Array || firstType instanceof Type.Class || firstType instanceof Type.Table)) {
+            expectedType = firstType;
+            contextualClassDecl = exactClassDecls.get(first);
+        }
+        Type secondType = checkExpression(second);
         selected.merge(narrowing);
         narrowing = selected;
         expectedType = context;
-        return conditionalResult(consequent, alternate, context, conditional.span());
+        contextualClassDecl = declaration;
+        return reverse ? conditionalResult(secondType, firstType, context, conditional.span())
+            : conditionalResult(firstType, secondType, context, conditional.span());
+    }
+
+    private static boolean literalNeedsContext(ExpressionNode expression) {
+        return expression instanceof ObjectLiteralExpr
+            || expression instanceof ArrayLiteralExpr array
+                && (array.elements().isEmpty() || array.elements().stream().anyMatch(TypeChecker::literalNeedsContext));
     }
 
     private Type checkOptionalGuard(OptionalGuardExpr guard) {

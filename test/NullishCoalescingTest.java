@@ -88,6 +88,9 @@ public final class NullishCoalescingTest {
             function check(ok:boolean):void { if(!ok){throw {name:"PROVIDER",message:"fallback provider"};} }
             function first(x:a.Item|null, rows:a.Item[]|null):void {
               const item=x??{value:17};check(item.value===(x===null?17:x.value));
+              const forward=x===null?{value:19}:item;check(forward.value===(x===null?19:item.value));
+              const backward=x!==null?item:{value:20};check(backward.value===(x===null?20:item.value));
+              const empty=rows===null?[]:rows;check(empty.length===(rows===null?0:rows.length));
               const items=rows??[{value:18}];check(items[0].value===(rows===null?18:rows[0].value));
               if(x!==null){check(item===x);}if(rows!==null){check(items===rows);}
             }

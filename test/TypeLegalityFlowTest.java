@@ -173,9 +173,23 @@ public final class TypeLegalityFlowTest {
         check("function f(a:number[]|null):void{let x:unknown=a??[\"s\"];}", null);
     }
 
+    private static void ternaryLiteralContext() {
+        String prefix = "class Item{value:number;}function f(b:boolean,a:number[],c:Item,r:Record<string,unknown>):void{";
+        for (String expression : List.of("b?a:[]", "b?[]:a", "b?c:{value:1}", "b?{value:1}:c",
+                "b?r:{}", "b?{}:r", "b?[[1]]:[[]]", "b?[[]]:[[1]]", "b?[1]:[]", "b?[]:[1]"))
+            check(prefix + "let x=" + expression + ";}", null);
+        check(prefix + "let x=b?a:[\"bad\"];}", "E3011");
+        check(prefix + "let x=b?[\"bad\"]:a;}", "E3011");
+        check(prefix + "let x=b?{}:c;}", "E4001");
+        for (String expression : List.of("b?[]:[]", "b?{}:{}", "b?null:[]", "b?JSON.parse(\"[]\"):[]"))
+            check(prefix + "let x=" + expression + ";}", "E3002");
+        check(prefix + "let x=[[1],[]];}", "E3002");
+    }
+
     public static void main(String[] args) throws Exception {
         bindingOwnership();
         coalescingLiteralContext();
+        ternaryLiteralContext();
         boundedNarrowing();
         for (String expression : List.of("x!==null && x>0", "x===null || x>0", "!(x===null) && x>0"))
             check("function f(x:number|null):boolean{return " + expression + ";}", null);
