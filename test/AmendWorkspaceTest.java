@@ -233,7 +233,9 @@ public final class AmendWorkspaceTest {
                     new CompilerProtocol.ChangeSetPrecondition(base.sourceDigest(), Map.of(body.id().value(), body.fingerprint())),
                     change, List.of(new AmendWorkspace.ReplaceFunctionBody(body.id(), invalid)));
             check(!staged.accepted() && staged.source().equals(clean)
-                            && staged.diagnostics().stream().anyMatch(d -> d.facts().reason().equals("syntax.expression-required"))
+                            && staged.diagnostics().stream().anyMatch(d -> d.facts().reason().equals("syntax.expression-required")
+                                    && d.facts().syntax().foundKind().equals("COMMA")
+                                    && d.facts().syntax().lexeme().equals(","))
                             && staged.diagnostics().stream().allMatch(d -> d.missingSymbols().isEmpty() && !d.code().equals("E2001")),
                     "recovered later list values never authorize resolution or candidate publication: " + staged.diagnostics());
             var repaired = AmendWorkspace.patchRepairWorkspace(clean, "probe.deal", staged.workspace(),

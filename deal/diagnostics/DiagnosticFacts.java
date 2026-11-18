@@ -13,7 +13,21 @@ public record DiagnosticFacts(
         List<PathSegment> path,
         CallContext call,
         OperatorContext operator,
-        TypeMismatch mismatch) {
+        TypeMismatch mismatch,
+        SyntaxContext syntax) {
+    /** Token spelling is a bounded raw-lexeme prefix in UTF-16 units, escaped only by transport. */
+    public record SyntaxContext(String context, List<String> expectedKinds, String foundKind,
+                                String lexeme, int lexemeLength, boolean truncated) {
+        public SyntaxContext {
+            Objects.requireNonNull(context, "context");
+            expectedKinds = List.copyOf(expectedKinds);
+            Objects.requireNonNull(foundKind, "foundKind");
+            Objects.requireNonNull(lexeme, "lexeme");
+            if (lexemeLength < lexeme.length() || truncated != (lexemeLength > lexeme.length()))
+                throw new IllegalArgumentException("Invalid syntax lexeme geometry");
+        }
+    }
+
     public enum TypeComponentKind { ARRAY_ELEMENT, NULLABLE_INNER, FUNCTION_RESULT, FUNCTION_PARAMETER }
 
     /** Only parameter components carry a zero-based index; other components use -1. */
@@ -94,16 +108,26 @@ public record DiagnosticFacts(
         this(reason, operation, expected, actual, guidance, path, call, operator, null);
     }
 
+    public DiagnosticFacts(String reason, String operation, String expected, String actual,
+                           List<String> guidance, List<PathSegment> path, CallContext call,
+                           OperatorContext operator, TypeMismatch mismatch) {
+        this(reason, operation, expected, actual, guidance, path, call, operator, mismatch, null);
+    }
+
     public DiagnosticFacts withCall(CallContext context) {
-        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, context, operator, mismatch);
+        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, context, operator, mismatch, syntax);
     }
 
     public DiagnosticFacts withOperator(OperatorContext context) {
-        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, context, mismatch);
+        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, context, mismatch, syntax);
     }
 
     public DiagnosticFacts withMismatch(TypeMismatch context) {
-        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, context);
+        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, context, syntax);
+    }
+
+    public DiagnosticFacts withSyntax(SyntaxContext context) {
+        return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, mismatch, context);
     }
 
     public static final DiagnosticFacts EMPTY = new DiagnosticFacts("", "", "", "", List.of());

@@ -1688,7 +1688,24 @@ JSON scanner offsets, which are one-based UTF-8 byte positions.
 
 `facts` separates producer-owned `reason`, failed `operation`, `expected`,
 `actual`, ordered `guidance`, a typed `path`, nullable typed `call` context
-and nullable typed `operator` and `mismatch` contexts from explanatory message text.
+and nullable typed `operator`, `mismatch`, and `syntax` contexts from explanatory message text.
+Enriched parser token/delimiter/subset/type/expression/terminator diagnostics carry
+`syntax.context`, ordered `expectedKinds`, `foundKind`, `lexeme`,
+`lexemeLength`, and `truncated`. Concrete token expectations list admitted kinds;
+identifier expectations include `IDENTIFIER`, `ASYNC`, `AS`, `FROM`, `OF`.
+Abstract type/expression/subset requirements leave `expectedKinds` empty rather
+than claiming an exhaustive grammar set. `lexeme` is the lexer's raw spelling
+prefix, at most 80 UTF-16 units, shortened by one if necessary to avoid splitting
+a valid surrogate pair. `lexemeLength` counts the complete raw lexeme in UTF-16
+units and `truncated` explicitly identifies omission. EOF has kind `EOF`, empty
+lexeme, zero length and no truncation. Template-token lexemes exclude their outer
+backticks as in the lexer carrier; this is not a source excerpt. JSON transports
+escape controls, quotes, backslashes and isolated surrogate units exactly once,
+without decoding source escape spellings. Absent syntax evidence is `null`.
+Syntax context carries no independent source range; the complete diagnostic
+range and ordered opener notes remain authoritative, including after template
+rebasing. These facts do not change parser progress, token admission or repair
+authorization.
 Assignment, ordinary call-argument, expression-return and supplied class-field
 type failures retain the first incompatible type constraint in `mismatch`:
 `rule`, ordered typed `path`, component `expected`/`actual`, and `truncated`.

@@ -877,7 +877,8 @@ public final class Parser {
         diagnostics.add(fromTokenAnchor(DiagnosticCode.E1032, "error", "Expected type name", peek())
                 .withFacts(new deal.diagnostics.DiagnosticFacts("syntax.type-required", "parse.type",
                         "DEAL type", peek().type().name(),
-                        List.of("Provide the intended admitted type annotation; no type is inferred from recovery."))));
+                        List.of("Provide the intended admitted type annotation; no type is inferred from recovery."))
+                        .withSyntax(syntaxContext("type", peek(), List.of()))));
         return null;
     }
 
@@ -1882,11 +1883,22 @@ public final class Parser {
         return null;
     }
 
+    private static deal.diagnostics.DiagnosticFacts.SyntaxContext syntaxContext(
+            String context, Token found, List<String> expectedKinds) {
+        String lexeme = found.lexeme();
+        int end = Math.min(80, lexeme.length());
+        if (end < lexeme.length() && end > 0 && Character.isHighSurrogate(lexeme.charAt(end - 1))
+                && Character.isLowSurrogate(lexeme.charAt(end))) end--;
+        return new deal.diagnostics.DiagnosticFacts.SyntaxContext(context, expectedKinds, found.type().name(),
+                lexeme.substring(0, end), lexeme.length(), end < lexeme.length());
+    }
+
     private void subsetError(DiagnosticCode code, String message, Token token, String rule,
                              String expected, String guidance) {
         diagnostics.add(fromTokenAnchor(code, "error", message, token).withFacts(
                 new deal.diagnostics.DiagnosticFacts("syntax.subset." + rule, "parse.subset",
-                        expected, token.type().name(), List.of(guidance))));
+                        expected, token.type().name(), List.of(guidance))
+                        .withSyntax(syntaxContext("subset." + rule, token, List.of()))));
     }
 
     private void functionExpressionStatementError() {
@@ -1903,7 +1915,9 @@ public final class Parser {
     private void expectedToken(DiagnosticCode code, String message, TokenType expected) {
         diagnostics.add(fromTokenAnchor(code, "error", message, peek()).withFacts(
                 new deal.diagnostics.DiagnosticFacts("syntax.expected-token", "parse.token",
-                        expected.name(), peek().type().name(), List.of())));
+                        expected.name(), peek().type().name(), List.of())
+                        .withSyntax(syntaxContext("token", peek(), expected == TokenType.IDENTIFIER
+                                ? List.of("IDENTIFIER", "ASYNC", "AS", "FROM", "OF") : List.of(expected.name())))));
     }
 
     private Token expectCloser(TokenType kind, DiagnosticCode code, String message, Token opener) {
@@ -1915,7 +1929,8 @@ public final class Parser {
     private void expectedCloser(DiagnosticCode code, String message, TokenType kind, Token opener) {
         diagnostics.add(fromTokenAnchor(code, "error", message, peek())
                 .withFacts(new deal.diagnostics.DiagnosticFacts("syntax.unclosed-delimiter", "parse.delimiter",
-                        kind.name(), peek().type().name(), List.of("Close the delimiter opened at the related location.")))
+                        kind.name(), peek().type().name(), List.of("Close the delimiter opened at the related location."))
+                        .withSyntax(syntaxContext("delimiter", peek(), List.of(kind.name()))))
                 .withNote("Unclosed delimiter opened here", opener.range(file)));
     }
 
@@ -1935,7 +1950,8 @@ public final class Parser {
         diagnostics.add(fromTokenAnchor(DiagnosticCode.E1053, "error", missingTerminatorMessage(), peek())
                 .withFacts(new deal.diagnostics.DiagnosticFacts("syntax.missing-terminator", "parse.terminator",
                         TokenType.SEMICOLON.name(), peek().type().name(),
-                        List.of("Terminate the preceding statement with ';' at this boundary."))));
+                        List.of("Terminate the preceding statement with ';' at this boundary."))
+                        .withSyntax(syntaxContext("terminator", peek(), List.of("SEMICOLON")))));
     }
 
     /** The E1053 message for the current (missing-terminator) position. */
@@ -2111,7 +2127,8 @@ public final class Parser {
         diagnostics.add(fromTokenAnchor(DiagnosticCode.E1037, "error", "Expected expression", token)
                 .withFacts(new deal.diagnostics.DiagnosticFacts("syntax.expression-required", "parse.expression",
                         "DEAL expression", token.type().name(),
-                        List.of("Provide the intended expression; no value or execution path is inferred from recovery."))));
+                        List.of("Provide the intended expression; no value or execution path is inferred from recovery."))
+                        .withSyntax(syntaxContext("expression", token, List.of()))));
     }
 
     private ExpressionNode parseListElement() {

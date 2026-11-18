@@ -3101,7 +3101,7 @@ public class DiagnosticRangeTest {
             + range.replace("\n", "\n      ") + ",\n      \"notes\": "
             + notes.replace("\n", "\n      ") + ",\n"
             + "      \"facts\": {\n        \"reason\": \"\",\n        \"operation\": \"\",\n"
-            + "        \"expected\": \"\",\n        \"actual\": \"\",\n        \"guidance\": [],\n        \"path\": [],\n        \"call\": null,\n        \"operator\": null,\n        \"mismatch\": null\n      },\n"
+            + "        \"expected\": \"\",\n        \"actual\": \"\",\n        \"guidance\": [],\n        \"path\": [],\n        \"call\": null,\n        \"operator\": null,\n        \"mismatch\": null,\n        \"syntax\": null\n      },\n"
             + "      \"missingSymbols\": []\n    }\n  ]\n}";
     }
 
@@ -3225,6 +3225,28 @@ public class DiagnosticRangeTest {
             }
         }
 
+        var syntaxKinds = new java.util.ArrayList<>(List.of("COLON"));
+        var syntaxContext = new deal.diagnostics.DiagnosticFacts.SyntaxContext("token", syntaxKinds,
+                "STRING_LITERAL", "\"\u0000\uD800😀\"", 6, false);
+        syntaxKinds.clear();
+        var syntaxFacts = deal.diagnostics.DiagnosticFacts.EMPTY.withSyntax(syntaxContext);
+        check(syntaxFacts.withCall(null).withOperator(null).withMismatch(null).syntax().equals(syntaxContext)
+                        && syntaxContext.expectedKinds().equals(List.of("COLON")),
+                "syntax context copies preserve independent evidence and immutable expected alternatives");
+        var syntaxDiagnostic = escaped.withFacts(syntaxFacts);
+        var syntaxDocument = deal.amend.CompilerProtocolJson.requireObject(deal.amend.CompilerProtocolJson.decode(
+                DiagnosticStructuredOutput.toJson(List.of(syntaxDiagnostic))), "document");
+        var syntaxEntries = deal.amend.CompilerProtocolJson.requireArray(
+                deal.amend.CompilerProtocolJson.field(syntaxDocument, "diagnostics"), "diagnostics");
+        var syntaxEntry = deal.amend.CompilerProtocolJson.requireObject(syntaxEntries.items().getFirst(), "diagnostic");
+        check(deal.amend.CompilerProtocolJson.encode(syntaxFacts).equals(deal.semantic.ir.CanonicalJson.serializeText(
+                        deal.amend.CompilerProtocolJson.field(syntaxEntry, "facts"))),
+                "syntax lexeme escaping preserves NUL, lone units and valid pairs across sole serializers");
+        boolean invalidSyntax = false;
+        try { new deal.diagnostics.DiagnosticFacts.SyntaxContext("token", List.of(), "EOF", "", 1, false); }
+        catch (IllegalArgumentException expected) { invalidSyntax = true; }
+        check(invalidSyntax, "inconsistent syntax lexeme geometry fails closed");
+
         var facts = new deal.diagnostics.DiagnosticFacts("name.unresolved", "read", "binding", "missing",
                 List.of("Check spelling \"first\".", "Check scope."));
         CompilerDiagnostic rich = escaped.withFacts(facts)
@@ -3278,7 +3300,10 @@ public class DiagnosticRangeTest {
                 new deal.diagnostics.DiagnosticFacts.TypeComponent(
                         deal.diagnostics.DiagnosticFacts.TypeComponentKind.FUNCTION_PARAMETER, 2)));
         var mismatch = new deal.diagnostics.DiagnosticFacts.TypeMismatch("type.exact", componentPath, "number", "string", false);
-        operatorFacts = operatorFacts.withMismatch(mismatch);
+        operatorFacts = operatorFacts.withMismatch(mismatch).withSyntax(syntaxContext);
+        check(operatorFacts.call().equals(callContext) && operatorFacts.operator().equals(operator)
+                        && operatorFacts.mismatch().equals(mismatch) && operatorFacts.withSyntax(null).syntax() == null,
+                "adding and clearing syntax facts preserve unrelated call, operator and mismatch evidence");
         componentPath.clear();
         check(mismatch.path().size() == 1 && operatorFacts.withCall(null).withOperator(null).mismatch().equals(mismatch)
                         && operatorFacts.call().equals(callContext) && operatorFacts.operator().equals(operator),

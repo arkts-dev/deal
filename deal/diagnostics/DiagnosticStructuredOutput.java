@@ -167,7 +167,7 @@ public final class DiagnosticStructuredOutput {
         sb.append(",\n");
         indent(sb, level + 1).append("\"mismatch\": ");
         var mismatch = facts.mismatch();
-        if (mismatch == null) sb.append("null\n");
+        if (mismatch == null) sb.append("null");
         else {
             sb.append("{\n");
             indent(sb, level + 2).append("\"rule\": ").append(jsonString(mismatch.rule())).append(",\n");
@@ -182,6 +182,22 @@ public final class DiagnosticStructuredOutput {
             indent(sb, level + 2).append("\"expected\": ").append(jsonString(mismatch.expected())).append(",\n");
             indent(sb, level + 2).append("\"actual\": ").append(jsonString(mismatch.actual())).append(",\n");
             indent(sb, level + 2).append("\"truncated\": ").append(mismatch.truncated()).append('\n');
+            indent(sb, level + 1).append('}');
+        }
+        sb.append(",\n");
+        indent(sb, level + 1).append("\"syntax\": ");
+        var syntax = facts.syntax();
+        if (syntax == null) sb.append("null\n");
+        else {
+            sb.append("{\n");
+            indent(sb, level + 2).append("\"context\": ").append(jsonString(syntax.context())).append(",\n");
+            indent(sb, level + 2).append("\"expectedKinds\": ");
+            appendStrings(sb, syntax.expectedKinds());
+            sb.append(",\n");
+            indent(sb, level + 2).append("\"foundKind\": ").append(jsonString(syntax.foundKind())).append(",\n");
+            indent(sb, level + 2).append("\"lexeme\": ").append(jsonString(syntax.lexeme())).append(",\n");
+            indent(sb, level + 2).append("\"lexemeLength\": ").append(syntax.lexemeLength()).append(",\n");
+            indent(sb, level + 2).append("\"truncated\": ").append(syntax.truncated()).append('\n');
             indent(sb, level + 1).append("}\n");
         }
         indent(sb, level).append('}');

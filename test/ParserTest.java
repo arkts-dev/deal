@@ -66,6 +66,26 @@ public class ParserTest {
 
     private static void testSubsetAndListRecoveryFacts() {
         String prefix = "// 😀\r\n";
+        for (String[] spelling : new String[][] {{"\"next\"", "\"next\""},
+                {"\"a\\n\\\"b\"", "\"a\\n\\\"b\""},
+                {"\"" + "a".repeat(78) + "😀tail\"", "\"" + "a".repeat(78)},
+                {"\"" + "b".repeat(90) + "\"", "\"" + "b".repeat(79)},
+                {"\"\u0000\uD800\"", "\"\u0000\uD800\""}}) {
+            String lexeme = spelling[0];
+            var syntax = diagOf(parse(prefix + "let value=1 " + lexeme), "E1053").facts().syntax();
+            check(syntax.context().equals("terminator") && syntax.expectedKinds().equals(List.of("SEMICOLON"))
+                            && syntax.foundKind().equals("STRING_LITERAL") && syntax.lexeme().equals(spelling[1])
+                            && syntax.lexemeLength() == lexeme.length() && syntax.truncated() == !lexeme.equals(spelling[1]),
+                    "found raw lexeme retains escape spelling and bounded UTF-16 prefix without splitting a valid pair");
+        }
+        var identifierSyntax = diagOf(parse("function f(1:number):void{}"), "E1029");
+        check(identifierSyntax != null && identifierSyntax.facts().syntax().expectedKinds()
+                        .equals(List.of("IDENTIFIER", "ASYNC", "AS", "FROM", "OF")),
+                "identifier expectation publishes admitted contextual keyword alternatives");
+        var eofSyntax = diagOf(parse(prefix + "let value=1"), "E1053").facts().syntax();
+        check(eofSyntax.foundKind().equals("EOF") && eofSyntax.lexeme().isEmpty()
+                        && eofSyntax.lexemeLength() == 0 && !eofSyntax.truncated(),
+                "EOF is explicit rather than a fabricated source lexeme");
         for (String[] sample : new String[][] {
                 {"function outer():void{function inner():void{}}", "declaration-placement",
                         "function outer():void{let inner=():void=>{};}"},
@@ -112,6 +132,8 @@ public class ParserTest {
         var embedded = diagOf(parse(template), "E1037");
         check(embedded != null && embedded.facts().reason().equals("syntax.expression-required")
                         && embedded.facts().actual().equals("COMMA")
+                        && embedded.facts().syntax().context().equals("expression")
+                        && embedded.facts().syntax().lexeme().equals(",")
                         && embedded.range().startScalarOffset() == template.indexOf(',')
                         && embedded.range().scalarLength() == 1,
                 "template list omission retains producer facts and full-candidate UTF-16 token coordinates");
