@@ -6843,7 +6843,11 @@ public final class SemanticLowerer {
                     syntheticTypes.put(binary, readType);
                     var store = new AssignmentExpr(assignment.span(), target, binary);
                     syntheticTypes.put(store, readType);
-                    try { return lowerAssignment(store, slot); }
+                    try {
+                        ValueId updated = lowerAssignment(store, assignment.operator().postfix() ? null : slot);
+                        return assignment.operator().postfix()
+                            ? emitBuiltinLoad(oldBinding, valueDescriptorOf(readType), assignment.span(), slot) : updated;
+                    }
                     finally {
                         syntheticTypes.remove(store);
                         syntheticTypes.remove(binary);

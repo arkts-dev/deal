@@ -741,18 +741,16 @@ public final class Lexer {
                 bump();
                 yield makeToken(TokenType.DOT, ".");
             }
-            case '+' -> { bump(); if (pos < source.length() && source.charAt(pos) == '=') { bump(); yield makeToken(TokenType.PLUS_ASSIGN, "+="); } yield makeToken(TokenType.PLUS, "+"); }
+            case '+' -> {
+                bump();
+                if (pos < source.length() && source.charAt(pos) == '+') { bump(); yield makeToken(TokenType.INCREMENT, "++"); }
+                if (pos < source.length() && source.charAt(pos) == '=') { bump(); yield makeToken(TokenType.PLUS_ASSIGN, "+="); }
+                yield makeToken(TokenType.PLUS, "+");
+            }
             case '-' -> {
                 bump();
                 if (pos < source.length() && source.charAt(pos) == '=') { bump(); yield makeToken(TokenType.MINUS_ASSIGN, "-="); }
-                if (pos < source.length() && source.charAt(pos) == '-') {
-                    diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E1042,
-                            "Adjacent '-' tokens require whitespace or a comment", tokenStartRange())
-                            .withFacts(new deal.diagnostics.DiagnosticFacts("syntax.adjacent-minus", "lex.operator",
-                                    "whitespace or comment between minus tokens", "--", List.of(
-                                            "If two minus operators are intended, separate them with whitespace or a comment; DEAL does not admit a decrement operator.")))
-                            .withNote("Adjacent minus starts here", currentComponentRange()));
-                }
+                if (pos < source.length() && source.charAt(pos) == '-') { bump(); yield makeToken(TokenType.DECREMENT, "--"); }
                 yield makeToken(TokenType.MINUS, "-");
             }
             case '/' -> { bump(); if (pos < source.length() && source.charAt(pos) == '=') { bump(); yield makeToken(TokenType.SLASH_ASSIGN, "/="); } yield makeToken(TokenType.SLASH, "/"); }

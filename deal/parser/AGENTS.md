@@ -22,6 +22,8 @@ Keep checker/backend policy outside parsing; add focused positive/negative fixtu
   association. Optional postfix guards and completed wrappers retain chain ownership;
   parentheses end chains. Chains cannot be assignment targets; deletion keeps its
   terminal target.
+- Assignments associate right; numeric prefix/postfix updates retain result form
+  and assignable targets. Reject line breaks before postfix updates, including comments.
 - Decode validated template/string escapes once while retaining physical spans.
   Remove numeric separators only after lexing; radix integers round once without
   fixed-width overflow.

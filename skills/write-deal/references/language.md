@@ -12,6 +12,8 @@ main(): void; no-result functions use bare return or fallthrough.
 
 Comments use // or /* ... */. `$` bindings are compiler-owned. Property keys need
 explicit values. Numeric `+=`, `-=`, `*=`, `/=`, `%=` and string `+=` evaluate targets once.
+Numeric prefix `++`/`--` yield the new value; postfix yields the old value.
+No line break before postfix updates; write `- -x` for double negation.
 Arrows have parenthesized parameters and
 explicit results: `(x: number): number => x * 2`. Block/expression bodies are legal;
 a void expression body must produce void. Keep async with its parameter opening

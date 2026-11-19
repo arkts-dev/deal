@@ -7,7 +7,11 @@ public enum AssignmentOperator {
     SUB("-=", BinaryOp.SUB),
     MUL("*=", BinaryOp.MUL),
     DIV("/=", BinaryOp.DIV),
-    REM("%=", BinaryOp.REM);
+    REM("%=", BinaryOp.REM),
+    PRE_INCREMENT("++", BinaryOp.ADD),
+    PRE_DECREMENT("--", BinaryOp.SUB),
+    POST_INCREMENT("++", BinaryOp.ADD),
+    POST_DECREMENT("--", BinaryOp.SUB);
 
     private final String text;
     private final BinaryOp binary;
@@ -19,4 +23,6 @@ public enum AssignmentOperator {
 
     public String text() { return text; }
     public BinaryOp binary() { return binary; }
+    public boolean update() { return this == PRE_INCREMENT || this == PRE_DECREMENT || postfix(); }
+    public boolean postfix() { return this == POST_INCREMENT || this == POST_DECREMENT; }
 }

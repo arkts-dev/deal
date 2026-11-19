@@ -1027,7 +1027,7 @@ public class ParserTest {
                 == expected[i], "binary64 value " + literals[i]);
         }
         for (String expression : new String[]{"-2147483648", "-(2147483648)",
-                "-2147483649", "2147483648 + 0", "1 - 2147483648", "--2147483648"}) {
+                "-2147483649", "2147483648 + 0", "1 - 2147483648", "- -2147483648"}) {
             assertNoParseErrors(parse("let a: number = " + expression + ";"), expression);
         }
         ParseResult r = parse("let a: number = -2147483648;");

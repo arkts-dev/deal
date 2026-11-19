@@ -755,20 +755,9 @@ public class LexerTest {
                     "explicitly chosen literal-backslash template repair " + suffix);
         }
         for (String text : List.of("1--2", "x--y", "--x")) {
-            assertDiagnosticCode(tokenize(text).diagnostics(), "E1042", "adjacent minus " + text);
-            String source = "// 😀\r\n\t" + text;
-            var diagnostic = findDiag(tokenize(source), "E1042");
-            int first = source.indexOf("--");
-            check(diagnostic != null && diagnostic.facts().reason().equals("syntax.adjacent-minus")
-                            && diagnostic.facts().expected().equals("whitespace or comment between minus tokens")
-                            && diagnostic.facts().actual().equals("--")
-                            && diagnostic.range().startScalarOffset() == first
-                            && diagnostic.range().endScalarOffset() == first + 1
-                            && diagnostic.notes().getFirst().range().startScalarOffset() == first + 1
-                            && diagnostic.notes().getFirst().range().endScalarOffset() == first + 2,
-                    "adjacent minus retains both token positions without admitting decrement " + text);
-            assertNoDiagnostics(tokenize(source.replace("--", "- -")).diagnostics(),
-                    "chosen two-operator separation " + text);
+            var tokens = tokenize(text);
+            assertNoDiagnostics(tokens.diagnostics(), "decrement token " + text);
+            check(tokens.tokens().stream().anyMatch(t -> t.type() == TokenType.DECREMENT), "longest-match decrement " + text);
         }
         for (String text : List.of("1- -2", "x-/*gap*/-y", "- -x", "`\\n`", "`\\q`", "`\\0`", "`\\x41`", "`\\u0041`", "`\\u{10FFFF}`", "`\\u{00000000041}`")) {
             assertNoDiagnostics(tokenize(text).diagnostics(), "syntax control " + text);

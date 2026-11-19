@@ -1137,7 +1137,26 @@ public final class Parser {
             return new UnaryExpr(sp, UnaryOp.NEG, operand);
         }
 
-        return parsePostfix();
+        if (peek().type() == TokenType.INCREMENT || peek().type() == TokenType.DECREMENT) {
+            Token operator = advance();
+            ExpressionNode target = parsePostfix();
+            return target == null ? null : updateExpression(operator, target, false);
+        }
+        ExpressionNode target = parsePostfix();
+        if (target != null && (peek().type() == TokenType.INCREMENT || peek().type() == TokenType.DECREMENT)
+                && peek().line() == target.span().endLine())
+            return updateExpression(advance(), target, true);
+        return target;
+    }
+
+    private AssignmentExpr updateExpression(Token operator, ExpressionNode target, boolean postfix) {
+        if (!isValidAssignmentTarget(target)) error(DiagnosticCode.E1033, "Invalid update target", target);
+        AssignmentOperator kind = operator.type() == TokenType.INCREMENT
+            ? (postfix ? AssignmentOperator.POST_INCREMENT : AssignmentOperator.PRE_INCREMENT)
+            : (postfix ? AssignmentOperator.POST_DECREMENT : AssignmentOperator.PRE_DECREMENT);
+        Span span = postfix ? spanBetween(target.span(), spanOf(operator)) : spanBetween(spanOf(operator), target.span());
+        return new AssignmentExpr(span, target,
+            new LiteralExpr(spanOf(operator), new LiteralValue.NumberLiteral(1)), kind);
     }
 
     private ExpressionNode parsePostfix() {
