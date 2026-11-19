@@ -345,6 +345,7 @@ public final class ErrorNameMessageTest {
             Path input=Files.createDirectories(root.resolve("oracle/src")).resolve("main.deal");
             Files.writeString(input,source.replace("function diagnostic():number", "export function diagnostic():number") + """
                 class MetadataRoot { items:number[]; }
+                export function diagnosticArray():number{let xs:number[]=[1];return xs[2];}
                 export function diagnosticMetadata():MetadataRoot {
                   try { return JSON.parse("{\\"items\\":[false]}"); }
                   catch(caught) { if(caught instanceof Error){caught.message="chosen";throw caught;} let unexpected:Error={name:"Unexpected",message:"not Error"};throw unexpected; }
@@ -376,6 +377,13 @@ public final class ErrorNameMessageTest {
                 var failed=SemanticOracle.invokeSyncEntry(executable,tables,registries,new SemanticOracle.HostResponder(){},
                     executable.entryModule(),"diagnostic",List.of());
                 if(!(failed.terminal() instanceof SemanticRuntimeModel.Terminal.DealFailure failure)) throw new AssertionError(failed.comparisonReport());
+                var arrayFailure = SemanticOracle.invokeSyncEntry(executable,tables,registries,new SemanticOracle.HostResponder(){},
+                    executable.entryModule(),"diagnosticArray",List.of());
+                if (!(arrayFailure.terminal() instanceof SemanticRuntimeModel.Terminal.DealFailure arrayDetail)
+                        || !arrayDetail.error().metadata().get("arrayIndex").equals("0x1.0p1")
+                        || !arrayDetail.error().metadata().get("arrayLength").equals("1")
+                        || !arrayDetail.error().metadata().get("arrayConstraint").equals("read-range"))
+                    throw new AssertionError("Oracle dropped original read operands: " + arrayFailure.comparisonReport());
                 var metadataFailure = SemanticOracle.invokeSyncEntry(executable,tables,registries,new SemanticOracle.HostResponder(){},
                     executable.entryModule(),"diagnosticMetadata",List.of());
                 if (!(metadataFailure.terminal() instanceof SemanticRuntimeModel.Terminal.DealFailure detail)

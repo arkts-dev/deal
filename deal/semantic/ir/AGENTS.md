@@ -46,7 +46,9 @@ IDs without renumbering existing ones.
 | ARRAY_SEARCH | Array/element/number, includes mode and boolean/number result; ordered reached checks and early exit |
 
 Array mutations/results preserve descriptors, aliases and rollback. Present-element
-failures retain original source-index E8003 and unwrapped leaf cause/origin. Missing
+failures retain original source-index E8003 and unwrapped leaf cause/origin.
+Rejected array bounds retain original index/observed length/failed constraint at
+the executor, independently of bare registry rendering and without rereading data. Missing
 strict reads fail even when elements admit undefined. Includes uses SameValueZero
 and holes as undefined; indexOf uses strict equality and skips holes. Native storage
 remains dense. Numeric bounds truncate/clamp before integer casts.

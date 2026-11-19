@@ -2156,8 +2156,12 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
             double index = numberUse(valueOf(payload.index()));
             if (!Double.isFinite(index) || index != Math.rint(index) || index < 0
                     || index >= array.elements().size()
-                    || array.elements().get((int) index) instanceof Value.MissingValue)
-                throw registryFailure(op, FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR, null, null);
+                    || array.elements().get((int) index) instanceof Value.MissingValue) {
+                BoundaryFailure failure = FailureContractRegistry.render(FailureArmId.ARRAY_READ_BOUNDS,
+                    new LinkedHashMap<>(), null, null, null);
+                throw DealFailure.of(BoundaryExecutor.arrayConstraint(failure, index, array.elements().size(),
+                    index >= 0 && index < array.elements().size() ? "present-element" : "read-range"), op.origin(), List.copyOf(frames));
+            }
             Value value = array.elements().get((int) index);
             BoundaryOutcome outcome = BoundaryExecutor.execute(FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR,
                 (RuntimeDescriptor) op.resultType(), viewOfValue(value), BoundaryContext.element((int) index + 1),

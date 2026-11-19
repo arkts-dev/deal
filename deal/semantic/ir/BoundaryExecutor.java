@@ -326,13 +326,22 @@ public final class BoundaryExecutor {
                 + "length; got " + length);
         }
         if (!Double.isFinite(index) || index != Math.rint(index) || index < 0 || index >= length) {
-            return new BoundaryOutcome.Fail(FailureContractRegistry.render(
+            return new BoundaryOutcome.Fail(arrayConstraint(FailureContractRegistry.render(
                 FailureArmId.ARRAY_READ_BOUNDS, new LinkedHashMap<>(), null, null,
-                null));
+                null), index, length, "read-range"));
         }
         // The read's value/missing decision is the contextual boundary's,
         // not this cell's; the executor commits nothing.
         return new BoundaryOutcome.Pass(view);
+    }
+
+    /** Enrich only the rejecting producer's original operands; never access the rejected value. */
+    public static BoundaryFailure arrayConstraint(BoundaryFailure failure, double index, int length, String constraint) {
+        Map<String, String> metadata = new LinkedHashMap<>(failure.metadata());
+        metadata.put("arrayIndex", CanonicalJson.numberHex(index));
+        metadata.put("arrayLength", Integer.toString(length));
+        metadata.put("arrayConstraint", !Double.isFinite(index) || index != Math.rint(index) ? "finite-integer" : constraint);
+        return new BoundaryFailure(failure.policy(), failure.code(), failure.message(), failure.expected(), failure.actual(), metadata, failure.cause());
     }
 
     /** ARRAY_WRITE_BOUNDS_THEN_ELEMENT: bounds first, then the element check. */
@@ -348,8 +357,8 @@ public final class BoundaryExecutor {
                 + "length; got " + length);
         }
         if (!Double.isFinite(index) || index != Math.rint(index) || index < 0 || index > length) {
-            return new BoundaryOutcome.Fail(FailureContractRegistry.render(
-                FailureArmId.ARRAY_WRITE_BOUNDS, new LinkedHashMap<>(), null, null, null));
+            return new BoundaryOutcome.Fail(arrayConstraint(FailureContractRegistry.render(
+                FailureArmId.ARRAY_WRITE_BOUNDS, new LinkedHashMap<>(), null, null, null), index, length, "write-range"));
         }
         // The mutation is the enclosing commit op's, after this boundary;
         // the executor commits nothing.
@@ -369,8 +378,8 @@ public final class BoundaryExecutor {
                 + length);
         }
         if (!Double.isFinite(index) || index != Math.rint(index) || index < 0 || index > length) {
-            return new BoundaryOutcome.Fail(FailureContractRegistry.render(
-                FailureArmId.ARRAY_DELETE_BOUNDS, new LinkedHashMap<>(), null, null, null));
+            return new BoundaryOutcome.Fail(arrayConstraint(FailureContractRegistry.render(
+                FailureArmId.ARRAY_DELETE_BOUNDS, new LinkedHashMap<>(), null, null, null), index, length, "delete-range"));
         }
         // The commit's nil write runs after the boundary.
         return new BoundaryOutcome.Pass(view);

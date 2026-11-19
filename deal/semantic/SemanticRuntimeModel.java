@@ -241,7 +241,8 @@ public final class SemanticRuntimeModel {
         public static java.util.Map<String, String> approvedMetadata(java.util.Map<String, String> supplied) {
             var result = new java.util.LinkedHashMap<String, String>();
             for (String key : List.of("oneBasedIndex", "index", "module", "reason", "name", "field", "classId",
-                    "oneBasedByteOffset", "jsonPath", "jsonPathDepth", "jsonPathTruncated", "jsonMissingField")) {
+                    "oneBasedByteOffset", "jsonPath", "jsonPathDepth", "jsonPathTruncated", "jsonMissingField",
+                    "arrayIndex", "arrayLength", "arrayConstraint")) {
                 String value = supplied.get(key);
                 if (value != null) result.put(key, value);
             }
