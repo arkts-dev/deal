@@ -49,6 +49,17 @@ public final class ErrorNameMessageTest {
             if(!captured.includes('Outer'))process.exit(7);
             const boundary=JSON.parse(runtime.runtimeDiagnostic(runtime.errorValue('Boundary','x'.repeat(8191)+'😀tail'))).runtime;
             if(boundary.message!=='x'.repeat(8191)||boundary.messageLength!==8197||!boundary.messageTruncated)process.exit(8);
+            const longError=runtime.errorValue('Boundary','x'.repeat(8191)+'😀tail');
+            const savedSlice=String.prototype.slice,savedChar=String.prototype.charCodeAt;
+            const savedPush=Array.prototype.push,savedJoin=Array.prototype.join,savedIterator=Array.prototype[Symbol.iterator];
+            let traps=0;const trap=()=>{traps++;throw Error('late diagnostic hook');};
+            String.prototype.slice=String.prototype.charCodeAt=Array.prototype.push=Array.prototype.join=Array.prototype[Symbol.iterator]=trap;
+            let safe;
+            try{safe=runtime.runtimeDiagnostic(longError);}finally{
+              String.prototype.slice=savedSlice;String.prototype.charCodeAt=savedChar;
+              Array.prototype.push=savedPush;Array.prototype.join=savedJoin;Array.prototype[Symbol.iterator]=savedIterator;
+            }
+            if(traps!==0||JSON.parse(safe).runtime.message!=='x'.repeat(8191))process.exit(9);
             """), Path.of("").toAbsolutePath(), Map.of());
         if (getterControl.exitCode() != 0) throw new AssertionError("runtime export invoked mutable host metadata: " + getterControl);
         List<String> jvmProjection = List.of("java", "-cp", TestClasspath.absolute(TestClasspath.EmptyEntry.OMIT),

@@ -42,6 +42,10 @@ const $diagnosticErrorHas = $diagnosticErrors.has.bind($diagnosticErrors);
 const $diagnosticErrorAdd = $diagnosticErrors.add.bind($diagnosticErrors);
 const $descriptorHasOwn = Object.prototype.hasOwnProperty.call.bind(Object.prototype.hasOwnProperty);
 const $diagnosticFinite = Number.isFinite;
+const $diagnosticSlice = String.prototype.slice.call.bind(String.prototype.slice);
+const $diagnosticCharCode = String.prototype.charCodeAt.call.bind(String.prototype.charCodeAt);
+const $diagnosticPush = Array.prototype.push.call.bind(Array.prototype.push);
+const $diagnosticJoin = Array.prototype.join.call.bind(Array.prototype.join);
 
 // ===== Error spine: the module-private $DEALError class =====
 // (js-backend-runtime-artifact D8) The single constructor path every
@@ -1987,26 +1991,30 @@ const $rt = {
       if (value === null || typeof value !== "object" || !$diagnosticErrorHas(value) || visited(value)) return "null";
       seen[seen.length] = value;
       const fields = [];
-      for (const key of ["code", "message", "file", "expected", "actual", "frames"]) {
+      const textKeys = ["code", "message", "file", "expected", "actual", "frames"];
+      for (let index = 0; index < textKeys.length; index++) {
+        const key = textKeys[index];
         const text = own(value, key);
         if (typeof text !== "string") continue;
         let take = text.length > 8192 ? 8192 : text.length;
-        if (take < text.length && text.charCodeAt(take - 1) >= 0xD800 && text.charCodeAt(take - 1) <= 0xDBFF
-            && text.charCodeAt(take) >= 0xDC00 && text.charCodeAt(take) <= 0xDFFF) take--;
-        fields.push($jsonQuote(key) + ":" + $jsonQuote(text.slice(0, take)));
-        if (take < text.length) fields.push($jsonQuote(key + "Length") + ":" + text.length,
+        if (take < text.length && $diagnosticCharCode(text, take - 1) >= 0xD800 && $diagnosticCharCode(text, take - 1) <= 0xDBFF
+            && $diagnosticCharCode(text, take) >= 0xDC00 && $diagnosticCharCode(text, take) <= 0xDFFF) take--;
+        $diagnosticPush(fields, $jsonQuote(key) + ":" + $jsonQuote($diagnosticSlice(text, 0, take)));
+        if (take < text.length) $diagnosticPush(fields, $jsonQuote(key + "Length") + ":" + text.length,
           $jsonQuote(key + "Truncated") + ":true");
       }
-      for (const key of ["line", "column"]) {
+      const numberKeys = ["line", "column"];
+      for (let index = 0; index < numberKeys.length; index++) {
+        const key = numberKeys[index];
         const number = own(value, key);
-        if (typeof number === "number" && $diagnosticFinite(number)) fields.push($jsonQuote(key) + ":" + number);
+        if (typeof number === "number" && $diagnosticFinite(number)) $diagnosticPush(fields, $jsonQuote(key) + ":" + number);
       }
       const cause = own(value, "cause");
       if (cause !== null && typeof cause === "object") {
-        if (depth >= 7 || visited(cause) || !$diagnosticErrorHas(cause)) fields.push('"causeTruncated":true');
-        else fields.push('"cause":' + render(cause, depth + 1));
+        if (depth >= 7 || visited(cause) || !$diagnosticErrorHas(cause)) $diagnosticPush(fields, '"causeTruncated":true');
+        else $diagnosticPush(fields, '"cause":' + render(cause, depth + 1));
       }
-      return "{" + fields.join(",") + "}";
+      return "{" + $diagnosticJoin(fields, ",") + "}";
     };
     return '{"version":2,"runtime":' + render(error, 0) + "}";
   },
