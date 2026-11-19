@@ -111,6 +111,7 @@ public class DiagnosticRangeTest {
         testIntrinsicPreSignatureEvidence();
         testRuleReferencesAndIntentDependentExamples();
         testProducerSourceExcerpts();
+        testRevisionScopedOccurrences();
         testCatchVariableIdentifierRange();
         testProgramSpanAnchorsCombined();
         testV12CornerCaseScalarCoordinatePins();
@@ -1219,6 +1220,45 @@ public class DiagnosticRangeTest {
         for (String source : List.of("let a=[1];let r=a.map((n:number):number=>n+1);",
                 "let r=Array.from([1],(n:number):string=>\"chosen\");"))
             check(checkerDiagnostics(source, "intrinsic.deal").isEmpty(), "explicit intended mapper repair rechecks");
+    }
+
+    private static void testRevisionScopedOccurrences() {
+        String source = "// 😀\r\nexport function f():void{let text:string=1;}";
+        var raw = checkerDiag(checkerDiagnostics(source, "identity.deal"), "E3001");
+        var diagnostic = raw.withExcerpt(deal.diagnostics.DiagnosticExcerpt.fromSource("identity.deal", source, raw.range()));
+        var occurrence = deal.diagnostics.DiagnosticOccurrence.fromSource("identity.deal", source, diagnostic);
+        check(occurrence != null && occurrence.rootCauseId() == null && occurrence.occurrenceId().startsWith("diagnostic:"),
+                "source-owned occurrence exposes no guessed root-cause link");
+        check(occurrence.equals(deal.diagnostics.DiagnosticOccurrence.fromSource("identity.deal", source, diagnostic.withOccurrence(occurrence))),
+                "issuing an occurrence is deterministic and independent of its own serialized identity");
+        for (var changed : List.of(diagnostic.withNote("independent evidence", null),
+                diagnostic.withFacts(deal.diagnostics.DiagnosticFacts.EMPTY), diagnostic.withMissingSymbol("VALUE", "absent", "", List.of()))) {
+            var other = deal.diagnostics.DiagnosticOccurrence.fromSource("identity.deal", source, changed);
+            check(other.sourceRevision().equals(occurrence.sourceRevision()) && !other.occurrenceId().equals(occurrence.occurrenceId()),
+                    "same range/key with independent full carrier evidence is a different occurrence");
+        }
+        var changedSource = deal.diagnostics.DiagnosticOccurrence.fromSource("identity.deal", source + " ", diagnostic);
+        check(!changedSource.sourceRevision().equals(occurrence.sourceRevision())
+                        && !changedSource.occurrenceId().equals(occurrence.occurrenceId()),
+                "even an unchanged diagnostic belongs to a new exact source revision");
+        var loneA = deal.diagnostics.DiagnosticOccurrence.fromSource("identity.deal", source + "\uD800", diagnostic);
+        var loneB = deal.diagnostics.DiagnosticOccurrence.fromSource("identity.deal", source + "\uD801", diagnostic);
+        check(!loneA.sourceRevision().equals(loneB.sourceRevision()), "source revision hashing preserves distinct isolated UTF-16 units");
+        check(deal.diagnostics.DiagnosticOccurrence.fromSource("foreign.deal", source, diagnostic) == null,
+                "foreign source grants no diagnostic occurrence identity");
+        var issued = diagnostic.withOccurrence(occurrence);
+        check(issued.withFacts(issued.facts()).withNote("transport", null).withMissingSymbol("VALUE", "x", "", List.of())
+                        .withExcerpt(issued.excerpt()).occurrence().equals(occurrence),
+                "independent carrier copies retain the issued occurrence rather than inventing causal relationships");
+        var amended = deal.amend.AmendWorkspace.inspect(source, "identity.deal").diagnostics().stream()
+                .filter(d -> d.code().equals("E3001")).findFirst().orElseThrow();
+        check(amended.occurrence().equals(occurrence) && amended.withFacts(amended.facts()).withMissingSymbols(List.of())
+                        .withOperationIndex(0).withContextRequest(amended.contextRequest()).withExcerpt(amended.excerpt()).occurrence().equals(occurrence),
+                "CLI carrier and amendment projection share occurrence and preserve it across scoped copies");
+        String json = DiagnosticStructuredOutput.toJson(List.of(issued, issued));
+        check(json.indexOf(occurrence.occurrenceId()) == json.lastIndexOf(occurrence.occurrenceId())
+                        && deal.amend.CompilerProtocolJson.encode(amended).contains(occurrence.occurrenceId()),
+                "exact report repeats collapse while sole transports retain the same revision-scoped occurrence");
     }
 
     private static void testProducerSourceExcerpts() throws IOException {
@@ -3517,7 +3557,7 @@ public class DiagnosticRangeTest {
             + "      \"code\": \"" + code + "\",\n      \"classification\": "
             + expectedClassification(code) + ",\n      \"severity\": \"error\",\n"
             + "      \"message\": \"" + message + "\",\n      \"range\": "
-            + range.replace("\n", "\n      ") + ",\n      \"excerpt\": null,\n      \"notes\": "
+            + range.replace("\n", "\n      ") + ",\n      \"excerpt\": null,\n      \"occurrence\": null,\n      \"notes\": "
             + notes.replace("\n", "\n      ") + ",\n"
             + "      \"facts\": {\n        \"reason\": \"\",\n        \"operation\": \"\",\n"
             + "        \"expected\": \"\",\n        \"actual\": \"\",\n        \"guidance\": [],\n        \"path\": [],\n        \"call\": null,\n        \"operator\": null,\n        \"mismatch\": null,\n        \"syntax\": null,\n        \"names\": null,\n        \"construction\": null,\n        \"exports\": null,\n        \"resolution\": null,\n        \"cycle\": null,\n        \"tool\": null,\n        \"lowering\": null\n      },\n"

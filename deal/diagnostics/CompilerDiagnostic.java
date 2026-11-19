@@ -11,7 +11,7 @@ import java.util.List;
  *
  * <p>Carrier contract (D1):
  * {@code CompilerDiagnostic(code, severity, message, range, notes,
- * diagnosticCode, missingSymbols, facts, excerpt)}. Convenience construction supplies empty
+ * diagnosticCode, missingSymbols, facts, excerpt, occurrence)}. Convenience construction supplies empty
  * facts when the producer has no additional evidence. The accessors {@link #file()},
  * {@link #line()}, and {@link #column()} derive from the range start;
  * {@link #code()}, {@link #severity()}, {@link #message()}, and
@@ -58,7 +58,8 @@ public record CompilerDiagnostic(
     DiagnosticCode diagnosticCode,
     List<MissingSymbol> missingSymbols,
     DiagnosticFacts facts,
-    DiagnosticExcerpt excerpt
+    DiagnosticExcerpt excerpt,
+    DiagnosticOccurrence occurrence
 ) {
     public record MissingSymbol(String kind, String name, String namespace, List<String> constraints) {
         public MissingSymbol {
@@ -85,24 +86,34 @@ public record CompilerDiagnostic(
         this(code, severity, message, range, notes, diagnosticCode, missingSymbols, facts, null);
     }
 
+    public CompilerDiagnostic(String code, String severity, String message, DiagnosticRange range,
+                              List<DiagnosticNote> notes, DiagnosticCode diagnosticCode,
+                              List<MissingSymbol> missingSymbols, DiagnosticFacts facts, DiagnosticExcerpt excerpt) {
+        this(code, severity, message, range, notes, diagnosticCode, missingSymbols, facts, excerpt, null);
+    }
+
+    public CompilerDiagnostic withOccurrence(DiagnosticOccurrence value) {
+        return new CompilerDiagnostic(code, severity, message, range, notes, diagnosticCode, missingSymbols, facts, excerpt, value);
+    }
+
     public CompilerDiagnostic withExcerpt(DiagnosticExcerpt value) {
-        return new CompilerDiagnostic(code, severity, message, range, notes, diagnosticCode, missingSymbols, facts, value);
+        return new CompilerDiagnostic(code, severity, message, range, notes, diagnosticCode, missingSymbols, facts, value, occurrence);
     }
 
     public CompilerDiagnostic withFacts(DiagnosticFacts value) {
-        return new CompilerDiagnostic(code, severity, message, range, notes, diagnosticCode, missingSymbols, value, excerpt);
+        return new CompilerDiagnostic(code, severity, message, range, notes, diagnosticCode, missingSymbols, value, excerpt, occurrence);
     }
 
     public CompilerDiagnostic withNote(String message, DiagnosticRange relatedRange) {
         var related = new ArrayList<>(notes);
         related.add(new DiagnosticNote(message, relatedRange));
-        return new CompilerDiagnostic(code, severity, this.message, range, related, diagnosticCode, missingSymbols, facts, excerpt);
+        return new CompilerDiagnostic(code, severity, this.message, range, related, diagnosticCode, missingSymbols, facts, excerpt, occurrence);
     }
 
     public CompilerDiagnostic withMissingSymbol(String kind, String name, String namespace, List<String> constraints) {
         var facts = new ArrayList<>(missingSymbols);
         facts.add(new MissingSymbol(kind, name, namespace, constraints));
-        return new CompilerDiagnostic(code, severity, message, range, notes, diagnosticCode, facts, this.facts, excerpt);
+        return new CompilerDiagnostic(code, severity, message, range, notes, diagnosticCode, facts, this.facts, excerpt, occurrence);
     }
 
     public CompilerDiagnostic {

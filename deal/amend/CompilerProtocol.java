@@ -180,7 +180,23 @@ public final class CompilerProtocol {
             List<deal.diagnostics.DiagnosticNote> notes,
             Integer operationIndex,
             List<deal.diagnostics.CompilerDiagnostic.MissingSymbol> missingSymbols,
-            deal.diagnostics.DiagnosticExcerpt excerpt) {
+            deal.diagnostics.DiagnosticExcerpt excerpt,
+            deal.diagnostics.DiagnosticOccurrence occurrence) {
+        public StructuredDiagnostic(String code, String severity, String message, DiagnosticRange range,
+                                    SemanticId ownerId, DiagnosticFacts facts, List<SemanticId> relatedIds,
+                                    List<RepairScope> repairScopes, ContextRequest contextRequest,
+                                    List<deal.diagnostics.DiagnosticNote> notes, Integer operationIndex,
+                                    List<deal.diagnostics.CompilerDiagnostic.MissingSymbol> missingSymbols,
+                                    deal.diagnostics.DiagnosticExcerpt excerpt) {
+            this(code, severity, message, range, ownerId, facts, relatedIds, repairScopes, contextRequest,
+                    notes, operationIndex, missingSymbols, excerpt, null);
+        }
+
+        public StructuredDiagnostic withOccurrence(deal.diagnostics.DiagnosticOccurrence value) {
+            return new StructuredDiagnostic(code, severity, message, range, ownerId, facts,
+                    relatedIds, repairScopes, contextRequest, notes, operationIndex, missingSymbols, excerpt, value);
+        }
+
         public StructuredDiagnostic(String code, String severity, String message, DiagnosticRange range,
                                     SemanticId ownerId, DiagnosticFacts facts, List<SemanticId> relatedIds,
                                     List<RepairScope> repairScopes, ContextRequest contextRequest,
@@ -192,7 +208,7 @@ public final class CompilerProtocol {
 
         public StructuredDiagnostic withExcerpt(deal.diagnostics.DiagnosticExcerpt value) {
             return new StructuredDiagnostic(code, severity, message, range, ownerId, facts,
-                    relatedIds, repairScopes, contextRequest, notes, operationIndex, missingSymbols, value);
+                    relatedIds, repairScopes, contextRequest, notes, operationIndex, missingSymbols, value, occurrence);
         }
 
         public StructuredDiagnostic(String code, String severity, String message, DiagnosticRange range,
@@ -205,7 +221,7 @@ public final class CompilerProtocol {
         }
         public StructuredDiagnostic withMissingSymbols(List<deal.diagnostics.CompilerDiagnostic.MissingSymbol> facts) {
             return new StructuredDiagnostic(code, severity, message, range, ownerId, this.facts,
-                    relatedIds, repairScopes, contextRequest, notes, operationIndex, facts, excerpt);
+                    relatedIds, repairScopes, contextRequest, notes, operationIndex, facts, excerpt, occurrence);
         }
         public StructuredDiagnostic(String code, String severity, String message, DiagnosticRange range,
                                     SemanticId ownerId, String expected, String actual,
@@ -217,7 +233,7 @@ public final class CompilerProtocol {
 
         public StructuredDiagnostic withContextRequest(ContextRequest request) {
             return new StructuredDiagnostic(code, severity, message, range, ownerId, facts,
-                    relatedIds, repairScopes, request, notes, operationIndex, missingSymbols, excerpt);
+                    relatedIds, repairScopes, request, notes, operationIndex, missingSymbols, excerpt, occurrence);
         }
 
         /** Registered language contract only; protocol/extension codes have no invented language classification. */
@@ -230,13 +246,13 @@ public final class CompilerProtocol {
 
         public StructuredDiagnostic withFacts(DiagnosticFacts value) {
             return new StructuredDiagnostic(code, severity, message, range, ownerId, value,
-                    relatedIds, repairScopes, contextRequest, notes, operationIndex, missingSymbols, excerpt);
+                    relatedIds, repairScopes, contextRequest, notes, operationIndex, missingSymbols, excerpt, occurrence);
         }
 
         /** Index in this response's ChangeSet only; never a persisted semantic identity. */
         public StructuredDiagnostic withOperationIndex(int index) {
             return new StructuredDiagnostic(code, severity, message, range, ownerId, facts,
-                    relatedIds, repairScopes, contextRequest, notes, index, missingSymbols, excerpt);
+                    relatedIds, repairScopes, contextRequest, notes, index, missingSymbols, excerpt, occurrence);
         }
         public StructuredDiagnostic(String code, String severity, String message, DiagnosticRange range,
                                     SemanticId ownerId, String expected, String actual,

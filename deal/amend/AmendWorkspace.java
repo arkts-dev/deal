@@ -1430,9 +1430,13 @@ public final class AmendWorkspace {
                 classesByName,
                 index);
         List<StructuredDiagnostic> diagnostics = deal.diagnostics.DiagnosticOrder.exactDistinct(rawDiagnostics).stream()
+                .map(value -> {
+                    var withSource = value.withExcerpt(deal.diagnostics.DiagnosticExcerpt.fromSource(modulePath, source, value.range()));
+                    return withSource.withOccurrence(deal.diagnostics.DiagnosticOccurrence.fromSource(modulePath, source, withSource));
+                })
                 .map(value -> diagnostic(value, moduleId, functionsByName.values(), classesByName.values(), targets.values())
                         .withMissingSymbols(value.missingSymbols())
-                        .withExcerpt(deal.diagnostics.DiagnosticExcerpt.fromSource(modulePath, source, value.range())))
+                        .withExcerpt(value.excerpt()).withOccurrence(value.occurrence()))
                 .map(value -> value.withContextRequest(contextRequest(source, sourceDigest, moduleId, targets, value.ownerId())))
                 .toList();
         Inspection inspection = new Inspection(
@@ -1724,7 +1728,7 @@ public final class AmendWorkspace {
                 diagnostic.code(), diagnostic.severity(), diagnostic.message(), diagnostic.range(),
                 diagnostic.ownerId(), diagnostic.facts(),
                 ownedOperations.stream().map(Operation::targetId).toList(), scopes,
-                diagnostic.contextRequest(), diagnostic.notes(), diagnostic.operationIndex(), diagnostic.missingSymbols(), diagnostic.excerpt());
+                diagnostic.contextRequest(), diagnostic.notes(), diagnostic.operationIndex(), diagnostic.missingSymbols(), diagnostic.excerpt(), diagnostic.occurrence());
     }
 
     private static SemanticId operationOwner(Operation operation, Analysis base) {

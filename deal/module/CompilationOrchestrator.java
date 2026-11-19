@@ -799,8 +799,10 @@ public final class CompilationOrchestrator {
     public List<CompilerDiagnostic> diagnostics() {
         return diagnostics.stream().map(diagnostic -> {
             String source = diagnosticSources.get(diagnostic.file());
-            return source == null ? diagnostic : diagnostic.withExcerpt(
+            if (source == null) return diagnostic;
+            var withSource = diagnostic.withExcerpt(
                     deal.diagnostics.DiagnosticExcerpt.fromSource(diagnostic.file(), source, diagnostic.range()));
+            return withSource.withOccurrence(deal.diagnostics.DiagnosticOccurrence.fromSource(diagnostic.file(), source, withSource));
         }).toList();
     }
 

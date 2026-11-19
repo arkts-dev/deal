@@ -141,6 +141,13 @@ public final class DiagnosticStructuredOutput {
         sb.append(",\n");
         appendExcerpt(sb, d.excerpt(), 3);
         sb.append(",\n");
+        indent(sb, 3).append("\"occurrence\": ");
+        var occurrence = d.occurrence();
+        if (occurrence == null) sb.append("null");
+        else sb.append("{\"sourceRevision\": ").append(jsonString(occurrence.sourceRevision()))
+                .append(", \"occurrenceId\": ").append(jsonString(occurrence.occurrenceId()))
+                .append(", \"rootCauseId\": ").append(occurrence.rootCauseId() == null ? "null" : jsonString(occurrence.rootCauseId())).append('}');
+        sb.append(",\n");
         appendNotes(sb, d.notes(), 3);
         sb.append(",\n");
         appendFacts(sb, d.facts(), 3);
