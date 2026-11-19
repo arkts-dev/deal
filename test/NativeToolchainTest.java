@@ -523,6 +523,24 @@ public final class NativeToolchainTest {
         check(missing.tool() == null && missing.facts().tool() == null,
             "missing compiler invents no executed child evidence");
 
+        check(missing.facts().resolution() != null
+                        && missing.facts().resolution().attempted().equals(NativeToolchain.COMPILER_CANDIDATES.stream()
+                                .map(name -> emptyPath.resolve(name).toString()).toList())
+                        && missing.facts().resolution().attemptedCount() == 4 && !missing.facts().resolution().truncated(),
+                "missing compiler retains actual candidate-major/path-minor probe order");
+        var directories = new ArrayList<Path>();
+        for (int i = 0; i < 10; i++) directories.add(Files.createDirectories(emptyPath.resolve("part" + i)));
+        String search = directories.stream().map(Path::toString).collect(java.util.stream.Collectors.joining(File.pathSeparator));
+        var boundedMissing = expectFailure(new NativeBuildRequest(published, scratch.resolve("reject/search"), 2, List.of(), null), Map.of("PATH", search));
+        var resolution = boundedMissing.facts().resolution();
+        var actualOrder = NativeToolchain.COMPILER_CANDIDATES.stream().flatMap(name -> directories.stream().map(dir -> dir.resolve(name).toString())).toList();
+        check(resolution.attempted().equals(actualOrder.subList(0, 32)) && resolution.attemptedCount() == 40 && resolution.truncated()
+                        && boundedMissing.tool() == null && resolution.mode().equals("native.compiler-path"),
+                "bounded compiler search retains exact observed total and no invented child status/output");
+        String report = deal.diagnostics.DiagnosticStructuredOutput.toJson(List.of(), List.of(boundedMissing.structuredDiagnostic()));
+        check(report.contains("native.compiler-path") && report.contains("\"attemptedCount\": 40")
+                        && report.contains("\"truncated\": true"), "sole JSON report preserves missing compiler search evidence");
+
         // (b) A major outside the accepted 14-16 window, on both sides.
         for (int major : List.of(13, 17)) {
             Path directory = Files.createDirectories(

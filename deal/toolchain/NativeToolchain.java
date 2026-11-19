@@ -407,6 +407,8 @@ public final class NativeToolchain {
             throws NativeBuildException {
         String pathValue = environment.containsKey("PATH")
             ? environment.get("PATH") : System.getenv("PATH");
+        List<String> attempted = new ArrayList<>();
+        int attemptedCount = 0;
         if (pathValue != null) {
             for (String candidate : COMPILER_CANDIDATES) {
                 for (String directory : pathValue.split(
@@ -416,6 +418,8 @@ public final class NativeToolchain {
                         continue;
                     }
                     Path executable = Path.of(directory, candidate);
+                    attemptedCount++;
+                    if (attempted.size() < 32) attempted.add(executable.toString());
                     if (Files.isRegularFile(executable)
                             && Files.isExecutable(executable)) {
                         return executable.toAbsolutePath().normalize();
@@ -426,7 +430,9 @@ public final class NativeToolchain {
         throw new NativeBuildException(
             NativeBuildException.Kind.TOOLCHAIN_MISSING,
             "none of " + String.join(", ", COMPILER_CANDIDATES)
-                + " resolves on PATH");
+                + " resolves on PATH", null, "executable clang on effective PATH", "no accepted executable found",
+            new DiagnosticFacts.ResolutionContext("clang", "native.compiler-path", attempted, attemptedCount,
+                    attemptedCount > attempted.size()));
     }
 
     /** Requires a compiler whose major is inside the accepted window. */

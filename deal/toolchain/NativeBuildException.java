@@ -67,6 +67,7 @@ public final class NativeBuildException extends Exception {
     private final DiagnosticFacts.ToolContext tool;
     private final String expected;
     private final String actual;
+    private final DiagnosticFacts.ResolutionContext resolution;
 
     /**
      * @param kind the named condition; non-null
@@ -81,6 +82,11 @@ public final class NativeBuildException extends Exception {
     }
 
     NativeBuildException(Kind kind, String detail, DiagnosticFacts.ToolContext tool, String expected, String actual) {
+        this(kind, detail, tool, expected, actual, null);
+    }
+
+    NativeBuildException(Kind kind, String detail, DiagnosticFacts.ToolContext tool, String expected, String actual,
+                         DiagnosticFacts.ResolutionContext resolution) {
         super(Objects.requireNonNull(kind, "kind must not be null").prefix()
             + Objects.requireNonNull(detail, "detail must not be null"));
         this.kind = kind;
@@ -88,6 +94,7 @@ public final class NativeBuildException extends Exception {
         this.tool = tool;
         this.expected = Objects.requireNonNull(expected, "expected");
         this.actual = Objects.requireNonNull(actual, "actual");
+        this.resolution = resolution;
         if (detail.isBlank()) {
             throw new IllegalArgumentException("a native build failure names its"
                 + " condition detail");
@@ -109,7 +116,8 @@ public final class NativeBuildException extends Exception {
 
     public DiagnosticFacts facts() {
         return new DiagnosticFacts("native." + kind.name().toLowerCase(java.util.Locale.ROOT).replace('_', '-'),
-                tool == null ? "native.build" : tool.operation(), expected, actual, recoveryGuidance()).withTool(tool);
+                tool == null ? "native.build" : tool.operation(), expected, actual, recoveryGuidance())
+                .withTool(tool).withResolution(resolution);
     }
 
     private java.util.List<String> recoveryGuidance() {
