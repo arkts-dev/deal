@@ -43,6 +43,9 @@ const $diagnosticErrorAdd = $diagnosticErrors.add.bind($diagnosticErrors);
 const $diagnosticJson = new WeakMap();
 const $diagnosticJsonGet = $diagnosticJson.get.bind($diagnosticJson);
 const $diagnosticJsonSet = $diagnosticJson.set.bind($diagnosticJson);
+const $diagnosticDecode = new WeakMap();
+const $diagnosticDecodeGet = $diagnosticDecode.get.bind($diagnosticDecode);
+const $diagnosticDecodeSet = $diagnosticDecode.set.bind($diagnosticDecode);
 const $descriptorHasOwn = Object.prototype.hasOwnProperty.call.bind(Object.prototype.hasOwnProperty);
 const $diagnosticFinite = Number.isFinite;
 const $diagnosticSlice = String.prototype.slice.call.bind(String.prototype.slice);
@@ -1961,6 +1964,8 @@ const $rt = {
         v.expected, v.actual, v.frames, v.cause);
       const json = $diagnosticJsonGet(v);
       if (json !== $undefined) $diagnosticJsonSet(value, json);
+      const decode = $diagnosticDecodeGet(v);
+      if (decode !== $undefined) $diagnosticDecodeSet(value, decode);
       return value;
     }
     if (typeof v === "object" && v !== null && v.$kind === "class" && v.$classname === "Error") {
@@ -2016,6 +2021,13 @@ const $rt = {
       if (json !== $undefined) {
         append('"jsonByteOffset":' + $jsonQuote(json.offset));
         append('"jsonReason":' + $jsonQuote(json.reason));
+      }
+      const decode = $diagnosticDecodeGet(value);
+      if (decode !== $undefined) {
+        append('"jsonPath":' + $jsonQuote(decode.path));
+        append('"jsonPathDepth":' + $jsonQuote(decode.depth));
+        append('"jsonPathTruncated":' + $jsonQuote(decode.truncated));
+        append('"jsonMissingField":' + $jsonQuote(decode.missing));
       }
       const numberKeys = ["line", "column"];
       for (let index = 0; index < numberKeys.length; index++) {
@@ -2793,13 +2805,34 @@ const $rt = {
         for (let i = plan.length - 1; i >= 0; --i) pending.push(plan[i].descriptor);
       }
     }
+    const stack = [{raw: $rt.jsonParseText(text, file, line, column), descriptor, opened: false}];
+    const fail = (code, message, expected, actual, rejectedKey) => {
+      let path = "", depth = 0, truncated = false;
+      const segment = key => {
+        depth++;
+        if (depth > 32) { truncated = true; return; }
+        let take = key.length > 128 ? 128 : key.length;
+        if (take < key.length && $diagnosticCharCode(key, take - 1) >= 0xD800
+            && $diagnosticCharCode(key, take - 1) <= 0xDBFF
+            && $diagnosticCharCode(key, take) >= 0xDC00 && $diagnosticCharCode(key, take) <= 0xDFFF) take--;
+        if (take < key.length) truncated = true;
+        path += "/";
+        for (let i = 0; i < take; i++) path += key[i] === "~" ? "~0" : key[i] === "/" ? "~1" : key[i];
+      };
+      for (let i = 1; i < stack.length; i++) segment("" + stack[i].key);
+      if (rejectedKey !== $undefined) segment(rejectedKey);
+      try { $rt.fail(code, message, file, line, column, expected, actual); }
+      catch (error) {
+        $diagnosticDecodeSet(error, {path, depth: "" + depth, truncated: "" + truncated,
+          missing: stack[stack.length - 1].missing ? "true" : "false"});
+        throw error;
+      }
+    };
     const mismatch = (d, value) => {
       const kind = d.$t === "class" ? "class instance" : d.$t === "array" ? "array"
         : d.$name === "record" ? "table" : d.$name;
-      $rt.fail("E8001", "expected " + kind, file, line, column,
-        d.$t === "class" ? "class" : kind, $kindOf(value));
+      fail("E8001", "expected " + kind, d.$t === "class" ? "class" : kind, $kindOf(value));
     };
-    const stack = [{raw: $rt.jsonParseText(text, file, line, column), descriptor, opened: false}];
     let completed;
     while (stack.length) {
       const f = stack[stack.length - 1];
@@ -2817,7 +2850,7 @@ const $rt = {
           f.plan = layouts(d.$name);
           const names = new Set(f.plan.map(field => field.name));
           for (const key of Object.keys(f.raw)) if (!names.has(key))
-            $rt.fail("E8007", "extra field '" + key + "' in class '" + d.$name + "'", file, line, column);
+            fail("E8007", "extra field '" + key + "' in class '" + d.$name + "'", $undefined, $undefined, key);
           f.children = [];
           for (const field of f.plan) {
             const present = Object.prototype.hasOwnProperty.call(f.raw, field.name);

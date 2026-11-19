@@ -23,6 +23,6 @@ Opt-in runtime diagnostics read only known Error carriers' own data descriptors 
 
 ## JSON and maps
 
-Generated Records share generic JSON omission/substitution, own-key ordering and nested-class rules; declared fields retain declaration order. Read private class presence/order metadata without hooks; detect cycles by original identity. Error exposes name/message only. Decoding tags typed arrays recursively, including empty arrays; nested decoder failure cannot become a successful nullable field.
+Generated Records share generic JSON omission/substitution, own-key ordering and nested-class rules; declared fields retain declaration order. Read private class presence/order metadata without hooks; detect cycles by original identity. Error exposes name/message only. Decoding tags typed arrays recursively, including empty arrays; nested decoder failure cannot become a successful nullable field. Decode paths use current walk frames only and private Error metadata; reification/rethrow preserves them independently of message text.
 
 Record source mappings through the shared recorder during emission. Map local groups at recorded origins, foreign boundaries through initiating callers; never borrow coordinates or move effects. Modules own version-1 sidecars. Map-off rendering changes only mapping comments, never runtime locations or executable bytes.

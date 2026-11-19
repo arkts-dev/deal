@@ -10826,7 +10826,9 @@ function __dealRuntimeDiagnostic(error)
     local parts = {}
     for _, pair in ipairs({{"code", "code"}, {"message", "m"}, {"origin", "o"},
                             {"expected", "e"}, {"actual", "a"}, {"frames", "f"},
-                            {"jsonByteOffset", "jsonByteOffset"}, {"jsonReason", "jsonReason"}}) do
+                            {"jsonByteOffset", "jsonByteOffset"}, {"jsonReason", "jsonReason"},
+                            {"jsonPath", "jsonPath"}, {"jsonPathDepth", "jsonPathDepth"},
+                            {"jsonPathTruncated", "jsonPathTruncated"}, {"jsonMissingField", "jsonMissingField"}}) do
       local text = rawget(value, pair[2])
       if type(text) == "string" then
         local take = math.min(#text, 8192)
@@ -11567,8 +11569,32 @@ __factories.__jsonGeneric = function(value, path)
 end
 
 local function __jsonDecodeTarget(raw, descriptor, origin, plans, runtimeDescriptor, opKey, digest, parent)
-  local function fail(armId, values, expected, actual)
+  local stack = {{raw=raw,desc=descriptor,opened=false}}
+  local function fail(armId, values, expected, actual, rejectedKey)
     local e = __arm(armId, values, origin, expected, actual)
+    local path,depth,truncated="",0,false
+    local function segment(key)
+      depth=depth+1
+      if depth>32 then truncated=true; return end
+      local take=math.min(#key,128)
+      if take<#key then
+        while take>0 and string.byte(key,take+1)>=128 and string.byte(key,take+1)<192 do take=take-1 end
+        truncated=true
+      end
+      key=string.sub(key,1,take)
+      key=string.gsub(key,"~","~0")
+      key=string.gsub(key,"/","~1")
+      path=path.."/"..key
+    end
+    for i=2,#stack do
+      local key=stack[i].key
+      segment(type(key)=="number" and tostring(key-1) or key)
+    end
+    if rejectedKey~=nil then segment(rejectedKey) end
+    e.jsonPath=path
+    e.jsonPathDepth=tostring(depth)
+    e.jsonPathTruncated=tostring(truncated)
+    e.jsonMissingField=stack[#stack].missing and "true" or "false"
     __ev(opKey, "FAILURE", "JSON_PARSE", digest, parent, {}, nil, __errtext(e))
     error(e, 0)
   end
@@ -11587,7 +11613,6 @@ local function __jsonDecodeTarget(raw, descriptor, origin, plans, runtimeDescrip
     local actual = missing and "undefined" or __typedBoundaryKind("",value)
     fail("TYPED_BOUNDARY_KIND",{kind=text},expected,actual)
   end
-  local stack = {{raw=raw,desc=descriptor,opened=false}}
   local completed
   while #stack > 0 do
     local frame = stack[#stack]
@@ -11611,7 +11636,7 @@ local function __jsonDecodeTarget(raw, descriptor, origin, plans, runtimeDescrip
         local names={}
         for _,field in ipairs(frame.plan.fields) do names[field.name]=true end
         for _,key in ipairs(value[__dealCarrierKeys.order]) do
-          if not names[key] then fail("CLASS_EXTRA_FIELD",{field=key,classId=desc},nil,nil) end
+          if not names[key] then fail("CLASS_EXTRA_FIELD",{field=key,classId=desc},nil,nil,key) end
         end
         frame.children={}
         for _,field in ipairs(frame.plan.fields) do

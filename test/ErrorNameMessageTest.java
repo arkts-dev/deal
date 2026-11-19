@@ -203,6 +203,50 @@ public final class ErrorNameMessageTest {
         }
     }
 
+    private static void runtimeJsonDecoderExports(Path root) throws Exception {
+        for (Backend backend : List.of(Backend.JS, Backend.LUAJIT, Backend.JVM)) {
+            for (String[] sample : new String[][] {
+                    {"nested", "{\\\"items\\\":[{\\\"name\\\":false}]}", "/items/0/name", "false"},
+                    {"missing", "{\\\"items\\\":[{}]}", "/items/0/name", "true"},
+                    {"extra", "{\\\"items\\\":[{\\\"name\\\":\\\"ok\\\",\\\"extra/~\\\":0}]}", "/items/0/extra~1~0", "false"}}) {
+                Path project = Files.createDirectories(root.resolve(backend.name()).resolve(sample[0]));
+                Path src = Files.createDirectories(project.resolve("src")), out = project.resolve("out");
+                Path entry = src.resolve("main.deal");
+                Files.writeString(entry, "class Item{name:string;}class Document{items:Item[];}export function main():void{"
+                    + "try{let value:Document=JSON.parse(\"" + sample[1] + "\");}catch(caught){if(caught instanceof Error){"
+                    + "let repaired:Document=JSON.parse(\"{\\\"items\\\":[{\\\"name\\\":\\\"chosen\\\"}]}\");"
+                    + "console.log(repaired.items[0].name);caught.message=\"chosen message\";throw caught;}}}");
+                var compiler = new deal.module.CompilationOrchestrator(entry, out, false, false, false,
+                    backend, null, List.of(src), null);
+                if (!compiler.compile()) throw new AssertionError(compiler.diagnostics());
+                List<String> launch;
+                if (backend == Backend.JVM) {
+                    Path classes = Files.createDirectories(project.resolve("classes"));
+                    String cp = TestClasspath.absolute(TestClasspath.EmptyEntry.OMIT);
+                    var command = new ArrayList<>(List.of("javac", "--release", "25", "-proc:none", "-cp", cp, "-d", classes.toString()));
+                    try (var files = Files.walk(out)) { files.filter(p -> p.toString().endsWith(".java")).sorted().forEach(p -> command.add(p.toString())); }
+                    var built = deal.test.conformance.JvmCompilation.compile(command, out);
+                    if (built.exitCode() != 0) throw new AssertionError(built.stderr());
+                    launch = List.of("java", "-cp", classes + java.io.File.pathSeparator + cp, deal.codegen.jvm.JvmNames.classNameFor("main"));
+                } else launch = List.of(backend == Backend.JS ? "node" : "luajit", backend == Backend.JS ? "main.js" : "main.lua");
+                var baseline = BoundedProcess.runCaptured(launch, out, Map.of("DEAL_DIAGNOSTICS_JSON", "0"));
+                var enabled = BoundedProcess.runCaptured(launch, out, Map.of("DEAL_DIAGNOSTICS_JSON", "1"));
+                String prefix = "DEAL_RUNTIME_DIAGNOSTIC: ";
+                String line = enabled.stderr().lines().filter(s -> s.startsWith(prefix)).findFirst().orElseThrow(() -> new AssertionError(enabled));
+                if (baseline.exitCode() != 1 || enabled.exitCode() != 1 || !baseline.stdout().equals(enabled.stdout())
+                        || !baseline.stdout().contains("chosen") || !enabled.stderr().replace(line + "\n", "").equals(baseline.stderr()))
+                    throw new AssertionError("decoder export changed terminal behavior " + backend + " " + sample[0]);
+                var document = deal.amend.CompilerProtocolJson.requireObject(deal.amend.CompilerProtocolJson.decode(line.substring(prefix.length())), "document");
+                var runtime = deal.amend.CompilerProtocolJson.requireObject(deal.amend.CompilerProtocolJson.field(document, "runtime"), "runtime");
+                for (var expected : Map.of("jsonPath", sample[2], "jsonPathDepth", "3", "jsonPathTruncated", "false",
+                        "jsonMissingField", sample[3], "message", "chosen message").entrySet())
+                    if (!deal.amend.CompilerProtocolJson.field(runtime, expected.getKey()).equals(new CanonicalJson.Str(expected.getValue())))
+                        throw new AssertionError("decoder evidence lost on rethrow " + backend + " " + sample[0] + ": " + line);
+                System.out.println("JSON decoder diagnostics: " + backend + " " + sample[0] + " path/repair/default parity");
+            }
+        }
+    }
+
     public static void main(String[] args) throws Exception {
         if (args.length == 1 && args[0].equals("--diagnostic-projection")) {
             var cause = new deal.codegen.jvm.JvmRuntime.DealError("Leaf", "leaf", null, null, null, null, null);
@@ -259,6 +303,7 @@ public final class ErrorNameMessageTest {
             LlvmConformanceTest.runInstrumented(corpus,fixture);
             runtimeDiagnosticExports(root.resolve("diagnostics"));
             runtimeJsonScannerExports(root.resolve("json-diagnostics"));
+            runtimeJsonDecoderExports(root.resolve("decoder-diagnostics"));
             System.out.println("Error name/message: transported Oracle and all production backends passed");
         } finally {CompositionProductionTest.remove(root);}
     }
