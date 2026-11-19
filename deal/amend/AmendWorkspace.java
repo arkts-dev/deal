@@ -52,7 +52,6 @@ import deal.parser.ParseResult;
 import deal.parser.Parser;
 import deal.types.Type;
 
-import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
@@ -1343,8 +1342,16 @@ public final class AmendWorkspace {
 
     public static String digest(String source) {
         try {
-            byte[] bytes = MessageDigest.getInstance("SHA-256")
-                    .digest(source.getBytes(StandardCharsets.UTF_8));
+            // Hash exact source units, not a charset encoder's replacement for
+            // isolated surrogates. Revisions/fingerprints must distinguish every
+            // Java source snapshot accepted by the frontend, including comments.
+            MessageDigest hash = MessageDigest.getInstance("SHA-256");
+            for (int index = 0; index < source.length(); index++) {
+                char unit = source.charAt(index);
+                hash.update((byte) (unit >>> 8));
+                hash.update((byte) unit);
+            }
+            byte[] bytes = hash.digest();
             StringBuilder result = new StringBuilder(bytes.length * 2);
             for (byte value : bytes) result.append(String.format("%02x", value));
             return result.toString();

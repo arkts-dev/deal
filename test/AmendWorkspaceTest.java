@@ -14,6 +14,7 @@ public final class AmendWorkspaceTest {
     public static void main(String[] args) {
         var baseline = AmendWorkspace.inspect(source(), "app.deal");
         deterministicInspectionAndRelationships();
+        sourceRevisionsRetainEveryUtf16Unit();
         staleDigestRejectsWithoutMutation(baseline);
         functionReplacementIsAtomic(baseline);
         completeFunctionCannotMasqueradeAsBody(baseline);
@@ -1057,6 +1058,44 @@ public final class AmendWorkspaceTest {
         check(update.callees().contains(increment.id()), "update must call increment");
         check(increment.callers().contains(update.id()), "increment must report update caller");
         check(first.appInterface() != null, "generated app interface must be extracted upstream");
+    }
+
+    private static void sourceRevisionsRetainEveryUtf16Unit() {
+        String suffix = "\nexport function value():number{return 1;}";
+        String source = "// \uD800" + suffix;
+        var inspection = AmendWorkspace.inspect(source, "units.deal");
+        check(inspection.diagnostics().isEmpty(), "lone comment units do not change source admission");
+        var symbol = inspection.symbols().getFirst();
+        var request = new CompilerProtocol.ContextRequest(new CompilerProtocol.RevisionRef(inspection.sourceDigest()),
+                CompilerProtocol.ContextKind.SYMBOL, symbol.id(), symbol.fingerprint());
+        var body = inspection.nodes().stream().filter(n -> n.kind().equals("function-body")).findFirst().orElseThrow();
+        var precondition = new CompilerProtocol.ChangeSetPrecondition(inspection.sourceDigest(),
+                Map.of(body.id().value(), body.fingerprint()));
+        var revisions = new java.util.HashSet<String>();
+        for (String comment : List.of("// \uD800", "// \uD801", "// \uDC00", "// ?", "// \uFFFD", "// 😀", "// ab")) {
+            String changed = comment + suffix;
+            var current = AmendWorkspace.inspect(changed, "units.deal");
+            check(current.diagnostics().isEmpty() && revisions.add(current.sourceDigest()),
+                    "every exact UTF-16 source receives a distinct revision, including isolated surrogate units");
+            check(current.sourceDigest().equals(AmendWorkspace.digest(changed)), "inspection uses the exact public source digest");
+            if (changed.equals(source)) continue;
+            var staleContext = AmendWorkspace.queryContext(changed, "units.deal", request);
+            check(!staleContext.accepted(), "a changed comment unit invalidates previously issued context reads");
+            check(AmendWorkspace.queryContext(changed, "units.deal", staleContext.diagnostics().getFirst().contextRequest()).accepted(),
+                    "current reinspection after changed comment units is executable");
+            var staleEdit = AmendWorkspace.applyChecked(changed, "units.deal", precondition,
+                    List.of(new AmendWorkspace.ReplaceFunctionBody(body.id(), "return 2;")));
+            check(!staleEdit.accepted() && staleEdit.source().equals(changed)
+                            && staleEdit.diagnostics().getFirst().code().equals("CP1001"),
+                    "changed source units reject stale edits without modifying committed source");
+            var currentBody = current.nodes().stream().filter(n -> n.kind().equals("function-body")).findFirst().orElseThrow();
+            var chosen = AmendWorkspace.applyChecked(changed, "units.deal",
+                    new CompilerProtocol.ChangeSetPrecondition(current.sourceDigest(), Map.of(currentBody.id().value(), currentBody.fingerprint())),
+                    List.of(new AmendWorkspace.ReplaceFunctionBody(currentBody.id(), "return 2;")));
+            check(chosen.accepted() && chosen.source().startsWith(comment + "\n")
+                            && AmendWorkspace.inspect(chosen.source(), "units.deal").diagnostics().isEmpty(),
+                    "fresh explicitly chosen repair preserves comment units and rechecks");
+        }
     }
 
     private static void staleDigestRejectsWithoutMutation(CompilerProtocol.Inspection baseline) {
