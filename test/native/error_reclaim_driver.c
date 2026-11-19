@@ -368,6 +368,32 @@ int main(void) {
           "allocation count to its baseline");
     deal_root_frame_leave();
 
+    /* -- 7. scanner facts own platform text, never managed references ---- */
+    deal_outcome started = deal_project_start();
+    check(started.error == NULL, "scanner reclamation installs the closed arm table");
+    const size_t parser_baseline = platform_live();
+    deal_root_frame_enter(1u);
+    const deal_origin parser_origin = {"parser.deal", 3, 7};
+    const deal_arm_parameter parser_parameters[] = {
+        {"oneBasedByteOffset", "8"}, {"reason", "trailing content"}
+    };
+    deal_error *parser_error = deal_error_materialize(DEAL_ARM_ID_JSON_PARSE_ERROR,
+        parser_parameters, 2u, NULL, NULL, &parser_origin, NULL);
+    deal_root_frame_write(0u, parser_error);
+    check(platform_live() == parser_baseline + 6u,
+          "scanner Error owns name/code/message/origin and two copied parser facts");
+    deal_gc_collect_full();
+    char *diagnostic = deal_error_diagnostic(parser_error);
+    check(strstr(diagnostic, "\"jsonByteOffset\":\"8\"") != NULL
+            && strstr(diagnostic, "\"jsonReason\":\"trailing content\"") != NULL,
+          "live scanner facts survive full collection");
+    deal_error_snapshot_release(diagnostic);
+    deal_root_frame_write(0u, NULL);
+    deal_gc_collect_full();
+    check(platform_live() == parser_baseline,
+          "reclaiming scanner Error releases both diagnostic parameter copies");
+    deal_root_frame_leave();
+
     printf(failures == 0 ? "error reclaim ok\n" : "error reclaim failed\n");
     return failures == 0 ? 0 : 1;
 }
