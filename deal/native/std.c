@@ -99,7 +99,8 @@ static const deal_std_operation deal_std_operations[DEAL_STDLIB_OPERATION_COUNT]
     { deal_std_parameters_search, 3u, "number" },            /* STRING_LAST_INDEX_OF */
     { deal_std_parameters_string, 1u, "string" },            /* STRING_TO_LOWER_CASE */
     { deal_std_parameters_string, 1u, "string" },            /* STRING_TO_UPPER_CASE */
-    { deal_std_parameters_string, 1u, "number" }             /* STRING_TO_NUMBER */
+    { deal_std_parameters_string, 1u, "number" },            /* STRING_TO_NUMBER */
+    { deal_std_parameters_numbers, 2u, "number" }            /* MATH_POW */
 };
 
 /* =========================================================================
@@ -746,6 +747,14 @@ static deal_data deal_std_evaluate(uint32_t operation_id,
     case DEAL_STDLIB_MATH_ABS_NUMBER:
         return deal_data_of_number(deal_std_abs(
             deal_std_number_argument(&arguments[0])));
+    case DEAL_STDLIB_MATH_POW: {
+        double a = deal_std_number_argument(&arguments[0]);
+        double b = deal_std_number_argument(&arguments[1]);
+        if (b == 0.0) return deal_data_of_number(1.0);
+        if (isnan(b) || isnan(a) || (fabs(a) == 1.0 && isinf(b)))
+            return deal_data_of_number(NAN);
+        return deal_data_of_number(pow(a, b));
+    }
     case DEAL_STDLIB_MATH_MIN:
     case DEAL_STDLIB_MATH_MAX: {
         double a = deal_std_number_argument(&arguments[0]);

@@ -1461,6 +1461,7 @@ public class SharedStdlibSemanticsTest {
                 new Value.Number((double) FIXED_CLOCK_MILLIS)),
             new Seed(StdlibFunctionId.MATH_MIN, List.of(new Value.Number(1), new Value.Number(2)), new Value.Number(1)),
             new Seed(StdlibFunctionId.MATH_MAX, List.of(new Value.Number(1), new Value.Number(2)), new Value.Number(2)),
+            new Seed(StdlibFunctionId.MATH_POW, List.of(new Value.Number(-2), new Value.Number(3)), new Value.Number(-8)),
             seed(StdlibFunctionId.MATH_ROUND, new Value.Number(-0.5), new Value.Number(-0.0)),
             seed(StdlibFunctionId.NUMBER_IS_FINITE, new Value.Table(table), new Value.Bool(false)),
             seed(StdlibFunctionId.NUMBER_IS_NAN, new Value.Number(Double.NaN), new Value.Bool(true)),
@@ -1523,6 +1524,7 @@ public class SharedStdlibSemanticsTest {
                       let now: number = time.nowMillis();
                       let min: number = Math.min(1,2);
                       let max: number = Math.max(1,2);
+                      let power: number = Math.pow(-2,3);
                       let round: number = Math.round(-0.5);
                       let finite: boolean = Number.isFinite(t);
                       let nan: boolean = Number.isNaN(0/0);
@@ -1562,8 +1564,8 @@ public class SharedStdlibSemanticsTest {
                     stdlibOps.add(op);
                 }
             }
-            check(stdlibOps.size() == 31,
-                "exactly one STDLIB_CALL per algorithm except contextual JSON_PARSE: 31 ops; got "
+            check(stdlibOps.size() == StdlibFunctionId.values().length - 1,
+                "exactly one STDLIB_CALL per algorithm except contextual JSON_PARSE; got "
                     + stdlibOps.size());
             EnumSet<StdlibFunctionId> produced = EnumSet.noneOf(StdlibFunctionId.class);
             for (SemanticOp op : stdlibOps) {

@@ -27,6 +27,15 @@ export function main():void {
   check(Number.isNaN(nan) && !Number.isNaN(inf) && !Number.isNaN(-0));
   let values:unknown[] = ["1",true,null,undefined,{},[1],():number=>1];
   for (let value of values) { check(!Number.isFinite(value) && !Number.isNaN(value)); }
+  check(Math.pow(2,10) === 1024 && Math.pow(9,0.5) === 3 && Math.pow(4,-0.5) === 0.5);
+  check(Math.pow(-2,3) === -8 && Math.pow(-2,4) === 16 && Number.isNaN(Math.pow(-2,0.5)));
+  check(Math.pow(nan,0) === 1 && Math.pow(nan,-0) === 1 && Number.isNaN(Math.pow(2,nan)));
+  check(Number.isNaN(Math.pow(1,inf)) && Number.isNaN(Math.pow(-1,-inf)));
+  check(Math.pow(2,inf) === inf && Math.pow(0.5,-inf) === inf && Math.pow(0.5,inf) === 0);
+  check(1/Math.pow(-0,3) === -inf && 1/Math.pow(-0,2) === inf);
+  check(Math.pow(-0,-3) === -inf && Math.pow(-0,-2) === inf);
+  check(Math.pow(-inf,3) === -inf && Math.pow(-inf,2) === inf && 1/Math.pow(-inf,-3) === -inf);
+  check(Math.pow(2,-1074) === 5e-324 && Math.pow(2,1024) === inf);
   check(Math.min(3,-2) === -2 && Math.max(-2,3) === 3);
   check(Math.min(inf,1) === 1 && Math.max(-inf,1) === 1);
   check(Number.isNaN(Math.min(nan,1)) && Number.isNaN(Math.min(1,nan)));
@@ -46,9 +55,14 @@ export function main():void {
   check(Number.isNaN(Math.min(mark("a",nan),mark("b",1))) && order === "ab");
   order = "";
   check(Math.max(mark("a",1),mark("b",2)) === 2 && order === "ab");
+  order = "";
+  check(Math.pow(mark("a",2),mark("b",3)) === 8 && order === "ab");
   let fail = ():number=>{order=order+"x";throw {name:"STOP",message:"stop"};};
   order = "";
   try { Math.min(fail(),mark("b",2)); } catch(e) { check(order === "x"); }
+  check(order === "x");
+  order = "";
+  try { Math.pow(fail(),mark("b",2)); } catch(e) { check(order === "x"); }
   check(order === "x");
   return ;
 }

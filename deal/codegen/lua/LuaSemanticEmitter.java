@@ -11510,6 +11510,11 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
     local v = __args[1]
     if v == 0 then return 0 end
     return math.abs(v)
+  elseif fn == "MATH_POW" then
+    local a, b = __args[1], __args[2]
+    if b == 0 then return 1 end
+    if b ~= b or a ~= a or (math.abs(a) == 1 and math.abs(b) == math.huge) then return 0/0 end
+    return math.pow(a, b)
   elseif fn == "MATH_MIN" or fn == "MATH_MAX" then
     local a, b = __args[1], __args[2]
     if a ~= a then return a end

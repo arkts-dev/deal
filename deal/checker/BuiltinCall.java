@@ -13,6 +13,7 @@ public enum BuiltinCall {
     MATH_ABS_NUMBER("Math", "abs", List.of(Type.Number.INSTANCE), Type.Number.INSTANCE),
     MATH_MIN("Math", "min", List.of(Type.Number.INSTANCE, Type.Number.INSTANCE), Type.Number.INSTANCE),
     MATH_MAX("Math", "max", List.of(Type.Number.INSTANCE, Type.Number.INSTANCE), Type.Number.INSTANCE),
+    MATH_POW("Math", "pow", List.of(Type.Number.INSTANCE, Type.Number.INSTANCE), Type.Number.INSTANCE),
     MATH_ROUND("Math", "round", List.of(Type.Number.INSTANCE), Type.Number.INSTANCE),
     NUMBER_IS_FINITE("Number", "isFinite", List.of(Type.Unknown.INSTANCE), Type.Boolean.INSTANCE),
     NUMBER_IS_NAN("Number", "isNaN", List.of(Type.Unknown.INSTANCE), Type.Boolean.INSTANCE),

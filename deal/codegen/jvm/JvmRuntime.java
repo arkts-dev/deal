@@ -2649,6 +2649,7 @@ case "NUMBER_ADD" -> {
                 }
 
 
+                case "MATH_POW" -> { return Math.pow(numberOf(args[0]), numberOf(args[1])); }
                 case "MATH_MIN" -> { return Math.min(numberOf(args[0]), numberOf(args[1])); }
                 case "MATH_MAX" -> { return Math.max(numberOf(args[0]), numberOf(args[1])); }
                 case "MATH_ROUND" -> {
