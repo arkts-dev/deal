@@ -241,6 +241,10 @@ public final class CompilerProtocol {
             return deal.diagnostics.DiagnosticClassification.forCode(code);
         }
 
+        public deal.diagnostics.DiagnosticEditOffer editOffer() {
+            return deal.diagnostics.DiagnosticEditOffer.forDiagnostic(facts, occurrence, range);
+        }
+
         public String expected() { return facts.expected(); }
         public String actual() { return facts.actual(); }
 

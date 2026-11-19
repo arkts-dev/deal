@@ -2019,7 +2019,10 @@ public final class Parser {
                 .withFacts(new deal.diagnostics.DiagnosticFacts("syntax.missing-terminator", "parse.terminator",
                         TokenType.SEMICOLON.name(), peek().type().name(),
                         List.of("Terminate the preceding statement with ';' at this boundary."))
-                        .withSyntax(syntaxContext("terminator", peek(), List.of("SEMICOLON")))));
+                        .withSyntax(syntaxContext("terminator", peek(), List.of("SEMICOLON"))
+                            .withInsertion(peek().range(file).origin() == deal.diagnostics.RangeOrigin.SOURCE
+                                ? new deal.diagnostics.DiagnosticFacts.SyntaxInsertion(peek().range(file).startScalarOffset(), ";")
+                                : null))));
     }
 
     /** The E1053 message for the current (missing-terminator) position. */

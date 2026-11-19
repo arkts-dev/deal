@@ -19,9 +19,13 @@ public record DiagnosticOccurrence(String sourceRevision, String occurrenceId, S
         Objects.requireNonNull(source, "source");
         Objects.requireNonNull(diagnostic, "diagnostic");
         if (!file.equals(diagnostic.file())) return null;
-        String revision = digest(file, source);
+        String revision = sourceRevision(file, source);
         String carrier = DiagnosticStructuredOutput.toJson(List.of(diagnostic.withOccurrence(null)));
         return new DiagnosticOccurrence(revision, "diagnostic:" + digest(revision, carrier), null);
+    }
+
+    public static String sourceRevision(String file, String source) {
+        return digest(Objects.requireNonNull(file, "file"), Objects.requireNonNull(source, "source"));
     }
 
     /** Length-framed UTF-16 units preserve isolated surrogates as well as valid supplementary pairs. */

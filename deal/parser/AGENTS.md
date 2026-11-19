@@ -2,6 +2,7 @@
 
 Parse specification grammar with exact UTF-16 spans and deterministic recovery.
 Keep checker/backend policy outside parsing; add focused positive/negative fixtures.
+Missing-terminator insertion evidence uses only the parser's exact boundary; no guessed operands or declaration edits.
 
 - Comments are whitespace, including inside templates; retain their line breaks
   for grammar restrictions. Manifests alone select versions; no directive metadata.

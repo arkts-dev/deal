@@ -93,7 +93,9 @@ uses messages and concise producer notes; structured `facts.guidance` retains
 additional rule explanations and intent-dependent examples. Operational
 failures and actual compilation/publication outcomes are separate fields.
 Amendment uses `compiler-protocol-v3` with revision-pinned context requests;
-context reads do not grant edits. Embedded callers can use
+context reads do not grant edits. Missing-semicolon diagnostics can carry exact,
+source-revision-pinned insertion offers; explicitly chosen offers still require
+rechecking and do not expand amendment authority. Embedded callers can use
 `StrictManifestParser.parseBatch` for independent manifest schema failures in
 canonical order; strict syntax/duplicate/unknown-member faults and the default
 `parse` entry remain fail-fast. Failed validation never publishes a manifest.

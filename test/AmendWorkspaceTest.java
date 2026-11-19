@@ -285,6 +285,33 @@ public final class AmendWorkspaceTest {
     }
 
     private static void actionabilityFactsAndRepairScope() {
+        for (String syntaxSource : List.of("// 😀\r\nexport function f():void{let x:number=1}", "let x:number=1")) {
+            var syntaxInspection = AmendWorkspace.inspect(syntaxSource, "semicolon.deal");
+            var syntaxDiagnostic = syntaxInspection.diagnostics().stream().filter(d -> d.code().equals("E1053")).findFirst().orElseThrow();
+            var offer = syntaxDiagnostic.editOffer();
+            check(offer != null && offer.replacement().equals(";") && offer.expectedText().isEmpty()
+                && offer.startUtf16Offset() == syntaxDiagnostic.range().startScalarOffset(), "exact parser-owned semicolon offer");
+            var lexedSyntax = new deal.lexer.Lexer(syntaxSource, "semicolon.deal").tokenize();
+            var parsedSyntax = new deal.parser.Parser(lexedSyntax.tokens(), "semicolon.deal").parse();
+            var rawSyntax = parsedSyntax.diagnostics().stream().filter(d -> d.code().equals("E1053")).findFirst().orElseThrow();
+            check(rawSyntax.editOffer() == null, "no offer without an exact producer-owned snapshot revision");
+            var pinnedSyntax = rawSyntax.withOccurrence(deal.diagnostics.DiagnosticOccurrence.fromSource("semicolon.deal", syntaxSource, rawSyntax));
+            check(pinnedSyntax.editOffer().equals(offer)
+                && deal.diagnostics.DiagnosticStructuredOutput.toJson(List.of(pinnedSyntax)).contains("\"replacement\": \";\""),
+                "same exact offer on CLI and amendment transports");
+            String repairedSyntax = offer.applyChosen("semicolon.deal", syntaxSource);
+            check(AmendWorkspace.inspect(repairedSyntax, "semicolon.deal").diagnostics().isEmpty(), "chosen syntax insertion rechecks");
+            check(CompilerProtocolJson.encode(syntaxDiagnostic).contains("\"editOffer\":{")
+                && CompilerProtocolJson.encode(syntaxDiagnostic).contains(offer.sourceRevision()), "offer is attached and revision pinned in amendment JSON");
+            boolean staleOffer = false;
+            try { offer.applyChosen("semicolon.deal", " " + syntaxSource); }
+            catch (IllegalArgumentException expected) { staleOffer = true; }
+            check(staleOffer, "syntax offer rejects changed source without applying any edit");
+            boolean wrongFile = false;
+            try { offer.applyChosen("other.deal", syntaxSource); }
+            catch (IllegalArgumentException expected) { wrongFile = true; }
+            check(wrongFile, "syntax offer rejects another module");
+        }
         String relatedSource = "// 😀\r\nfunction consume(value:number):void{}\r\nexport function run():void{consume(\"bad\");}";
         var relatedInspection = AmendWorkspace.inspect(relatedSource, "related.deal");
         var relatedDiagnostic = relatedInspection.diagnostics().stream().filter(d -> d.code().equals("E5001")).findFirst().orElseThrow();

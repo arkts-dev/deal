@@ -91,6 +91,7 @@ public final class CompilerProtocolJson {
         if (!(value instanceof CompilerProtocol.StructuredDiagnostic diagnostic)) return object;
         var entries = new ArrayList<>(object.entries());
         entries.add(CanonicalJson.e("classification", toValue(diagnostic.classification())));
+        entries.add(CanonicalJson.e("editOffer", toValue(diagnostic.editOffer())));
         return CanonicalJson.obj(entries);
     }
 

@@ -148,6 +148,16 @@ public final class DiagnosticStructuredOutput {
                 .append(", \"occurrenceId\": ").append(jsonString(occurrence.occurrenceId()))
                 .append(", \"rootCauseId\": ").append(occurrence.rootCauseId() == null ? "null" : jsonString(occurrence.rootCauseId())).append('}');
         sb.append(",\n");
+        indent(sb, 3).append("\"editOffer\": ");
+        var edit = d.editOffer();
+        if (edit == null) sb.append("null");
+        else sb.append("{\"sourceRevision\": ").append(jsonString(edit.sourceRevision()))
+            .append(", \"file\": ").append(jsonString(edit.file()))
+            .append(", \"startUtf16Offset\": ").append(edit.startUtf16Offset())
+            .append(", \"endUtf16Offset\": ").append(edit.endUtf16Offset())
+            .append(", \"expectedText\": ").append(jsonString(edit.expectedText()))
+            .append(", \"replacement\": ").append(jsonString(edit.replacement())).append('}');
+        sb.append(",\n");
         appendNotes(sb, d.notes(), 3);
         sb.append(",\n");
         appendFacts(sb, d.facts(), 3);
@@ -272,7 +282,12 @@ public final class DiagnosticStructuredOutput {
             indent(sb, level + 2).append("\"foundKind\": ").append(jsonString(syntax.foundKind())).append(",\n");
             indent(sb, level + 2).append("\"lexeme\": ").append(jsonString(syntax.lexeme())).append(",\n");
             indent(sb, level + 2).append("\"lexemeLength\": ").append(syntax.lexemeLength()).append(",\n");
-            indent(sb, level + 2).append("\"truncated\": ").append(syntax.truncated()).append('\n');
+            indent(sb, level + 2).append("\"truncated\": ").append(syntax.truncated()).append(",\n");
+            indent(sb, level + 2).append("\"insertion\": ");
+            if (syntax.insertion() == null) sb.append("null");
+            else sb.append("{\"utf16Offset\": ").append(syntax.insertion().utf16Offset())
+                .append(", \"text\": ").append(jsonString(syntax.insertion().text())).append('}');
+            sb.append('\n');
             indent(sb, level + 1).append('}');
         }
         sb.append(",\n");

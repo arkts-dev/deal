@@ -3659,7 +3659,7 @@ public class DiagnosticRangeTest {
             + "      \"code\": \"" + code + "\",\n      \"classification\": "
             + expectedClassification(code) + ",\n      \"severity\": \"error\",\n"
             + "      \"message\": \"" + message + "\",\n      \"range\": "
-            + range.replace("\n", "\n      ") + ",\n      \"excerpt\": null,\n      \"occurrence\": null,\n      \"notes\": "
+            + range.replace("\n", "\n      ") + ",\n      \"excerpt\": null,\n      \"occurrence\": null,\n      \"editOffer\": null,\n      \"notes\": "
             + notes.replace("\n", "\n      ") + ",\n"
             + "      \"facts\": {\n        \"reason\": \"\",\n        \"operation\": \"\",\n"
             + "        \"expected\": \"\",\n        \"actual\": \"\",\n        \"guidance\": [],\n        \"path\": [],\n        \"call\": null,\n        \"operator\": null,\n        \"mismatch\": null,\n        \"syntax\": null,\n        \"names\": null,\n        \"construction\": null,\n        \"exports\": null,\n        \"resolution\": null,\n        \"cycle\": null,\n        \"tool\": null,\n        \"lowering\": null\n      },\n"

@@ -92,6 +92,10 @@ public record CompilerDiagnostic(
         this(code, severity, message, range, notes, diagnosticCode, missingSymbols, facts, excerpt, null);
     }
 
+    public DiagnosticEditOffer editOffer() {
+        return DiagnosticEditOffer.forDiagnostic(facts, occurrence, range);
+    }
+
     public CompilerDiagnostic withOccurrence(DiagnosticOccurrence value) {
         return new CompilerDiagnostic(code, severity, message, range, notes, diagnosticCode, missingSymbols, facts, excerpt, value);
     }

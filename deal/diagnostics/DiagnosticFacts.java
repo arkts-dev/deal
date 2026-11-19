@@ -133,8 +133,22 @@ public record DiagnosticFacts(
     }
 
     /** Token spelling is a bounded raw-lexeme prefix in UTF-16 units, escaped only by transport. */
+    /** Parser-owned insertion only; no inferred expression, declaration or semantic repair. */
+    public record SyntaxInsertion(int utf16Offset, String text) {
+        public SyntaxInsertion {
+            if (utf16Offset < 0 || !";".equals(text)) throw new IllegalArgumentException("Unsupported syntax insertion");
+        }
+    }
+
     public record SyntaxContext(String context, List<String> expectedKinds, String foundKind,
-                                String lexeme, int lexemeLength, boolean truncated) {
+                                String lexeme, int lexemeLength, boolean truncated, SyntaxInsertion insertion) {
+        public SyntaxContext(String context, List<String> expectedKinds, String foundKind,
+                             String lexeme, int lexemeLength, boolean truncated) {
+            this(context, expectedKinds, foundKind, lexeme, lexemeLength, truncated, null);
+        }
+        public SyntaxContext withInsertion(SyntaxInsertion value) {
+            return new SyntaxContext(context, expectedKinds, foundKind, lexeme, lexemeLength, truncated, value);
+        }
         public SyntaxContext {
             Objects.requireNonNull(context, "context");
             expectedKinds = List.copyOf(expectedKinds);
