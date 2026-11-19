@@ -1892,12 +1892,14 @@ public final class AmendWorkspace {
         errors.addAll(parsed.diagnostics());
         return errors.stream().filter(value -> value.severity().equals("error")).map(value -> {
             var r = value.range();
+            var withSource = value.withExcerpt(deal.diagnostics.DiagnosticExcerpt.fromSource(modulePath, source, r));
             return new StructuredDiagnostic(value.code(), value.severity(), value.message(),
                     r,
                     operation.targetId(), "", "", List.of(),
                     List.of(new RepairScope(operationName(operation), operation.targetId())),
                     null, value.notes(), operationIndex).withFacts(value.facts())
-                    .withExcerpt(deal.diagnostics.DiagnosticExcerpt.fromSource(modulePath, source, r));
+                    .withExcerpt(withSource.excerpt())
+                    .withOccurrence(deal.diagnostics.DiagnosticOccurrence.fromSource(modulePath, source, withSource));
         }).toList();
     }
 

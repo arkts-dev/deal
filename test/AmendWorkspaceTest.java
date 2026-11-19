@@ -90,11 +90,22 @@ public final class AmendWorkspaceTest {
         var diagnostic = rejected.diagnostics().stream().filter(d -> d.code().equals("E1008")).findFirst().orElseThrow();
         check(diagnostic.excerpt() != null && diagnostic.excerpt().text().equals(payload),
                 "syntax excerpt owns original payload, not committed source or masked directive");
+        check(diagnostic.occurrence() != null && diagnostic.occurrence().rootCauseId() == null,
+                "payload syntax occurrence owns its exact snapshot without guessed causal links");
         check(!rejected.accepted() && rejected.source().equals(base) && diagnostic.operationIndex() == 0,
                 "malformed annotated declaration remains operation-local and leaves source unchanged");
         check(diagnostic.range().startScalarOffset() == payload.indexOf("number")
                         && diagnostic.range().startLine() == 2 && diagnostic.range().startColumn() == 30,
                 "hiding supplementary directive text preserves exact payload UTF-16 offsets and CRLF");
+        var repeated = AmendWorkspace.apply(base, "geometry.deal", inspection.sourceDigest(),
+                List.of(new AmendWorkspace.AddDeclaration(inspection.moduleId(), payload)));
+        check(repeated.diagnostics().stream().filter(d -> d.code().equals("E1008")).findFirst().orElseThrow()
+                        .occurrence().equals(diagnostic.occurrence()), "same malformed payload has deterministic occurrence identity");
+        var revised = AmendWorkspace.apply(base, "geometry.deal", inspection.sourceDigest(),
+                List.of(new AmendWorkspace.AddDeclaration(inspection.moduleId(), payload + " ")));
+        check(!revised.diagnostics().stream().filter(d -> d.code().equals("E1008")).findFirst().orElseThrow()
+                        .occurrence().sourceRevision().equals(diagnostic.occurrence().sourceRevision()),
+                "same syntax anchor on revised payload receives a different exact source revision");
         String fixed = payload.replace("value number", "value:number");
         var accepted = AmendWorkspace.apply(base, "geometry.deal", inspection.sourceDigest(),
                 List.of(new AmendWorkspace.AddDeclaration(inspection.moduleId(), fixed)));
