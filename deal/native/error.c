@@ -11,6 +11,7 @@
 #include "deal/native/text.h"
 
 #include <stddef.h>
+#include <stdio.h>
 #include <string.h>
 
 /* `deal_string` stays opaque in this group: the class fields of the builtin
@@ -311,6 +312,11 @@ struct deal_error {
     size_t json_byte_offset_length;
     char *json_reason;
     size_t json_reason_length;
+    char *json_path;
+    size_t json_path_length;
+    size_t json_path_depth;
+    int json_path_truncated;
+    int json_missing_field;
 };
 
 /*
@@ -371,6 +377,8 @@ static void deal_error_release(void *object) {
     deal_platform_release(error->json_reason);
     error->json_reason = NULL;
     error->json_reason_length = 0u;
+    deal_platform_release(error->json_path);
+    error->json_path = NULL;
 }
 
 /* One Error record allocation. `snapshot_frames` is 0 for the host-authored
@@ -407,6 +415,11 @@ static deal_error *deal_error_allocate(const char *code, const char *message,
     error->json_byte_offset_length = 0u;
     error->json_reason = NULL;
     error->json_reason_length = 0u;
+    error->json_path = NULL;
+    error->json_path_length = 0u;
+    error->json_path_depth = 0u;
+    error->json_path_truncated = 0;
+    error->json_missing_field = 0;
     if (origin != NULL) {
         error->source_file = deal_platform_duplicate(origin->source_file);
         error->line = origin->line;
@@ -942,6 +955,16 @@ static void deal_diagnostic_error(deal_snapshot_buffer *buffer, const deal_error
     if (error->actual != NULL) {
         deal_diagnostic_text(buffer, "actual", error->actual, strlen(error->actual), &first);
     }
+    if (error->json_path != NULL) {
+        deal_diagnostic_text(buffer, "jsonPath", error->json_path, error->json_path_length, &first);
+        char depth_text[32];
+        (void)snprintf(depth_text, sizeof(depth_text), "%zu", error->json_path_depth);
+        deal_diagnostic_text(buffer, "jsonPathDepth", depth_text, strlen(depth_text), &first);
+        const char *truncated = error->json_path_truncated ? "true" : "false";
+        const char *missing = error->json_missing_field ? "true" : "false";
+        deal_diagnostic_text(buffer, "jsonPathTruncated", truncated, strlen(truncated), &first);
+        deal_diagnostic_text(buffer, "jsonMissingField", missing, strlen(missing), &first);
+    }
     if (error->json_byte_offset != NULL) {
         deal_diagnostic_text(buffer, "jsonByteOffset", error->json_byte_offset, error->json_byte_offset_length, &first);
         deal_diagnostic_text(buffer, "jsonReason", error->json_reason, error->json_reason_length, &first);
@@ -973,6 +996,22 @@ static void deal_diagnostic_error(deal_snapshot_buffer *buffer, const deal_error
         }
     }
     deal_snapshot_append(buffer, "}", 1u);
+}
+
+void deal_error_set_json_path(deal_error *error, const char *path, size_t length,
+                             size_t depth, int truncated, int missing) {
+    if (error == NULL || path == NULL || length > 8192u)
+        deal_platform_fault("error diagnostic: invalid JSON path");
+    char *copy = deal_platform_allocate(length + 1u);
+    if (copy == NULL) deal_platform_fault("error diagnostic: JSON path allocation failed");
+    memcpy(copy, path, length);
+    copy[length] = '\0';
+    deal_platform_release(error->json_path);
+    error->json_path = copy;
+    error->json_path_length = length;
+    error->json_path_depth = depth;
+    error->json_path_truncated = truncated;
+    error->json_missing_field = missing;
 }
 
 char *deal_error_diagnostic(const deal_error *error) {

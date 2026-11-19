@@ -111,7 +111,8 @@ Install the emitted closed arm table before user code; validate its repertoire a
 materialize its templates rather than composing failure prose in C. Error owns
 mutable name/message and independent diagnostic code. First throw binds code,
 origin and frames once; rethrow preserves identity and causes. Release all copied
-text/frame storage when the Error is collected.
+text/frame storage when the Error is collected. Decoder path copies are length-
+delimited platform storage, built from current frames only and released with Error.
 
 Host crossings preserve aliases, descriptors and rollback. Canonical function
 positions use FUNCTION_SIGNATURE, other data positions TYPE_DESCRIPTOR. Validate

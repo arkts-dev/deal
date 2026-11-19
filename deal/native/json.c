@@ -2014,6 +2014,9 @@ typedef struct deal_json_decode_frame {
     size_t count;
     /* 1 while the position at `field_index` / `index` is being decoded. */
     int child_open;
+    const char *rejected_key;
+    size_t rejected_key_length;
+    int missing_field;
 } deal_json_decode_frame;
 
 /* Releases one frame's invocation-local scratch (M5: no publication). */
@@ -2485,6 +2488,8 @@ static int deal_json_decode_advance(deal_json_decode_frame *frame,
             deal_root_scope_pop();
             if (!present) {
                 if (!field->optional) {
+                    frame->missing_field = 1;
+                    frame->child_open = 1;
                     *error = deal_json_target_mismatch(deal_data_of_undefined(),
                         field->descriptor, origin, 1);
                     return DEAL_JSON_DECODE_FAIL;
@@ -2523,6 +2528,8 @@ static int deal_json_decode_advance(deal_json_decode_frame *frame,
                         {"field", (const char *)deal_text_transport_bytes(key), deal_text_transport_length(key)},
                         {"classId", frame->layout->class_atom, strlen(frame->layout->class_atom)}
                     };
+                    frame->rejected_key = parameters[0].value;
+                    frame->rejected_key_length = parameters[0].length;
                     *error = deal_error_materialize_text(DEAL_ARM_ID_CLASS_EXTRA_FIELD,
                         parameters, 2u, NULL, NULL, origin, NULL);
                     return DEAL_JSON_DECODE_FAIL;
@@ -2601,6 +2608,48 @@ static int deal_json_decode_target(deal_data raw, deal_descriptor *descriptor,
         if (depth == 0u) {
             break;
         }
+    }
+    if (failed && *error != NULL) {
+        char path[8193];
+        size_t length = 0u, path_depth = 0u;
+        int truncated = 0, missing = 0;
+        for (size_t index = 0; index < depth; index += 1u) {
+            deal_json_decode_frame *frame = &frames[index];
+            const char *key = NULL;
+            size_t key_length = 0u;
+            char number[32];
+            if (frame->child_open) {
+                if (frame->kind == DEAL_JSON_DECODE_ARRAY) {
+                    (void)snprintf(number, sizeof(number), "%zu", frame->index);
+                    key = number;
+                    key_length = strlen(number);
+                } else {
+                    key = frame->layout->fields[frame->field_index].name;
+                    key_length = strlen(key);
+                }
+            } else if (frame->rejected_key != NULL) {
+                key = frame->rejected_key;
+                key_length = frame->rejected_key_length;
+            }
+            missing |= frame->missing_field;
+            if (key == NULL) continue;
+            path_depth += 1u;
+            if (path_depth > 32u) { truncated = 1; continue; }
+            size_t take = key_length > 128u ? 128u : key_length;
+            size_t available = (8192u - length - 1u) / 2u;
+            if (take > available) take = available;
+            while (take < key_length && take > 0u
+                    && ((unsigned char)key[take] & 0xc0u) == 0x80u) take -= 1u;
+            if (take < key_length) truncated = 1;
+            path[length++] = '/';
+            for (size_t unit = 0; unit < take; unit += 1u) {
+                if (key[unit] == '~' || key[unit] == '/') {
+                    path[length++] = '~';
+                    path[length++] = key[unit] == '~' ? '0' : '1';
+                } else path[length++] = key[unit];
+            }
+        }
+        deal_error_set_json_path(*error, path, length, path_depth, truncated, missing);
     }
     for (size_t index = 0; index < depth; index += 1u) {
         deal_json_decode_release_frame(&frames[index]);

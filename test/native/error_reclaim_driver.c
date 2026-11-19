@@ -388,6 +388,21 @@ int main(void) {
             && strstr(diagnostic, "\"jsonReason\":\"trailing content\"") != NULL,
           "live scanner facts survive full collection");
     deal_error_snapshot_release(diagnostic);
+    const char path[] = "/items/0/na\0me";
+    deal_error_set_json_path(parser_error, path, sizeof(path) - 1u, 3u, 0, 1);
+    check(platform_live() == parser_baseline + 7u,
+          "decoder path adds one Error-owned platform allocation");
+    deal_error_set_json_path(parser_error, path, sizeof(path) - 1u, 3u, 1, 1);
+    check(platform_live() == parser_baseline + 7u,
+          "replacing path releases previous storage exactly");
+    deal_gc_collect_full();
+    diagnostic = deal_error_diagnostic(parser_error);
+    check(strstr(diagnostic, "\"jsonPath\":\"/items/0/na\\u0000me\"") != NULL
+            && strstr(diagnostic, "\"jsonPathDepth\":\"3\"") != NULL
+            && strstr(diagnostic, "\"jsonMissingField\":\"true\"") != NULL
+            && strstr(diagnostic, "\"jsonPathTruncated\":\"true\"") != NULL,
+          "length-delimited path and status survive collection");
+    deal_error_snapshot_release(diagnostic);
     deal_root_frame_write(0u, NULL);
     deal_gc_collect_full();
     check(platform_live() == parser_baseline,

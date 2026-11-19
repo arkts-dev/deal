@@ -333,5 +333,8 @@ void deal_error_snapshot_release(char *text);
 /* Opt-in version-2 terminal diagnostics: existing metadata only, bounded text,
  * 32 innermost frames and eight cause levels. Release with snapshot_release. */
 char *deal_error_diagnostic(const deal_error *error);
+/* Copies bounded decoder-owned path text; no managed allocation or value walk. */
+void deal_error_set_json_path(deal_error *error, const char *path, size_t length,
+                             size_t depth, int truncated, int missing);
 
 #endif /* DEAL_NATIVE_ERROR_H */

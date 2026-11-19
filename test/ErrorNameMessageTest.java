@@ -204,7 +204,7 @@ public final class ErrorNameMessageTest {
     }
 
     private static void runtimeJsonDecoderExports(Path root) throws Exception {
-        for (Backend backend : List.of(Backend.JS, Backend.LUAJIT, Backend.JVM)) {
+        for (Backend backend : List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM)) {
             for (String[] sample : new String[][] {
                     {"nested", "{\\\"items\\\":[{\\\"name\\\":false}]}", "/items/0/name", "false"},
                     {"missing", "{\\\"items\\\":[{}]}", "/items/0/name", "true"},
@@ -219,18 +219,25 @@ public final class ErrorNameMessageTest {
                 var compiler = new deal.module.CompilationOrchestrator(entry, out, false, false, false,
                     backend, null, List.of(src), null);
                 if (!compiler.compile()) throw new AssertionError(compiler.diagnostics());
-                List<String> launch;
-                if (backend == Backend.JVM) {
+                List<List<String>> launches = new ArrayList<>();
+                if (backend == Backend.LLVM) {
+                    for (int level : new int[] {0, 2}) {
+                        Path product = project.resolve("native" + level);
+                        NativeCompiler.build(new deal.toolchain.NativeBuildRequest(out, product, level, List.of(), null), List.of());
+                        launches.add(List.of(product.toString()));
+                    }
+                } else if (backend == Backend.JVM) {
                     Path classes = Files.createDirectories(project.resolve("classes"));
                     String cp = TestClasspath.absolute(TestClasspath.EmptyEntry.OMIT);
                     var command = new ArrayList<>(List.of("javac", "--release", "25", "-proc:none", "-cp", cp, "-d", classes.toString()));
                     try (var files = Files.walk(out)) { files.filter(p -> p.toString().endsWith(".java")).sorted().forEach(p -> command.add(p.toString())); }
                     var built = deal.test.conformance.JvmCompilation.compile(command, out);
                     if (built.exitCode() != 0) throw new AssertionError(built.stderr());
-                    launch = List.of("java", "-cp", classes + java.io.File.pathSeparator + cp, deal.codegen.jvm.JvmNames.classNameFor("main"));
-                } else launch = List.of(backend == Backend.JS ? "node" : "luajit", backend == Backend.JS ? "main.js" : "main.lua");
-                var baseline = BoundedProcess.runCaptured(launch, out, Map.of("DEAL_DIAGNOSTICS_JSON", "0"));
-                var enabled = BoundedProcess.runCaptured(launch, out, Map.of("DEAL_DIAGNOSTICS_JSON", "1"));
+                    launches.add(List.of("java", "-cp", classes + java.io.File.pathSeparator + cp, deal.codegen.jvm.JvmNames.classNameFor("main")));
+                } else launches.add(List.of(backend == Backend.JS ? "node" : "luajit", backend == Backend.JS ? "main.js" : "main.lua"));
+                for (var launch : launches) for (String stress : backend == Backend.LLVM ? List.of("0", "1") : List.of("0")) {
+                var baseline = BoundedProcess.runCaptured(launch, out, Map.of("DEAL_DIAGNOSTICS_JSON", "0", "DEAL_GC_STRESS", stress));
+                var enabled = BoundedProcess.runCaptured(launch, out, Map.of("DEAL_DIAGNOSTICS_JSON", "1", "DEAL_GC_STRESS", stress));
                 String prefix = "DEAL_RUNTIME_DIAGNOSTIC: ";
                 String line = enabled.stderr().lines().filter(s -> s.startsWith(prefix)).findFirst().orElseThrow(() -> new AssertionError(enabled));
                 if (baseline.exitCode() != 1 || enabled.exitCode() != 1 || !baseline.stdout().equals(enabled.stdout())
@@ -242,6 +249,7 @@ public final class ErrorNameMessageTest {
                         "jsonMissingField", sample[3], "message", "chosen message").entrySet())
                     if (!deal.amend.CompilerProtocolJson.field(runtime, expected.getKey()).equals(new CanonicalJson.Str(expected.getValue())))
                         throw new AssertionError("decoder evidence lost on rethrow " + backend + " " + sample[0] + ": " + line);
+                }
                 System.out.println("JSON decoder diagnostics: " + backend + " " + sample[0] + " path/repair/default parity");
             }
         }

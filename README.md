@@ -98,7 +98,10 @@ context reads do not grant edits.
 Set `DEAL_DIAGNOSTICS_JSON=1` before execution to append a bounded
 `DEAL_RUNTIME_DIAGNOSTIC:` JSON v2 record on uncaught runtime errors across all
 four backends. It retains available Error metadata, causes/frames and original
-JSON scanner byte offsets/reasons without traversing user values. Default
+JSON scanner byte offsets/reasons without traversing user values. Contextual
+JSON failures also retain a JSON-pointer path prefix (root is empty), exact path
+depth, truncation and missing-field status. Prefixes retain at most 32 segments;
+keys are bounded to 128 UTF-16 units on JS/JVM or 128 bytes on Lua/native. Default
 terminal output and exit behavior remain unchanged when disabled.
 
 ## Embedded timing
