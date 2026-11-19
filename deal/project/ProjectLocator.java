@@ -208,7 +208,8 @@ public final class ProjectLocator {
             if (converted instanceof ProtectedPathOps.PathResult.Failure rootFailure) {
                 return e2010("deal.json: 'moduleRoots' entry '" + root.value()
                         + "' cannot be converted: " + rootFailure.reason(),
-                    sourceRange(manifestPathText, root.sourceRange()), null);
+                    sourceRange(manifestPathText, root.sourceRange()), null,
+                    "config.root-conversion", List.of("moduleRoots"), "convertible relative root path", root.value());
             }
             convertedRoots.add(new ConfiguredModuleRoot(root.value(),
                 ((ProtectedPathOps.PathResult.Success) converted).resolvedPath().toString(),
@@ -222,7 +223,8 @@ public final class ProjectLocator {
                         + root.configuredText()
                         + "' resolve to the same directory '"
                         + root.absoluteNormalizedPath() + "'",
-                    sourceRange(manifestPathText, root.sourceRange()), null);
+                    sourceRange(manifestPathText, root.sourceRange()), null,
+                    "config.duplicate-root", List.of("moduleRoots"), "distinct normalized root directories", root.absoluteNormalizedPath());
             }
             seenRootPaths.put(root.absoluteNormalizedPath(), root.configuredText());
         }
@@ -244,7 +246,9 @@ public final class ProjectLocator {
                         + "': declaration '" + declarationText
                         + "' is not an existing regular readable file: "
                         + declarationFailure.reason(),
-                    sourceRange(manifestPathText, spec.declaration().sourceRange()), null);
+                    sourceRange(manifestPathText, spec.declaration().sourceRange()), null,
+                    "config.declaration-file", List.of("externals", spec.rawImportSpecifier(), "declaration"),
+                    "existing regular readable declaration file", declarationText);
             }
             String declarationPathText =
                 ((ProtectedPathOps.PathResult.Success) converted).resolvedPath().toString();
@@ -259,7 +263,9 @@ public final class ProjectLocator {
                     List.of(new DiagnosticNote("stdlib module '" + overlapped
                         + "' is resolved as part of the language distribution rather"
                         + " than as a project external host module"
-                        + " (docs/spec-v1.6.md#package-manifest)", null)));
+                        + " (docs/spec-v1.6.md#package-manifest)", null)),
+                    "config.external-stdlib-overlap", List.of("externals", spec.rawImportSpecifier(), "declaration"),
+                    "project external declaration distinct from pinned stdlib", declarationPathText);
             }
 
             completedExternals.add(new ExternalEntry(spec.rawImportSpecifier(),
@@ -276,7 +282,9 @@ public final class ProjectLocator {
                         + completedEntry.rawImportSpecifier()
                         + "' declare the same file '" + path + "'",
                     sourceRange(manifestPathText,
-                        completedEntry.declarationPath().sourceRange()), null);
+                        completedEntry.declarationPath().sourceRange()), null,
+                    "config.duplicate-declaration-file", List.of("externals", completedEntry.rawImportSpecifier(), "declaration"),
+                    "distinct declaration file per external specifier", path);
             }
             seenDeclarationPaths.put(path, completedEntry.rawImportSpecifier());
         }
@@ -613,6 +621,18 @@ public final class ProjectLocator {
         return new LocateResult(null, new CompilerDiagnostic(
             DiagnosticCode.E2010.code(), "error", message, range, notes,
             DiagnosticCode.E2010), null);
+    }
+
+    private static LocateResult e2010(String message, DiagnosticRange range, List<DiagnosticNote> notes,
+                                       String reason, List<String> path, String expected, String actual) {
+        LocateResult failure = e2010(message, range, notes);
+        var facts = new deal.diagnostics.DiagnosticFacts(reason, "manifest.resolve", expected, actual,
+                List.of("Inspect the configured member and its resolved path, then explicitly choose the intended distinct root/declaration. "
+                        + "No replacement path, import specifier or declaration is inferred; resolution remains fail-fast. "
+                        + "See docs/spec-v1.6.md#package-manifest."),
+                path.stream().map(name -> new deal.diagnostics.DiagnosticFacts.PathSegment(
+                        deal.diagnostics.DiagnosticFacts.PathKind.FIELD, name)).toList());
+        return new LocateResult(null, failure.e2010().withFacts(facts), null);
     }
 
     private static LocateResult cliFailure(String message, String entryFile) {

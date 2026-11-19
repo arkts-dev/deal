@@ -65,6 +65,7 @@ public final class ProjectLocatorTest {
             testOverrideRules();
             testRoots();
             testRootDuplicateDetection();
+            testResolvedPathFactsAndChosenRepair();
             testExternalsDeclarationValidation();
             testExternalsDuplicateDeclarations();
             testStdlibOverlapRejection();
@@ -1039,6 +1040,39 @@ public final class ProjectLocatorTest {
 
     }
 
+    private static void testResolvedPathFactsAndChosenRepair() throws Exception {
+        Path dir = fixture("resolved-path-facts");
+        writeEntry(dir, "main.deal");
+        Files.createDirectories(dir.resolve("src"));
+        Files.createDirectories(dir.resolve("lib"));
+        writeText(dir.resolve("a.d.deal"), "export function first():void;\n");
+        writeText(dir.resolve("b.d.deal"), "export function second():void;\n");
+        record Case(String manifest, String reason, List<String> path, String expected, String actual) {}
+        for (var sample : List.of(
+                new Case("{\"languageVersion\":\"1.6\",\"moduleRoots\":[\"src\",\"src\"]}", "config.duplicate-root",
+                        List.of("moduleRoots"), "distinct normalized root directories", dir.resolve("src").toRealPath().toString()),
+                new Case("{\"languageVersion\":\"1.6\",\"externals\":{\"host\":{\"declaration\":\"absent.d.deal\"}}}", "config.declaration-file",
+                        List.of("externals", "host", "declaration"), "existing regular readable declaration file", "absent.d.deal"),
+                new Case("{\"languageVersion\":\"1.6\",\"externals\":{\"a\":{\"declaration\":\"a.d.deal\"},\"b\":{\"declaration\":\"./a.d.deal\"}}}",
+                        "config.duplicate-declaration-file", List.of("externals", "b", "declaration"), "distinct declaration file per external specifier",
+                        dir.resolve("a.d.deal").toRealPath().toString()))) {
+            writeText(dir.resolve("deal.json"), sample.manifest());
+            var result = ProjectLocator.locate(dir.resolve("main.deal").toString(), null);
+            var diagnostic = result.e2010();
+            check(result.context() == null && diagnostic != null && diagnostic.facts().reason().equals(sample.reason())
+                            && diagnostic.facts().expected().equals(sample.expected()) && diagnostic.facts().actual().equals(sample.actual())
+                            && diagnostic.facts().path().stream().map(deal.diagnostics.DiagnosticFacts.PathSegment::name).toList().equals(sample.path()),
+                    "resolved path rejection retains observed identity and exact member route without prose parsing: " + sample.reason());
+            check(diagnostic != null && diagnostic.facts().guidance().getFirst().contains("No replacement path"),
+                    "resolved-path recovery remains intent-dependent");
+        }
+        writeText(dir.resolve("deal.json"), "{\"languageVersion\":\"1.6\",\"moduleRoots\":[\"src\",\"lib\"],"
+                + "\"externals\":{\"a\":{\"declaration\":\"a.d.deal\"},\"b\":{\"declaration\":\"b.d.deal\"}}}");
+        var repaired = ProjectLocator.locate(dir.resolve("main.deal").toString(), null);
+        check(repaired.context() != null && repaired.e2010() == null && repaired.context().externals().size() == 2,
+                "explicitly chosen distinct roots/declarations resolve after rejected manifest without stale error state");
+    }
+
     private static void testExternalsDuplicateDeclarations() throws Exception {
         System.out.println("-- Externals: cross-entry duplicate declarations");
 
@@ -1102,6 +1136,10 @@ public final class ProjectLocatorTest {
                 note.message().contains("console")
                     && note.message().contains("docs/spec-v1.6.md#package-manifest")
                     && note.message().contains("language distribution"));
+            check(direct.facts().reason().equals("config.external-stdlib-overlap")
+                            && direct.facts().actual().equals(dir.resolve("std/console.d.deal").toRealPath().toString())
+                            && direct.facts().path().stream().map(deal.diagnostics.DiagnosticFacts.PathSegment::name).toList()
+                                    .equals(List.of("externals", "host", "declaration")), "stdlib overlap retains actual resolved path and configured route");
             check(moduleNote, "stdlib-overlap note names the module and the"
                 + " language-distribution rule");
         }
