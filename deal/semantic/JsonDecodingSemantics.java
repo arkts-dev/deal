@@ -67,6 +67,7 @@ public final class JsonDecodingSemantics {
         final List<String> keys = new ArrayList<>();
         ClassLayout layout;
         int index;
+        String rejectedKey;
 
         Frame(SharedStdlibSemantics.Value raw, RuntimeDescriptor target) {
             this.raw = raw;
@@ -97,7 +98,8 @@ public final class JsonDecodingSemantics {
                     throw new IllegalArgumentException("JSON decoding requires acyclic parsed JSON data");
                 BoundaryFailure failure = open(frame, layouts);
                 if (failure != null)
-                    return new ClassOpsExecutor.Outcome.Failure<>(new ClassOpsExecutor.OpFailure(failure, origin));
+                    return new ClassOpsExecutor.Outcome.Failure<>(new ClassOpsExecutor.OpFailure(
+                        withDecodeEvidence(failure, stack), origin));
             }
             if (frame.index < frame.children.size()) {
                 Child child = frame.children.get(frame.index++);
@@ -112,6 +114,37 @@ public final class JsonDecodingSemantics {
             stack.peek().values.add(completed);
         }
         throw new IllegalStateException("JSON decoding walk without a result");
+    }
+
+    /** Uses only the walk's current frames, never another read of the document. */
+    private static BoundaryFailure withDecodeEvidence(BoundaryFailure failure, Deque<Frame> stack) {
+        var metadata = new LinkedHashMap<>(failure.metadata());
+        var path = new StringBuilder();
+        int depth = 0;
+        boolean truncated = false;
+        for (var frames = stack.descendingIterator(); frames.hasNext();) {
+            Frame frame = frames.next();
+            String segment = null;
+            if (frames.hasNext()) {
+                int child = frame.index - 1;
+                segment = frame.keys.isEmpty() ? Integer.toString(child) : frame.keys.get(child);
+            } else if (frame.rejectedKey != null) segment = frame.rejectedKey;
+            if (segment == null) continue;
+            depth++;
+            if (depth > 32) { truncated = true; continue; }
+            int take = Math.min(segment.length(), 128);
+            if (take < segment.length() && Character.isHighSurrogate(segment.charAt(take - 1))
+                    && Character.isLowSurrogate(segment.charAt(take))) take--;
+            truncated |= take < segment.length();
+            path.append('/').append(segment.substring(0, take).replace("~", "~0").replace("/", "~1"));
+        }
+        Frame leaf = stack.peek();
+        metadata.put("jsonPath", path.toString());
+        metadata.put("jsonPathDepth", Integer.toString(depth));
+        metadata.put("jsonPathTruncated", Boolean.toString(truncated));
+        metadata.put("jsonMissingField", Boolean.toString(leaf.raw == null));
+        return new BoundaryFailure(failure.policy(), failure.code(), failure.message(), failure.expected(),
+            failure.actual(), metadata, failure.cause());
     }
 
     private static Object containerIdentity(SharedStdlibSemantics.Value value) {
@@ -157,9 +190,11 @@ public final class JsonDecodingSemantics {
             Set<String> declared = new HashSet<>();
             for (var field : frame.layout.fields()) declared.add(field.name());
             for (String key : table.table().keys()) {
-                if (!declared.contains(key))
+                if (!declared.contains(key)) {
+                    frame.rejectedKey = key;
                     return FailureContractRegistry.render(FailureArmId.CLASS_EXTRA_FIELD,
                         Map.of("field", key, "classId", cls.classId().text()), null, null, null);
+                }
             }
             for (var field : frame.layout.fields()) {
                 var found = table.table().get(field.name());

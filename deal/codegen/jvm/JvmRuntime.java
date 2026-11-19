@@ -513,6 +513,7 @@ public final class JvmRuntime {
         public final DealError cause;
         private final String jsonByteOffset;
         private final String jsonReason;
+        private final Map<String, String> jsonDecodeEvidence;
         /**
          * Whether this failure was published by a rethrow of a
          * transported Error value (never by a fresh runtime check, a
@@ -533,6 +534,12 @@ public final class JvmRuntime {
 
         DealError(String code, String msg, String origin, String expected,
                   String actual, String frames, DealError cause, String jsonByteOffset, String jsonReason) {
+            this(code, msg, origin, expected, actual, frames, cause, jsonByteOffset, jsonReason, Map.of());
+        }
+
+        DealError(String code, String msg, String origin, String expected,
+                  String actual, String frames, DealError cause, String jsonByteOffset, String jsonReason,
+                  Map<String, String> jsonDecodeEvidence) {
             super(msg, cause);
             this.code = code;
             this.msg = msg;
@@ -543,6 +550,7 @@ public final class JvmRuntime {
             this.cause = cause;
             this.jsonByteOffset = jsonByteOffset;
             this.jsonReason = jsonReason;
+            this.jsonDecodeEvidence = Map.copyOf(jsonDecodeEvidence);
         }
 
         /**
@@ -579,7 +587,7 @@ public final class JvmRuntime {
             return transport;
         }
         DealError published = new DealError(transport.code, value.message, transport.origin,
-            transport.expected, transport.actual, transport.frames, transport.cause, transport.jsonByteOffset, transport.jsonReason);
+            transport.expected, transport.actual, transport.frames, transport.cause, transport.jsonByteOffset, transport.jsonReason, transport.jsonDecodeEvidence);
         published.transported = true;
         published.reified = value;
         value.transport = published;
@@ -619,7 +627,7 @@ public final class JvmRuntime {
     public static DealError wrap(DealError previous, DealError cause) {
         DealError wrapped = new DealError(previous.code, previous.msg,
             previous.origin, previous.expected, previous.actual,
-            previous.frames, cause, previous.jsonByteOffset, previous.jsonReason);
+            previous.frames, cause, previous.jsonByteOffset, previous.jsonReason, previous.jsonDecodeEvidence);
         wrapped.reified = previous.reified;
         if (wrapped.reified != null) {
             wrapped.reified.transport = wrapped;
@@ -812,6 +820,8 @@ public final class JvmRuntime {
         appendRuntimeText(out, "frames", error.frames, true);
         appendRuntimeText(out, "jsonByteOffset", error.jsonByteOffset, true);
         appendRuntimeText(out, "jsonReason", error.jsonReason, true);
+        for (String key : List.of("jsonPath", "jsonPathDepth", "jsonPathTruncated", "jsonMissingField"))
+            appendRuntimeText(out, key, error.jsonDecodeEvidence.get(key), true);
         if (error.cause != null) {
             if (depth >= 7 || seen.contains(error.cause)) out.append(",\"causeTruncated\":true");
             else {

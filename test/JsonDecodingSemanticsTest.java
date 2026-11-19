@@ -52,7 +52,29 @@ public final class JsonDecodingSemanticsTest {
             check(expected.getMessage().equals("JSON decoding requires acyclic parsed JSON data"));
         }
     }
-    public static void main(String[] args) {
+    public static void main(String[] args) throws Exception {
+        if (args.length == 1 && args[0].equals("--jvm-decode-projection")) {
+            try {
+                deal.codegen.jvm.JvmJson.decode("[false]", new RuntimeDescriptor.Array(RuntimeDescriptor.Number.INSTANCE).canonicalSpecText(),
+                    ORIGIN, "json.deal:7:3", Map.of());
+                throw new AssertionError("unexpected successful decode");
+            } catch (deal.codegen.jvm.JvmRuntime.DealError rejected) {
+                var value = rejected.reify();
+                value.message = "chosen message";
+                var transported = deal.codegen.jvm.JvmRuntime.rethrow(value);
+                check(transported.reify() == value);
+                deal.codegen.jvm.JvmRuntime.reportRuntimeDiagnostic(transported);
+            }
+            return;
+        }
+        var projection = BoundedProcess.runCaptured(List.of("java", "-cp",
+            TestClasspath.absolute(TestClasspath.EmptyEntry.OMIT), JsonDecodingSemanticsTest.class.getName(),
+            "--jvm-decode-projection"), java.nio.file.Path.of("").toAbsolutePath(), Map.of("DEAL_DIAGNOSTICS_JSON", "1"));
+        check(projection.exitCode() == 0);
+        check(projection.stderr().contains("\"jsonPath\":\"/0\"")
+            && projection.stderr().contains("\"jsonPathDepth\":\"1\"")
+            && projection.stderr().contains("\"jsonMissingField\":\"false\"")
+            && projection.stderr().contains("chosen message"));
         var unknown = RuntimeDescriptor.Unknown.INSTANCE;
         var number = RuntimeDescriptor.Number.INSTANCE;
         var string = RuntimeDescriptor.String.INSTANCE;
@@ -106,7 +128,19 @@ public final class JsonDecodingSemanticsTest {
         value("{\"value\":null}", node, Map.of(nodeId, requiredNullable));
         // Earlier nested defects precede a later missing required field.
         var ordered = new ClassLayout(nodeId, List.of(field("first", new RuntimeDescriptor.Array(number), true), field("later", string, true)));
-        check(failure("{\"first\":[false]}", node, Map.of(nodeId, ordered)).message().equals("expected number"));
+        var nestedFailure = failure("{\"first\":[false]}", node, Map.of(nodeId, ordered));
+        check(nestedFailure.message().equals("expected number"));
+        check(nestedFailure.metadata().get("jsonPath").equals("/first/0"));
+        check(nestedFailure.metadata().get("jsonPathDepth").equals("2"));
+        check(nestedFailure.metadata().get("jsonMissingField").equals("false"));
+        var missingFailure = failure("{\"first\":[1]}", node, Map.of(nodeId, ordered));
+        check(missingFailure.metadata().get("jsonPath").equals("/later"));
+        check(missingFailure.metadata().get("jsonMissingField").equals("true"));
+        var escapedLayout = new ClassLayout(nodeId, List.of(field("a/~😀", new RuntimeDescriptor.Array(number), true)));
+        check(failure("{\"a/~😀\":[false]}", node, Map.of(nodeId, escapedLayout)).metadata().get("jsonPath").equals("/a~1~0😀/0"));
+        check(failure("{\"other/~\":1}", node, layouts).metadata().get("jsonPath").equals("/other~1~0"));
+        check(failure("false", number, Map.of()).metadata().get("jsonPath").isEmpty());
+        value("{\"first\":[1],\"later\":\"chosen\"}", node, Map.of(nodeId, ordered));
         var siblingId = new ClassId("src/other.deal", "Node");
         var sibling = new ClassLayout(siblingId, List.of(field("name", string, true)));
         var both = Map.of(nodeId, layout, siblingId, sibling);
@@ -196,6 +230,14 @@ public final class JsonDecodingSemanticsTest {
             deep = ((ClassOpsExecutor.FieldState.Present) instance.fields().get(1)).value();
         }
         check(deep == ClassOpsExecutor.Value.Null.INSTANCE);
+        var deepFailure = failure("{\"value\":1,\"next\":".repeat(40) + "{\"value\":false}" + "}".repeat(40), node, layouts);
+        check(deepFailure.metadata().get("jsonPathDepth").equals("41"));
+        check(deepFailure.metadata().get("jsonPathTruncated").equals("true"));
+        check(deepFailure.metadata().get("jsonPath").equals("/next".repeat(32)));
+        String longKey = "x".repeat(127) + "😀tail";
+        var boundedFailure = failure("{\"" + longKey + "\":false}", node, layouts);
+        check(boundedFailure.metadata().get("jsonPath").equals("/" + "x".repeat(127)));
+        check(boundedFailure.metadata().get("jsonPathTruncated").equals("true"));
         System.out.println("JsonDecodingSemanticsTest: " + checks + " passed, 0 failed");
     }
 }

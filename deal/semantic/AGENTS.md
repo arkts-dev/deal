@@ -96,6 +96,8 @@ JSON parsing has explicit contextual schemas, syntax/duplicate errors, extras-fi
 then declaration-order failures, fresh exact instances/arrays and no factories.
 Assertions never supply decoding targets. Preserve typed descriptors recursively,
 including empty arrays; operation-local reconstruction/checking stays stack-safe.
+Decode evidence comes from current walk frames, with bounded JSON-pointer prefixes,
+exact path depth and missing-field status; never re-read a rejected document.
 
 Stringify validates declared positions only when reached, preserves original
 cycle identity and class order/presence, and exposes Error name/message only.

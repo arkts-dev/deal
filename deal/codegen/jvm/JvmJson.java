@@ -101,7 +101,8 @@ public final class JvmJson {
             var failure = failed.failure().failure();
             throw new JvmRuntime.DealError(failure.code().name(), failure.message(), originText,
                 failure.expected(), failure.actual(), JvmRuntime.framesText(), null,
-                failure.metadata().get("oneBasedByteOffset"), failure.metadata().get("reason"));
+                failure.metadata().get("oneBasedByteOffset"), failure.metadata().get("reason"),
+                failure.metadata().containsKey("jsonPath") ? failure.metadata() : Map.of());
         }
         var value = ((deal.semantic.ir.ClassOpsExecutor.Outcome.Success<deal.semantic.ir.ClassOpsExecutor.Value>) outcome).value();
         return materialize(value, plans);
