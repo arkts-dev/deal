@@ -65,6 +65,8 @@ public final class NativeBuildException extends Exception {
     private final Kind kind;
     private final String detail;
     private final DiagnosticFacts.ToolContext tool;
+    private final String expected;
+    private final String actual;
 
     /**
      * @param kind the named condition; non-null
@@ -75,11 +77,17 @@ public final class NativeBuildException extends Exception {
     }
 
     public NativeBuildException(Kind kind, String detail, DiagnosticFacts.ToolContext tool) {
+        this(kind, detail, tool, "", "");
+    }
+
+    NativeBuildException(Kind kind, String detail, DiagnosticFacts.ToolContext tool, String expected, String actual) {
         super(Objects.requireNonNull(kind, "kind must not be null").prefix()
             + Objects.requireNonNull(detail, "detail must not be null"));
         this.kind = kind;
         this.detail = detail;
         this.tool = tool;
+        this.expected = Objects.requireNonNull(expected, "expected");
+        this.actual = Objects.requireNonNull(actual, "actual");
         if (detail.isBlank()) {
             throw new IllegalArgumentException("a native build failure names its"
                 + " condition detail");
@@ -101,7 +109,19 @@ public final class NativeBuildException extends Exception {
 
     public DiagnosticFacts facts() {
         return new DiagnosticFacts("native." + kind.name().toLowerCase(java.util.Locale.ROOT).replace('_', '-'),
-                tool == null ? "native.build" : tool.operation(), "", "", java.util.List.of()).withTool(tool);
+                tool == null ? "native.build" : tool.operation(), expected, actual, recoveryGuidance()).withTool(tool);
+    }
+
+    private java.util.List<String> recoveryGuidance() {
+        return switch (kind) {
+            case TOOLCHAIN_MISSING, TOOLCHAIN_UNVERSIONED, TOOLCHAIN_UNSUPPORTED -> java.util.List.of(
+                    "Select an installed executable clang in the supported major window on PATH and retry the same build. "
+                            + "Search/probe evidence does not authorize changing target, flags or accepted versions.");
+            case LINK_FAILED, TOOL_FAILURE -> java.util.List.of(
+                    "Inspect the observed child outcome and retained output before choosing a tool or source repair; "
+                            + "no signal, missing library, replacement flag or successful product is inferred.");
+            default -> java.util.List.of();
+        };
     }
 
     public deal.diagnostics.OperationalDiagnostic structuredDiagnostic() {

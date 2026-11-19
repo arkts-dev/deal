@@ -437,21 +437,23 @@ public final class NativeToolchain {
         if (version.exitCode() != 0) {
             throw new NativeBuildException(
                 NativeBuildException.Kind.TOOLCHAIN_UNVERSIONED,
-                "'" + compiler + " --version' exited " + version.exitCode(), version.tool());
+                "'" + compiler + " --version' exited " + version.exitCode(), version.tool(),
+                "successful version probe", "exit " + version.exitCode());
         }
         int major = versionMajor(version.stdout());
         if (major < 0) {
             throw new NativeBuildException(
                 NativeBuildException.Kind.TOOLCHAIN_UNVERSIONED,
                 "'" + compiler + " --version' states no version major ("
-                    + firstLine(version.stdout()) + ")", version.tool());
+                    + firstLine(version.stdout()) + ")", version.tool(), "version major", "unavailable");
         }
         if (major < MINIMUM_MAJOR || major > MAXIMUM_MAJOR) {
             throw new NativeBuildException(
                 NativeBuildException.Kind.TOOLCHAIN_UNSUPPORTED,
                 "'" + compiler + "' states major " + major
                     + ", outside the accepted " + MINIMUM_MAJOR + "-"
-                    + MAXIMUM_MAJOR + " window", version.tool());
+                    + MAXIMUM_MAJOR + " window", version.tool(),
+                MINIMUM_MAJOR + "-" + MAXIMUM_MAJOR, Integer.toString(major));
         }
     }
 

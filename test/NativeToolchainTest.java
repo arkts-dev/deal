@@ -539,6 +539,9 @@ public final class NativeToolchainTest {
                     && unsupported.tool().exitCode() == 0
                     && unsupported.tool().stdout().text().contains("clang version " + major),
                 "unsupported version retains actual successful probe output and status");
+            check(unsupported.facts().expected().equals("14-16") && unsupported.facts().actual().equals(Integer.toString(major))
+                            && unsupported.facts().guidance().getFirst().contains("does not authorize changing target"),
+                    "unsupported major retains producer comparison and intent-dependent recovery without parsing output twice");
             check(unsupported.diagnostic().contains("major " + major),
                 "the version diagnostic names the observed major: "
                     + unsupported.diagnostic());
@@ -555,6 +558,8 @@ public final class NativeToolchainTest {
             noVersion.kind(),
             "a compiler that states no version is the named unversioned"
                 + " preflight");
+        check(noVersion.facts().expected().equals("version major") && noVersion.facts().actual().equals("unavailable"),
+                "a successful unversioned child does not invent a parsed major");
         Path brokenVersion = Files.createDirectories(
             scratch.resolve("path-broken-version"));
         writeWrapper(brokenVersion.resolve("clang"), "clang version 14.0.0", 3);
@@ -565,6 +570,8 @@ public final class NativeToolchainTest {
         checkEq(NativeBuildException.Kind.TOOLCHAIN_UNVERSIONED,
             failedVersion.kind(),
             "a failing version probe is the named unversioned preflight");
+        check(failedVersion.facts().expected().equals("successful version probe") && failedVersion.facts().actual().equals("exit 3"),
+                "failed probe retains observed exit rather than a guessed unsupported version");
         check(failedVersion.detail().contains("--version"),
             "the unversioned diagnostic names the probe: "
                 + failedVersion.detail());
