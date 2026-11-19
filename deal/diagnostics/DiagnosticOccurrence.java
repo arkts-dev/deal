@@ -7,10 +7,22 @@ import java.util.List;
 import java.util.Objects;
 
 /** A diagnostic occurrence in an exact producer-owned source snapshot, not a semantic/edit identity. */
-public record DiagnosticOccurrence(String sourceRevision, String occurrenceId, String rootCauseId) {
+public record DiagnosticOccurrence(String sourceRevision, String occurrenceId, String rootCauseId,
+                                   SnapshotKind snapshotKind) {
+    public enum SnapshotKind { CURRENT_SOURCE, REJECTED_CANDIDATE, REJECTED_PAYLOAD }
+
+    public DiagnosticOccurrence(String sourceRevision, String occurrenceId, String rootCauseId) {
+        this(sourceRevision, occurrenceId, rootCauseId, SnapshotKind.CURRENT_SOURCE);
+    }
+
+    public DiagnosticOccurrence withSnapshotKind(SnapshotKind kind) {
+        return new DiagnosticOccurrence(sourceRevision, occurrenceId, rootCauseId, kind);
+    }
+
     public DiagnosticOccurrence {
         Objects.requireNonNull(sourceRevision, "sourceRevision");
         Objects.requireNonNull(occurrenceId, "occurrenceId");
+        Objects.requireNonNull(snapshotKind, "snapshotKind");
     }
 
     /** Exact repeats share an occurrence; no inferred causal grouping from codes, ranges or prose. */

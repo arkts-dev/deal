@@ -146,7 +146,8 @@ public final class DiagnosticStructuredOutput {
         if (occurrence == null) sb.append("null");
         else sb.append("{\"sourceRevision\": ").append(jsonString(occurrence.sourceRevision()))
                 .append(", \"occurrenceId\": ").append(jsonString(occurrence.occurrenceId()))
-                .append(", \"rootCauseId\": ").append(occurrence.rootCauseId() == null ? "null" : jsonString(occurrence.rootCauseId())).append('}');
+                .append(", \"rootCauseId\": ").append(occurrence.rootCauseId() == null ? "null" : jsonString(occurrence.rootCauseId()))
+                .append(", \"snapshotKind\": ").append(jsonString(occurrence.snapshotKind().name())).append('}');
         sb.append(",\n");
         indent(sb, 3).append("\"editOffer\": ");
         var edit = d.editOffer();

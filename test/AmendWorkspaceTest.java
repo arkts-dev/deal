@@ -91,7 +91,8 @@ public final class AmendWorkspaceTest {
         var diagnostic = rejected.diagnostics().stream().filter(d -> d.code().equals("E1008")).findFirst().orElseThrow();
         check(diagnostic.excerpt() != null && diagnostic.excerpt().text().equals(payload),
                 "syntax excerpt owns original payload, not committed source or masked directive");
-        check(diagnostic.occurrence() != null && diagnostic.occurrence().rootCauseId() == null,
+        check(diagnostic.occurrence() != null && diagnostic.occurrence().rootCauseId() == null
+                && diagnostic.occurrence().snapshotKind() == deal.diagnostics.DiagnosticOccurrence.SnapshotKind.REJECTED_PAYLOAD,
                 "payload syntax occurrence owns its exact snapshot without guessed causal links");
         check(!rejected.accepted() && rejected.source().equals(base) && diagnostic.operationIndex() == 0,
                 "malformed annotated declaration remains operation-local and leaves source unchanged");
@@ -415,6 +416,10 @@ public final class AmendWorkspaceTest {
                 List.of(new AmendWorkspace.ReplaceFunctionBody(operatorBody.id(), "return 1+\"bad\";")));
         var operatorDiagnostic = rejectedOperator.diagnostics().stream().filter(d -> d.code().equals("E3010"))
                 .findFirst().orElseThrow();
+        String assembledOperatorCandidate = operatorBase.replace("return 1+2;", "\n    return 1+\"bad\";\n  ");
+        check(operatorDiagnostic.occurrence().snapshotKind() == deal.diagnostics.DiagnosticOccurrence.SnapshotKind.REJECTED_CANDIDATE
+                && operatorDiagnostic.occurrence().sourceRevision().equals(deal.diagnostics.DiagnosticOccurrence.sourceRevision(
+                    "probe.deal", assembledOperatorCandidate)), "candidate designation owns assembled-source revision, not returned base");
         var operator = operatorDiagnostic.facts().operator();
         check(!rejectedOperator.accepted() && rejectedOperator.source().equals(operatorBase)
                         && operator.token().equals("+") && operator.operands().get(1).type().equals("string")

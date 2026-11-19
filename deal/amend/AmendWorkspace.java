@@ -435,8 +435,9 @@ public final class AmendWorkspace {
         if (rejection != null) return rejection;
         ChangeResult changed = apply(source, modulePath, base, operations, resolver, adapter);
         if (!changed.accepted()) return changed;
-        List<StructuredDiagnostic> diagnostics = List.copyOf(
-                validator.validate(changed.source(), changed.inspection(), operations));
+        List<StructuredDiagnostic> diagnostics = validator.validate(changed.source(), changed.inspection(), operations).stream()
+                .map(value -> value.withOccurrence(value.occurrence() == null ? null : value.occurrence()
+                    .withSnapshotKind(deal.diagnostics.DiagnosticOccurrence.SnapshotKind.REJECTED_CANDIDATE))).toList();
         if (diagnostics.isEmpty()) return changed;
         return new ChangeResult(
                 false,
@@ -1842,7 +1843,9 @@ public final class AmendWorkspace {
                 diagnostic.code(), diagnostic.severity(), diagnostic.message(), diagnostic.range(),
                 diagnostic.ownerId(), diagnostic.facts(),
                 diagnostic.relatedIds(), scopes,
-                diagnostic.contextRequest(), diagnostic.notes(), diagnostic.operationIndex(), diagnostic.missingSymbols(), diagnostic.excerpt(), diagnostic.occurrence());
+                diagnostic.contextRequest(), diagnostic.notes(), diagnostic.operationIndex(), diagnostic.missingSymbols(), diagnostic.excerpt(),
+                diagnostic.occurrence() == null ? null : diagnostic.occurrence()
+                    .withSnapshotKind(deal.diagnostics.DiagnosticOccurrence.SnapshotKind.REJECTED_CANDIDATE));
     }
 
     private static SemanticId operationOwner(Operation operation, Analysis base) {
@@ -2013,7 +2016,8 @@ public final class AmendWorkspace {
                     List.of(new RepairScope(operationName(operation), operation.targetId())),
                     null, value.notes(), operationIndex).withFacts(value.facts())
                     .withExcerpt(withSource.excerpt())
-                    .withOccurrence(deal.diagnostics.DiagnosticOccurrence.fromSource(modulePath, source, withSource));
+                    .withOccurrence(deal.diagnostics.DiagnosticOccurrence.fromSource(modulePath, source, withSource)
+                        .withSnapshotKind(deal.diagnostics.DiagnosticOccurrence.SnapshotKind.REJECTED_PAYLOAD));
         }).toList();
     }
 
