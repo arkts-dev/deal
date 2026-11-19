@@ -113,6 +113,8 @@ mutable name/message and independent diagnostic code. First throw binds code,
 origin and frames once; rethrow preserves identity and causes. Release all copied
 text/frame storage when the Error is collected. Decoder path copies are length-
 delimited platform storage, built from current frames only and released with Error.
+Host context copies belong to Error too; capture only selected rejection facts,
+never attribute propagated host failure tokens from their code or message.
 
 Host crossings preserve aliases, descriptors and rollback. Canonical function
 positions use FUNCTION_SIGNATURE, other data positions TYPE_DESCRIPTOR. Validate

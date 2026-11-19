@@ -1667,6 +1667,22 @@ final class LlvmFunctionEmitter {
             + proceedLabel);
         terminated = true;
         startSegment(failureLabel);
+        if (boundaryKind == LlvmRuntimeAbi.BOUNDARY_HOST_PARAMETER && originOp != null
+                && originOp.payload() instanceof KindPayload.CallPayload call) {
+            session.referenceRuntimeEntry("deal_error_set_host_context");
+            var binding = call.callee() instanceof KindPayload.CallCallee.Static fixed ? fixed.binding()
+                : call.callee() instanceof KindPayload.CallCallee.Indirect indirect ? session.bindingOfIdentity(indirect.callee()) : null;
+            String module = binding instanceof deal.semantic.ir.FunctionExecutionBinding.HostFunction host
+                ? host.hostModuleId().path() : null;
+            String name = binding instanceof deal.semantic.ir.FunctionExecutionBinding.HostFunction host
+                ? host.exportName() : null;
+            String typedError = emitTemporary(op, "bitcast i8* " + error + " to %struct.deal_error*");
+            emit("call void @deal_error_set_host_context(%struct.deal_error* " + typedError + ", "
+                + session.data.operand(session.data.intern(call.signature().canonicalSpecText())) + ", "
+                + (module == null ? "i8* null" : session.data.operand(session.data.intern(module))) + ", "
+                + (name == null ? "i8* null" : session.data.operand(session.data.intern(name))) + ", "
+                + session.data.operand(session.data.intern("parameter")) + ", i32 " + parameterIndex + ")");
+        }
         if (op.payload() instanceof KindPayload.BoundaryPayload boundary
                 && boundary.kind() == deal.semantic.ir.BoundaryKind.ASSERTION) {
             // ASSERTION owns E8001 even when its descriptor check discovers a

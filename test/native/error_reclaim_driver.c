@@ -403,6 +403,18 @@ int main(void) {
             && strstr(diagnostic, "\"jsonPathTruncated\":\"true\"") != NULL,
           "length-delimited path and status survive collection");
     deal_error_snapshot_release(diagnostic);
+    deal_error_set_host_context(parser_error, "()->string", "declared/module", "read", "return", 0);
+    check(platform_live() == parser_baseline + 11u,
+          "host context owns exactly four additional text allocations");
+    deal_error_set_host_context(parser_error, "(string)->string", NULL, NULL, "parameter", 1);
+    check(platform_live() == parser_baseline + 11u, "replacing host context releases old text");
+    deal_gc_collect_full();
+    diagnostic = deal_error_diagnostic(parser_error);
+    check(strstr(diagnostic, "\"hostSignature\":\"(string)->string\"") != NULL
+            && strstr(diagnostic, "\"hostDeclaration\":\"declared/module\"") != NULL
+            && strstr(diagnostic, "\"hostParameter\":\"1\"") != NULL,
+          "host rejection context survives rooted collection");
+    deal_error_snapshot_release(diagnostic);
     deal_root_frame_write(0u, NULL);
     deal_gc_collect_full();
     check(platform_live() == parser_baseline,

@@ -1125,6 +1125,9 @@ static deal_error *deal_check_render(uint32_t boundary_kind,
         deal_error *error = deal_error_materialize(arm_id, parameters,
             parameter_count, deal_check_expected_of(arm_id, failure),
             deal_check_actual_of(arm_id, failure, value), context->origin, NULL);
+        deal_error_set_host_context(error, NULL, NULL, NULL,
+            boundary_kind == DEAL_BOUNDARY_HOST_PARAMETER ? "parameter" : "return",
+            boundary_kind == DEAL_BOUNDARY_HOST_PARAMETER ? context->parameter_index : 0);
         if (inner != NULL) {
             deal_arm_text_release(inner);
         }

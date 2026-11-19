@@ -2317,6 +2317,8 @@ static deal_outcome_data deal_host_function_thunk(void *function,
         deal_outcome admitted = deal_check_value(parameters[index],
             arguments[index], DEAL_BOUNDARY_HOST_PARAMETER, &context);
         if (admitted.error != NULL) {
+            deal_error_set_host_context(admitted.error, deal_fn_signature(function), NULL,
+                NULL, "parameter", (int32_t)index + 1);
             deal_host_crossing_pop(crossing);
             outcome.error = admitted.error;
             return outcome;
@@ -2388,6 +2390,8 @@ static deal_outcome_data deal_host_function_thunk(void *function,
     deal_outcome admitted = deal_check_value(declared_result, checked,
         DEAL_BOUNDARY_HOST_SYNC_RETURN, &context);
     if (admitted.error != NULL) {
+        deal_error_set_host_context(admitted.error, deal_fn_signature(function), NULL,
+            NULL, "return", 0);
         deal_host_memo_release(&memo);
         deal_host_crossing_pop(crossing);
         outcome.error = admitted.error;
@@ -2640,6 +2644,8 @@ deal_outcome_data deal_host_invoke_sync(const deal_host_export *exported,
     deal_outcome admitted = deal_check_value(declared, checked,
         DEAL_BOUNDARY_HOST_SYNC_RETURN, &context);
     if (admitted.error != NULL) {
+        deal_error_set_host_context(admitted.error, signature_descriptor, NULL,
+            exported->name, "return", 0);
         deal_host_memo_release(&memo);
         deal_host_crossing_pop(crossing);
         outcome.error = admitted.error;

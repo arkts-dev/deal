@@ -1444,6 +1444,16 @@ public final class LlvmHostAbiTest {
                 checkEq("", run.stderr(), "-O" + level + " the "
                     + cell.getKey() + " parameter cell is a typed arm, not an"
                     + " infrastructure fault: " + run.describe());
+                Path product = scratch.resolve("product-" + level + "-probe.c");
+                NativeCompiler.Result diagnostic = NativeCompiler.execute(product, scratch,
+                    Map.of("DEAL_DIAGNOSTICS_JSON", "1"));
+                check(diagnostic.exitCode() == run.exitCode() && diagnostic.stdout().equals(run.stdout())
+                        && diagnostic.stderr().contains("\"hostBoundary\":\"parameter\"")
+                        && diagnostic.stderr().contains("\"hostParameter\":\"1\"")
+                        && diagnostic.stderr().contains("\"hostSignature\":")
+                        && diagnostic.stderr().contains("\"hostExport\":\""
+                            + (cell.getKey().equals("scalar") ? "sum" : "applyOne") + "\""),
+                    "-O" + level + " selected native parameter provenance/default parity: " + diagnostic.describe());
             }
         }
     }

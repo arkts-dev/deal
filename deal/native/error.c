@@ -317,6 +317,11 @@ struct deal_error {
     size_t json_path_depth;
     int json_path_truncated;
     int json_missing_field;
+    char *host_signature;
+    char *host_declaration;
+    char *host_export;
+    char *host_boundary;
+    int32_t host_parameter;
 };
 
 /*
@@ -379,6 +384,11 @@ static void deal_error_release(void *object) {
     error->json_reason_length = 0u;
     deal_platform_release(error->json_path);
     error->json_path = NULL;
+    deal_platform_release(error->host_signature);
+    deal_platform_release(error->host_declaration);
+    deal_platform_release(error->host_export);
+    deal_platform_release(error->host_boundary);
+    error->host_signature = error->host_declaration = error->host_export = error->host_boundary = NULL;
 }
 
 /* One Error record allocation. `snapshot_frames` is 0 for the host-authored
@@ -420,6 +430,8 @@ static deal_error *deal_error_allocate(const char *code, const char *message,
     error->json_path_depth = 0u;
     error->json_path_truncated = 0;
     error->json_missing_field = 0;
+    error->host_signature = error->host_declaration = error->host_export = error->host_boundary = NULL;
+    error->host_parameter = 0;
     if (origin != NULL) {
         error->source_file = deal_platform_duplicate(origin->source_file);
         error->line = origin->line;
@@ -969,6 +981,15 @@ static void deal_diagnostic_error(deal_snapshot_buffer *buffer, const deal_error
         deal_diagnostic_text(buffer, "jsonByteOffset", error->json_byte_offset, error->json_byte_offset_length, &first);
         deal_diagnostic_text(buffer, "jsonReason", error->json_reason, error->json_reason_length, &first);
     }
+    const char *host_text[] = {error->host_signature, error->host_declaration, error->host_export, error->host_boundary};
+    const char *host_keys[] = {"hostSignature", "hostDeclaration", "hostExport", "hostBoundary"};
+    for (size_t i = 0u; i < 4u; i += 1u)
+        if (host_text[i] != NULL) deal_diagnostic_text(buffer, host_keys[i], host_text[i], strlen(host_text[i]), &first);
+    if (error->host_parameter > 0) {
+        char parameter[16];
+        (void)snprintf(parameter, sizeof(parameter), "%d", error->host_parameter);
+        deal_diagnostic_text(buffer, "hostParameter", parameter, strlen(parameter), &first);
+    }
     deal_snapshot_append_key(buffer, "frameCount", &first);
     deal_snapshot_append_integer(buffer, error->frame_count);
     deal_snapshot_append_key(buffer, "frames", &first);
@@ -996,6 +1017,21 @@ static void deal_diagnostic_error(deal_snapshot_buffer *buffer, const deal_error
         }
     }
     deal_snapshot_append(buffer, "}", 1u);
+}
+
+void deal_error_set_host_context(deal_error *error, const char *signature,
+                                 const char *declaration, const char *export_name,
+                                 const char *boundary, int32_t parameter) {
+    if (error == NULL) deal_platform_fault("error diagnostic: null host error");
+    const char *values[] = {signature, declaration, export_name, boundary};
+    char **slots[] = {&error->host_signature, &error->host_declaration, &error->host_export, &error->host_boundary};
+    for (size_t i = 0u; i < 4u; i += 1u) {
+        if (values[i] == NULL) continue;
+        char *copy = deal_platform_duplicate(values[i]);
+        deal_platform_release(*slots[i]);
+        *slots[i] = copy;
+    }
+    if (parameter > 0) error->host_parameter = parameter;
 }
 
 void deal_error_set_json_path(deal_error *error, const char *path, size_t length,
