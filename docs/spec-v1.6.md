@@ -115,6 +115,7 @@ HexDigit ::= [0-9a-fA-F]
 LineTerminator ::= '\n' | '\r\n' | '\r'
 
 Operator ::= '+' | '-' | '*' | '/' | '%'
+ | '+=' | '-=' | '*=' | '/=' | '%=' | '++' | '--'
  | '===' | '!==' | '<' | '<=' | '>' | '>='
  | '&&' | '||' | '??' | '?.' | '!' | '=' | '.' | '=>' | '|'
 /* '?.' is not followed by a decimal digit. */
@@ -203,7 +204,7 @@ DeclarationExport ::= 'export' (ExternalFunctionDeclaration | ClassDeclaration)
 Expression ::= AssignmentExpression
 
 AssignmentExpression ::= ConditionalExpression
- | LeftHandSideExpression '=' AssignmentExpression
+ | LeftHandSideExpression ('=' | '+=' | '-=' | '*=' | '/=' | '%=') AssignmentExpression
  | ArrowFunction
 
 ConditionalExpression ::= ShortCircuitExpression ('?' AssignmentExpression ':' AssignmentExpression)?
@@ -229,7 +230,10 @@ MultiplicativeExpression ::= UnaryExpression (('*' | '/' | '%') UnaryExpression)
 
 UnaryExpression ::= ('!' | '-' | 'typeof') UnaryExpression
                   | AwaitExpression
-                  | PostfixExpression
+                  | UpdateExpression
+
+UpdateExpression ::= ('++' | '--') LeftHandSideExpression
+ | PostfixExpression ('++' | '--')? /* no line break before postfix update */
 
 AwaitExpression ::= 'await' PostfixExpression
 
@@ -278,7 +282,7 @@ LeftHandSideExpression ::= Identifier
  | PostfixExpression
 ```
 
-Adjacent minus operators require whitespace or comments.
+Write `- -x` for double negation; `--x` decrements.
 
 ### Semicolon rules
 
@@ -296,6 +300,8 @@ Require grammatical semicolons; no automatic insertion. Forbid line terminators,
 ### Assignment targets
 
 Only [reassignable variables](#variables), declared class fields, Record keys and array elements are assignable; otherwise compile-time error. Optional chains are not assignment targets.
+
+Evaluation follows ECMAScript [compound assignment](https://262.ecma-international.org/16.0/#sec-assignment-operators) and [update](https://262.ecma-international.org/16.0/#sec-update-expressions) semantics. Binary operand rules apply; updates require number operands.
 
 ```ts
 class User { name: string; }
@@ -1296,6 +1302,8 @@ xs.find(predicate: (value: E, index: number, array: E[]) => boolean): E | undefi
 xs.findIndex(predicate: (value: E, index: number, array: E[]) => boolean): number
 xs.some(predicate: (value: E, index: number, array: E[]) => boolean): boolean
 xs.every(predicate: (value: E, index: number, array: E[]) => boolean): boolean
+xs.concat(other: E[]): E[]
+xs.toSorted(compare: (a: E, b: E) => number): E[]
 xs.slice(): E[]
 xs.slice(start: number): E[]
 xs.slice(start: number, end: number): E[]
@@ -1716,7 +1724,7 @@ Evaluation is strict and left-to-right:
 
 1. Evaluate receiver expression before member/index/call arguments.
 2. Evaluate call arguments left-to-right.
-3. Assignment evaluates receiver, index (if present), then RHS once, before validation and write. Variables evaluate only RHS. Its static type is the RHS type; after successful storage, it yields the original RHS value. Any arity adapter is stored, not yielded. Failed validation leaves the target unwritten; earlier effects remain.
+3. Simple assignment evaluates receiver, index (if present), then RHS once, before validation and write. Variables evaluate only RHS. Its static type is the RHS type; after successful storage, it yields the original RHS value. Any arity adapter is stored, not yielded. Failed validation leaves the target unwritten; earlier effects remain.
 4. Short-circuit evaluation follows [Type-of-expression rules](#type-of-expression-rules) and [Nullish coalescing and optional chaining](#nullish-coalescing-and-optional-chaining).
 5. Function calls create a new local scope.
 6. Class object literals follow [Construction](#construction).
