@@ -1981,7 +1981,12 @@ public final class TypeChecker {
             return checkFunctionCall(call, funcType, argTypes);
         }
 
-        error(DiagnosticCode.E3008, typeName(calleeType) + " is not callable", call.callee().span());
+        diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E3008,
+                typeName(calleeType) + " is not callable", call.callee().span())
+                .withFacts(new deal.diagnostics.DiagnosticFacts("call.non-callable", "call", "function value", typeName(calleeType),
+                        List.of("Choose a declared callable or explicitly narrow/extract an unknown callable under its intended contract. "
+                                + "No function declaration, signature, conversion or replacement name is inferred. "
+                                + "See docs/spec-v1.6.md#function-values-calls-and-wrappers."))));
         return Type.Error.INSTANCE;
     }
 
@@ -2267,15 +2272,39 @@ public final class TypeChecker {
     private deal.diagnostics.DiagnosticFacts callFacts(String reason, CallExpr call, Type.Func signature,
                                                       int argument, String expected, String actual) {
         Symbol.FunctionSymbol declaration = calleeDeclarationOf(call);
-        String name = declaration == null ? "" : declaration.name();
+        String name = declaration == null ? intrinsicCalleeName(call) : declaration.name();
         FunctionDeclaration source = declaration == null ? null : declaration.declaration();
         Parameter parameter = source != null && argument >= 0 && argument < source.params().size()
             ? source.params().get(argument) : null;
-        return new deal.diagnostics.DiagnosticFacts(reason, "call", expected, actual, List.of())
+        return new deal.diagnostics.DiagnosticFacts(reason, "call", expected, actual, List.of(
+                "Match the selected callable's declared parameter count and types using explicitly chosen arguments; "
+                        + "no omitted value, coercion or signature change is inferred. "
+                        + "See docs/spec-v1.6.md#function-values-calls-and-wrappers and #function-type-compatibility."))
                 .withCall(new deal.diagnostics.DiagnosticFacts.CallContext(name, typeName(signature),
                         source == null ? null : source.span().range(), argument,
                         parameter == null ? "" : parameter.name(), signature.paramTypes().size(),
                         call.args().size(), parameter == null ? null : parameter.type().span().range()));
+    }
+
+    /** Name an intrinsic only after its receiver/namespace was actually selected by this check. */
+    private String intrinsicCalleeName(CallExpr call) {
+        ExpressionNode callee = call.callee();
+        while (callee instanceof OptionalGuardExpr guard) callee = guard.value();
+        if (callee instanceof IdentifierExpr id && id.name().equals("String")
+                && resolveVisibleBinding(id.name()) instanceof Symbol.IntrinsicSymbol) return "String";
+        if (!(callee instanceof MemberAccessExpr member)) return "";
+        if (member.object() instanceof IdentifierExpr namespace
+                && typeMap.get(member.object()) instanceof Type.Table
+                && !(resolveVisibleBinding(namespace.name()) instanceof Symbol.ModuleSymbol)
+                && BuiltinCall.resolve(namespace.name(), member.field()) != null)
+            return namespace.name() + "." + member.field();
+        Type receiver = typeMap.get(member.object());
+        if (receiver instanceof Type.Array && List.of("map", "find", "findIndex", "filter", "some", "every",
+                "push", "pop", "splice", "slice", "includes", "indexOf", "join").contains(member.field()))
+            return "Array." + member.field();
+        if (receiver instanceof Type.String && StringIntrinsic.forMember(member.field()) != null)
+            return "String." + member.field();
+        return "";
     }
 
     private Type checkFunctionCall(CallExpr call, Type.Func funcType, List<Type> argTypes) {

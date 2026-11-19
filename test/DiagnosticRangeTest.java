@@ -112,6 +112,7 @@ public class DiagnosticRangeTest {
         testRuleReferencesAndIntentDependentExamples();
         testProducerSourceExcerpts();
         testRevisionScopedOccurrences();
+        testSelectedIntrinsicCallNames();
         testCatchVariableIdentifierRange();
         testProgramSpanAnchorsCombined();
         testV12CornerCaseScalarCoordinatePins();
@@ -1220,6 +1221,44 @@ public class DiagnosticRangeTest {
         for (String source : List.of("let a=[1];let r=a.map((n:number):number=>n+1);",
                 "let r=Array.from([1],(n:number):string=>\"chosen\");"))
             check(checkerDiagnostics(source, "intrinsic.deal").isEmpty(), "explicit intended mapper repair rechecks");
+    }
+
+    private static void testSelectedIntrinsicCallNames() {
+        for (String[] sample : new String[][] {
+                {"let a=[1];a.map((n:string):number=>1);", "Array.map", "E5001"},
+                {"let a=[1];a.find((n:number):number=>n);", "Array.find", "E5001"},
+                {"let a=[1];a.filter();", "Array.filter", "E3009"},
+                {"let a=[1];a.some((n:number):string=>\"yes\");", "Array.some", "E5001"},
+                {"let a=[1];a.every((n:string):boolean=>true);", "Array.every", "E5001"},
+                {"let a=[1];a.push(\"bad\");", "Array.push", "E5001"},
+                {"let s=\"abc\";s.slice(\"bad\");", "String.slice", "E5001"},
+                {"Math.min(1);", "Math.min", "E3009"},
+                {"JSON.parse(1);", "JSON.parse", "E5001"},
+                {"String(true);", "String", "E5001"}}) {
+            String source = "function f():void{" + sample[0] + "}";
+            var diagnostic = checkerDiag(checkerDiagnostics(source, "intrinsic-names.deal"), sample[2]);
+            check(diagnostic != null && diagnostic.facts().call() != null
+                            && diagnostic.facts().call().callee().equals(sample[1])
+                            && !diagnostic.facts().call().signature().isEmpty()
+                            && diagnostic.facts().call().declarationRange() == null
+                            && diagnostic.facts().call().parameterRange() == null,
+                    "selected intrinsic retains its actual name/signature without a fabricated declaration: " + sample[1]);
+        }
+        var callableField = checkerDiag(checkerDiagnostics("class C{map:()=>number;}function f(c:C):void{c.map(1);}",
+                "intrinsic-names.deal"), "E3009");
+        check(callableField != null && callableField.facts().call().callee().isEmpty(),
+                "same-spelled ordinary class callable field is not labeled an array intrinsic");
+        var nonCallable = checkerDiag(checkerDiagnostics("function f():void{let value=1;value();}", "intrinsic-names.deal"), "E3008");
+        check(nonCallable != null && nonCallable.facts().reason().equals("call.non-callable")
+                        && nonCallable.facts().expected().equals("function value") && nonCallable.facts().actual().equals("number")
+                        && nonCallable.facts().call() == null,
+                "non-callable evidence retains observed kind without fabricating a function signature");
+        for (String source : List.of(
+                "function f():void{let a=[1];a.find((n:number):boolean=>n>0);}",
+                "function f():void{let a=[1];a.map((n:number):number=>n);}",
+                "function f():void{let text=\"abc\";text.slice(1);Math.min(1,2);String(1);}",
+                "function f():void{let chosen=():number=>1;chosen();}"))
+            check(checkerDiagnostics(source, "intrinsic-names.deal").isEmpty(), "explicit intended callable/argument repair rechecks");
     }
 
     private static void testRevisionScopedOccurrences() {
