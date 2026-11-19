@@ -328,6 +328,14 @@ public final class AmendWorkspaceTest {
             check(AmendWorkspace.inspect(nestedSource.replace("return \"bad\"", "return 2"), "nested.deal").diagnostics().isEmpty(),
                 "explicit nested result repair rechecks under existing module authority");
         }
+        String moduleCallable = "let fn=():number=>{return \"bad\";};";
+        var moduleCallableInspection = AmendWorkspace.inspect(moduleCallable, "module-callable.deal");
+        var moduleCallableDiagnostic = moduleCallableInspection.diagnostics().stream().filter(d -> d.code().equals("E5003")).findFirst().orElseThrow();
+        check(moduleCallableInspection.nodes().stream().anyMatch(n -> n.id().equals(moduleCallableDiagnostic.ownerId())
+                && n.kind().equals("function-expression") && n.ownerId().equals(moduleCallableInspection.moduleId())),
+            "module initializer callable has an exact read-only semantic owner rather than module blame");
+        check(AmendWorkspace.queryContext(moduleCallable, "module-callable.deal", moduleCallableDiagnostic.contextRequest()).accepted(),
+            "module initializer callable owner is queryable");
         String nestedBase = "export function outer():void{}";
         var nestedBaseInspection = AmendWorkspace.inspect(nestedBase, "nested.deal");
         var outerBody = nestedBaseInspection.nodes().stream().filter(n -> n.kind().equals("function-body")).findFirst().orElseThrow();

@@ -1447,7 +1447,12 @@ public final class AmendWorkspace {
                     .map(FunctionInfo::id).ifPresent(calledIds::add));
             callees.put(info.id(), calledIds);
             collectBlocks(info, info.function().body(), "body", sourceDigest, index, targets, nodes, true);
-            collectSemanticOwners(info, sourceDigest, index, targets, nodes);
+            collectSemanticOwners(info.id(), info.function().body(), sourceDigest, index, targets, nodes);
+        }
+        for (StatementNode statement : parsed.program().statements()) {
+            StatementNode declaration = statement instanceof ExportDeclaration export ? export.declaration() : statement;
+            if (!(declaration instanceof FunctionDeclaration) && !(declaration instanceof ClassDeclaration))
+                collectSemanticOwners(moduleId, declaration, sourceDigest, index, targets, nodes);
         }
         Map<SemanticId, Set<SemanticId>> callers = new LinkedHashMap<>();
         callees.forEach((caller, values) -> values.forEach(callee ->
@@ -1567,19 +1572,19 @@ public final class AmendWorkspace {
         }
     }
 
-    private static void collectSemanticOwners(FunctionInfo owner, String sourceDigest, SourceIndex index,
+    private static void collectSemanticOwners(SemanticId owner, StatementNode statement, String sourceDigest, SourceIndex index,
             Map<SemanticId, Target> targets, List<NodeSnapshot> nodes) {
-        // One walk per function; read-only owners create no nested edit authority.
-        for (var semantic : DeclarationReferences.semanticOwners(owner.function().body())) {
+        // One walk per root; read-only owners create no nested edit authority.
+        for (var semantic : DeclarationReferences.semanticOwners(statement)) {
             Span span = semantic.span();
             if (!span.hasScalarOffsets()) continue;
             String semanticPath = "semantic/" + semantic.kind() + "/" + span.startScalarOffset() + "/" + span.endScalarOffset();
-            SemanticId id = nodeId(sourceDigest, owner.id(), semanticPath);
+            SemanticId id = nodeId(sourceDigest, owner, semanticPath);
             if (targets.containsKey(id)) continue;
             int start = index.offset(span.startLine(), span.startColumn());
             int end = index.offsetAfter(span.endLine(), span.endColumn());
-            targets.put(id, new Target(id, owner.id(), semantic.kind(), span.range(), start, end, start, end));
-            nodes.add(new NodeSnapshot(id, owner.id(), semantic.kind(), span.range(), digest(index.slice(span))));
+            targets.put(id, new Target(id, owner, semantic.kind(), span.range(), start, end, start, end));
+            nodes.add(new NodeSnapshot(id, owner, semantic.kind(), span.range(), digest(index.slice(span))));
         }
     }
 
@@ -1739,7 +1744,7 @@ public final class AmendWorkspace {
             Target selected = null;
             boolean ambiguous = false;
             for (Target target : targets) {
-                if (!target.kind().equals("declaration") || !encloses(target.range(), note.range())) continue;
+                if ((!target.kind().equals("declaration") && !readOnlyOwner(target)) || !encloses(target.range(), note.range())) continue;
                 if (selected == null || target.range().scalarLength() < selected.range().scalarLength()) {
                     selected = target;
                     ambiguous = false;
