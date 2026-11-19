@@ -68,6 +68,24 @@ public final class StrictManifestParser {
      */
     public static StrictManifestParseResult parse(String manifestPath,
                                                   String strictlyDecodedText) {
+        BatchManifestParseResult result = parse(manifestPath, strictlyDecodedText, false);
+        return new StrictManifestParseResult(result.manifest(), result.failures().isEmpty() ? null : result.failures().get(0));
+    }
+
+    public record BatchManifestParseResult(ProjectManifest manifest, List<CompilerDiagnostic> failures) {
+        public BatchManifestParseResult {
+            failures = List.copyOf(failures);
+            if ((manifest != null) != failures.isEmpty())
+                throw new IllegalArgumentException("manifest requires no parse or validation failures");
+        }
+    }
+
+    /** Optional independent schema diagnostics; malformed/ambiguous strict input still fails fast. */
+    public static BatchManifestParseResult parseBatch(String manifestPath, String strictlyDecodedText) {
+        return parse(manifestPath, strictlyDecodedText, true);
+    }
+
+    private static BatchManifestParseResult parse(String manifestPath, String strictlyDecodedText, boolean batch) {
         String file = manifestPath == null ? "" : manifestPath;
         String source = strictlyDecodedText == null ? "" : strictlyDecodedText;
         JsonRangeLexResult lexed = JsonRangeLexer.lex(source);
@@ -91,16 +109,19 @@ public final class StrictManifestParser {
             var diagnostic = e2010(file, first.message(), first.range()).withFacts(first.facts());
             if (first.relatedRange() != null)
                 diagnostic = diagnostic.withNote("First member with this decoded key", sourceRange(file, first.relatedRange()));
-            return new StrictManifestParseResult(null, diagnostic);
+            return new BatchManifestParseResult(null, List.of(diagnostic));
         }
 
-        ProjectConfigValidator.Outcome outcome = ProjectConfigValidator.validate(
-            new StrictJsonDocument(rootHolder[0], valueRanges));
-        if (outcome.failure() != null) {
-            return new StrictManifestParseResult(null,
-                e2010(file, outcome.failure().message(), outcome.failure().anchorRange()).withFacts(outcome.failure().facts()));
+        var document = new StrictJsonDocument(rootHolder[0], valueRanges);
+        ProjectConfigValidator.BatchOutcome outcome;
+        if (batch) outcome = ProjectConfigValidator.validateBatch(document);
+        else {
+            var single = ProjectConfigValidator.validate(document);
+            outcome = new ProjectConfigValidator.BatchOutcome(single.manifest(),
+                single.failure() == null ? List.of() : List.of(single.failure()));
         }
-        return new StrictManifestParseResult(outcome.manifest(), null);
+        return new BatchManifestParseResult(outcome.manifest(), outcome.failures().stream().map(failure ->
+            e2010(file, failure.message(), failure.anchorRange()).withFacts(failure.facts())).toList());
     }
 
     // =========================================================================

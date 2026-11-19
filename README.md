@@ -93,7 +93,12 @@ uses messages and concise producer notes; structured `facts.guidance` retains
 additional rule explanations and intent-dependent examples. Operational
 failures and actual compilation/publication outcomes are separate fields.
 Amendment uses `compiler-protocol-v3` with revision-pinned context requests;
-context reads do not grant edits.
+context reads do not grant edits. Embedded callers can use
+`StrictManifestParser.parseBatch` for independent manifest schema failures in
+canonical order; strict syntax/duplicate/unknown-member faults and the default
+`parse` entry remain fail-fast. Failed validation never publishes a manifest.
+Oracle `ErrorSnapshot.diagnosticJson()` offers bounded approved metadata without
+changing canonical trace text or `projectionLine()`.
 
 Set `DEAL_DIAGNOSTICS_JSON=1` before execution to append a bounded
 `DEAL_RUNTIME_DIAGNOSTIC:` JSON v2 record on uncaught runtime errors across all

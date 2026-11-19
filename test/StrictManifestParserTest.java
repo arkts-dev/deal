@@ -79,6 +79,7 @@ public final class StrictManifestParserTest {
         testContentOnlyAndDeterminism();
         testCompleteScalarRanges();
         testProducerFacts();
+        testBatchValidation();
 
         System.out.println();
         System.out.println("Passed: " + passed + ", Failed: " + failed);
@@ -86,6 +87,40 @@ public final class StrictManifestParserTest {
             System.err.println("StrictManifestParserTest FAILED: " + failed + " failure(s)");
             System.exit(1);
         }
+    }
+
+    private static void testBatchValidation() {
+        String source = "{\r\n\"externals\":{\"😀\":7,\"other\":{},\"valid\":{\"declaration\":\"absent.d.deal\"}},"
+            + "\"dependencies\":false,\"output\":\"\",\"moduleRoots\":[7,\"/abs\",\"src\"],"
+            + "\"stdlib\":\"old\",\"backend\":\"lua\",\"languageVersion\":\"old\"}";
+        var batch = StrictManifestParser.parseBatch("deal.json", source);
+        var first = StrictManifestParser.parse("deal.json", source);
+        check(batch.manifest() == null && batch.failures().size() == 9, "all independent schema failures, no partial manifest");
+        check(batch.failures().getFirst().equals(first.failure()), "default fail-fast diagnostic remains exactly the first batch diagnostic");
+        check(batch.failures().stream().map(d -> d.facts().reason()).toList().equals(java.util.List.of(
+            "config.language-version", "config.backend", "config.value-kind", "config.relative-path", "config.empty-path",
+            "config.stdlib-version", "config.value-kind", "config.value-kind", "config.required-member")),
+            "batch preserves canonical field and source entry order");
+        check(batch.equals(StrictManifestParser.parseBatch("deal.json", source)), "batch is deterministic");
+        var external = batch.failures().get(7);
+        check(external.facts().path().get(1).name().equals("😀")
+            && external.range().startScalarOffset() == source.indexOf("7,"), "batch retains exact supplementary-key identity and value range");
+        var blocked = StrictManifestParser.parseBatch("deal.json", "{\"languageVersion\":false,\"externals\":[],\"moduleRoots\":false}");
+        check(blocked.failures().size() == 3, "invalid containers suppress dependent checks, not independent members");
+        for (String malformed : java.util.List.of("{\"languageVersion\":\"old\",\"backend\":}",
+                "{\"languageVersion\":\"old\",\"backend\":1,\"backend\":2}",
+                "{\"languageVersion\":\"old\",\"typo\":false}")) {
+            var rejected = StrictManifestParser.parseBatch("deal.json", malformed);
+            check(rejected.manifest() == null && rejected.failures().equals(java.util.List.of(StrictManifestParser.parse("deal.json", malformed).failure())),
+                "strict syntax/duplicate/unknown-key rejection is still fail-fast before schema checks");
+        }
+        String chosen = "{\"languageVersion\":\"1.6\",\"moduleRoots\":[\"src\"],\"backend\":\"js\","
+            + "\"externals\":{\"h\":{\"declaration\":\"absent.d.deal\"}}}";
+        var repaired = StrictManifestParser.parseBatch("deal.json", chosen);
+        check(repaired.failures().isEmpty() && repaired.manifest().equals(parse(chosen).manifest()),
+            "explicit chosen repair validates identically without probing paths or publishing output");
+        check(StrictManifestParser.parseBatch("deal.json", "").failures().size() == 1
+                && StrictManifestParser.parseBatch("deal.json", "[]").failures().size() == 1, "absent/root-kind batch failures stay singular");
     }
 
     private static void testProducerFacts() {
