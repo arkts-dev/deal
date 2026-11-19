@@ -42,7 +42,9 @@ remain distinct dialects.
   or rewrite unrefined storage descriptors.
 - Address-chain receiver/key/normalize/commit links use admitted operands in child
   order. Slot-threaded logical results keep preallocated identities. For-of retains
-  once-evaluated live iterables and fresh captured iteration cells.
+  once-evaluated live iterables and fresh captured iteration cells. Compound writes
+  save address operands and the admitted old value before RHS effects, then use
+  ordinary binary operations and validated assignment chains.
 - Conditionals own lazy blocks and explicit result links. Selected-arm adapters
   wire to the owning join; void joins publish no data. Coalescing saves the left,
   tests IS_NULLISH and uses matching NON_NULLISH projection in the alternate arm.

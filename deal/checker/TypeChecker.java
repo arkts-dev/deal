@@ -28,6 +28,7 @@ public final class TypeChecker {
 
     // -- Accumulated results --
     private final Map<ExpressionNode, Type> typeMap = new HashMap<>();
+    private final Map<AssignmentExpr, Type> assignmentReads = new HashMap<>();
 
     // -- Null narrowing (mutable during checking) --
     private NullNarrowing narrowing = new NullNarrowing();
@@ -230,7 +231,8 @@ public final class TypeChecker {
             Map.copyOf(checker.constructedDeclNodes),
             Map.copyOf(checker.exactClassDecls),
             Set.copyOf(checker.narrowedReads),
-            Map.copyOf(checker.instanceofTargets)
+            Map.copyOf(checker.instanceofTargets),
+            Map.copyOf(checker.assignmentReads)
         );
     }
 
@@ -3340,7 +3342,8 @@ public final class TypeChecker {
         // F3 & F4: Determine target type first (with write-context mode for
         // table accesses), then use it as expectedType for the value.
         boolean savedMode = assignmentTargetMode;
-        assignmentTargetMode = true;
+        boolean compound = assign.operator() != AssignmentOperator.ASSIGN;
+        assignmentTargetMode = !compound;
         Type targetType = checkExpression(assign.target());
         assignmentTargetMode = savedMode;
 
@@ -3349,6 +3352,7 @@ public final class TypeChecker {
         // legal inside a narrowed block; the narrowing is invalidated by
         // the assignment instead).
         Type declaredTarget = targetType;
+        if (compound) assignmentReads.put(assign, targetType);
         if (assign.target() instanceof IdentifierExpr targetId) {
             Type declared = declaredTypeOf(targetId.name());
             if (declared != null && declared != Type.Error.INSTANCE) {
@@ -3403,9 +3407,7 @@ public final class TypeChecker {
         // F3: Use the target type as contextual expected type for the value
         Type savedExpected = expectedType;
         Symbol.ClassSymbol savedContextualClass = contextualClassDecl;
-        if (declaredTarget != null && declaredTarget != Type.Error.INSTANCE) {
-            expectedType = declaredTarget;
-        }
+        expectedType = compound ? null : declaredTarget;
         // The target binding's exact class declaration is the construction
         // context for a same-typed object literal: an assignment into
         // `a: A` constructs the value as that A, never as an unrelated
@@ -3423,6 +3425,17 @@ public final class TypeChecker {
         expectedType = savedExpected;
         contextualClassDecl = savedContextualClass;
 
+        if (compound && valueType != Type.Error.INSTANCE && targetType != Type.Error.INSTANCE) {
+            boolean valid = Types.equals(targetType, valueType)
+                && (targetType instanceof Type.Number
+                    || assign.operator() == AssignmentOperator.ADD && targetType instanceof Type.String);
+            if (!valid) {
+                error(DiagnosticCode.E3010, "Invalid operand types for '" + assign.operator().text()
+                    + "': " + typeName(targetType) + " and " + typeName(valueType), assign.span());
+                return Type.Error.INSTANCE;
+            }
+            valueType = targetType;
+        }
         if (valueType == Type.Error.INSTANCE || targetType == Type.Error.INSTANCE) {
             return Type.Error.INSTANCE;
         }

@@ -15,6 +15,7 @@ TEST_MAINS=(
   'fg|=== Running Type Legality and Flow Contracts ===|java -ea -cp build deal.test.TypeLegalityFlowTest'
   'fg|=== Running v1.6 Production Runtime Contracts ===|java -ea -cp build deal.test.Language16RuntimeTest'
   'fg|=== Running Nullish Coalescing Contracts ===|java -ea -cp build deal.test.NullishCoalescingTest'
+  'fg|=== Running Compound Assignment Contracts ===|java -ea -cp build deal.test.CompoundAssignmentTest'
   'fg|=== Running Optional Chaining Contracts ===|java -ea -cp build deal.test.OptionalChainingTest'
   'fg|=== Running Error Name Message Contracts ===|java -ea -cp build deal.test.ErrorNameMessageTest'
   'fg|=== Running Void Entry Contracts ===|java -ea -cp build deal.test.EntryVoidTest'

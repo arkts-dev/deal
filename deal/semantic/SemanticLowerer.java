@@ -6760,6 +6760,8 @@ public final class SemanticLowerer {
          */
         public ValueId lowerAssignment(AssignmentExpr assignment, ValueId slot) {
             Objects.requireNonNull(assignment, "assignment must not be null");
+            if (assignment.operator() != deal.ast.AssignmentOperator.ASSIGN)
+                return lowerCompoundAssignment(assignment, slot);
             ExpressionNode target = assignment.target();
             if (target instanceof IdentifierExpr identifier) {
                 if (closureCore) {
@@ -6803,6 +6805,59 @@ public final class SemanticLowerer {
             throw new ConstructUnlowered("assignment target "
                 + target.getClass().getSimpleName() + " (no closed A-D9 chain shape)",
                     target.span());
+        }
+
+        /** Lower arithmetic updates through ordinary reads, binary operations and assignment chains. */
+        private ValueId lowerCompoundAssignment(AssignmentExpr assignment, ValueId slot) {
+            ExpressionNode target = assignment.target();
+            Type readType = checks.assignmentReads().get(assignment);
+            if (readType == null)
+                throw new ConstructUnlowered("compound assignment without its checked read type", assignment.span());
+            var saved = new java.util.IdentityHashMap<ExpressionNode, BindingId>();
+            try {
+                // Save address operands before the read; the write reuses these carriers.
+                if (target instanceof MemberAccessExpr member) {
+                    ValueId receiver = lowerOperand(member.object());
+                    saved.put(member.object(), emitBuiltinBinding(receiver, member.object().span()));
+                } else if (target instanceof IndexExpr index) {
+                    ValueId receiver = lowerOperand(index.array());
+                    saved.put(index.array(), emitBuiltinBinding(receiver, index.array().span()));
+                    ValueId key = lowerOperand(index.index());
+                    saved.put(index.index(), emitBuiltinBinding(key, index.index().span()));
+                }
+                var previous = new java.util.IdentityHashMap<ExpressionNode, BindingId>();
+                for (var entry : saved.entrySet()) {
+                    if (optionalValues.containsKey(entry.getKey())) previous.put(entry.getKey(), optionalValues.get(entry.getKey()));
+                    optionalValues.put(entry.getKey(), entry.getValue());
+                }
+                try {
+                    syntheticTypes.put(target, readType);
+                    ValueId old = lowerOperand(target);
+                    syntheticTypes.remove(target);
+                    BindingId oldBinding = emitBuiltinBinding(old, valueDescriptorOf(readType), target.span());
+                    // A synthetic expression names the already read value, not the source target.
+                    var oldExpr = new IdentifierExpr(target.span(), "<compound-read>");
+                    syntheticTypes.put(oldExpr, readType);
+                    optionalValues.put(oldExpr, oldBinding);
+                    var binary = new BinaryExpr(assignment.span(), oldExpr, assignment.operator().binary(), assignment.value());
+                    syntheticTypes.put(binary, readType);
+                    var store = new AssignmentExpr(assignment.span(), target, binary);
+                    syntheticTypes.put(store, readType);
+                    try { return lowerAssignment(store, slot); }
+                    finally {
+                        syntheticTypes.remove(store);
+                        syntheticTypes.remove(binary);
+                        syntheticTypes.remove(oldExpr);
+                        optionalValues.remove(oldExpr);
+                    }
+                } finally {
+                    syntheticTypes.remove(target);
+                    for (ExpressionNode expression : saved.keySet()) {
+                        if (previous.containsKey(expression)) optionalValues.put(expression, previous.get(expression));
+                        else optionalValues.remove(expression);
+                    }
+                }
+            } finally { syntheticTypes.remove(target); }
         }
 
         /**
@@ -13694,8 +13749,10 @@ public final class SemanticLowerer {
          * copied checker fact). A missing fact is a producer defect —
          * never an invented op and never a crash.
          */
+        private final Map<ExpressionNode, Type> syntheticTypes = new java.util.IdentityHashMap<>();
+
         private Type checkedType(ExpressionNode expr) {
-            Type type = checks.typeMap().get(expr);
+            Type type = syntheticTypes.containsKey(expr) ? syntheticTypes.get(expr) : checks.typeMap().get(expr);
             if (type == null) {
                 throw new ConstructUnlowered(expr.getClass().getSimpleName()
                     + " without a checked type (a missing checker fact is a producer "

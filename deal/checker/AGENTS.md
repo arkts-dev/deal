@@ -33,7 +33,9 @@ Publish exact checked facts; downstream phases must not rediscover meaning.
 Own facts by resolved binding identity, never name or structural equality. Scope
 exit removes only exiting declarations. Initialization/assignment refines reads to
 RHS types while preserving declared write envelopes and adapted signatures.
-Record scope-correct reads in `CheckResult.narrowedReads`.
+Record scope-correct reads in `CheckResult.narrowedReads`. Compound assignments
+retain a separate checked read type from the declared storage envelope; check
+arithmetic without destination context and invalidate facts as ordinary writes.
 
 Build condition states after effects; check &&/|| RHS under the selected outcome
 and reverse polarity for negation. Join only paths reaching continuation.

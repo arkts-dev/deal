@@ -730,7 +730,7 @@ public final class Lexer {
                 bump();
                 yield makeToken(TokenType.PIPE, "|");
             }
-            case '*' -> { bump(); yield makeToken(TokenType.STAR, "*"); }
+            case '*' -> { bump(); if (pos < source.length() && source.charAt(pos) == '=') { bump(); yield makeToken(TokenType.STAR_ASSIGN, "*="); } yield makeToken(TokenType.STAR, "*"); }
             case '.' -> {
                 if (pos + 2 < source.length()
                         && source.charAt(pos + 1) == '.'
@@ -741,9 +741,10 @@ public final class Lexer {
                 bump();
                 yield makeToken(TokenType.DOT, ".");
             }
-            case '+' -> { bump(); yield makeToken(TokenType.PLUS, "+"); }
+            case '+' -> { bump(); if (pos < source.length() && source.charAt(pos) == '=') { bump(); yield makeToken(TokenType.PLUS_ASSIGN, "+="); } yield makeToken(TokenType.PLUS, "+"); }
             case '-' -> {
                 bump();
+                if (pos < source.length() && source.charAt(pos) == '=') { bump(); yield makeToken(TokenType.MINUS_ASSIGN, "-="); }
                 if (pos < source.length() && source.charAt(pos) == '-') {
                     diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E1042,
                             "Adjacent '-' tokens require whitespace or a comment", tokenStartRange())
@@ -754,8 +755,8 @@ public final class Lexer {
                 }
                 yield makeToken(TokenType.MINUS, "-");
             }
-            case '/' -> { bump(); yield makeToken(TokenType.SLASH, "/"); }
-            case '%' -> { bump(); yield makeToken(TokenType.PERCENT, "%"); }
+            case '/' -> { bump(); if (pos < source.length() && source.charAt(pos) == '=') { bump(); yield makeToken(TokenType.SLASH_ASSIGN, "/="); } yield makeToken(TokenType.SLASH, "/"); }
+            case '%' -> { bump(); if (pos < source.length() && source.charAt(pos) == '=') { bump(); yield makeToken(TokenType.PERCENT_ASSIGN, "%="); } yield makeToken(TokenType.PERCENT, "%"); }
             case '?' -> {
                 bump();
                 if (pos < source.length() && source.charAt(pos) == '?') { bump(); yield makeToken(TokenType.COALESCE, "??"); }

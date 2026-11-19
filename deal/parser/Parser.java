@@ -998,7 +998,17 @@ public final class Parser {
         ExpressionNode left = parseConditional();
         if (left == null) return null;
 
-        if (match(TokenType.EQ_SIGN)) {
+        AssignmentOperator assignmentOperator = switch (peek().type()) {
+            case EQ_SIGN -> AssignmentOperator.ASSIGN;
+            case PLUS_ASSIGN -> AssignmentOperator.ADD;
+            case MINUS_ASSIGN -> AssignmentOperator.SUB;
+            case STAR_ASSIGN -> AssignmentOperator.MUL;
+            case SLASH_ASSIGN -> AssignmentOperator.DIV;
+            case PERCENT_ASSIGN -> AssignmentOperator.REM;
+            default -> null;
+        };
+        if (assignmentOperator != null) {
+            advance();
             ExpressionNode right = parseAssignment();
             if (right == null) return left;
 
@@ -1007,7 +1017,7 @@ public final class Parser {
             }
 
             Span sp = spanBetween(left.span(), right.span());
-            return new AssignmentExpr(sp, left, right);
+            return new AssignmentExpr(sp, left, right, assignmentOperator);
         }
 
         return left;

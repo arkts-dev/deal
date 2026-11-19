@@ -11,7 +11,8 @@ and forbids binding reassignment, not aggregate mutation. Entry exports synchron
 main(): void; no-result functions use bare return or fallthrough.
 
 Comments use // or /* ... */. `$` bindings are compiler-owned. Property keys need
-explicit values. Assign with x = x + 1. Arrows have parenthesized parameters and
+explicit values. Numeric `+=`, `-=`, `*=`, `/=`, `%=` and string `+=` evaluate targets once.
+Arrows have parenthesized parameters and
 explicit results: `(x: number): number => x * 2`. Block/expression bodies are legal;
 a void expression body must produce void. Keep async with its parameter opening
 and the result annotation with => on the same line.

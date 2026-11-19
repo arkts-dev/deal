@@ -925,7 +925,7 @@ public final class IrDumper implements Visitor<String> {
         String typeStr = hasType(node) ? specTypeDescriptor(typeOf(node))
             : (isDeclFile ? "[no-expr-in-decl]" : "?");
         StringBuilder sb = new StringBuilder();
-        sb.append(indent()).append("assign = : ").append(typeStr)
+        sb.append(indent()).append("assign ").append(node.operator().text()).append(" : ").append(typeStr)
             .append(" ").append(spanStr(node.span())).append("\n");
         ExpressionNode target = node.target();
         if (target instanceof IdentifierExpr) {
