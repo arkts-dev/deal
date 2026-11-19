@@ -570,11 +570,13 @@ public final class AmendWorkspace {
         }
         List<AddDeclaration> additions;
         try {
-            if (grant == null && !dependencies.isEmpty()) throw new IllegalArgumentException("Dependency additions require a repair grant");
+            if (grant == null && !dependencies.isEmpty()) throw new RepairWorkspaceProtocol.Rejection(
+                    "Dependency additions require a repair grant", "repair.missing-grant", "compiler-issued repair grant", "absent");
             additions = grant == null ? List.of()
                     : RepairWorkspaceProtocol.validateDependencies(workspace, grant, dependencies, modulePath, registry);
         } catch (IllegalArgumentException failure) {
-            return rejectedWorkspace(source, modulePath, resolver, adapter, workspace, "CP1030", failure.getMessage());
+            return rejectedWorkspace(source, modulePath, resolver, adapter, workspace, "CP1030", failure.getMessage(),
+                    failure instanceof RepairWorkspaceProtocol.Rejection rejected ? rejected : null);
         }
         Map<String, SlotPatch> bySlot = new LinkedHashMap<>();
         for (SlotPatch patch : patches) {
@@ -1038,23 +1040,36 @@ public final class AmendWorkspace {
     static void validateDependencyDeclaration(String source, String modulePath,
             deal.diagnostics.CompilerDiagnostic.MissingSymbol obligation) {
         String kind = obligation.kind().equals("TYPE") ? "class" : "function";
-        if (!singleDeclarationIdentity(source, modulePath).equals(symbolId(modulePath, kind, obligation.name()).value()))
-            throw new IllegalArgumentException("Dependency must declare exactly the granted " + kind + " " + obligation.name());
-        if (!obligation.namespace().equals(modulePath)) throw new IllegalArgumentException("Dependency namespace does not match module");
+        String expectedIdentity = symbolId(modulePath, kind, obligation.name()).value();
+        String actualIdentity = singleDeclarationIdentity(source, modulePath);
+        if (!actualIdentity.equals(expectedIdentity))
+            throw new RepairWorkspaceProtocol.Rejection("Dependency must declare exactly the granted " + kind + " " + obligation.name(),
+                    "repair.dependency-identity", expectedIdentity, actualIdentity);
+        if (!obligation.namespace().equals(modulePath)) throw new RepairWorkspaceProtocol.Rejection(
+                "Dependency namespace does not match module", "repair.dependency-namespace", obligation.namespace(), modulePath);
         if (kind.equals("function")) {
             var parsed = new Parser(new Lexer(source, modulePath).tokenize().tokens(), modulePath).parse();
             var statement = parsed.program().statements().getFirst();
             var function = (FunctionDeclaration) (statement instanceof ExportDeclaration exported ? exported.declaration() : statement);
-            if (function.isExternal()) throw new IllegalArgumentException("A missing function requires an implementation, not an external capability");
+            if (function.isExternal()) throw new RepairWorkspaceProtocol.Rejection(
+                    "A missing function requires an implementation, not an external capability",
+                    "repair.dependency-implementation", "function implementation", "external declaration");
             for (String constraint : obligation.constraints())
                 if (constraint.startsWith("arity=") && function.params().size() != Integer.parseInt(constraint.substring(6)))
-                    throw new IllegalArgumentException("Dependency function arity does not satisfy its call site");
+                    throw new RepairWorkspaceProtocol.Rejection("Dependency function arity does not satisfy its call site",
+                            "repair.dependency-arity", constraint.substring(6), Integer.toString(function.params().size()));
         }
     }
 
     private static RepairWorkspaceResult rejectedWorkspace(
             String source, String modulePath, ModuleResolver resolver, SourceAdapter adapter,
             RepairWorkspaceSnapshot workspace, String code, String message) {
+        return rejectedWorkspace(source, modulePath, resolver, adapter, workspace, code, message, null);
+    }
+
+    private static RepairWorkspaceResult rejectedWorkspace(
+            String source, String modulePath, ModuleResolver resolver, SourceAdapter adapter,
+            RepairWorkspaceSnapshot workspace, String code, String message, RepairWorkspaceProtocol.Rejection rejection) {
         Analysis current = analyze(source, modulePath, resolver, adapter);
         String reason = switch (code) {
             case "CP1021" -> "repair.stale-base";
@@ -1072,6 +1087,11 @@ public final class AmendWorkspace {
             : code.equals("CP1022") ? workspaceDigest(workspace) : "";
         String actual = code.equals("CP1021") ? workspace.baseRevision().sourceDigest()
             : code.equals("CP1022") ? workspace.workspaceDigest() : "";
+        if (rejection != null) {
+            reason = rejection.reason;
+            expected = rejection.expected;
+            actual = rejection.actual;
+        }
         StructuredDiagnostic diagnostic = diagnostic(code, message, current.moduleId(), null,
                 expected, actual, List.of(), contextRequest(current, current.moduleId()))
                 .withFacts(new deal.diagnostics.DiagnosticFacts(reason, "repair.transaction", expected, actual, List.of(

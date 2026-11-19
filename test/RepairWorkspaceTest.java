@@ -15,6 +15,7 @@ public final class RepairWorkspaceTest {
         dependenciesUseSyntaxAndScopes(baseline);
         dependentProviderCanBeReopened(baseline);
         rejectedTransactionsOfferCurrentReinspection(baseline);
+        dependencyRejectionsRetainProducerFacts(baseline);
         System.out.println("RepairWorkspaceTest: all tests passed");
     }
     private static RepairWorkspaceSnapshot stage(String source, List<AmendWorkspace.Operation> operations) {
@@ -122,6 +123,54 @@ public final class RepairWorkspaceTest {
         var result = apply(workspace, grant, List.of(), "export function helper(value: number): number { return value; }");
         check(result.accepted(), "new function repairs existing body: " + result.diagnostics());
     }
+    private static void dependencyRejectionsRetainProducerFacts(Inspection baseline) {
+        var body = baseline.nodes().stream().filter(n -> n.kind().equals("function-body")).findFirst().orElseThrow();
+        var workspace = stage(BASE, List.of(new AmendWorkspace.ReplaceFunctionBody(body.id(), "return helper(2);")));
+        var grant = RepairWorkspaceProtocol.expandRepairScope(workspace, workspace.workspaceDigest(), List.of("add:D1"));
+        String declaration = "export function helper(value:number):number{return value;}";
+        var dependency = new RepairWorkspaceProtocol.Dependency("D1", declaration);
+        var forged = new RepairWorkspaceProtocol.Grant(grant.version(), grant.workspaceDigest(), List.of("invented"),
+                grant.obligations(), grant.expansions(), grant.digest());
+        var stale = new RepairWorkspaceProtocol.Grant(grant.version(), "stale", grant.slots(),
+                grant.obligations(), grant.expansions(), grant.digest());
+        record Case(String reason, String expected, String actual, RepairWorkspaceResult result) {}
+        var cases = List.of(
+            new Case("repair.missing-grant", "compiler-issued repair grant", "absent",
+                    AmendWorkspace.applyRepairTransaction(BASE, MODULE, workspace, null, List.of(), List.of(dependency))),
+            new Case("repair.altered-grant", CompilerProtocolJson.encode(grant), CompilerProtocolJson.encode(forged),
+                    AmendWorkspace.applyRepairTransaction(BASE, MODULE, workspace, forged, List.of(), List.of(dependency))),
+            new Case("repair.stale-grant-workspace", workspace.workspaceDigest(), "stale",
+                    AmendWorkspace.applyRepairTransaction(BASE, MODULE, workspace, stale, List.of(), List.of(dependency))),
+            new Case("repair.ungranted-obligation", CompilerProtocolJson.encode(grant.obligations()), "invented",
+                    AmendWorkspace.applyRepairTransaction(BASE, MODULE, workspace, grant, List.of(),
+                            List.of(new RepairWorkspaceProtocol.Dependency("invented", declaration)))),
+            new Case("repair.duplicate-obligation", "one addition per granted obligation", "D1",
+                    AmendWorkspace.applyRepairTransaction(BASE, MODULE, workspace, grant, List.of(), List.of(dependency, dependency))),
+            new Case("repair.dependency-identity", "deal:app.deal:function:helper", "deal:app.deal:function:other",
+                    apply(workspace, grant, List.of(), "export function other(value:number):number{return value;}")),
+            new Case("repair.dependency-arity", "1", "0",
+                    apply(workspace, grant, List.of(), "export function helper():number{return 1;}")),
+            new Case("repair.dependency-implementation", "function implementation", "external declaration",
+                    apply(workspace, grant, List.of(), "export function helper(value:number):number;"))
+        );
+        for (var sample : cases) {
+            var result = sample.result();
+            var diagnostic = result.diagnostics().getFirst();
+            check(!result.accepted() && result.source().equals(BASE) && result.workspace().equals(workspace),
+                    sample.reason() + " leaves committed source and staged slots unchanged");
+            check(diagnostic.code().equals("CP1030") && diagnostic.facts().reason().equals(sample.reason())
+                            && diagnostic.expected().equals(sample.expected()) && diagnostic.actual().equals(sample.actual()),
+                    sample.reason() + " retains typed producer reason/expected/actual without parsing shared message prose");
+            check(diagnostic.repairScopes().isEmpty() && diagnostic.contextRequest() != null
+                            && AmendWorkspace.queryContext(BASE, MODULE, diagnostic.contextRequest()).accepted(),
+                    sample.reason() + " offers only current reinspection, not writable scope");
+            check(CompilerProtocolJson.encode(diagnostic).contains(sample.reason()), "reason survives sole protocol transport");
+        }
+        var repaired = AmendWorkspace.applyRepairTransaction(BASE, MODULE, workspace, grant, List.of(), List.of(dependency));
+        check(repaired.accepted() && AmendWorkspace.inspect(repaired.source(), MODULE).diagnostics().isEmpty(),
+                "explicit intended declaration with current grant rechecks after rejected dependency requests");
+    }
+
     private static void rejectedTransactionsOfferCurrentReinspection(Inspection baseline) {
         String modulePath = "actual-module.deal";
         var inspected = AmendWorkspace.inspect(BASE, modulePath);

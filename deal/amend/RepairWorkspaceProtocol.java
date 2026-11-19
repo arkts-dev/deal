@@ -31,6 +31,20 @@ public final class RepairWorkspaceProtocol {
     }
     public record Dependency(String obligation, String declaration) {}
 
+    /** Producer-classified validation failure; message remains the existing terminal/protocol spelling. */
+    static final class Rejection extends IllegalArgumentException {
+        private static final long serialVersionUID = 1L;
+        final String reason;
+        final String expected;
+        final String actual;
+        Rejection(String message, String reason, String expected, String actual) {
+            super(message);
+            this.reason = reason;
+            this.expected = expected;
+            this.actual = actual;
+        }
+    }
+
     public static Offer inspectRepair(RepairWorkspaceSnapshot workspace) {
         return inspectRepair(workspace, RepairDiagnosticRegistry.core());
     }
@@ -105,15 +119,19 @@ public final class RepairWorkspaceProtocol {
     public static Grant expandRepairScope(RepairWorkspaceSnapshot workspace, String expectedDigest, List<String> selections,
                                          RepairDiagnosticRegistry registry) {
         Offer offer = inspectRepair(workspace, registry);
-        if (!offer.workspaceDigest().equals(expectedDigest)) throw new IllegalArgumentException("Stale repair workspace digest");
-        if (offer.disposition() == Disposition.UNSUPPORTED) throw new IllegalArgumentException(offer.reason());
+        if (!offer.workspaceDigest().equals(expectedDigest)) throw new Rejection("Stale repair workspace digest",
+                "repair.stale-grant-workspace", offer.workspaceDigest(), expectedDigest);
+        if (offer.disposition() == Disposition.UNSUPPORTED) throw new Rejection(offer.reason(),
+                "repair.unsupported-scope", "compiler-issued repair operation", "none");
         var slots = new TreeSet<>(offer.slots());
         var obligations = new TreeSet<String>();
         var chosen = new TreeSet<String>();
         for (String id : selections) {
-            if (!chosen.add(id)) throw new IllegalArgumentException("Duplicate repair expansion: " + id);
+            if (!chosen.add(id)) throw new Rejection("Duplicate repair expansion: " + id,
+                    "repair.duplicate-expansion", "one selection per expansion", id);
             Expansion expansion = offer.expansions().stream().filter(item -> item.id().equals(id)).findFirst()
-                    .orElseThrow(() -> new IllegalArgumentException("Repair expansion is not granted: " + id));
+                    .orElseThrow(() -> new Rejection("Repair expansion is not granted: " + id,
+                            "repair.ungranted-expansion", "compiler-issued expansion", id));
             slots.addAll(expansion.slots()); obligations.addAll(expansion.obligations());
         }
         String digest = AmendWorkspace.digest(CompilerProtocolJson.encode(List.of(
@@ -127,7 +145,8 @@ public final class RepairWorkspaceProtocol {
 
     public static void validateGrant(RepairWorkspaceSnapshot workspace, Grant grant, RepairDiagnosticRegistry registry) {
         Grant expected = expandRepairScope(workspace, grant.workspaceDigest(), grant.expansions(), registry);
-        if (!expected.equals(grant)) throw new IllegalArgumentException("Repair grant was altered");
+        if (!expected.equals(grant)) throw new Rejection("Repair grant was altered",
+                "repair.altered-grant", CompilerProtocolJson.encode(expected), CompilerProtocolJson.encode(grant));
     }
 
     public static List<AmendWorkspace.AddDeclaration> validateDependencies(
@@ -143,8 +162,12 @@ public final class RepairWorkspaceProtocol {
         var seen = new HashSet<String>();
         var result = new ArrayList<AmendWorkspace.AddDeclaration>();
         for (var addition : additions) {
-            if (!grant.obligations().contains(addition.obligation()) || !seen.add(addition.obligation()))
-                throw new IllegalArgumentException("Dependency obligation is not granted or is duplicated");
+            if (!grant.obligations().contains(addition.obligation()))
+                throw new Rejection("Dependency obligation is not granted or is duplicated",
+                        "repair.ungranted-obligation", CompilerProtocolJson.encode(grant.obligations()), addition.obligation());
+            if (!seen.add(addition.obligation()))
+                throw new Rejection("Dependency obligation is not granted or is duplicated",
+                        "repair.duplicate-obligation", "one addition per granted obligation", addition.obligation());
             var obligation = offer.obligations().stream().filter(item -> item.id().equals(addition.obligation())).findFirst().orElseThrow();
             AmendWorkspace.validateDependencyDeclaration(addition.declaration(), modulePath, obligation.missing());
             result.add(new AmendWorkspace.AddDeclaration(new SemanticId("deal:module:" + modulePath), addition.declaration()));
@@ -153,7 +176,8 @@ public final class RepairWorkspaceProtocol {
     }
 
     private static void requireWorkspace(RepairWorkspaceSnapshot workspace) {
-        if (!AmendWorkspace.validRepairWorkspace(workspace)) throw new IllegalArgumentException("Invalid repair workspace digest");
+        if (!AmendWorkspace.validRepairWorkspace(workspace)) throw new Rejection("Invalid repair workspace digest",
+                "repair.invalid-workspace-digest", "", workspace.workspaceDigest());
     }
     private static Offer unsupported(RepairWorkspaceSnapshot workspace, String reason) {
         return new Offer(VERSION, workspace.workspaceDigest(), Disposition.UNSUPPORTED,
