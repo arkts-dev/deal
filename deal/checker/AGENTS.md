@@ -61,6 +61,7 @@ mutable unknowns with ordinary shadowing/capture rules; diagnostics anchor ident
 Function/arrow expression parameters may omit annotations only under an existing
 positional signature. Resolve their bindings and exact providers before body checks;
 never infer from bodies. Declaration parameters and all results stay explicit.
+Unresolved-call alternatives consume already checked argument types; never recheck arguments or supply guessed contextual types for ranking.
 Array callback contexts derive from receiver/source; ordinary shorter-arity
 adaptation remains. Void expression-bodied arrows require void or terminating never expressions.
 

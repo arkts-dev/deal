@@ -195,8 +195,8 @@ public class CheckerTest {
                         .map(c -> c.name()).toList().equals(List.of("cat", "cot")),
                 "spelling breaks equal-distance ties independently of declaration order");
         var uncheckedArguments = alternatives("function count(x:string):number{return 7;}let result=coun(42);");
-        check(uncheckedArguments.size() == 1 && uncheckedArguments.getFirst().name().equals("count"),
-                "call alternatives do not claim or test argument compatibility");
+        check(uncheckedArguments.isEmpty(),
+                "call alternatives exclude incompatible already checked arguments without supplying context");
         check(hasErrors(checkProgram("function count(x:string):number{return 7;}let result=count(42);").result().diagnostics()),
                 "an explicitly chosen alternative still requires ordinary argument checking");
         var ranked = alternatives("let cat:number=1;{let car:number=2;let result=cax;}");

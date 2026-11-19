@@ -1888,6 +1888,7 @@ public final class TypeChecker {
             return checkFunctionCall(call, (Type.Func) builtin.type(), arguments);
         }
         if (call.callee() instanceof IdentifierExpr id && currentScope.resolve(id.name()) == null) {
+            int diagnosticIndex = diagnostics.size();
             diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E2001,
                     "Undeclared identifier '" + id.name() + "'", id.span())
                     .withMissingSymbol("FUNCTION", id.name(), id.span().file(),
@@ -1895,9 +1896,10 @@ public final class TypeChecker {
                     .withFacts(new deal.diagnostics.DiagnosticFacts("name.unresolved-call", "call",
                             "visible callable binding", id.name(),
                             List.of("Check spelling, lexical scope, and intended imports; no callable declaration is inferred.",
-                                    "Listed call alternatives match arity, async form and known result context; argument compatibility is not established."))
-                            .withNames(nameAlternatives(id.name(), call))));
+                                    "Listed call alternatives match the already checked argument types, arity, async form and known result context; contextual arguments without an established type produce no suggestion."))));
             for (ExpressionNode arg : call.args()) checkExpression(arg);
+            var diagnostic = diagnostics.get(diagnosticIndex);
+            diagnostics.set(diagnosticIndex, diagnostic.withFacts(diagnostic.facts().withNames(nameAlternatives(id.name(), call))));
             return Type.Error.INSTANCE;
         }
         CallExpr savedBuiltinCall = directBuiltinCall;
@@ -3981,6 +3983,16 @@ public final class TypeChecker {
                     if (!(type instanceof Type.Func function)
                             || function.paramTypes().size() != call.args().size()
                             || function.isAsync() != (call == directAwaitCallee)) continue;
+                    boolean compatible = true;
+                    for (int i = 0; i < call.args().size(); i++) {
+                        Type argument = typeMap.get(call.args().get(i));
+                        if (argument == null || argument instanceof Type.Error
+                                || !isAssignable(function.paramTypes().get(i), argument)) {
+                            compatible = false;
+                            break;
+                        }
+                    }
+                    if (!compatible) continue;
                     valueType = function.returnType();
                 }
                 if (expectedType != null && !Types.isAssignable(valueType, expectedType)) continue;

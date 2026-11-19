@@ -3867,6 +3867,21 @@ public class DiagnosticRangeTest {
             check(diagnostic.withNote("related", null).withMissingSymbol("VALUE", "other", "", List.of()).facts()
                             .equals(diagnostic.facts()), "producer alternatives survive diagnostic metadata copies");
         }
+        String compatibleNames = "function count(x:number):number{return x;}function court(x:string):number{return 0;}let result=coun(7);";
+        var compatible = checkerDiag(checkerDiagnostics(compatibleNames, "names.deal"), "E2001");
+        check(compatible != null && compatible.facts().names().candidates().stream().map(c -> c.name()).toList().equals(List.of("count")),
+            "call alternatives reject nearby but argument-incompatible signatures");
+        check(checkerDiagnostics(compatibleNames.replace("coun(7)", "count(7)"), "names.deal").isEmpty(),
+            "explicitly chosen compatible callable repair rechecks");
+        String contextualName = "class C{n:number;}function count(x:C):number{return x.n;}let result=coun({n:7});";
+        var unresolvedContext = checkerDiagnostics(contextualName, "names.deal");
+        check(checkerDiag(unresolvedContext, "E2001").facts().names().candidates().isEmpty()
+            && checkerDiag(unresolvedContext, "E3002") != null, "candidate ranking never supplies guessed contextual type or removes E3002");
+        String effects = "class C{value:string|null;}function count(x:number):number{return 1;}function touch():number{return 1;}"
+            + "function f(c:C):void{if(c.value!==null){coun(touch());let n=c.value.length;}}";
+        var effectsDiagnostics = checkerDiagnostics(effects, "names.deal");
+        check(effectsDiagnostics.stream().filter(d -> d.code().equals("E2001")).count() == 1
+            && checkerDiag(effectsDiagnostics, "E3003") != null, "unresolved call arguments retain ordinary effect checking without second evaluation");
         var nameCandidates = new java.util.ArrayList<>(List.of(
                 new deal.diagnostics.DiagnosticFacts.NameCandidate("a\"\uD800😀", "VALUE", "number", escaped.range(), 1, 0),
                 new deal.diagnostics.DiagnosticFacts.NameCandidate("other", "FUNCTION", "() => number", null, 2, 1)));
