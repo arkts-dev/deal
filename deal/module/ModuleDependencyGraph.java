@@ -432,7 +432,7 @@ public final class ModuleDependencyGraph {
             }
             return new CompilerDiagnostic(anchored.code(),
                 anchored.severity(), anchored.message(), anchored.range(),
-                notes, anchored.diagnosticCode(), anchored.missingSymbols(), anchored.facts());
+                notes, anchored.diagnosticCode(), anchored.missingSymbols(), anchored.facts(), anchored.excerpt());
         }
     }
 

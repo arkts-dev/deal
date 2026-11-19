@@ -88,6 +88,8 @@ public final class AmendWorkspaceTest {
         var rejected = AmendWorkspace.apply(base, "geometry.deal", inspection.sourceDigest(),
                 List.of(new AmendWorkspace.AddDeclaration(inspection.moduleId(), payload)));
         var diagnostic = rejected.diagnostics().stream().filter(d -> d.code().equals("E1008")).findFirst().orElseThrow();
+        check(diagnostic.excerpt() != null && diagnostic.excerpt().text().equals(payload),
+                "syntax excerpt owns original payload, not committed source or masked directive");
         check(!rejected.accepted() && rejected.source().equals(base) && diagnostic.operationIndex() == 0,
                 "malformed annotated declaration remains operation-local and leaves source unchanged");
         check(diagnostic.range().startScalarOffset() == payload.indexOf("number")
@@ -1065,6 +1067,9 @@ public final class AmendWorkspaceTest {
                 List.of(new AmendWorkspace.ReplaceFunctionBody(body.id(), "return missing;")));
         check(!rejected.accepted(), "invalid replacement must reject");
         check(rejected.source().equals(source), "invalid replacement must roll back");
+        check(rejected.diagnostics().stream().allMatch(value -> value.excerpt() != null
+                        && value.excerpt().text().contains("return missing;")),
+                "rejected assembled candidate keeps its own excerpt, never rolled-back source text");
         check(rejected.diagnostics().stream().allMatch(value ->
                         value.ownerId().equals(update.id())
                                 && value.repairScopes().contains(new CompilerProtocol.RepairScope(

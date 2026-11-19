@@ -139,6 +139,8 @@ public final class DiagnosticStructuredOutput {
         indent(sb, 3).append("\"message\": ").append(jsonString(d.message())).append(",\n");
         appendRange(sb, d.range(), 3);
         sb.append(",\n");
+        appendExcerpt(sb, d.excerpt(), 3);
+        sb.append(",\n");
         appendNotes(sb, d.notes(), 3);
         sb.append(",\n");
         appendFacts(sb, d.facts(), 3);
@@ -146,6 +148,18 @@ public final class DiagnosticStructuredOutput {
         appendMissingSymbols(sb, d.missingSymbols(), 3);
         sb.append('\n');
         indent(sb, 2).append('}').append(last ? "\n" : ",\n");
+    }
+
+    private static void appendExcerpt(StringBuilder sb, DiagnosticExcerpt excerpt, int level) {
+        indent(sb, level).append("\"excerpt\": ");
+        if (excerpt == null) { sb.append("null"); return; }
+        sb.append("{\"text\": ").append(jsonString(excerpt.text()))
+            .append(", \"startScalarOffset\": ").append(excerpt.startScalarOffset())
+            .append(", \"endScalarOffset\": ").append(excerpt.endScalarOffset())
+            .append(", \"sourceLength\": ").append(excerpt.sourceLength())
+            .append(", \"omittedBefore\": ").append(excerpt.omittedBefore())
+            .append(", \"omittedAfter\": ").append(excerpt.omittedAfter())
+            .append(", \"primaryTruncated\": ").append(excerpt.primaryTruncated()).append('}');
     }
 
     private static void appendClassification(StringBuilder sb, DiagnosticClassification classification, int level) {

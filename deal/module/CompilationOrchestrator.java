@@ -148,6 +148,7 @@ public final class CompilationOrchestrator {
 
     private final Map<String, ModuleInfo> modules = new LinkedHashMap<>();
     private final List<CompilerDiagnostic> diagnostics = new ArrayList<>();
+    private final Map<String, String> diagnosticSources = new LinkedHashMap<>();
     private final List<deal.diagnostics.OperationalDiagnostic> operations = new ArrayList<>();
     private final EnumMap<Phase, Status> phaseStatuses = new EnumMap<>(Phase.class);
     private Phase activePhase;
@@ -595,6 +596,7 @@ public final class CompilationOrchestrator {
         // dumps are discarded with the rest of the stage tree.
         stager = PublicationStager.forRoot(outputRoot);
         pendingStageFailure = null;
+        diagnosticSources.clear();
         operations.clear();
         phaseStatuses.clear();
         for (Phase phase : Phase.values()) phaseStatuses.put(phase, Status.SKIPPED);
@@ -665,7 +667,7 @@ public final class CompilationOrchestrator {
                 // emission-order collection is unchanged.
                 Files.writeString(diagnosticsJsonPath,
                     DiagnosticStructuredOutput.toJson(
-                        DiagnosticOrder.canonical(diagnostics), operations, outcome()));
+                        DiagnosticOrder.canonical(diagnostics()), operations, outcome()));
             } catch (IOException e) {
                 System.err.println("deal: cannot write diagnostics JSON to '"
                     + diagnosticsJsonPath + "': " + e.getMessage());
@@ -795,7 +797,11 @@ public final class CompilationOrchestrator {
     }
 
     public List<CompilerDiagnostic> diagnostics() {
-        return Collections.unmodifiableList(diagnostics);
+        return diagnostics.stream().map(diagnostic -> {
+            String source = diagnosticSources.get(diagnostic.file());
+            return source == null ? diagnostic : diagnostic.withExcerpt(
+                    deal.diagnostics.DiagnosticExcerpt.fromSource(diagnostic.file(), source, diagnostic.range()));
+        }).toList();
     }
 
     private void beginPhase(Phase phase) {
@@ -891,6 +897,7 @@ public final class CompilationOrchestrator {
                 continue;
             }
 
+            diagnosticSources.put(sourcePath, source);
             LexResult lex = new Lexer(source, sourcePath).tokenize();
             diagnostics.addAll(lex.diagnostics());
             if (hasLexErrors(lex)) {

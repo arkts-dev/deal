@@ -110,6 +110,7 @@ public class DiagnosticRangeTest {
         testMissingReturnObligations();
         testIntrinsicPreSignatureEvidence();
         testRuleReferencesAndIntentDependentExamples();
+        testProducerSourceExcerpts();
         testCatchVariableIdentifierRange();
         testProgramSpanAnchorsCombined();
         testV12CornerCaseScalarCoordinatePins();
@@ -1218,6 +1219,79 @@ public class DiagnosticRangeTest {
         for (String source : List.of("let a=[1];let r=a.map((n:number):number=>n+1);",
                 "let r=Array.from([1],(n:number):string=>\"chosen\");"))
             check(checkerDiagnostics(source, "intrinsic.deal").isEmpty(), "explicit intended mapper repair rechecks");
+    }
+
+    private static void testProducerSourceExcerpts() throws IOException {
+        String source = "// 😀\r\nexport function f():void{let text:string=1;}";
+        var raw = checkerDiag(checkerDiagnostics(source, "excerpt.deal"), "E3001");
+        var excerpt = deal.diagnostics.DiagnosticExcerpt.fromSource("excerpt.deal", source, raw.range());
+        check(excerpt != null && excerpt.text().equals(source) && excerpt.sourceLength() == source.length()
+                        && excerpt.omittedBefore() == 0 && excerpt.omittedAfter() == 0 && !excerpt.primaryTruncated(),
+                "short excerpt retains exact original UTF-16/CRLF source");
+        var diagnostic = raw.withExcerpt(excerpt);
+        check(diagnostic.withFacts(raw.facts()).withNote("copied", null).withMissingSymbol("VALUE", "x", "", List.of()).excerpt().equals(excerpt),
+                "all independent diagnostic copies preserve exact source excerpt");
+        var inspection = deal.amend.AmendWorkspace.inspect(source, "excerpt.deal");
+        var amended = inspection.diagnostics().stream().filter(d -> d.code().equals("E3001")).findFirst().orElseThrow();
+        check(amended.excerpt().equals(excerpt) && amended.withFacts(amended.facts()).withMissingSymbols(List.of())
+                        .withContextRequest(amended.contextRequest()).withOperationIndex(0).excerpt().equals(excerpt),
+                "amendment uses original producer source and preserves excerpt across copies");
+        var cli = deal.amend.CompilerProtocolJson.requireObject(deal.amend.CompilerProtocolJson.decode(
+                DiagnosticStructuredOutput.toJson(List.of(diagnostic))), "report");
+        var exported = deal.amend.CompilerProtocolJson.requireObject(deal.amend.CompilerProtocolJson.requireArray(
+                deal.amend.CompilerProtocolJson.field(cli, "diagnostics"), "diagnostics").items().getFirst(), "diagnostic");
+        check(deal.amend.CompilerProtocolJson.field(exported, "excerpt").equals(deal.amend.CompilerProtocolJson.toValue(excerpt)),
+                "CLI and amendment serialize identical typed source excerpt geometry");
+        for (String boundary : List.of("😀", "\r\n")) {
+            String text = "x".repeat(239) + boundary + "z".repeat(300);
+            var range = new DiagnosticRange("boundary.deal", 1, 1, 1, 2, 0, 1, 1, RangeOrigin.SOURCE);
+            var bounded = deal.diagnostics.DiagnosticExcerpt.fromSource("boundary.deal", text, range);
+            check(bounded.endScalarOffset() == 239 && bounded.text().equals("x".repeat(239))
+                            && bounded.omittedAfter() == text.length() - 239,
+                    "excerpt cap retains neither half a valid pair nor half a CRLF");
+            var shifted = new DiagnosticRange("boundary.deal", 1, 321, 1, 322, 320, 321, 1, RangeOrigin.SOURCE);
+            var left = deal.diagnostics.DiagnosticExcerpt.fromSource("boundary.deal", text, shifted);
+            check(left.startScalarOffset() == 241 && left.omittedBefore() == 241 && left.text().length() == 240,
+                    "excerpt left boundary omits complete pair/CRLF with exact omission count");
+        }
+        String longText = "x".repeat(600);
+        var longRange = new DiagnosticRange("long.deal", 1, 1, 1, 601, 0, 600, 600, RangeOrigin.SOURCE);
+        var truncated = deal.diagnostics.DiagnosticExcerpt.fromSource("long.deal", longText, longRange);
+        check(truncated.primaryTruncated() && truncated.text().length() == 240 && truncated.omittedAfter() == 360,
+                "long primary explicitly reports missing remainder without changing full primary range");
+        check(deal.diagnostics.DiagnosticExcerpt.fromSource("other.deal", source, raw.range()) == null
+                        && deal.diagnostics.DiagnosticExcerpt.fromSource("excerpt.deal", source, DiagnosticRange.synthetic("excerpt.deal")) == null
+                        && deal.diagnostics.DiagnosticExcerpt.fromSource("long.deal", "short", longRange) == null,
+                "foreign/synthetic/out-of-bounds ranges invent no source text");
+        String units = "\uD800\u0000\uDC00";
+        var unitsRange = new DiagnosticRange("units.deal", 1, 1, 1, 4, 0, 3, 3, RangeOrigin.SOURCE);
+        var unitsDiagnostic = CompilerDiagnostic.error(DiagnosticCode.E1001, "units", unitsRange)
+                .withExcerpt(deal.diagnostics.DiagnosticExcerpt.fromSource("units.deal", units, unitsRange));
+        check(DiagnosticStructuredOutput.toJson(List.of(unitsDiagnostic)).contains("\\ud800\\u0000\\udc00"),
+                "excerpt controls and lone units escape losslessly in the sole report");
+        Path tmp = Files.createTempDirectory("deal-diagnostic-excerpt-");
+        try {
+            Path entry = tmp.resolve("main.deal");
+            String original = "// 😀\r\nexport function main():void{let text:string=1;}";
+            Files.writeString(entry, original);
+            var orchestrator = new CompilationOrchestrator(entry.toAbsolutePath(), tmp.resolve("out"), false, null,
+                    List.of(tmp.toAbsolutePath()), null);
+            PrintStream previous = System.err;
+            try {
+                System.setErr(new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8));
+                check(!orchestrator.compile(), "source excerpt integration retains frontend rejection");
+            } finally { System.setErr(previous); }
+            var before = firstCode(orchestrator.diagnostics(), "E3001");
+            Files.writeString(entry, "changed after compilation");
+            var after = firstCode(orchestrator.diagnostics(), "E3001");
+            check(before != null && after != null && before.excerpt().text().equals(original)
+                            && after.excerpt().equals(before.excerpt()),
+                    "orchestrator source evidence never rereads a changed file at formatting time");
+        } finally {
+            try (var paths = Files.walk(tmp)) {
+                for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) Files.deleteIfExists(path);
+            }
+        }
     }
 
     private static void testRuleReferencesAndIntentDependentExamples() throws IOException {
@@ -3443,7 +3517,7 @@ public class DiagnosticRangeTest {
             + "      \"code\": \"" + code + "\",\n      \"classification\": "
             + expectedClassification(code) + ",\n      \"severity\": \"error\",\n"
             + "      \"message\": \"" + message + "\",\n      \"range\": "
-            + range.replace("\n", "\n      ") + ",\n      \"notes\": "
+            + range.replace("\n", "\n      ") + ",\n      \"excerpt\": null,\n      \"notes\": "
             + notes.replace("\n", "\n      ") + ",\n"
             + "      \"facts\": {\n        \"reason\": \"\",\n        \"operation\": \"\",\n"
             + "        \"expected\": \"\",\n        \"actual\": \"\",\n        \"guidance\": [],\n        \"path\": [],\n        \"call\": null,\n        \"operator\": null,\n        \"mismatch\": null,\n        \"syntax\": null,\n        \"names\": null,\n        \"construction\": null,\n        \"exports\": null,\n        \"resolution\": null,\n        \"cycle\": null,\n        \"tool\": null,\n        \"lowering\": null\n      },\n"
