@@ -761,6 +761,18 @@ public final class AmendWorkspaceTest {
                 + repaired.source().replace("\n", "\\n"));
         check(repaired.diagnostics().stream().anyMatch(value -> value.code().equals("CP1029")),
                 "canonical no-op repair must publish stable CP1029");
+        var noProgress = repaired.diagnostics().stream().filter(d -> d.code().equals("CP1029")).findFirst().orElseThrow();
+        check(noProgress.facts().reason().equals("repair.no-source-progress")
+                        && noProgress.facts().guidance().getFirst().contains("no arbitrary edit is inferred")
+                        && noProgress.contextRequest() != null
+                        && AmendWorkspace.queryContext(source, "app.deal", noProgress.contextRequest()).accepted(),
+                "no-progress rejection retains exact current reinspection without choosing an arbitrary edit");
+        check(noProgress.repairScopes().equals(List.of(new CompilerProtocol.RepairScope(AmendWorkspace.REPLACE_FUNCTION_BODY, body.id()))),
+                "no-progress recovery preserves only the original writable body scope");
+        var progressed = AmendWorkspace.patchRepairWorkspace(source, "app.deal", repaired.workspace(),
+                List.of(new CompilerProtocol.SlotPatch(rejectedSlot, Map.of("body", "state.count=state.count+1;return state;"))));
+        check(progressed.accepted() && AmendWorkspace.inspect(progressed.source(), "app.deal").diagnostics().isEmpty(),
+                "explicitly intended source-changing repair rechecks after canonical no-progress rejection");
         check(repaired.workspace().slots().stream().anyMatch(value ->
                         value.slotId().equals(rejectedSlot)
                                 && value.status() == CompilerProtocol.RepairSlotStatus.REJECTED),

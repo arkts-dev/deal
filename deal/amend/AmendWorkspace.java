@@ -631,12 +631,18 @@ public final class AmendWorkspace {
             RepairSlot owner = workspace.slots().stream()
                     .filter(slot -> patches.stream().anyMatch(patch -> patch.slotId().equals(slot.slotId())))
                     .findFirst().orElse(workspace.slots().get(0));
+            Analysis current = analyze(source, modulePath, resolver, adapter);
             StructuredDiagnostic diagnostic = new StructuredDiagnostic(
                     "CP1029", "error",
                     "Repair patch is valid but makes no canonical source progress",
                     null, owner.targetId(), "a source-changing repair payload", "unchanged canonical source",
                     List.of(), List.of(new RepairScope(owner.operation(), owner.targetId())),
-                    null);
+                    contextRequest(current, current.targets().containsKey(owner.targetId()) ? owner.targetId() : current.moduleId()))
+                    .withFacts(new deal.diagnostics.DiagnosticFacts("repair.no-source-progress", "repair.transaction",
+                            "a source-changing repair payload", "unchanged canonical source", List.of(
+                                    "Inspect the current target and rejected slot, then choose an intended repair that changes the assembled source. "
+                                            + "Whitespace-only or equivalent canonical payloads do not make progress; no arbitrary edit is inferred, "
+                                            + "and reinspection does not expand the granted slot scope.")));
             change = new ChangeResult(
                     false, source, digest(source), change.inspection(), List.of(diagnostic));
         }
