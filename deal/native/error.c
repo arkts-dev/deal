@@ -325,6 +325,8 @@ struct deal_error {
     char *host_export;
     char *host_boundary;
     int32_t host_parameter;
+    const char *host_direction;
+    const char *host_stage;
     int has_array_constraint;
     double array_index;
     size_t array_length;
@@ -439,6 +441,7 @@ static deal_error *deal_error_allocate(const char *code, const char *message,
     error->json_missing_field = 0;
     error->host_signature = error->host_declaration = error->host_export = error->host_boundary = NULL;
     error->host_parameter = 0;
+    error->host_direction = error->host_stage = NULL;
     error->has_array_constraint = 0;
     error->array_index = 0;
     error->array_length = 0u;
@@ -996,6 +999,8 @@ static void deal_diagnostic_error(deal_snapshot_buffer *buffer, const deal_error
     const char *host_keys[] = {"hostSignature", "hostDeclaration", "hostExport", "hostBoundary"};
     for (size_t i = 0u; i < 4u; i += 1u)
         if (host_text[i] != NULL) deal_diagnostic_text(buffer, host_keys[i], host_text[i], strlen(host_text[i]), &first);
+    if (error->host_direction != NULL) deal_diagnostic_text(buffer, "hostDirection", error->host_direction, strlen(error->host_direction), &first);
+    if (error->host_stage != NULL) deal_diagnostic_text(buffer, "hostStage", error->host_stage, strlen(error->host_stage), &first);
     if (error->host_parameter > 0) {
         char parameter[16];
         (void)snprintf(parameter, sizeof(parameter), "%d", error->host_parameter);
@@ -1057,6 +1062,10 @@ void deal_error_set_host_context(deal_error *error, const char *signature,
         char *copy = deal_platform_duplicate(values[i]);
         deal_platform_release(*slots[i]);
         *slots[i] = copy;
+    }
+    if (boundary != NULL) {
+        error->host_direction = strcmp(boundary, "parameter") == 0 || strcmp(boundary, "arity") == 0 ? "deal-to-host" : "host-to-deal";
+        error->host_stage = strcmp(boundary, "completion") == 0 ? "completion" : "invocation";
     }
     if (parameter > 0) error->host_parameter = parameter;
 }

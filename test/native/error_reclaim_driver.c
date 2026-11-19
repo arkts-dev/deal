@@ -412,7 +412,9 @@ int main(void) {
     diagnostic = deal_error_diagnostic(parser_error);
     check(strstr(diagnostic, "\"hostSignature\":\"(string)->string\"") != NULL
             && strstr(diagnostic, "\"hostDeclaration\":\"declared/module\"") != NULL
-            && strstr(diagnostic, "\"hostParameter\":\"1\"") != NULL,
+            && strstr(diagnostic, "\"hostParameter\":\"1\"") != NULL
+            && strstr(diagnostic, "\"hostDirection\":\"deal-to-host\"") != NULL
+            && strstr(diagnostic, "\"hostStage\":\"invocation\"") != NULL,
           "host rejection context survives rooted collection");
     deal_error_snapshot_release(diagnostic);
     deal_root_frame_write(0u, NULL);

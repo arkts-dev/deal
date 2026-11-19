@@ -6655,6 +6655,8 @@ public class HostModuleLoadEmissionTest {
                     && enabled.stderr().contains("\"hostExport\":\"read\"")
                     && enabled.stderr().contains("\"hostSignature\":\"()->string\"")
                     && enabled.stderr().contains("\"hostBoundary\":\"return\"")
+                    && enabled.stderr().contains("\"hostDirection\":\"host-to-deal\"")
+                    && enabled.stderr().contains("\"hostStage\":\"invocation\"")
                     && enabled.stderr().contains("\"hostDeclaration\":")
                     && enabled.stderr().contains("\"message\":\"chosen\"")
                     && !disabled.stderr().contains("DEAL_RUNTIME_DIAGNOSTIC:"),
@@ -6748,6 +6750,8 @@ public class HostModuleLoadEmissionTest {
                 check(enabled.exitCode() == 0 && enabled.stderr().contains("\"hostExport\":\"badReturn\"")
                         && enabled.stderr().contains("\"hostSignature\":\"()->number\"")
                         && enabled.stderr().contains("\"hostBoundary\":\"return\"")
+                        && enabled.stderr().contains("\"hostDirection\":\"host-to-deal\"")
+                        && enabled.stderr().contains("\"hostStage\":\"invocation\"")
                         && enabled.stderr().contains("\"hostDeclaration\":")
                         && enabled.stderr().contains("\"message\":\"chosen\""),
                     "generated host return retains producer context through rethrow: " + enabled);

@@ -96,13 +96,13 @@ public final class ErrorNameMessageTest {
               const parameter=rt.hostFunction('(string)->string',v=>{calls++;return v;});
               try{parameter.$f(7,'main.deal',3,1);}catch(e){
                 const d=JSON.parse(rt.runtimeDiagnostic(e)).runtime;
-                if(d.hostBoundary!=='parameter'||d.hostParameter!=='1'||d.hostModule!==undefined)throw Error('parameter evidence');
+                if(d.hostBoundary!=='parameter'||d.hostParameter!=='1'||d.hostDirection!=='deal-to-host'||d.hostStage!=='invocation'||d.hostModule!==undefined)throw Error('parameter evidence');
               }
               if(calls!==1)throw Error('rejected parameter invoked host');
               const async=rt.hostAsyncFunction('async()->string',async()=>false,context);
               try{await async.$f('main.deal',4,1);}catch(e){
                 const d=JSON.parse(rt.runtimeDiagnostic(e)).runtime;
-                if(d.hostBoundary!=='completion'||d.hostSignature!=='async()->string')throw Error('completion evidence');
+                if(d.hostBoundary!=='completion'||d.hostSignature!=='async()->string'||d.hostDirection!=='host-to-deal'||d.hostStage!=='completion')throw Error('completion evidence');
               }
               const authored=rt.errorValue('E8010','return value 1 type mismatch: expected string');
               Object.defineProperty(authored,'hostSignature',{get(){throw Error('must not read user metadata');}});

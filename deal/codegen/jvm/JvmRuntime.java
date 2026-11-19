@@ -649,6 +649,8 @@ public final class JvmRuntime {
         if (export != null) facts.put("hostExport", export);
         if (signature != null) facts.put("hostSignature", signature);
         facts.put("hostBoundary", boundary);
+        facts.put("hostDirection", boundary.equals("parameter") || boundary.equals("arity") ? "deal-to-host" : "host-to-deal");
+        facts.put("hostStage", boundary.equals("completion") ? "completion" : "invocation");
         if (parameter != null) facts.put("hostParameter", Integer.toString(parameter));
         error.hostEvidence = Map.copyOf(facts);
         return error;
@@ -841,7 +843,7 @@ public final class JvmRuntime {
         appendRuntimeText(out, "jsonReason", error.jsonReason, true);
         for (String key : List.of("jsonPath", "jsonPathDepth", "jsonPathTruncated", "jsonMissingField"))
             appendRuntimeText(out, key, error.jsonDecodeEvidence.get(key), true);
-        for (String key : List.of("hostDeclaration", "hostExport", "hostSignature", "hostBoundary", "hostParameter"))
+        for (String key : List.of("hostDeclaration", "hostExport", "hostSignature", "hostBoundary", "hostParameter", "hostDirection", "hostStage"))
             appendRuntimeText(out, key, error.hostEvidence.get(key), true);
         for (String key : List.of("arrayIndex", "arrayLength", "arrayConstraint"))
             appendRuntimeText(out, key, error.arrayEvidence.get(key), true);

@@ -2069,7 +2069,7 @@ const $rt = {
       }
       const host = $diagnosticHostGet(value);
       if (host !== $undefined) {
-        const keys = ["hostModule", "hostExport", "hostSignature", "hostBoundary", "hostParameter", "hostDeclaration"];
+        const keys = ["hostModule", "hostExport", "hostSignature", "hostBoundary", "hostParameter", "hostDeclaration", "hostDirection", "hostStage"];
         for (let i = 0; i < keys.length; i++) {
           const text = own(host, keys[i]);
           if (typeof text !== "string") continue;
@@ -3186,6 +3186,7 @@ const $rt = {
       try { $rt.fail(code, message, file, line, column, expected, actual); }
       catch (error) {
         $diagnosticHostSet(error, {hostSignature: descriptor, hostBoundary: boundary, hostParameter: parameter,
+          hostDirection: boundary === "parameter" || boundary === "arity" ? "deal-to-host" : "host-to-deal", hostStage: "invocation",
           hostModule: context && context.module, hostExport: context && context.name, hostDeclaration: context && context.declaration});
         throw error;
       }
@@ -3304,6 +3305,8 @@ const $rt = {
       try { $rt.fail(code, message, file, line, column, expected, actual); }
       catch (error) {
         $diagnosticHostSet(error, {hostSignature: descriptor, hostBoundary: boundary, hostParameter: parameter,
+          hostDirection: boundary === "parameter" || boundary === "arity" ? "deal-to-host" : "host-to-deal",
+          hostStage: boundary === "completion" ? "completion" : "invocation",
           hostModule: context && context.module, hostExport: context && context.name, hostDeclaration: context && context.declaration});
         throw error;
       }
@@ -3374,7 +3377,7 @@ const $rt = {
               $completionError.expected, $completionKind($v));
           }
           if (failure instanceof $DEALError) $diagnosticHostSet(failure, {
-            hostSignature: descriptor, hostBoundary: "completion", hostModule: context && context.module,
+            hostSignature: descriptor, hostBoundary: "completion", hostDirection: "host-to-deal", hostStage: "completion", hostModule: context && context.module,
             hostExport: context && context.name, hostDeclaration: context && context.declaration});
           throw failure;
         }

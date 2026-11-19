@@ -1407,6 +1407,8 @@ local function host_arm_failure(id, values, file, line, column, expected, subjec
   failure.hostSignature = signature
   failure.hostBoundary = id == "HOST_PARAMETER_CELL" and "parameter"
     or (id == "ASYNC_SHAPE" and "async-shape" or "return")
+  failure.hostDirection = id == "HOST_PARAMETER_CELL" and "deal-to-host" or "host-to-deal"
+  failure.hostStage = "invocation"
   if id == "HOST_PARAMETER_CELL" then failure.hostParameter = tostring(values.index) end
   if context ~= nil then
     failure.hostModule = context.module

@@ -3671,7 +3671,9 @@ public final class LuaSemanticEmitter {
                 : binding instanceof FunctionExecutionBinding.HostFunctionValue host ? host.hostModuleId().path() : null;
             String export = binding instanceof FunctionExecutionBinding.HostFunction host ? host.exportName() : null;
             out.append(error).append(".hostSignature = ").append(luaString(payload.signature().canonicalSpecText())).append("\n")
-                .append(error).append(".hostBoundary = ").append(luaString(crossing)).append("\n");
+                .append(error).append(".hostBoundary = ").append(luaString(crossing)).append("\n")
+                .append(error).append(".hostDirection = ").append(luaString(crossing.equals("parameter") || crossing.equals("arity") ? "deal-to-host" : "host-to-deal")).append("\n")
+                .append(error).append(".hostStage = ").append(luaString(crossing.equals("completion") ? "completion" : "invocation")).append("\n");
             if (module != null) out.append(error).append(".hostDeclaration = ").append(luaString(module)).append("\n");
             if (export != null) out.append(error).append(".hostExport = ").append(luaString(export)).append("\n");
             if (parameter != null) out.append(error).append(".hostParameter = ").append(luaString(parameter.toString())).append("\n");
@@ -10860,6 +10862,7 @@ function __dealRuntimeDiagnostic(error)
                             {"hostModule", "hostModule"}, {"hostExport", "hostExport"},
                             {"hostDeclaration", "hostDeclaration"}, {"hostSignature", "hostSignature"},
                             {"hostBoundary", "hostBoundary"}, {"hostParameter", "hostParameter"},
+                            {"hostDirection", "hostDirection"}, {"hostStage", "hostStage"},
                             {"arrayIndex", "arrayIndex"}, {"arrayLength", "arrayLength"},
                             {"arrayConstraint", "arrayConstraint"}}) do
       local text = rawget(value, pair[2])
