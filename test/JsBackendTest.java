@@ -2662,8 +2662,8 @@ public class JsBackendTest {
         check(js.contains("$s68 = $rt.arrayLength($s61);"),
             "the bounds gate reads the receiver's carrier-agnostic length");
         check(js.contains("if (!Number.isInteger($s71) || $s71 < 0 || $s71 >= $n73) { "
-                + "$rt.fail(\"E8002\", \"array index out of bounds\", "),
-            "the read gates both bounds with E8002 'array index out of bounds'");
+                + "$rt.arrayReadFailure($s71, $n73, "),
+            "the read gates both bounds through the E8002 producer retaining the checked index/length");
         check(js.contains("$s74 = $rt.arrayAt($s61, $s71, true);"),
             "the read returns the carrier-agnostic position only after the "
                 + "bounds gate (the declared number element reads the decoded "
