@@ -222,13 +222,74 @@ public final class SemanticRuntimeModel {
         String expected,
         String actual,
         List<String> frames,
-        ErrorSnapshot cause
+        ErrorSnapshot cause,
+        java.util.Map<String, String> metadata
     ) {
+        public ErrorSnapshot(String code, String message, String origin, String expected,
+                             String actual, List<String> frames, ErrorSnapshot cause) {
+            this(code, message, origin, expected, actual, frames, cause, java.util.Map.of());
+        }
 
         public ErrorSnapshot {
             Objects.requireNonNull(code, "code must not be null");
             Objects.requireNonNull(message, "message must not be null");
             frames = List.copyOf(frames);
+            metadata = approvedMetadata(metadata);
+        }
+
+        /** Only explicitly supported producer facts cross into snapshots. */
+        public static java.util.Map<String, String> approvedMetadata(java.util.Map<String, String> supplied) {
+            var result = new java.util.LinkedHashMap<String, String>();
+            for (String key : List.of("oneBasedIndex", "index", "module", "reason", "name", "field", "classId",
+                    "oneBasedByteOffset", "jsonPath", "jsonPathDepth", "jsonPathTruncated", "jsonMissingField")) {
+                String value = supplied.get(key);
+                if (value != null) result.put(key, value);
+            }
+            return java.util.Collections.unmodifiableMap(result);
+        }
+
+        /** Opt-in caller surface; existing human/trace projections remain unchanged. */
+        public String diagnosticJson() {
+            return deal.semantic.ir.CanonicalJson.serializeText(new deal.semantic.ir.CanonicalJson.Obj(List.of(
+                new deal.semantic.ir.CanonicalJson.Entry("version", new deal.semantic.ir.CanonicalJson.Int(2)),
+                new deal.semantic.ir.CanonicalJson.Entry("runtime", diagnosticValue(0)))));
+        }
+
+        private deal.semantic.ir.CanonicalJson.Obj diagnosticValue(int depth) {
+            var fields = new ArrayList<deal.semantic.ir.CanonicalJson.Entry>();
+            diagnosticText(fields, "code", code);
+            diagnosticText(fields, "message", message);
+            diagnosticText(fields, "origin", origin);
+            diagnosticText(fields, "expected", expected);
+            diagnosticText(fields, "actual", actual);
+            var retained = new ArrayList<deal.semantic.ir.CanonicalJson.Value>();
+            for (String frame : frames.subList(0, Math.min(32, frames.size()))) {
+                var label = new ArrayList<deal.semantic.ir.CanonicalJson.Entry>();
+                diagnosticText(label, "label", frame);
+                retained.add(new deal.semantic.ir.CanonicalJson.Obj(label));
+            }
+            fields.add(new deal.semantic.ir.CanonicalJson.Entry("frames", new deal.semantic.ir.CanonicalJson.Arr(retained)));
+            fields.add(new deal.semantic.ir.CanonicalJson.Entry("frameCount", new deal.semantic.ir.CanonicalJson.Int(frames.size())));
+            if (frames.size() > 32) fields.add(new deal.semantic.ir.CanonicalJson.Entry("framesTruncated", new deal.semantic.ir.CanonicalJson.Bool(true)));
+            var facts = new ArrayList<deal.semantic.ir.CanonicalJson.Entry>();
+            metadata.forEach((key, value) -> diagnosticText(facts, key, value));
+            fields.add(new deal.semantic.ir.CanonicalJson.Entry("metadata", new deal.semantic.ir.CanonicalJson.Obj(facts)));
+            if (cause != null) fields.add(depth >= 7
+                ? new deal.semantic.ir.CanonicalJson.Entry("causeTruncated", new deal.semantic.ir.CanonicalJson.Bool(true))
+                : new deal.semantic.ir.CanonicalJson.Entry("cause", cause.diagnosticValue(depth + 1)));
+            return new deal.semantic.ir.CanonicalJson.Obj(fields);
+        }
+
+        private static void diagnosticText(List<deal.semantic.ir.CanonicalJson.Entry> fields, String key, String value) {
+            if (value == null) return;
+            int take = Math.min(8192, value.length());
+            if (take < value.length() && take > 0 && Character.isHighSurrogate(value.charAt(take - 1))
+                    && Character.isLowSurrogate(value.charAt(take))) take--;
+            fields.add(new deal.semantic.ir.CanonicalJson.Entry(key, new deal.semantic.ir.CanonicalJson.Str(value.substring(0, take))));
+            if (take < value.length()) {
+                fields.add(new deal.semantic.ir.CanonicalJson.Entry(key + "Length", new deal.semantic.ir.CanonicalJson.Int(value.length())));
+                fields.add(new deal.semantic.ir.CanonicalJson.Entry(key + "Truncated", new deal.semantic.ir.CanonicalJson.Bool(true)));
+            }
         }
 
         /** The canonical nested text form. */

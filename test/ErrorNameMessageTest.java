@@ -330,12 +330,26 @@ public final class ErrorNameMessageTest {
             System.out.println("projection identity unchanged");
             return;
         }
+        var boundedSnapshot = new SemanticRuntimeModel.ErrorSnapshot("Bound", "x".repeat(8191)+"😀tail", null,
+            null, null, Collections.nCopies(40, "frame"), null, Map.of("jsonPath", "/items/0", "private", "discard"));
+        var previousLine = boundedSnapshot.projectionLine();
+        String rich = boundedSnapshot.diagnosticJson();
+        if (boundedSnapshot.metadata().containsKey("private") || rich.contains("discard")
+                || !rich.contains("\"messageLength\":8197") || !rich.contains("\"frameCount\":40")
+                || !rich.contains("\"framesTruncated\":true") || !boundedSnapshot.projectionLine().equals(previousLine))
+            throw new AssertionError("bounded explicit Oracle projection changed legacy output or leaked metadata");
         Path root=Files.createTempDirectory("deal-error-name-");
         try {
             String source=ConformanceHarnessMetadata.productionCorpusSource(
                 Files.readString(Path.of("test/conformance/"+PATH)),PATH);
             Path input=Files.createDirectories(root.resolve("oracle/src")).resolve("main.deal");
-            Files.writeString(input,source.replace("function diagnostic():number", "export function diagnostic():number"));
+            Files.writeString(input,source.replace("function diagnostic():number", "export function diagnostic():number") + """
+                class MetadataRoot { items:number[]; }
+                export function diagnosticMetadata():MetadataRoot {
+                  try { return JSON.parse("{\\"items\\":[false]}"); }
+                  catch(caught) { if(caught instanceof Error){caught.message="chosen";throw caught;} let unexpected:Error={name:"Unexpected",message:"not Error"};throw unexpected; }
+                }
+                """);
             var invocation=CompilerProfileProvider.resolve(ReleaseConfiguration.CURRENT_RELEASE_STATE,
                 ReleaseConfiguration.releaseCapabilityRegistry());
             var compiler=new deal.module.CompilationOrchestrator(input,root.resolve("oracle/out"),
@@ -362,6 +376,14 @@ public final class ErrorNameMessageTest {
                 var failed=SemanticOracle.invokeSyncEntry(executable,tables,registries,new SemanticOracle.HostResponder(){},
                     executable.entryModule(),"diagnostic",List.of());
                 if(!(failed.terminal() instanceof SemanticRuntimeModel.Terminal.DealFailure failure)) throw new AssertionError(failed.comparisonReport());
+                var metadataFailure = SemanticOracle.invokeSyncEntry(executable,tables,registries,new SemanticOracle.HostResponder(){},
+                    executable.entryModule(),"diagnosticMetadata",List.of());
+                if (!(metadataFailure.terminal() instanceof SemanticRuntimeModel.Terminal.DealFailure detail)
+                        || !detail.error().metadata().get("jsonPath").equals("/items/0")
+                        || !detail.error().metadata().get("jsonMissingField").equals("false")
+                        || !detail.error().message().equals("chosen")
+                        || !detail.error().diagnosticJson().contains("\"jsonPath\":\"/items/0\""))
+                    throw new AssertionError("Oracle lost producer metadata through rethrow: " + metadataFailure.comparisonReport());
                 var error=failure.error();
                 if(!error.code().equals("Bound") || !error.message().equals("latest") || error.cause()!=null
                         || error.frames().isEmpty() || expected!=null && !expected.equals(error)) throw new AssertionError(error);

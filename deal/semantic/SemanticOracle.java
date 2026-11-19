@@ -832,6 +832,7 @@ record NumValue(double value) implements Value {
          * as its cause.
          */
         final boolean transported;
+        private Map<String, String> metadata = Map.of();
         /** The Error value identity this failure reifies (one per failure). */
         private Value.ErrorValue reified;
 
@@ -870,9 +871,11 @@ record NumValue(double value) implements Value {
 
         static DealFailure of(BoundaryFailure failure, SourceOrigin origin,
                               List<FunctionId> frames) {
-            return new DealFailure(failure.code().code(), failure.message(), origin,
+            DealFailure result = new DealFailure(failure.code().code(), failure.message(), origin,
                 failure.expected(), failure.actual(),
                 failure.cause() == null ? null : of(failure.cause(), origin, frames), frames);
+            result.metadata = SemanticRuntimeModel.ErrorSnapshot.approvedMetadata(failure.metadata());
+            return result;
         }
     }
 
@@ -1528,7 +1531,7 @@ record NumValue(double value) implements Value {
             }
             return new SemanticRuntimeModel.ErrorSnapshot(failure.code, failure.message,
                 originText(failure.origin), failure.expected, failure.actual, frameTexts,
-                failure.cause == null ? null : snapshot(failure.cause));
+                failure.cause == null ? null : snapshot(failure.cause), failure.metadata);
         }
 
         /**
@@ -6330,6 +6333,7 @@ private static IllegalStateException dynamicFunctionValueDefect(
                 DealFailure wrapped = new DealFailure(replacement.code,
                     replacement.message, replacement.origin, replacement.expected,
                     replacement.actual, caught, replacement.frames);
+                wrapped.metadata = replacement.metadata;
                 wrapped.reified = replacement.reified;
                 if (wrapped.reified != null) {
                     wrapped.reified.bindTransport(wrapped);
@@ -6357,6 +6361,7 @@ private static IllegalStateException dynamicFunctionValueDefect(
                 DealFailure published = new DealFailure(transport.code,
                     error.message(), transport.origin, transport.expected,
                     transport.actual, transport.cause, transport.frames, true);
+                published.metadata = transport.metadata;
                 published.reified = error;
                 throw published;
             }

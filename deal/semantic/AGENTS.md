@@ -56,7 +56,8 @@ remain distinct dialects.
   static names are payloads, not invented literal operands.
 - Throw/catch preserves Error identity/current fields and original facts/causes.
   First throw binds diagnostic code from name; catch executions own fresh captured
-  cells. Bare assignment targets are not invented identifier reads.
+  cells. Oracle snapshots retain only approved producer metadata through rethrow;
+  bounded structured projection never changes canonical trace/human text. Bare assignment targets are not invented identifier reads.
 
 ## Algorithms
 
