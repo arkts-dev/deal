@@ -8187,6 +8187,9 @@ public final class SemanticLowerer {
          */
         private ValueId lowerCallSite(CallExpr call, ValueId slot) {
             if (call.callee() instanceof MemberAccessExpr member
+                    && checkedType(member.object()) instanceof Type.Array && member.field().equals("toSorted"))
+                return lowerArrayToSorted(call, member, slot);
+            if (call.callee() instanceof MemberAccessExpr member
                     && checkedType(member.object()) instanceof Type.Array
                     && List.of("map", "find", "findIndex", "filter", "some", "every").contains(member.field())) return lowerArrayCallback(call, member, slot);
             if (call.callee() instanceof MemberAccessExpr member
@@ -9048,6 +9051,171 @@ public final class SemanticLowerer {
             }
             return emitValueOp(SemanticOpKind.ARRAY_LENGTH, new KindPayload.ArrayLengthPayload(container),
                 span, RuntimeDescriptor.Number.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE, slot);
+        }
+
+        /** Stable bottom-up merge sort over a fully read snapshot; callbacks use ordinary calls. */
+        private ValueId lowerArrayToSorted(CallExpr call, MemberAccessExpr member, ValueId slot) {
+            Span span = call.span();
+            RuntimeDescriptor.Array type = (RuntimeDescriptor.Array) valueDescriptorOf(checkedType(call));
+            RuntimeDescriptor.Func comparatorType = (RuntimeDescriptor.Func) callParameterDescriptor(call, 0);
+            BindingId source = emitBuiltinBinding(lowerOperand(member.object()), span);
+            BindingId compare = ids.nextBindingId(module, nextOrdinal++, 0);
+            emitUserNullOp(SemanticOpKind.BINDING_ALLOC, new KindPayload.BindingAllocPayload(compare,
+                currentBlock(), true, BindingCellKind.DIRECT, 0), span, FailurePolicyId.NO_DEAL_FAILURE);
+            ExpressionNode expression = call.args().getFirst();
+            ValueId comparator = positionAdapts(expression, comparatorType)
+                ? lowerPositionAdapter(expression, comparatorType, () -> lowerOperand(expression)) : lowerOperand(expression);
+            OpId boundary = emitNullOp(SemanticOpKind.BOUNDARY,
+                new KindPayload.BoundaryPayload(BoundaryKind.VARIABLE_DECLARATION, comparatorType, comparator,
+                    new BoundaryRealization.RuntimeValidation(CANONICAL_RUNTIME_VALIDATION_ID)),
+                expression.span(), FailurePolicyId.FUNCTION_SIGNATURE, SourceOriginKind.SYNTHETIC, null);
+            recordPositionAdapterAt(comparator, boundary, BoundaryKind.VARIABLE_DECLARATION);
+            emitUserNullOp(SemanticOpKind.BINDING_INIT, new KindPayload.BindingInitPayload(compare, 0, comparator),
+                span, FailurePolicyId.NO_DEAL_FAILURE);
+            ValueId length = emitValueOp(SemanticOpKind.ARRAY_LENGTH,
+                new KindPayload.ArrayLengthPayload(emitBuiltinLoad(source, type, span, null)), span,
+                RuntimeDescriptor.Number.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE);
+            BindingId limit = emitBuiltinBinding(length, span);
+            BindingId input = emitBuiltinBinding(emitValueOp(SemanticOpKind.ARRAY_NEW,
+                new KindPayload.ArrayNewPayload(type.element(), List.of(), List.of()), span, type, FailurePolicyId.NO_DEAL_FAILURE), span);
+            BindingId index = emitBuiltinBinding(builtinNumber(0, span), span);
+            emitBuiltinWhile(() -> builtinBinary(BinarySelector.NUMBER_LT, builtinNumberLoad(index, span), builtinNumberLoad(limit, span), span), () -> {
+                ValueId array = emitBuiltinLoad(source, type, span, null);
+                ValueId at = builtinNumberLoad(index, span);
+                ValueId present = emitOperandOp(SemanticOpKind.ARRAY_HAS, new KindPayload.ArrayHasPayload(array, at),
+                    List.of(array, at), List.of(type, RuntimeDescriptor.Number.INSTANCE), span, RuntimeDescriptor.Boolean.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE, null);
+                pushBuiltinIf(present, span);
+                try { emitBuiltinAppend(input, type, emitBuiltinArrayRead(array, type, at, span), span); }
+                finally { popBlock(); popBlockParent(); }
+                ValueId absent = emitOperandOp(SemanticOpKind.UNARY, new KindPayload.UnaryPayload(UnarySelector.BOOL_NOT),
+                    List.of(present), List.of(RuntimeDescriptor.Boolean.INSTANCE), span, RuntimeDescriptor.Boolean.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE, null);
+                pushBuiltinIf(absent, span);
+                try {
+                    ValueId missing = emitValueOp(SemanticOpKind.CONST, new KindPayload.ConstPayload(ScalarValue.Undefined.INSTANCE),
+                        span, RuntimeDescriptor.Undefined.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE);
+                    emitBuiltinAppend(input, type, missing, span);
+                } finally { popBlock(); popBlockParent(); }
+                builtinStore(index, builtinBinary(BinarySelector.NUMBER_ADD, builtinNumberLoad(index, span), builtinNumber(1, span), span), span);
+            }, span);
+            BindingId width = emitBuiltinBinding(builtinNumber(1, span), span);
+            emitBuiltinWhile(() -> builtinBinary(BinarySelector.NUMBER_LT, builtinNumberLoad(width, span), builtinNumberLoad(limit, span), span), () -> {
+                BindingId output = emitBuiltinBinding(emitValueOp(SemanticOpKind.ARRAY_NEW,
+                    new KindPayload.ArrayNewPayload(type.element(), List.of(), List.of()), span, type, FailurePolicyId.NO_DEAL_FAILURE), span);
+                BindingId start = emitBuiltinBinding(builtinNumber(0, span), span);
+                emitBuiltinWhile(() -> builtinBinary(BinarySelector.NUMBER_LT, builtinNumberLoad(start, span), builtinNumberLoad(limit, span), span), () -> {
+                    BindingId middle = emitBuiltinBinding(builtinBinary(BinarySelector.NUMBER_ADD, builtinNumberLoad(start, span), builtinNumberLoad(width, span), span), span);
+                    builtinClamp(middle, limit, span);
+                    BindingId end = emitBuiltinBinding(builtinBinary(BinarySelector.NUMBER_ADD, builtinNumberLoad(middle, span), builtinNumberLoad(width, span), span), span);
+                    builtinClamp(end, limit, span);
+                    BindingId left = emitBuiltinBinding(builtinNumberLoad(start, span), span);
+                    BindingId right = emitBuiltinBinding(builtinNumberLoad(middle, span), span);
+                    emitBuiltinWhile(() -> builtinBinary(BinarySelector.NUMBER_LT, builtinNumberLoad(left, span), builtinNumberLoad(middle, span), span), () -> {
+                        // Default to the left run. Equal/NaN results preserve its earlier position.
+                        BindingId takeRight = emitBuiltinBinding(emitValueOp(SemanticOpKind.CONST,
+                            new KindPayload.ConstPayload(new ScalarValue.Boolean(false)), span, RuntimeDescriptor.Boolean.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE), span);
+                        pushBuiltinIf(builtinBinary(BinarySelector.NUMBER_LT, builtinNumberLoad(right, span), builtinNumberLoad(end, span), span), span);
+                        try {
+                            ValueId a = emitBuiltinArrayRead(emitBuiltinLoad(input, type, span, null), type, builtinNumberLoad(left, span), span);
+                            ValueId b = emitBuiltinArrayRead(emitBuiltinLoad(input, type, span, null), type, builtinNumberLoad(right, span), span);
+                            ValueId selected = builtinSortAfter(compare, comparatorType, a, b, type.element(), span);
+                            builtinStore(takeRight, selected, span);
+                        } finally { popBlock(); popBlockParent(); }
+                        // Pick the index first, then do one read/append and advance its run.
+                        BindingId chosen = emitBuiltinBinding(builtinNumberLoad(left, span), span);
+                        pushBuiltinIf(emitBuiltinLoad(takeRight, RuntimeDescriptor.Boolean.INSTANCE, span, null), span);
+                        try { builtinStore(chosen, builtinNumberLoad(right, span), span); }
+                        finally { popBlock(); popBlockParent(); }
+                        emitBuiltinAppend(output, type, emitBuiltinArrayRead(emitBuiltinLoad(input, type, span, null), type, builtinNumberLoad(chosen, span), span), span);
+                        pushBuiltinIf(emitBuiltinLoad(takeRight, RuntimeDescriptor.Boolean.INSTANCE, span, null), span);
+                        try { builtinStore(right, builtinBinary(BinarySelector.NUMBER_ADD, builtinNumberLoad(right, span), builtinNumber(1, span), span), span); }
+                        finally { popBlock(); popBlockParent(); }
+                        ValueId notRight = emitOperandOp(SemanticOpKind.UNARY, new KindPayload.UnaryPayload(UnarySelector.BOOL_NOT),
+                            List.of(emitBuiltinLoad(takeRight, RuntimeDescriptor.Boolean.INSTANCE, span, null)), List.of(RuntimeDescriptor.Boolean.INSTANCE),
+                            span, RuntimeDescriptor.Boolean.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE, null);
+                        pushBuiltinIf(notRight, span);
+                        try { builtinStore(left, builtinBinary(BinarySelector.NUMBER_ADD, builtinNumberLoad(left, span), builtinNumber(1, span), span), span); }
+                        finally { popBlock(); popBlockParent(); }
+                    }, span);
+                    emitBuiltinWhile(() -> builtinBinary(BinarySelector.NUMBER_LT, builtinNumberLoad(right, span), builtinNumberLoad(end, span), span), () -> {
+                        emitBuiltinAppend(output, type, emitBuiltinArrayRead(emitBuiltinLoad(input, type, span, null), type, builtinNumberLoad(right, span), span), span);
+                        builtinStore(right, builtinBinary(BinarySelector.NUMBER_ADD, builtinNumberLoad(right, span), builtinNumber(1, span), span), span);
+                    }, span);
+                    builtinStore(start, builtinNumberLoad(end, span), span);
+                }, span);
+                builtinStore(input, emitBuiltinLoad(output, type, span, null), span);
+                builtinStore(width, builtinBinary(BinarySelector.NUMBER_MUL, builtinNumberLoad(width, span), builtinNumber(2, span), span), span);
+            }, span);
+            return emitBuiltinLoad(input, type, span, slot);
+        }
+
+        private ValueId builtinSortAfter(BindingId comparator, RuntimeDescriptor.Func signature,
+                ValueId left, ValueId right, RuntimeDescriptor element, Span span) {
+            ValueId leftMissing = builtinIsUndefined(left, element, span);
+            ValueId rightMissing = builtinIsUndefined(right, element, span);
+            ValueId rightPresent = emitOperandOp(SemanticOpKind.UNARY, new KindPayload.UnaryPayload(UnarySelector.BOOL_NOT),
+                List.of(rightMissing), List.of(RuntimeDescriptor.Boolean.INSTANCE), span, RuntimeDescriptor.Boolean.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE, null);
+            BindingId after = emitBuiltinBinding(emitValueOp(SemanticOpKind.CONST, new KindPayload.ConstPayload(new ScalarValue.Boolean(false)),
+                span, RuntimeDescriptor.Boolean.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE), span);
+            pushBuiltinIf(rightPresent, span);
+            try {
+                builtinStore(after, leftMissing, span);
+                ValueId leftPresent = emitOperandOp(SemanticOpKind.UNARY, new KindPayload.UnaryPayload(UnarySelector.BOOL_NOT),
+                    List.of(leftMissing), List.of(RuntimeDescriptor.Boolean.INSTANCE), span, RuntimeDescriptor.Boolean.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE, null);
+                pushBuiltinIf(leftPresent, span);
+                try {
+                    ValueId result = emitDynamicInvocation(signature, emitBuiltinLoad(comparator, signature, span, null),
+                        List.of(left, right), List.of(element, element), span, null);
+                    builtinStore(after, builtinBinary(BinarySelector.NUMBER_GT, result, builtinNumber(0, span), span), span);
+                } finally { popBlock(); popBlockParent(); }
+            } finally { popBlock(); popBlockParent(); }
+            return emitBuiltinLoad(after, RuntimeDescriptor.Boolean.INSTANCE, span, null);
+        }
+
+        private ValueId builtinIsUndefined(ValueId value, RuntimeDescriptor type, Span span) {
+            ValueId kind = emitOperandOp(SemanticOpKind.UNARY, new KindPayload.UnaryPayload(UnarySelector.TYPEOF),
+                List.of(value), List.of(type), span, RuntimeDescriptor.String.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE, null);
+            ValueId expected = emitValueOp(SemanticOpKind.CONST, new KindPayload.ConstPayload(new ScalarValue.String("undefined")),
+                span, RuntimeDescriptor.String.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE);
+            return emitOperandOp(SemanticOpKind.BINARY, new KindPayload.BinaryPayload(BinarySelector.STRING_EQ, null, null),
+                List.of(kind, expected), List.of(RuntimeDescriptor.String.INSTANCE, RuntimeDescriptor.String.INSTANCE), span,
+                RuntimeDescriptor.Boolean.INSTANCE, SemanticIrValidator.binaryPolicy(BinarySelector.STRING_EQ), null);
+        }
+
+        private ValueId builtinNumber(double n, Span span) {
+            return emitValueOp(SemanticOpKind.CONST, new KindPayload.ConstPayload(new ScalarValue.Number(n)),
+                span, RuntimeDescriptor.Number.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE);
+        }
+        private ValueId builtinNumberLoad(BindingId binding, Span span) {
+            return emitBuiltinLoad(binding, RuntimeDescriptor.Number.INSTANCE, span, null);
+        }
+        private void builtinStore(BindingId binding, ValueId value, Span span) {
+            emitUserNullOp(SemanticOpKind.BINDING_STORE, new KindPayload.BindingStorePayload(binding, 0, value), span, FailurePolicyId.NO_DEAL_FAILURE);
+        }
+        private ValueId builtinBinary(BinarySelector selector, ValueId left, ValueId right, Span span) {
+            boolean comparison = selector == BinarySelector.NUMBER_LT || selector == BinarySelector.NUMBER_GT;
+            return emitOperandOp(SemanticOpKind.BINARY, new KindPayload.BinaryPayload(selector, null, null), List.of(left, right),
+                List.of(RuntimeDescriptor.Number.INSTANCE, RuntimeDescriptor.Number.INSTANCE), span,
+                comparison ? RuntimeDescriptor.Boolean.INSTANCE : RuntimeDescriptor.Number.INSTANCE, SemanticIrValidator.binaryPolicy(selector), null);
+        }
+        private void builtinClamp(BindingId position, BindingId limit, Span span) {
+            pushBuiltinIf(builtinBinary(BinarySelector.NUMBER_GT, builtinNumberLoad(position, span), builtinNumberLoad(limit, span), span), span);
+            try { builtinStore(position, builtinNumberLoad(limit, span), span); }
+            finally { popBlock(); popBlockParent(); }
+        }
+        private void emitBuiltinWhile(java.util.function.Supplier<ValueId> condition, Runnable body, Span span) {
+            BlockId conditionBlock = allocateBlock(), bodyBlock = allocateBlock();
+            OpId loop = ids.nextOpId(module, nextOrdinal++, 0);
+            int mark = emitTarget().size();
+            pushBlockParent(loop);
+            ValueId test;
+            pushBlock(conditionBlock);
+            try { test = condition.get(); } finally { popBlock(); }
+            pushBlock(bodyBlock);
+            try { body.run(); } finally { popBlock(); popBlockParent(); }
+            emitAt(mark, buildOp(loop, SemanticOpKind.LOOP,
+                new KindPayload.LoopPayload(ControlSelector.WHILE, conditionBlock, test, bodyBlock, null), null, null,
+                FailurePolicyId.NO_DEAL_FAILURE, new SourceOrigin(sourceId, toSourceSpan(span), SourceOriginKind.SYNTHETIC,
+                    ids.nextAnchorId(module, nextOrdinal++, 0), currentParent())));
         }
 
         /** Snapshot callback traversals use strict live reads and ordinary call boundaries. */

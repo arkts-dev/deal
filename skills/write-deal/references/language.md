@@ -96,6 +96,7 @@ Iterate with inferred for-of bindings or explicit while indexes.
 | xs.push(value) | Append one checked element after argument effects; return new length |
 | xs.pop() | Remove checked tail; empty returns undefined |
 | xs.splice(start, count) | Remove range atomically into a fresh typed array |
+| xs.toSorted(compare) | Fresh stable shallow sort; required synchronous `(a: E, b: E) => number` comparator |
 | xs.concat(other) | Fresh shallow concatenation; other must have the identical array type |
 | xs.slice(), xs.slice(start), xs.slice(start,end) | Fresh shallow copy/range; negative relative bounds truncate/clamp without swapping; explicit undefined rejects |
 | xs.includes(value, fromIndex), xs.indexOf(value, fromIndex) | Optional relative start; first match, SameValueZero versus strict equality; indexOf returns -1 if absent |

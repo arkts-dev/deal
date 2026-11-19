@@ -96,7 +96,8 @@ or implicit extraction from unknown. Follow the specification/catalog for aritie
 - Map/from infer output from the mapper's explicit synchronous data result, never
   the destination/body. Predicates require synchronous boolean results with normal
   `(E, number, E[])` adaptation; from uses `(E, number)`. Find adds undefined;
-  findIndex returns number, filter E[], some/every boolean.
+  findIndex returns number, filter E[], some/every boolean. ToSorted requires one
+  synchronous `(E, E) => number` comparator and preserves E[].
 - Object.hasOwn tests presence without value refinement; class keys are literal
   declared fields. Object.keys takes one checked class/Record and returns string[].
 - JSON.stringify accepts unknown without extraction context and returns

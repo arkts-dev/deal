@@ -1850,7 +1850,7 @@ public final class TypeChecker {
                 && BuiltinCall.resolve(namespace.name(), member.field()) == BuiltinCall.ARRAY_FROM) {
             return checkArrayFrom(call, member);
         }
-        if (call.callee() instanceof MemberAccessExpr member && List.of("map", "find", "findIndex", "filter", "some", "every").contains(member.field())
+        if (call.callee() instanceof MemberAccessExpr member && List.of("map", "find", "findIndex", "filter", "some", "every", "toSorted").contains(member.field())
                 && !(member.object() instanceof IdentifierExpr id
                     && resolveVisibleBinding(id.name()) instanceof Symbol.ModuleSymbol)) {
             Type receiver = checkAddressOperand(member.object());
@@ -2068,10 +2068,12 @@ public final class TypeChecker {
     }
 
     private Type checkArrayPredicate(CallExpr call, MemberAccessExpr member, Type.Array source) {
-        Type.Func predicate = new Type.Func(List.of(source.element(), Type.Number.INSTANCE, source), Type.Boolean.INSTANCE);
+        Type.Func predicate = member.field().equals("toSorted")
+            ? new Type.Func(List.of(source.element(), source.element()), Type.Number.INSTANCE)
+            : new Type.Func(List.of(source.element(), Type.Number.INSTANCE, source), Type.Boolean.INSTANCE);
         Type result = switch (member.field()) {
             case "findIndex" -> Type.Number.INSTANCE;
-            case "filter" -> source;
+            case "filter", "toSorted" -> source;
             case "some", "every" -> Type.Boolean.INSTANCE;
             default -> Types.optionalRead(source.element());
         };
@@ -2402,7 +2404,7 @@ public final class TypeChecker {
                 return intrinsic.signature(directBuiltinCall.args().size());
             }
         }
-        if (objType instanceof Type.Array && List.of("map", "find", "findIndex", "filter", "some", "every").contains(field)) {
+        if (objType instanceof Type.Array && List.of("map", "find", "findIndex", "filter", "some", "every", "toSorted").contains(field)) {
             directOnlyError("Receiver intrinsics support direct calls only", mae.span(), "Array." + field, "call.receiver-direct-only");
             return Type.Error.INSTANCE;
         }

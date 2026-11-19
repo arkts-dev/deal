@@ -46,6 +46,8 @@ export function exercise(): null {
   check.require(larger.length === 2 && larger[0] === 2, "filter selected values into fresh storage");
   check.require(counts.some((value: number): boolean => value > 2), "some value matches");
   check.require(counts.every((value: number): boolean => value > 0), "every value matches");
+  let descending = counts.toSorted((a, b): number => b - a);
+  check.require(descending[0] === 3 && counts[0] === 1, "sort a fresh shallow copy");
   let optionalCounts: number[] | null = counts;
   check.require((optionalCounts?.[1] ?? 0) === 2, "optional indexed access");
   let callback = optionalCallback(false);

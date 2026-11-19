@@ -1,0 +1,33 @@
+// @spec: Arrays
+// @description: Stable comparator sort snapshots inputs and preserves descriptors and callback rules
+// @expected: runtime-ok
+class Item{key:number;label:string;}
+function check(ok:boolean):void{if(!ok){throw {name:"FAIL",message:"toSorted"};}}
+export function main():void{
+  let a=[3,1,2,1];let b=a.toSorted((x,y):number=>x-y);
+  check(b!==a && b.length===4 && b[0]===1 && b[1]===1 && b[3]===3 && a[0]===3);
+  let empty:number[]=[];check(empty.toSorted(():number=>0)!==empty);
+  let one=[8];let calls=0;check(one.toSorted(():number=>{calls++;return 0;})[0]===8 && calls===0);
+  let items:Item[]=[{key:2,label:"a"},{key:1,label:"b"},{key:2,label:"c"},{key:1,label:"d"}];
+  let ordered=items.toSorted((x,y):number=>x.key-y.key);
+  check(ordered[0]===items[1] && ordered[1]===items[3] && ordered[2]===items[0] && ordered[3]===items[2]);
+  let equal=items.toSorted(():number=>0/0);check(equal[0]===items[0] && equal[3]===items[3]);
+  let signed=[-0,0,-0];let zeros=signed.toSorted(():number=>-0);
+  check(1/zeros[0]===-1/0 && 1/zeros[1]===1/0 && 1/zeros[2]===-1/0);
+  let live=[4,3,2,1];let snapshots=live.toSorted((x,y):number=>{live[0]=99;live.push(5);return x-y;});
+  check(snapshots.length===4 && snapshots[0]===1 && snapshots[3]===4 && live[0]===99);
+  let log="";let receiver=():number[]=>{log+="r";return a;};
+  let make=():(x:number,y:number)=>number=>{log+="c";a.push(0);return (x,y):number=>x-y;};
+  let result=receiver().toSorted(make());check(log==="rc" && result.length===5 && result[0]===0);
+  let maybe:(number|undefined)[]=[undefined,3,1,undefined,2];let seen=0;
+  let values=maybe.toSorted((x,y):number=>{seen++;check(x!==undefined && y!==undefined);return (x as number)-(y as number);});
+  check((values[0] as number)===1 && (values[1] as number)===2 && (values[2] as number)===3 && values[3]===undefined && values[4]===undefined && seen>0);
+  let retained=[42];let caught=false;
+  try{retained=a.toSorted(():number=>{throw {name:"CMP",message:"stop"};});}catch(e){caught=true;}
+  check(caught && retained[0]===42 && a[0]===3);
+  let input:number[]=[];let i=63;while(i>=0){input.push(i%11);i--;}
+  let count=0;let sorted=input.toSorted((x,y):number=>{count++;return x-y;});
+  i=1;while(i<sorted.length){check(sorted[i-1]<=sorted[i]);i++;}check(count<600);
+  let strings=["b","a","\uD800"];let text=strings.toSorted((x,y):number=>x<y?-1:x>y?1:0);
+  check(text[0]==="a" && text[2]==="\uD800");
+}

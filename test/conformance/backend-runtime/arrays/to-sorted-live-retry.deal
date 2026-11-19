@@ -1,0 +1,33 @@
+// @spec: Arrays
+// @description: Sorting validates the complete snapshot before callbacks, preserves failure destinations and permits same-source repair
+// @expected: runtime-ok
+// @features: arrays, host-abi
+import * as host from "host/probe";
+class Item {x:number;stable:number;}
+function check(ok:boolean):void{if(!ok){throw {name:"SORT",message:"live mismatch"};}}
+export function main():void{
+  let xs=[4,5,9];let alias=xs;let destination=[123];let previous=destination;let calls=0;let caught=false;
+  host.keep(xs);host.corrupt();
+  try{destination=xs.toSorted((x,y):number=>{calls++;return x-y;});}
+  catch(e){check((e as Error).name==="E8003" && (e as Error).message==="array element 3 type mismatch");caught=true;}
+  check(caught && calls===0 && destination===previous && host.size()===3 && alias[1]===5);
+  host.repair();destination=xs.toSorted((x,y):number=>y-x);check(destination[0]===9 && xs===alias);
+  // Later source corruption cannot change copied primitive values.
+  calls=0;destination=xs.toSorted((x,y):number=>{calls++;host.corrupt();return y-x;});
+  check(destination[0]===9 && destination[2]===4 && calls>0);host.repair();
+  let item:Item={x:9,stable:4};let items:Item[]=[item];let itemsDestination:Item[]=[];let old=itemsDestination;
+  host.damage(item,false);caught=false;calls=0;
+  try{itemsDestination=items.toSorted((x,y):number=>{calls++;return x.x-y.x;});}
+  catch(e){check((e as Error).name==="E8003" && (e as Error).message==="array element 1 type mismatch");caught=true;}
+  check(caught && calls===0 && itemsDestination===old);host.damage(null,true);
+  itemsDestination=items.toSorted((x,y):number=>x.x-y.x);check(itemsDestination[0]===item);
+  let callback=():number=>7;let functions:(()=>number)[]=[callback];
+  for(let signature of [false,true]){
+    if(signature){host.poisonSignature(callback);}else{host.poison(callback);}
+    let result:(()=>number)[]=[];let prior=result;caught=false;
+    try{result=functions.toSorted(():number=>0);}
+    catch(e){check((e as Error).name==="E8003" && (e as Error).message==="array element 1 type mismatch");caught=true;}
+    check(caught && result===prior);host.restoreFunction();
+    result=functions.toSorted(():number=>0);check(result[0]===callback && result[0]()===7);
+  }
+}
