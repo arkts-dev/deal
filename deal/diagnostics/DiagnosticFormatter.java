@@ -15,10 +15,13 @@ import java.util.Objects;
  * </pre>
  *
  * <p>The main line carries the complete range — file, start and end
- * positions (half-open end), and the {@code [span N]} decoded-Unicode-
- * scalar length suffix. A message-only note renders its message alone; a
+ * positions (half-open end), and the {@code [span N]} UTF-16-unit length suffix. A message-only note renders its message alone; a
  * secondary-range note appends its own range positions and scalar length.
  * The severity renders upper case ({@code ERROR} / {@code WARNING}).</p>
+ *
+ * <p>Terminal output uses the producer's message and concise notes. Additional
+ * {@code facts.guidance} belongs to structured reports; do not append it here
+ * or maintain a second version of rule advice in the formatter.</p>
  *
  * <p>The formatter consumes the already-normalized carrier (D9): range
  * file, code, severity, and message are non-null, and scalar offsets and

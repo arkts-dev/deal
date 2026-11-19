@@ -2541,30 +2541,18 @@ public final class TypeChecker {
                 : expression instanceof IndexExpr index ? index.array() : null;
         if (receiver != null && typeMap.get(receiver) instanceof Type.Table
                 && typeMap.get(expression) instanceof Type.Unknown) {
-            diagnostic = diagnostic.withNote(
-                    "This raw Record read has type unknown; an expected type does not extract it. "
-                            + "Choose a checked assertion or store and narrow the value with a supported guard: "
-                            + "typeof for undefined/boolean/number/string, nullish equality, or a nominal instanceof test. "
-                            + "Presence alone does not distinguish a missing key from a present undefined value or narrow its type. "
-                            + "See docs/spec-v1.6.md#reading-and-writing-fields and #narrowing-and-checked-assertions.",
-                    expression.span().range());
+            diagnostic = diagnostic.withNote(RuleGuidance.rawRecordReadNote(), expression.span().range());
+            var guidance = new ArrayList<>(diagnostic.facts().guidance());
+            if (!guidance.contains(RuleGuidance.unknownRead())) guidance.add(RuleGuidance.unknownRead());
+            diagnostic = diagnostic.withFacts(diagnostic.facts().withGuidance(guidance));
         }
         return diagnostic;
     }
 
     private static List<String> receiverReadGuidance(Type receiver) {
-        if (receiver instanceof Type.Unknown) return List.of(
-                "Unknown requires checked extraction or supported binding narrowing; an expected result type does not extract a raw Record read. "
-                    + "Direct typeof tests narrow undefined/boolean/number/string; nominal instanceof tests narrow to the selected class. "
-                    + "typeof object/function does not infer a structural type, and presence alone never narrows a value. "
-                    + "See docs/spec-v1.6.md#narrowing-and-checked-assertions; schematic example: "
-                    + "if (typeof value === \"string\") { consume(value); }. Choose the intended consumer contract explicitly.");
+        if (receiver instanceof Type.Unknown) return List.of(RuleGuidance.unknownRead());
         if (receiver instanceof Type.Nullable || receiver instanceof Type.Null || receiver instanceof Type.Undefined)
-            return List.of("Establish a non-nullish receiver with a supported guard or choose optional chaining when skipped access is intended; presence alone does not refine a field value. "
-                    + "See docs/spec-v1.6.md#narrowing-and-checked-assertions and #nullish-coalescing-and-optional-chaining; "
-                    + "schematic example: if (value !== null && value !== undefined) { consume(value); }. "
-                    + "Choose the intended guard or skipped-access behavior explicitly. Guard each admitted nullish member; "
-                    + "optional access deliberately adds undefined for skipped non-void results.");
+            return List.of(RuleGuidance.nullishReceiver());
         return List.of("Choose a receiver supporting this access; no conversion or replacement declaration is inferred.");
     }
 
@@ -2591,8 +2579,7 @@ public final class TypeChecker {
                     "Table index key must have static type string, got "
                     + typeName(indexType), idx.index().span()).withFacts(
                             new deal.diagnostics.DiagnosticFacts("index.record-key", "record.index.target",
-                                    "string", typeName(indexType), List.of(
-                                            "Choose an intended string key; no implicit key conversion is performed."))));
+                                    "string", typeName(indexType), List.of(RuleGuidance.recordKey()))));
                 return Type.Error.INSTANCE;
             }
             // Computed Record reads retain unknown and require string keys.
@@ -2600,8 +2587,7 @@ public final class TypeChecker {
                 diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E3007,
                     "Array index must be int, got " + typeName(indexType),
                     idx.index().span()).withFacts(new deal.diagnostics.DiagnosticFacts(
-                            "index.record-key", "record.index.read", "string", typeName(indexType), List.of(
-                                    "Choose an intended string key; no implicit key conversion is performed."))));
+                            "index.record-key", "record.index.read", "string", typeName(indexType), List.of(RuleGuidance.recordKey()))));
                 return Type.Error.INSTANCE;
             }
             return Type.Unknown.INSTANCE;

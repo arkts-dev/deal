@@ -1182,6 +1182,14 @@ public class DiagnosticRangeTest {
             check(note != null && note.message().contains("expected type does not extract")
                             && note.message().contains("missing key") && note.message().contains("present undefined"),
                     "raw read explains extraction versus presence without guessed values");
+            String guidance = String.join(" ", diagnostic.facts().guidance());
+            check(guidance.contains("Direct typeof tests") && guidance.contains("#reading-and-writing-fields")
+                            && !DiagnosticFormatter.format(diagnostic).contains("schematic example")
+                            && DiagnosticStructuredOutput.toJson(List.of(diagnostic)).contains("schematic example")
+                            && deal.amend.CompilerProtocolJson.encode(diagnostic.facts()).contains("schematic example"),
+                    "concise terminal read note and additional structured advice share the extraction rule");
+            check(diagnostic.facts().guidance().stream().filter(g -> g.contains("Direct typeof tests")).count() == 1,
+                    "receiver advice is not repeated when raw read evidence adds its note");
         }
         for (String body : List.of("let value=r.key as string;", "let value=r.key;if(typeof value===\"string\"){consume(value);}"))
             check(checkerDiagnostics("function consume(x:string):void{}function f(r:Record<string,unknown>):void{"
@@ -1429,7 +1437,7 @@ public class DiagnosticRangeTest {
         }
         var unknown = checkerDiag(checkerDiagnostics("function f(x:unknown):void{let n=x.length;}", "help.deal"), "E3003");
         check(unknown.facts().guidance().getFirst().contains("typeof object/function does not infer")
-                        && unknown.facts().guidance().getFirst().contains("presence alone never narrows"),
+                        && unknown.facts().guidance().getFirst().contains("or narrow its type"),
                 "guard help does not promise structural inference or presence-based value narrowing");
     }
 

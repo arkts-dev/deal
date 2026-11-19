@@ -88,7 +88,9 @@ Minima: **85% lines**, **75% branches**. Reports: `build/coverage.csv`,
 
 `compile` and `native build|run` accept `--diagnostics-json <path>` for JSON v2:
 source diagnostics include full UTF-16 ranges, notes, producer-owned facts,
-classification and available snapshot excerpts/occurrence IDs. Operational
+classification and available snapshot excerpts/occurrence IDs. Terminal output
+uses messages and concise producer notes; structured `facts.guidance` retains
+additional rule explanations and intent-dependent examples. Operational
 failures and actual compilation/publication outcomes are separate fields.
 Amendment uses `compiler-protocol-v3` with revision-pinned context requests;
 context reads do not grant edits.

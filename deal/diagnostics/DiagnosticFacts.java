@@ -284,6 +284,10 @@ public record DiagnosticFacts(
                 construction, exports, resolution, cycle, tool, null);
     }
 
+    public DiagnosticFacts withGuidance(List<String> value) {
+        return new DiagnosticFacts(reason, operation, expected, actual, value, path, call, operator, mismatch, syntax, names, construction, exports, resolution, cycle, tool, lowering);
+    }
+
     public DiagnosticFacts withLowering(LoweringContext context) {
         return new DiagnosticFacts(reason, operation, expected, actual, guidance, path, call, operator, mismatch, syntax, names, construction, exports, resolution, cycle, tool, context);
     }

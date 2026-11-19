@@ -309,7 +309,8 @@ public class CheckerTest {
                 .result().diagnostics().stream().filter(d -> d.facts().reason().equals("access.field-receiver"))
                 .findFirst().orElseThrow();
         check(nullableRead.facts().actual().equals("C | null")
-                        && nullableRead.facts().guidance().getFirst().contains("presence alone"),
+                        && nullableRead.facts().guidance().getFirst().contains("Presence alone")
+                        && nullableRead.facts().guidance().getFirst().contains("or narrow its type"),
                 "nullish access guidance does not conflate presence with a value guard");
         assertNoErrors(checkProgram("class C{name:string;}function read(value:C|null):string{if(value!==null){return value.name;}return \"absent\";}"),
                 "explicitly chosen non-null receiver guard rechecks");
