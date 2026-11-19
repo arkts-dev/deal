@@ -1337,7 +1337,7 @@ public final class AmendWorkspace {
         Analysis checked = analyze(candidate, modulePath, resolver, adapter);
         if (hasErrors(checked.inspection().diagnostics())) {
             List<StructuredDiagnostic> scoped = checked.inspection().diagnostics().stream()
-                    .map(value -> scopeDiagnostic(value, requestedOperations, base))
+                    .map(value -> scopeDiagnostic(value, requestedOperations, base, checked))
                     .toList();
             return new ChangeResult(
                     false,
@@ -1820,9 +1820,14 @@ public final class AmendWorkspace {
     private static StructuredDiagnostic scopeDiagnostic(
             StructuredDiagnostic diagnostic,
             List<? extends Operation> operations,
-            Analysis base) {
+            Analysis base,
+            Analysis candidate) {
+        SemanticId repairOwner = diagnostic.ownerId();
+        Target semanticTarget = candidate.targets().get(repairOwner);
+        if (semanticTarget != null && readOnlyOwner(semanticTarget)) repairOwner = semanticTarget.ownerId();
+        SemanticId selectedOwner = repairOwner;
         List<Operation> ownedOperations = operations.stream()
-                .filter(operation -> operationOwner(operation, base).equals(diagnostic.ownerId()))
+                .filter(operation -> operationOwner(operation, base).equals(selectedOwner))
                 .map(Operation.class::cast)
                 .toList();
         List<RepairScope> scopes = ownedOperations.stream()
@@ -1831,7 +1836,7 @@ public final class AmendWorkspace {
         return new StructuredDiagnostic(
                 diagnostic.code(), diagnostic.severity(), diagnostic.message(), diagnostic.range(),
                 diagnostic.ownerId(), diagnostic.facts(),
-                ownedOperations.stream().map(Operation::targetId).toList(), scopes,
+                diagnostic.relatedIds(), scopes,
                 diagnostic.contextRequest(), diagnostic.notes(), diagnostic.operationIndex(), diagnostic.missingSymbols(), diagnostic.excerpt(), diagnostic.occurrence());
     }
 

@@ -328,6 +328,16 @@ public final class AmendWorkspaceTest {
             check(AmendWorkspace.inspect(nestedSource.replace("return \"bad\"", "return 2"), "nested.deal").diagnostics().isEmpty(),
                 "explicit nested result repair rechecks under existing module authority");
         }
+        String nestedBase = "export function outer():void{}";
+        var nestedBaseInspection = AmendWorkspace.inspect(nestedBase, "nested.deal");
+        var outerBody = nestedBaseInspection.nodes().stream().filter(n -> n.kind().equals("function-body")).findFirst().orElseThrow();
+        var rejectedNested = AmendWorkspace.applyChecked(nestedBase, "nested.deal",
+            new CompilerProtocol.ChangeSetPrecondition(nestedBaseInspection.sourceDigest(), Map.of(outerBody.id().value(), outerBody.fingerprint())),
+            List.of(new AmendWorkspace.ReplaceFunctionBody(outerBody.id(), "let inner=():number=>{return \"bad\";};")));
+        var nestedFailure = rejectedNested.diagnostics().stream().filter(d -> d.code().equals("E5003")).findFirst().orElseThrow();
+        check(!rejectedNested.accepted() && nestedFailure.repairScopes().equals(List.of(new CompilerProtocol.RepairScope(
+            AmendWorkspace.REPLACE_FUNCTION_BODY, outerBody.id()))) && !nestedFailure.relatedIds().contains(outerBody.id()),
+            "candidate nested owner retains the submitted writable scope without pretending operation targets are related declarations");
         String relatedSource = "// 😀\r\nfunction consume(value:number):void{}\r\nexport function run():void{consume(\"bad\");}";
         var relatedInspection = AmendWorkspace.inspect(relatedSource, "related.deal");
         var relatedDiagnostic = relatedInspection.diagnostics().stream().filter(d -> d.code().equals("E5001")).findFirst().orElseThrow();
