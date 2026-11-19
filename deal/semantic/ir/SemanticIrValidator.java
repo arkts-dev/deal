@@ -2029,6 +2029,21 @@ public final class SemanticIrValidator {
                     return fail(op, unit, facts, R_ENUM, SemanticCapability.CONTAINERS_AND_STRINGS,
                         origin(R_ENUM, "ARRAY_SEARCH requires preceding array/element/number operands, a boolean includes mode and its boolean/number result descriptor"));
             }
+            case "ARRAY_CONCAT" -> {
+                ValueId receiver = parseValueIdQuiet(payloadValue(payload, "arrayValue") instanceof CanonicalJson.Obj obj ? obj : null);
+                ValueId other = parseValueIdQuiet(payloadValue(payload, "other") instanceof CanonicalJson.Obj obj ? obj : null);
+                String leftType = null, rightType = null;
+                for (RawOp producer : unit.ops()) {
+                    if (producer.opId().equals(op.opId())) break;
+                    if (receiver != null && receiver.equals(producer.resultValue())) leftType = producer.resultType();
+                    if (other != null && other.equals(producer.resultValue())) rightType = producer.resultType();
+                }
+                if (!(parseDescriptorQuiet(leftType) instanceof RuntimeDescriptor.Array) || !Objects.equals(leftType, rightType)
+                        || !Objects.equals(leftType, op.resultType()) || receiver == null || other == null
+                        || !List.of(receiver, other).equals(op.operands()) || !List.of(leftType, rightType).equals(op.operandTypes()))
+                    return fail(op, unit, facts, R_ENUM, SemanticCapability.CONTAINERS_AND_STRINGS,
+                        origin(R_ENUM, "ARRAY_CONCAT requires two preceding identical array descriptors and the same result descriptor"));
+            }
             case "ARRAY_SPLICE", "ARRAY_SLICE" -> {
                 ValueId receiver = parseValueIdQuiet(payloadValue(payload, "arrayValue") instanceof CanonicalJson.Obj obj ? obj : null);
                 ValueId start = parseValueIdQuiet(payloadValue(payload, "start") instanceof CanonicalJson.Obj obj ? obj : null);
@@ -2637,7 +2652,7 @@ public final class SemanticIrValidator {
         return switch (kind) {
             case ARRAY_ELEMENT_GET -> Set.of(FailurePolicyId.ARRAY_PRESENT_ELEMENT);
             case ARRAY_HAS -> Set.of(FailurePolicyId.NO_DEAL_FAILURE);
-            case ARRAY_POP, ARRAY_SPLICE, ARRAY_SLICE, ARRAY_SEARCH, ARRAY_JOIN -> Set.of(FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR);
+            case ARRAY_POP, ARRAY_SPLICE, ARRAY_SLICE, ARRAY_CONCAT, ARRAY_SEARCH, ARRAY_JOIN -> Set.of(FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR);
             case ARRAY_LENGTH, OBJECT_KEYS -> Set.of(FailurePolicyId.NO_DEAL_FAILURE);
             case OPTIONAL_READ -> Set.of(FailurePolicyId.NO_DEAL_FAILURE,
                 FailurePolicyId.TYPE_DESCRIPTOR);

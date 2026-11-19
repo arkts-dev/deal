@@ -1853,6 +1853,7 @@ record NumValue(double value) implements Value {
                 case OBJECT_KEYS -> executeObjectKeys(op);
                 case ARRAY_SPLICE -> executeArraySplice(op);
                 case ARRAY_SLICE -> executeArraySlice(op);
+                case ARRAY_CONCAT -> executeArrayConcat(op);
                 case ARRAY_SEARCH -> executeArraySearch(op);
                 case ARRAY_JOIN -> executeArrayJoin(op);
                 case ARRAY_ELEMENT_GET -> executeArrayElementGet(op);
@@ -2207,6 +2208,26 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                 if (equal) return publish(op, payload.includes() ? new Value.BoolValue(true) : new Value.NumValue(i));
             }
             return publish(op, payload.includes() ? new Value.BoolValue(false) : new Value.NumValue(-1));
+        }
+
+        private String executeArrayConcat(SemanticOp op) {
+            KindPayload.ArrayConcatPayload payload = (KindPayload.ArrayConcatPayload) op.payload();
+            RuntimeDescriptor element = ((RuntimeDescriptor.Array) op.operandTypes().getFirst()).element();
+            List<Value> copied = new ArrayList<>();
+            for (ValueId input : List.of(payload.arrayValue(), payload.other())) {
+                Value.ArrayValue array = (Value.ArrayValue) valueOf(input);
+                for (int i = 0; i < array.elements().size(); i++) {
+                    Value value = array.elements().get(i);
+                    if (value instanceof Value.MissingValue) { copied.add(value); continue; }
+                    BoundaryOutcome outcome = BoundaryExecutor.execute(FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR,
+                        element, viewOfValue(value), BoundaryContext.element(i + 1),
+                        new deal.semantic.ir.BoundaryRealization.RuntimeValidation("array-concat"));
+                    if (outcome instanceof BoundaryOutcome.Fail fail)
+                        throw DealFailure.of(fail.failure(), op.origin(), List.copyOf(frames));
+                    copied.add(valueOfView(((BoundaryOutcome.Pass) outcome).value(), value));
+                }
+            }
+            return publish(op, new Value.ArrayValue(copied, element, false));
         }
 
         private String executeArraySlice(SemanticOp op) {

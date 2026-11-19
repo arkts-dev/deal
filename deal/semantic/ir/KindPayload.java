@@ -15,6 +15,7 @@ public sealed interface KindPayload
             KindPayload.ObjectKeysPayload,
             KindPayload.ArraySplicePayload,
             KindPayload.ArraySlicePayload,
+            KindPayload.ArrayConcatPayload,
             KindPayload.ArraySearchPayload,
             KindPayload.ArrayJoinPayload,
             KindPayload.ArrayElementGetPayload,
@@ -348,6 +349,14 @@ public sealed interface KindPayload
             Objects.requireNonNull(arrayValue, "arrayValue");
             Objects.requireNonNull(start, "start");
             Objects.requireNonNull(end, "end");
+        }
+    }
+
+    /** Fresh shallow concatenation of two identically described arrays. */
+    record ArrayConcatPayload(ValueId arrayValue, ValueId other) implements KindPayload {
+        public ArrayConcatPayload {
+            Objects.requireNonNull(arrayValue, "arrayValue");
+            Objects.requireNonNull(other, "other");
         }
     }
 

@@ -229,6 +229,8 @@ deal_outcome_data deal_array_search(deal_array *array, const deal_data *needle, 
                                      uint32_t includes, deal_descriptor *element, const deal_origin *origin);
 
 /* Fresh shallow typed copy; selected positions validate without source mutation. */
+deal_outcome_data deal_array_concat(deal_array *array, deal_array *other,
+                                    deal_descriptor *element, const deal_origin *origin);
 deal_outcome_data deal_array_slice(deal_array *array, double from, double to,
                                     deal_descriptor *element, const deal_origin *origin);
 

@@ -1562,6 +1562,7 @@ public final class LuaSemanticEmitter {
                 case OBJECT_KEYS -> emitObjectKeys(op);
                 case ARRAY_SPLICE -> emitArraySplice(op);
                 case ARRAY_SLICE -> emitArraySlice(op);
+                case ARRAY_CONCAT -> emitArrayConcat(op);
                 case ARRAY_SEARCH -> emitArraySearch(op);
                 case ARRAY_JOIN -> emitArrayJoin(op);
                 case ARRAY_ELEMENT_GET -> emitArrayElementGet(op);
@@ -2054,6 +2055,25 @@ public final class LuaSemanticEmitter {
                 .append(" then ").append(target).append(payload.includes() ? "=true" : "=i-1")
                 .append("; break end; ").append(payload.includes() ? "" : "end; ").append("end end\n");
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
+        }
+
+        private void emitArrayConcat(SemanticOp op) {
+            KindPayload.ArrayConcatPayload payload = (KindPayload.ArrayConcatPayload) op.payload();
+            RuntimeDescriptor element = ((RuntimeDescriptor.Array) op.operandTypes().getFirst()).element();
+            emitStart(op);
+            out.append("do local result = {[__dealCarrierKeys.a]=true,[__dealCarrierKeys.n]=0,[__dealCarrierKeys.elementDescriptor]=")
+                .append(luaString(element.canonicalSpecText())).append("}; local offset=0\n")
+                .append("for _,a in ipairs({").append(slot(payload.arrayValue())).append(",").append(slot(payload.other())).append("}) do\n")
+                .append("local n=a[__dealCarrierKeys.n] or 0; while rawget(a,n+1) ~= nil do n=n+1 end\n")
+                .append("for i=1,n do local v=rawget(a,i); if v ~= nil then __okB,__chkB=pcall(__bcheck,")
+                .append(bcheckArgs(element,"v")).append(")\n")
+                .append("if not __okB then local failure=__arm(\"ARRAY_ELEMENT_KIND\",{oneBasedIndex=i},")
+                .append(luaString(originOf(op))).append(",").append(luaString(element.canonicalSpecText()))
+                .append(",__elemRefKind(").append(luaString(staticKind(element))).append(",v)); failure.cause=(__chkB.code == \"E8003\" and __chkB.cause) or __chkB; error(failure,0) end\n")
+                .append("rawset(result,offset+i,__chkB == nil and __NULL or __chkB); local marks=a[__dealCarrierKeys.nK]; __numKey(result,offset+i,v,marks ~= nil and marks[i] == true) end end\n")
+                .append("offset=offset+n; result[__dealCarrierKeys.n]=offset end\n")
+                .append(slot((ValueId)op.result())).append("=result end\n");
+            emitResultSuccess(op,slot((ValueId)op.result()),(RuntimeDescriptor)op.resultType());
         }
 
         private void emitArraySlice(SemanticOp op) {

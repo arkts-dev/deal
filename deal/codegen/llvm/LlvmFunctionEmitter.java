@@ -652,6 +652,7 @@ final class LlvmFunctionEmitter {
             case OBJECT_KEYS -> emitObjectKeys(op);
             case ARRAY_SPLICE -> emitArraySplice(op);
             case ARRAY_SLICE -> emitArraySlice(op);
+            case ARRAY_CONCAT -> emitArrayConcat(op);
             case ARRAY_SEARCH -> emitArraySearch(op);
             case ARRAY_JOIN -> emitArrayJoin(op);
             case ARRAY_ELEMENT_GET -> emitArrayElementGet(op);
@@ -5064,6 +5065,24 @@ final class LlvmFunctionEmitter {
         String result = emitTemporary(op, "extractvalue %struct.deal_outcome_data " + outcome + ", 1");
         RuntimeDescriptor type = (RuntimeDescriptor) op.resultType();
         storeResult(op, LlvmTypeMapper.representationOf(type).orElseThrow(), datumToRepresentation(type, result, op));
+    }
+
+    private void emitArrayConcat(SemanticOp op) {
+        KindPayload.ArrayConcatPayload payload = (KindPayload.ArrayConcatPayload) op.payload();
+        RuntimeDescriptor element = ((RuntimeDescriptor.Array) op.operandTypes().getFirst()).element();
+        session.referenceRuntimeEntry("deal_descriptor_intern");
+        session.referenceRuntimeEntry("deal_array_concat");
+        String atom = emitTemporary(op, "call %struct.deal_descriptor* @deal_descriptor_intern("
+            + session.data.operand(session.data.intern(element.canonicalSpecText())) + ")");
+        String array = loadValue(payload.arrayValue(), LlvmTypeMapper.ARRAY, op);
+        String other = loadValue(payload.other(), LlvmTypeMapper.ARRAY, op);
+        String outcome = callRecord(op, "%struct.deal_outcome_data", "deal_array_concat",
+            LlvmTypeMapper.ARRAY + " " + array + ", " + LlvmTypeMapper.ARRAY + " " + other
+                + ", %struct.deal_descriptor* " + atom + ", %struct.deal_origin* " + originValue(op));
+        String error = emitTemporary(op, "extractvalue %struct.deal_outcome_data " + outcome + ", 0");
+        branchOnFailure(op, error, "arrayconcat");
+        String datum = emitTemporary(op, "extractvalue %struct.deal_outcome_data " + outcome + ", 1");
+        storeResult(op, LlvmTypeMapper.ARRAY, datumToRepresentation((RuntimeDescriptor) op.resultType(), datum, op));
     }
 
     private void emitArraySlice(SemanticOp op) {

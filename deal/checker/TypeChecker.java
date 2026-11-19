@@ -2406,7 +2406,7 @@ public final class TypeChecker {
             directOnlyError("Receiver intrinsics support direct calls only", mae.span(), "Array." + field, "call.receiver-direct-only");
             return Type.Error.INSTANCE;
         }
-        if (objType instanceof Type.Array array && List.of("push", "pop", "splice", "slice", "includes", "indexOf", "join").contains(field)) {
+        if (objType instanceof Type.Array array && List.of("push", "pop", "splice", "slice", "concat", "includes", "indexOf", "join").contains(field)) {
             if (directBuiltinCall == null || mae != directBuiltinCall.callee()) {
                 directOnlyError("Receiver intrinsics support direct calls only", mae.span(), "Array." + field, "call.receiver-direct-only");
                 return Type.Error.INSTANCE;
@@ -2419,6 +2419,7 @@ public final class TypeChecker {
                     }
                     yield new Type.Func(List.of(Type.String.INSTANCE), Type.String.INSTANCE, false);
                 }
+                case "concat" -> new Type.Func(List.of(array), array, false);
                 case "push" -> new Type.Func(List.of(array.element()), Type.Number.INSTANCE, false);
                 case "pop" -> new Type.Func(List.of(), Types.optionalRead(array.element()), false);
                 case "slice" -> new Type.Func(directBuiltinCall.args().size() == 0 ? List.of()

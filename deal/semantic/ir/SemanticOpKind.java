@@ -13,6 +13,7 @@ public enum SemanticOpKind {
     OBJECT_KEYS,
     ARRAY_SPLICE,
     ARRAY_SLICE,
+    ARRAY_CONCAT,
     ARRAY_SEARCH,
     ARRAY_JOIN,
     ARRAY_ELEMENT_GET,
@@ -83,6 +84,7 @@ public enum SemanticOpKind {
             case OBJECT_KEYS -> KindPayload.ObjectKeysPayload.class;
             case ARRAY_SPLICE -> KindPayload.ArraySplicePayload.class;
             case ARRAY_SLICE -> KindPayload.ArraySlicePayload.class;
+            case ARRAY_CONCAT -> KindPayload.ArrayConcatPayload.class;
             case ARRAY_SEARCH -> KindPayload.ArraySearchPayload.class;
             case ARRAY_JOIN -> KindPayload.ArrayJoinPayload.class;
             case ARRAY_ELEMENT_GET -> KindPayload.ArrayElementGetPayload.class;

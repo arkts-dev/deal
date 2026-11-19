@@ -36,6 +36,7 @@ IDs without renumbering existing ones.
 | OBJECT_KEYS | Exact class/Record -> fresh string[]; presence/order only, never field admission |
 | ARRAY_POP | Exact array -> optional element; validate live tail before removal |
 | ARRAY_SPLICE | Exact array/number/number -> same array type; admit all removed positions before mutation |
+| ARRAY_CONCAT | Two identical array descriptors -> same array type; fresh shallow storage, source-local failures, sparse presence preserved |
 | ARRAY_SLICE | Exact array/number/number -> same array type; post-argument relative bounds, selected checks, fresh shallow storage |
 | ARRAY_ELEMENT_GET | Exact array/number -> element; integrality/bounds/presence E8002 before present-element admission |
 | ARRAY_HAS | Exact array/number -> boolean, NO_DEAL_FAILURE; presence only, invalid indexes absent |

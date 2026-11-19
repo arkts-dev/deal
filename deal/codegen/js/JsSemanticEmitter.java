@@ -1038,6 +1038,7 @@ public final class JsSemanticEmitter {
                 case OBJECT_KEYS -> emit(slotOf(op) + " = $rt.objectKeys(" + slot(((KindPayload.ObjectKeysPayload) op.payload()).receiver()) + ");");
                 case ARRAY_SPLICE -> emitArraySplice(op);
                 case ARRAY_SLICE -> emitArraySlice(op);
+                case ARRAY_CONCAT -> emitArrayConcat(op);
                 case ARRAY_SEARCH -> emitArraySearch(op);
                 case ARRAY_JOIN -> emitArrayJoin(op);
                 case ARRAY_ELEMENT_GET -> emitArrayElementGet(op);
@@ -1340,6 +1341,13 @@ case NUMBER_ADD -> "(" + numeric(left) + " + "
             emit(slotOf(op) + " = $rt.arraySearch(" + slot(payload.arrayValue()) + ", "
                 + slot(payload.value()) + ", " + numeric(slot(payload.fromIndex())) + ", " + payload.includes() + ", "
                 + jsString(element.canonicalSpecText()) + ", " + spanArgs(op) + ");");
+        }
+
+        private void emitArrayConcat(SemanticOp op) {
+            KindPayload.ArrayConcatPayload payload = (KindPayload.ArrayConcatPayload) op.payload();
+            RuntimeDescriptor element = ((RuntimeDescriptor.Array) op.operandTypes().getFirst()).element();
+            emit(slotOf(op) + " = $rt.arrayConcat(" + slot(payload.arrayValue()) + ", " + slot(payload.other())
+                + ", " + jsString(element.canonicalSpecText()) + ", " + spanArgs(op) + ");");
         }
 
         private void emitArraySlice(SemanticOp op) {

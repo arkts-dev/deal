@@ -699,6 +699,9 @@ public final class ContractSnapshotCanonicalizer {
                 CanonicalJson.e("fromIndex", semanticIdJson(p.fromIndex())),
                 CanonicalJson.e("includes", new CanonicalJson.Bool(p.includes())),
                 CanonicalJson.e("value", semanticIdJson(p.value())));
+            case KindPayload.ArrayConcatPayload p -> CanonicalJson.obj(
+                CanonicalJson.e("arrayValue", semanticIdJson(p.arrayValue())),
+                CanonicalJson.e("other", semanticIdJson(p.other())));
             case KindPayload.ArraySlicePayload p -> CanonicalJson.obj(
                 CanonicalJson.e("arrayValue", semanticIdJson(p.arrayValue())),
                 CanonicalJson.e("end", semanticIdJson(p.end())),

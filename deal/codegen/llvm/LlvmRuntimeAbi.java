@@ -255,6 +255,7 @@ deal_outcome_data deal_array_splice(deal_array *array, double from, double delet
 deal_outcome_data deal_array_element_get(deal_array *array, double index, deal_descriptor *element, const deal_origin *origin)
 deal_outcome_data deal_array_join(deal_array *array, deal_string *separator, const deal_origin *origin)
 deal_outcome_data deal_array_search(deal_array *array, const deal_data *needle, double from, uint32_t includes, deal_descriptor *element, const deal_origin *origin)
+deal_outcome_data deal_array_concat(deal_array *array, deal_array *other, deal_descriptor *element, const deal_origin *origin)
 deal_outcome_data deal_array_slice(deal_array *array, double from, double to, deal_descriptor *element, const deal_origin *origin)
 deal_outcome_number deal_check_number(const deal_data *datum, const deal_check_context *context)
 deal_outcome_boolean deal_check_boolean(const deal_data *datum, const deal_check_context *context)

@@ -3193,6 +3193,17 @@ case "NUMBER_ADD" -> {
         return -1.0;
     }
 
+    public static Array arrayConcat(Array left, Array right, String descriptor, String canonical, String origin) {
+        Array result = new Array(0);
+        result.elementDescriptor = canonical;
+        for (Array source : new Array[]{left, right}) {
+            Array copy = arraySlice(source, 0, Double.POSITIVE_INFINITY, descriptor, canonical, origin);
+            result.elements.addAll(copy.elements);
+        }
+        result.length = result.elements.size();
+        return result;
+    }
+
     /** Shallow copy with source-position element failures and no source mutation. */
     public static Array arraySlice(Array array, double from, double to,
                                    String descriptor, String canonical, String origin) {

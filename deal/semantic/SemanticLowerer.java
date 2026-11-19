@@ -8241,6 +8241,18 @@ public final class SemanticLowerer {
             }
             if (call.callee() instanceof MemberAccessExpr member
                     && checkedType(member.object()) instanceof Type.Array array
+                    && member.field().equals("concat")) {
+                ValueId receiver = lowerOperand(member.object());
+                BindingId saved = emitBuiltinBinding(receiver, call.span());
+                ValueId other = lowerOperand(call.args().getFirst());
+                RuntimeDescriptor descriptor = valueDescriptorOf(array);
+                receiver = emitBuiltinLoad(saved, descriptor, call.span(), null);
+                return emitOperandOp(SemanticOpKind.ARRAY_CONCAT,
+                    new KindPayload.ArrayConcatPayload(receiver, other), List.of(receiver, other),
+                    List.of(descriptor, descriptor), call.span(), descriptor, FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, slot);
+            }
+            if (call.callee() instanceof MemberAccessExpr member
+                    && checkedType(member.object()) instanceof Type.Array array
                     && member.field().equals("slice")) {
                 ValueId receiver = lowerOperand(member.object());
                 ValueId start = call.args().isEmpty()

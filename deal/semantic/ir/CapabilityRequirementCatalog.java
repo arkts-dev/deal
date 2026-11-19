@@ -75,6 +75,7 @@ public final class CapabilityRequirementCatalog {
             RequiredOperation.of("OBJECT_KEYS", SemanticOpKind.OBJECT_KEYS),
             RequiredOperation.of("ARRAY_SPLICE", SemanticOpKind.ARRAY_SPLICE),
             RequiredOperation.of("ARRAY_SLICE", SemanticOpKind.ARRAY_SLICE),
+            RequiredOperation.of("ARRAY_CONCAT", SemanticOpKind.ARRAY_CONCAT),
             RequiredOperation.of("ARRAY_SEARCH", SemanticOpKind.ARRAY_SEARCH),
             RequiredOperation.of("ARRAY_JOIN", SemanticOpKind.ARRAY_JOIN),
             RequiredOperation.of("ARRAY_ELEMENT_GET", SemanticOpKind.ARRAY_ELEMENT_GET),

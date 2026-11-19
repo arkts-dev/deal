@@ -1457,6 +1457,7 @@ public final class JvmSemanticEmitter {
                 case OBJECT_KEYS -> emitObjectKeys(op, indent);
                 case ARRAY_SPLICE -> emitArraySplice(op, indent);
                 case ARRAY_SLICE -> emitArraySlice(op, indent);
+                case ARRAY_CONCAT -> emitArrayConcat(op, indent);
                 case ARRAY_SEARCH -> emitArraySearch(op, indent);
                 case ARRAY_JOIN -> emitArrayJoin(op, indent);
                 case ARRAY_ELEMENT_GET -> emitArrayElementGet(op, indent);
@@ -1993,6 +1994,18 @@ public final class JvmSemanticEmitter {
                 .append(" = JvmRuntime.arraySearch((JvmRuntime.Array) ").append(slot(payload.arrayValue()))
                 .append(", ").append(slot(payload.value())).append(", ((Number) ").append(slot(payload.fromIndex()))
                 .append(").doubleValue(), ").append(payload.includes()).append(", ")
+                .append(javaString(runtimeDescriptorText(element))).append(", ")
+                .append(javaString(element.canonicalSpecText())).append(", ").append(javaString(originOf(op))).append(");\n");
+            emitResultSuccess(op, slot((ValueId) op.result()), (RuntimeDescriptor) op.resultType(), indent);
+        }
+
+        private void emitArrayConcat(SemanticOp op, int indent) {
+            KindPayload.ArrayConcatPayload payload = (KindPayload.ArrayConcatPayload) op.payload();
+            RuntimeDescriptor element = ((RuntimeDescriptor.Array) op.operandTypes().getFirst()).element();
+            emitStart(op, indent);
+            out.append(indent(indent)).append(slot((ValueId) op.result()))
+                .append(" = JvmRuntime.arrayConcat((JvmRuntime.Array) ").append(slot(payload.arrayValue()))
+                .append(", (JvmRuntime.Array) ").append(slot(payload.other())).append(", ")
                 .append(javaString(runtimeDescriptorText(element))).append(", ")
                 .append(javaString(element.canonicalSpecText())).append(", ").append(javaString(originOf(op))).append(");\n");
             emitResultSuccess(op, slot((ValueId) op.result()), (RuntimeDescriptor) op.resultType(), indent);

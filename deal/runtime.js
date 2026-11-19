@@ -2613,6 +2613,28 @@ const $rt = {
     return includes ? false : -1;
   },
 
+  arrayConcat: function(left, right, descriptor, file, line, column) {
+    const result = $rt.tagArray([], descriptor);
+    let offset = 0;
+    for (const source of [left, right]) {
+      const length = $rt.arrayLength(source);
+      result.length = offset + length;
+      for (let i = 0; i < length; i++) {
+        if (!$rt.arrayHas(source, i)) continue;
+        const value = $rt.arrayAt(source, i);
+        try { result[offset + i] = $rt.checkType(descriptor, value, file, line, column); }
+        catch (cause) {
+          const failure = new $DEALError("E8003", "array element " + (i + 1) + " type mismatch",
+            file, line, column, descriptor, $elemKindOf(value));
+          failure.cause = cause.code === "E8003" && cause.cause ? cause.cause : cause;
+          throw failure;
+        }
+      }
+      offset += length;
+    }
+    return result;
+  },
+
   // Shallow copy; relative bounds observe length only after argument effects.
   arraySlice: function(v, start, end, descriptor, file, line, column) {
     const length = $rt.arrayLength(v);

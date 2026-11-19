@@ -1711,6 +1711,34 @@ deal_outcome_data deal_array_slice(deal_array *array, double from, double to,
     return result;
 }
 
+deal_outcome_data deal_array_concat(deal_array *array, deal_array *other,
+                                    deal_descriptor *element, const deal_origin *origin) {
+    deal_outcome_data result = {0};
+    deal_root_scope_push();
+    (void)deal_root_scope_hold(array);
+    (void)deal_root_scope_hold(other);
+    deal_outcome_data left = deal_array_slice(array, 0.0, INFINITY, element, origin);
+    if (left.error != NULL) { deal_root_scope_pop(); return left; }
+    deal_array *first = left.value.reference;
+    (void)deal_root_scope_hold(first);
+    deal_outcome_data right = deal_array_slice(other, 0.0, INFINITY, element, origin);
+    if (right.error != NULL) { deal_root_scope_pop(); return right; }
+    deal_array *second = right.value.reference;
+    (void)deal_root_scope_hold(second);
+    size_t a = deal_container_array_count(first), b = deal_container_array_count(second);
+    if (a > SIZE_MAX - b) deal_platform_fault("array concat size overflow");
+    deal_array *copy = deal_container_array_new_typed(deal_container_array_element_layout(array),
+        deal_descriptor_reference(element), a + b);
+    (void)deal_root_scope_hold(copy);
+    for (size_t i = 0u; i < a; i++)
+        deal_container_array_store(copy, i, deal_container_array_element(first, i));
+    for (size_t i = 0u; i < b; i++)
+        deal_container_array_store(copy, a + i, deal_container_array_element(second, i));
+    result.value = deal_data_of_reference(DEAL_DATA_ARRAY, copy);
+    deal_root_scope_pop();
+    return result;
+}
+
 /* -- the typed-boundary token (R4) -------------------------------------- */
 
 const char *deal_check_token(const deal_check_input *input) {

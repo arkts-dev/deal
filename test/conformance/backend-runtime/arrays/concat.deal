@@ -1,0 +1,26 @@
+// @spec: Arrays
+// @description: Exact-descriptor concatenation preserves shallow identities and argument order
+// @expected: runtime-ok
+class Item{n:number;}
+function check(ok:boolean):void{if(!ok){throw {name:"FAIL",message:"concat"};}}
+export function main():void{
+  let a=[1,2];let b=[3,4];let c=a.concat(b);
+  check(c!==a && c!==b && c.length===4 && c[0]===1 && c[3]===4);
+  c[0]=9;check(a[0]===1);let d=a.concat(a);check(d.length===4 && d[2]===1);
+  let empty:number[]=[];check(empty.concat(empty)!==empty);check(empty.concat(a).length===2);
+  let item:Item={n:7};let items:Item[]=[item];let copied=items.concat(items);
+  check(copied[0]===item && copied[1]===item);copied[1].n=8;check(item.n===8);
+  let fn=():number=>11;let fs:(()=>number)[]=[fn];check(fs.concat(fs)[1]()===11);
+  let nullable:(number|null|undefined)[]=[null,undefined,-0,0/0];let all=nullable.concat(nullable);
+  check(all.length===8 && all[0]===null && all[1]===undefined);
+  check(1/(all[6] as number)===-1/0 && Number.isNaN(all[7]));
+  let text=["\uD800\0"];check(text.concat(["\uDC00"])[0]==="\uD800\0");
+  let log="";let receiver=():number[]=>{log+="r";return a;};
+  let argument=():number[]=>{log+="a";a.push(5);return b;};
+  let live=receiver().concat(argument());check(log==="ra" && live.length===5 && live[2]===5);
+  let saved=a;let replace=():number[]=>{a=[99];return [6];};
+  let retained=a.concat(replace());check(retained[0]===1 && retained[3]===6 && saved.length===3 && a[0]===99);
+  let decoded:number[]=JSON.parse("[12,13]");check(decoded.concat([14])[2]===14);
+  let bad=():number[]=>{throw {name:"ARG",message:"failure"};};let target=[42];
+  try{target=b.concat(bad());}catch(e){}check(target[0]===42 && b.length===2);
+}
