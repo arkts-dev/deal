@@ -285,6 +285,16 @@ public final class AmendWorkspaceTest {
     }
 
     private static void actionabilityFactsAndRepairScope() {
+        String relatedSource = "// 😀\r\nfunction consume(value:number):void{}\r\nexport function run():void{consume(\"bad\");}";
+        var relatedInspection = AmendWorkspace.inspect(relatedSource, "related.deal");
+        var relatedDiagnostic = relatedInspection.diagnostics().stream().filter(d -> d.code().equals("E5001")).findFirst().orElseThrow();
+        var consumer = relatedInspection.symbols().stream().filter(s -> s.name().equals("consume")).findFirst().orElseThrow();
+        var caller = relatedInspection.symbols().stream().filter(s -> s.name().equals("run")).findFirst().orElseThrow();
+        check(relatedDiagnostic.ownerId().equals(caller.id()) && relatedDiagnostic.relatedIds().equals(List.of(consumer.id())),
+                "producer parameter note maps to exact local declaration identity, not the editable caller");
+        check(CompilerProtocolJson.encode(relatedDiagnostic).contains(consumer.id().value()), "related identity survives JSON");
+        String chosen = relatedSource.replace("consume(\"bad\")", "consume(2)");
+        check(AmendWorkspace.inspect(chosen, "related.deal").diagnostics().isEmpty(), "chosen argument repair rechecks");
         String source = "// supplementary 😀\r\nexport function broken(x:Missing):number{return 1;}";
         var inspection = AmendWorkspace.inspect(source, "probe.deal");
         var diagnostics = inspection.diagnostics().stream().filter(d -> d.code().equals("E3004")).toList();

@@ -1652,20 +1652,20 @@ public final class AmendWorkspace {
             Iterable<Target> targets) {
         FunctionInfo owner = null;
         for (FunctionInfo function : functions) {
-            if (contains(function.declarationSpan(), value.line(), value.column())) {
+            if (encloses(function.declarationSpan().range(), value.range())
+                    && (owner == null || function.declarationSpan().range().scalarLength() < owner.declarationSpan().range().scalarLength())) {
                 owner = function;
-                break;
             }
         }
         SemanticId ownerId = owner == null ? moduleId : owner.id();
         List<RepairScope> scopes = owner == null
                 ? List.of()
                 : List.of(new RepairScope(
-                        contains(owner.function().body().span(), value.line(), value.column())
+                        encloses(owner.function().body().span().range(), value.range())
                                 ? REPLACE_FUNCTION_BODY : REPLACE_DECLARATION, owner.id()));
         if (owner == null) {
             for (ClassInfo valueClass : classes) {
-                if (contains(valueClass.declarationSpan(), value.line(), value.column())) {
+                if (encloses(valueClass.declarationSpan().range(), value.range())) {
                     ownerId = valueClass.id();
                     scopes = List.of(new RepairScope(REPLACE_DECLARATION, ownerId));
                     break;
@@ -1673,7 +1673,7 @@ public final class AmendWorkspace {
             }
         }
         // Semantic ownership is a declaration; the smallest editable block is a separate target.
-        if (owner != null && contains(owner.function().body().span(), value.line(), value.column())) {
+        if (owner != null && encloses(owner.function().body().span().range(), value.range())) {
             Target smallest = null;
             for (Target target : targets) {
                 if (!target.ownerId().equals(ownerId) || !target.kind().equals("block")) continue;
@@ -1696,10 +1696,37 @@ public final class AmendWorkspace {
                 ownerId,
                 value.facts().expected(),
                 value.facts().actual(),
-                List.of(),
+                relatedDeclarations(value, targets),
                 scopes,
                 null,
                 value.notes()).withFacts(value.facts());
+    }
+
+    /** Correlate producer-owned secondary ranges with existing local declaration targets only. */
+    private static List<SemanticId> relatedDeclarations(CompilerDiagnostic diagnostic, Iterable<Target> targets) {
+        Set<SemanticId> related = new LinkedHashSet<>();
+        for (var note : diagnostic.notes()) {
+            if (note.range() == null) continue;
+            Target selected = null;
+            boolean ambiguous = false;
+            for (Target target : targets) {
+                if (!target.kind().equals("declaration") || !encloses(target.range(), note.range())) continue;
+                if (selected == null || target.range().scalarLength() < selected.range().scalarLength()) {
+                    selected = target;
+                    ambiguous = false;
+                } else if (target.range().scalarLength() == selected.range().scalarLength()
+                        && !target.id().equals(selected.id())) ambiguous = true;
+            }
+            if (selected != null && !ambiguous) related.add(selected.id());
+        }
+        return List.copyOf(related);
+    }
+
+    private static boolean encloses(DiagnosticRange outer, DiagnosticRange inner) {
+        return outer != null && inner != null && outer.origin() == RangeOrigin.SOURCE
+                && inner.origin() == RangeOrigin.SOURCE && outer.file().equals(inner.file())
+                && outer.startScalarOffset() <= inner.startScalarOffset()
+                && inner.endScalarOffset() <= outer.endScalarOffset();
     }
 
     private static StructuredDiagnostic diagnostic(
