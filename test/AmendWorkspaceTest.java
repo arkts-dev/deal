@@ -391,9 +391,11 @@ public final class AmendWorkspaceTest {
                 "advertised declaration repair must actually recheck successfully: " + repaired.diagnostics());
         var body = AmendWorkspace.inspect("export function f():number{let x:number=\"bad\";return 1;}", "probe.deal");
         var bodyDiagnostic = body.diagnostics().stream().filter(d -> d.code().equals("E3001")).findFirst().orElseThrow();
+        var inspectedBody = body.nodes().stream().filter(n -> n.ownerId().equals(bodyDiagnostic.ownerId())
+                && n.kind().equals("function-body")).findFirst().orElseThrow();
         check(bodyDiagnostic.repairScopes().equals(List.of(new CompilerProtocol.RepairScope(
-                        AmendWorkspace.REPLACE_FUNCTION_BODY, bodyDiagnostic.ownerId()))),
-                "body-owned errors keep body-only repair");
+                        AmendWorkspace.REPLACE_FUNCTION_BODY, inspectedBody.id()))),
+                "body-owned errors advertise the executable body node, never the declaration identity");
         var copied = bodyDiagnostic.withOperationIndex(2).withMissingSymbols(diagnostic.missingSymbols());
         check(copied.facts().equals(bodyDiagnostic.facts()) && copied.range().equals(bodyDiagnostic.range())
                         && copied.operationIndex() == 2, "operation attribution and missing facts preserve producer data");

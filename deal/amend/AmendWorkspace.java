@@ -1696,8 +1696,16 @@ public final class AmendWorkspace {
                 }
             }
         }
-        // Semantic ownership is a declaration; the smallest editable block is a separate target.
+        // Semantic ownership is a declaration; body operations require their exact node identity.
         if (owner != null && encloses(owner.function().body().span().range(), value.range())) {
+            Target body = null;
+            for (Target target : targets) {
+                if (target.ownerId().equals(ownerId) && target.kind().equals("function-body")) {
+                    body = target;
+                    break;
+                }
+            }
+            scopes = body == null ? List.of() : List.of(new RepairScope(REPLACE_FUNCTION_BODY, body.id()));
             Target smallest = null;
             for (Target target : targets) {
                 if (!target.ownerId().equals(ownerId) || !target.kind().equals("block")) continue;
