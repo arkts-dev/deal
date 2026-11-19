@@ -16,6 +16,7 @@ public final class RepairWorkspaceTest {
         dependentProviderCanBeReopened(baseline);
         rejectedTransactionsOfferCurrentReinspection(baseline);
         dependencyRejectionsRetainProducerFacts(baseline);
+        slotRejectionsRetainObservedContracts(baseline);
         System.out.println("RepairWorkspaceTest: all tests passed");
     }
     private static RepairWorkspaceSnapshot stage(String source, List<AmendWorkspace.Operation> operations) {
@@ -169,6 +170,43 @@ public final class RepairWorkspaceTest {
         var repaired = AmendWorkspace.applyRepairTransaction(BASE, MODULE, workspace, grant, List.of(), List.of(dependency));
         check(repaired.accepted() && AmendWorkspace.inspect(repaired.source(), MODULE).diagnostics().isEmpty(),
                 "explicit intended declaration with current grant rechecks after rejected dependency requests");
+    }
+
+    private static void slotRejectionsRetainObservedContracts(Inspection baseline) {
+        var module = baseline.moduleId();
+        var workspace = stage(BASE, List.of(
+                new AmendWorkspace.AddDeclaration(module, "export class Broken{value:Missing;}"),
+                new AmendWorkspace.AddDeclaration(module, "export class Intact{value:number;}")));
+        var patch = new SlotPatch("R1", Map.of("declaration", "export class Broken{value:number;}"));
+        var body = baseline.nodes().stream().filter(n -> n.kind().equals("function-body")).findFirst().orElseThrow();
+        var bodyWorkspace = stage(BASE, List.of(new AmendWorkspace.ReplaceFunctionBody(body.id(), "return missing;")));
+        record Case(RepairWorkspaceSnapshot workspace, String code, String reason, String expected, String actual, List<SlotPatch> patches) {}
+        for (var sample : List.of(
+                new Case(workspace, "CP1023", "repair.duplicate-slot-patch", "one patch per slot", "R1", List.of(patch, patch)),
+                new Case(workspace, "CP1024", "repair.ungranted-slot", "[\"R1\"]", "R2",
+                        List.of(new SlotPatch("R2", Map.of("declaration", "export class Intact{other:string;}")))),
+                new Case(workspace, "CP1025", "repair.payload-fields", "[\"declaration\"]", "[\"body\"]",
+                        List.of(new SlotPatch("R1", Map.of("body", "return 1;")))),
+                new Case(workspace, "CP1026", "repair.unknown-slot", "[\"R1\",\"R2\"]", "invented",
+                        List.of(new SlotPatch("invented", Map.of("body", "return 1;")))),
+                new Case(bodyWorkspace, "CP1027", "repair.drop-operation", AmendWorkspace.ADD_DECLARATION, AmendWorkspace.REPLACE_FUNCTION_BODY,
+                        List.of(SlotPatch.drop("R1"))),
+                new Case(workspace, "CP1028", "repair.drop-payload", "{}", "{\"declaration\":\"chosen\"}",
+                        List.of(new SlotPatch("R1", Map.of("declaration", "chosen"), true))))) {
+            var rejected = AmendWorkspace.patchRepairWorkspace(BASE, MODULE, sample.workspace(), sample.patches());
+            var diagnostic = rejected.diagnostics().getFirst();
+            check(!rejected.accepted() && rejected.source().equals(BASE) && rejected.workspace().equals(sample.workspace()),
+                    sample.reason() + " preserves source and every staged slot");
+            check(diagnostic.code().equals(sample.code()) && diagnostic.facts().reason().equals(sample.reason())
+                            && diagnostic.expected().equals(sample.expected()) && diagnostic.actual().equals(sample.actual()),
+                    sample.reason() + " retains the observed slot contract rather than empty expected/actual: " + CompilerProtocolJson.encode(diagnostic));
+            check(diagnostic.repairScopes().isEmpty() && AmendWorkspace.queryContext(BASE, MODULE, diagnostic.contextRequest()).accepted(),
+                    "rejected slot contract offers only current reinspection");
+        }
+        var fixed = AmendWorkspace.patchRepairWorkspace(BASE, MODULE, workspace, List.of(patch));
+        check(fixed.accepted() && AmendWorkspace.inspect(fixed.source(), MODULE).diagnostics().isEmpty()
+                        && fixed.workspace().slots().get(1).payloadFingerprint().equals(workspace.slots().get(1).payloadFingerprint()),
+                "explicit intended field-contract repair rechecks and preserves independent slot");
     }
 
     private static void rejectedTransactionsOfferCurrentReinspection(Inspection baseline) {

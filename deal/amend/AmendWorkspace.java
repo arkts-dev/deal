@@ -580,7 +580,9 @@ public final class AmendWorkspace {
         Map<String, SlotPatch> bySlot = new LinkedHashMap<>();
         for (SlotPatch patch : patches) {
             if (bySlot.put(patch.slotId(), patch) != null) {
-                return rejectedWorkspace(source, modulePath, resolver, adapter, workspace, "CP1023", "Repair slot was patched more than once");
+                return rejectedWorkspace(source, modulePath, resolver, adapter, workspace, "CP1023", "Repair slot was patched more than once",
+                        new RepairWorkspaceProtocol.Rejection("Repair slot was patched more than once",
+                                "repair.duplicate-slot-patch", "one patch per slot", patch.slotId()));
             }
         }
         List<Operation> operations = new ArrayList<>();
@@ -589,30 +591,43 @@ public final class AmendWorkspace {
             if (patch != null && (grant == null ? slot.status() != RepairSlotStatus.REJECTED : !grant.slots().contains(slot.slotId()))) {
                 return rejectedWorkspace(source, modulePath, resolver, adapter, workspace, "CP1024", grant == null
                         ? "Only rejected repair slots are writable"
-                        : "Repair slot is outside the compiler-issued grant: " + slot.slotId());
+                        : "Repair slot is outside the compiler-issued grant: " + slot.slotId(),
+                        new RepairWorkspaceProtocol.Rejection("Repair slot is not writable", "repair.ungranted-slot",
+                                CompilerProtocolJson.encode(grant == null ? workspace.slots().stream()
+                                        .filter(value -> value.status() == RepairSlotStatus.REJECTED).map(RepairSlot::slotId).toList()
+                                        : grant.slots()), slot.slotId()));
             }
             if (patch != null && patch.drop()) {
                 if (!slot.operation().equals(ADD_DECLARATION)) {
                     return rejectedWorkspace(source, modulePath, resolver, adapter, workspace, "CP1027",
-                            "Only a rejected addDeclaration slot may be dropped");
+                            "Only a rejected addDeclaration slot may be dropped",
+                            new RepairWorkspaceProtocol.Rejection("Invalid drop operation", "repair.drop-operation", ADD_DECLARATION, slot.operation()));
                 }
                 if (!patch.payload().isEmpty()) {
                     return rejectedWorkspace(source, modulePath, resolver, adapter, workspace, "CP1028",
-                            "A dropped repair slot must not contain a replacement payload");
+                            "A dropped repair slot must not contain a replacement payload",
+                            new RepairWorkspaceProtocol.Rejection("Unexpected drop payload", "repair.drop-payload",
+                                    CompilerProtocolJson.encode(Map.of()), CompilerProtocolJson.encode(patch.payload())));
                 }
                 continue;
             }
             Map<String, String> payload = new LinkedHashMap<>(slot.payload());
             if (patch != null) {
                 if (!payload.keySet().equals(patch.payload().keySet())) {
-                    return rejectedWorkspace(source, modulePath, resolver, adapter, workspace, "CP1025", "Repair patch fields do not match the slot contract");
+                    return rejectedWorkspace(source, modulePath, resolver, adapter, workspace, "CP1025", "Repair patch fields do not match the slot contract",
+                            new RepairWorkspaceProtocol.Rejection("Invalid patch fields", "repair.payload-fields",
+                                    CompilerProtocolJson.encode(payload.keySet().stream().sorted().toList()),
+                                    CompilerProtocolJson.encode(patch.payload().keySet().stream().sorted().toList())));
                 }
                 payload.putAll(patch.payload());
             }
             operations.add(operation(slot.operation(), slot.targetId(), payload));
         }
         if (!bySlot.isEmpty()) {
-            return rejectedWorkspace(source, modulePath, resolver, adapter, workspace, "CP1026", "Unknown repair slot " + bySlot.keySet().iterator().next());
+            return rejectedWorkspace(source, modulePath, resolver, adapter, workspace, "CP1026", "Unknown repair slot " + bySlot.keySet().iterator().next(),
+                    new RepairWorkspaceProtocol.Rejection("Unknown slot", "repair.unknown-slot",
+                            CompilerProtocolJson.encode(workspace.slots().stream().map(RepairSlot::slotId).toList()),
+                            bySlot.keySet().iterator().next()));
         }
         operations.addAll(additions);
         ChangeInspection inspection = inspectChange(
