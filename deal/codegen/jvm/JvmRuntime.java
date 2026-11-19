@@ -514,6 +514,7 @@ public final class JvmRuntime {
         private final String jsonByteOffset;
         private final String jsonReason;
         private final Map<String, String> jsonDecodeEvidence;
+        private Map<String, String> hostEvidence = Map.of();
         /**
          * Whether this failure was published by a rethrow of a
          * transported Error value (never by a fresh runtime check, a
@@ -588,6 +589,7 @@ public final class JvmRuntime {
         }
         DealError published = new DealError(transport.code, value.message, transport.origin,
             transport.expected, transport.actual, transport.frames, transport.cause, transport.jsonByteOffset, transport.jsonReason, transport.jsonDecodeEvidence);
+        published.hostEvidence = transport.hostEvidence;
         published.transported = true;
         published.reified = value;
         value.transport = published;
@@ -628,11 +630,25 @@ public final class JvmRuntime {
         DealError wrapped = new DealError(previous.code, previous.msg,
             previous.origin, previous.expected, previous.actual,
             previous.frames, cause, previous.jsonByteOffset, previous.jsonReason, previous.jsonDecodeEvidence);
+        wrapped.hostEvidence = previous.hostEvidence;
         wrapped.reified = previous.reified;
         if (wrapped.reified != null) {
             wrapped.reified.transport = wrapped;
         }
         return wrapped;
+    }
+
+    /** Called only by the producer of a rejected host crossing, never for propagated host Errors. */
+    public static DealError hostContext(DealError error, String module, String export, String signature,
+                                        String boundary, Integer parameter) {
+        var facts = new LinkedHashMap<String, String>(error.hostEvidence);
+        if (module != null) facts.put("hostDeclaration", module);
+        if (export != null) facts.put("hostExport", export);
+        if (signature != null) facts.put("hostSignature", signature);
+        facts.put("hostBoundary", boundary);
+        if (parameter != null) facts.put("hostParameter", Integer.toString(parameter));
+        error.hostEvidence = Map.copyOf(facts);
+        return error;
     }
 
     private static boolean sameText(String left, String right) {
@@ -822,6 +838,8 @@ public final class JvmRuntime {
         appendRuntimeText(out, "jsonReason", error.jsonReason, true);
         for (String key : List.of("jsonPath", "jsonPathDepth", "jsonPathTruncated", "jsonMissingField"))
             appendRuntimeText(out, key, error.jsonDecodeEvidence.get(key), true);
+        for (String key : List.of("hostDeclaration", "hostExport", "hostSignature", "hostBoundary", "hostParameter"))
+            appendRuntimeText(out, key, error.hostEvidence.get(key), true);
         if (error.cause != null) {
             if (depth >= 7 || seen.contains(error.cause)) out.append(",\"causeTruncated\":true");
             else {

@@ -786,11 +786,16 @@ final class JvmHostAbiEmission {
             }
             out.append("java.lang.String oFile, int oLine, int oCol) {\n");
             for (int i = 0; i < func.paramTypes().size(); i++) {
-                out.append("    __a").append(i).append(" = __hostParamCheck(")
+                out.append("    try { __a").append(i).append(" = __hostParamCheck(")
                     .append(i + 1).append(", ")
                     .append(javaString(descriptorText(func.paramTypes().get(i))))
                     .append(", __a").append(i)
-                    .append(", oFile, oLine, oCol);\n");
+                    .append(", oFile, oLine, oCol); } catch (JvmRuntime.DealError __parameterError) {\n")
+                    .append("      throw JvmRuntime.hostContext(__parameterError, ")
+                    .append(javaString(module.modulePath())).append(", ")
+                    .append(javaString(export.getKey())).append(", ")
+                    .append(javaString(descriptorText(func))).append(", \"parameter\", ")
+                    .append(i + 1).append(");\n    }\n");
                 // The host-facing projection of the checked parameter (H7):
                 // the declared carrier class at the crossing, never the
                 // production value carrier.
@@ -803,7 +808,15 @@ final class JvmHostAbiEmission {
                 .append(methodField(key, export.getKey()))
                 .append(", new java.lang.Object[]{ ")
                 .append(String.join(", ", argNames)).append(" }, oFile, oLine, oCol);\n");
+            out.append("    try {\n");
             emitReturnCell(out, func);
+            out.append("    } catch (JvmRuntime.DealError __returnError) {\n")
+                .append("      throw JvmRuntime.hostContext(__returnError, ")
+                .append(javaString(module.modulePath())).append(", ")
+                .append(javaString(export.getKey())).append(", ")
+                .append(javaString(descriptorText(func))).append(", ")
+                .append(javaString(func.isAsync() ? "async-shape" : "return"))
+                .append(", null);\n    }\n");
             out.append("  }\n\n");
         }
     }
@@ -979,7 +992,7 @@ final class JvmHostAbiEmission {
         out.append("    try {\n");
         out.append("      return __hostCheckValue(desc, v, oFile, oLine, oCol);\n");
         out.append("    } catch (JvmRuntime.DealError __inner) {\n");
-        out.append("      throw JvmRuntime.arm(deal.semantic.ir.FailureArmId.HOST_PARAMETER_CELL, java.util.Map.of(\"index\", java.lang.Integer.toString(i), \"inner\", __hostInnerMessage(desc, v, __inner)), oFile + \":\" + oLine + \":\" + oCol, desc, __hostKind(v));\n");
+        out.append("      throw JvmRuntime.hostContext(JvmRuntime.arm(deal.semantic.ir.FailureArmId.HOST_PARAMETER_CELL, java.util.Map.of(\"index\", java.lang.Integer.toString(i), \"inner\", __hostInnerMessage(desc, v, __inner)), oFile + \":\" + oLine + \":\" + oCol, desc, __hostKind(v)), null, null, null, \"parameter\", i);\n");
         out.append("    }\n");
         out.append("  }\n\n");
         out.append("  static java.lang.Object __hostCheck(java.lang.String desc, "
@@ -989,7 +1002,7 @@ final class JvmHostAbiEmission {
         out.append("      return __hostCheckValue(desc, v, oFile, oLine, oCol);\n");
         out.append("    } catch (JvmRuntime.DealError __inner) {\n");
         out.append("      if (completion) { throw JvmRuntime.arm(deal.semantic.ir.FailureArmId.ASYNC_COMPLETION_KIND, java.util.Map.of(\"expected\", __hostKindText(desc)), oFile + \":\" + oLine + \":\" + oCol, __hostKindToken(desc), __hostKind(v)); }\n");
-        out.append("      throw JvmRuntime.arm(deal.semantic.ir.FailureArmId.HOST_SYNC_RETURN_CELL, java.util.Map.of(\"inner\", __hostInnerMessage(desc, v, __inner)), oFile + \":\" + oLine + \":\" + oCol, desc, __hostKind(v));\n");
+        out.append("      throw JvmRuntime.hostContext(JvmRuntime.arm(deal.semantic.ir.FailureArmId.HOST_SYNC_RETURN_CELL, java.util.Map.of(\"inner\", __hostInnerMessage(desc, v, __inner)), oFile + \":\" + oLine + \":\" + oCol, desc, __hostKind(v)), null, null, null, \"return\", null);\n");
         out.append("    }\n");
         out.append("  }\n\n");
         out.append("  static JvmRuntime.DealError __hostFail(java.lang.String reason, "

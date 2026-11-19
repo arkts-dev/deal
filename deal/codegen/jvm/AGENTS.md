@@ -19,5 +19,7 @@ execution, host/async identity and normalized failures.
   artifact's immutable exact plan map, never process-global schema selection.
   Preserve private field order/presence/cycle identity and generic Record rules.
   Error exposes mutable required name/message; first throw binds code independently.
+  Host rejection producers retain known crossing/signature/declaration facts;
+  propagated host Errors acquire no inferred blame.
 - Reuse StringSemantics. Escape UTF-16 units losslessly in traces; console UTF-8
   display replaces lone units only, without changing language text.

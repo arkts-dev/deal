@@ -4190,6 +4190,19 @@ public final class JvmSemanticEmitter {
         }
 
         /** The checked, identity-preserving arguments of one host call. */
+        private void emitHostDiagnosticContext(SemanticOp op, KindPayload.CallPayload payload,
+                String error, String crossing, Integer parameter, int indent) {
+            FunctionExecutionBinding binding = callBinding(op, payload);
+            String module = binding instanceof FunctionExecutionBinding.HostFunction host ? host.hostModuleId().path()
+                : binding instanceof FunctionExecutionBinding.HostFunctionValue host ? host.hostModuleId().path() : null;
+            String export = binding instanceof FunctionExecutionBinding.HostFunction host ? host.exportName() : null;
+            out.append(indent(indent)).append("JvmRuntime.hostContext(").append(error).append(", ")
+                .append(module == null ? "null" : javaString(module)).append(", ")
+                .append(export == null ? "null" : javaString(export)).append(", ")
+                .append(javaString(payload.signature().canonicalSpecText())).append(", ")
+                .append(javaString(crossing)).append(", ").append(parameter).append(");\n");
+        }
+
         private record HostCallArguments(List<String> projected) {
         }
 
@@ -4224,6 +4237,7 @@ public final class JvmSemanticEmitter {
                     .append(", ").append(originArgs(op)).append(");\n");
                 out.append(indent(indent))
                     .append("} catch (JvmRuntime.DealError __be) {\n");
+                emitHostDiagnosticContext(op, payload, "__be", "parameter", index, indent + 1);
                 emitFailureEvent(boundary.opId(), "BOUNDARY", boundary,
                     "JvmRuntime.errtext(__be)", indent + 1);
                 emitFailureEvent(op.opId(), op.kind().name(), op,

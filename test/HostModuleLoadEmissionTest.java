@@ -6381,6 +6381,18 @@ public class HostModuleLoadEmissionTest {
 
               public static void main(String[] args) {
                 App.dealMain();
+                if (args.length == 1 && args[0].equals("--host-diagnostic")) {
+                  try { App.__host$$PROBE$$badReturn("probe.deal", 9, 1); }
+                  catch (deal.codegen.jvm.JvmRuntime.DealError error) {
+                    var value = error.reify();
+                    value.message = "chosen";
+                    var rethrown = deal.codegen.jvm.JvmRuntime.rethrow(value);
+                    check(rethrown.reify() == value, "rethrow identity");
+                    deal.codegen.jvm.JvmRuntime.reportRuntimeDiagnostic(rethrown);
+                    return;
+                  }
+                  throw new AssertionError("missing return rejection");
+                }
                 check(App.__hostLoaded$$PROBE$, "the load entry ran in the walk");
                 check(App.__hostM$$PROBE$$ping != null, "the ping binding exists");
                 check(App.__hostM$$PROBE$$echoInt != null, "the echoInt binding exists");
@@ -6701,6 +6713,22 @@ public class HostModuleLoadEmissionTest {
                 classes + java.io.File.pathSeparator + classpath, driver), workspace, false);
             check(run.exitCode() == 0 && run.stdout().contains("PROBE-OK")
                     && run.stderr().isEmpty(), label + ": real java: " + run.output());
+            if (template.equals("HostModuleLoadProbe")) {
+                var diagnosticCommand = List.of("java", "-cp",
+                    classes + java.io.File.pathSeparator + classpath, driver, "--host-diagnostic");
+                var enabled = BoundedProcess.runCaptured(diagnosticCommand, workspace,
+                    Map.of("DEAL_DIAGNOSTICS_JSON", "1"));
+                check(enabled.exitCode() == 0 && enabled.stderr().contains("\"hostExport\":\"badReturn\"")
+                        && enabled.stderr().contains("\"hostSignature\":\"()->number\"")
+                        && enabled.stderr().contains("\"hostBoundary\":\"return\"")
+                        && enabled.stderr().contains("\"hostDeclaration\":")
+                        && enabled.stderr().contains("\"message\":\"chosen\""),
+                    "generated host return retains producer context through rethrow: " + enabled);
+                var disabled = BoundedProcess.runCaptured(diagnosticCommand, workspace,
+                    Map.of("DEAL_DIAGNOSTICS_JSON", "0"));
+                check(disabled.exitCode() == 0 && disabled.stderr().isEmpty()
+                        && disabled.stdout().equals(enabled.stdout()), "disabled host export parity: " + disabled);
+            }
         }
     }
 

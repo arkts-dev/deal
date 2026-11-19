@@ -113,8 +113,14 @@ public final class ErrorNameMessageTest {
                 || !disabledProjection.stdout().equals("projection identity unchanged\n")
                 || !enabledProjection.stdout().equals(disabledProjection.stdout()) || !disabledProjection.stderr().isEmpty())
             throw new AssertionError("JVM diagnostic projection changed transport identity/defaults");
+        var projectionLines = enabledProjection.stderr().lines().toList();
+        if (projectionLines.size() != 3 || projectionLines.get(1).contains("hostBoundary")
+                || !projectionLines.get(2).contains("\"hostBoundary\":\"parameter\"")
+                || !projectionLines.get(2).contains("\"hostParameter\":\"1\"")
+                || projectionLines.get(2).contains("hostDeclaration"))
+            throw new AssertionError("JVM projection inferred or lost host provenance: " + enabledProjection.stderr());
         var projected = deal.amend.CompilerProtocolJson.requireObject(deal.amend.CompilerProtocolJson.decode(
-                enabledProjection.stderr().strip().substring("DEAL_RUNTIME_DIAGNOSTIC: ".length())), "projection");
+                projectionLines.get(0).substring("DEAL_RUNTIME_DIAGNOSTIC: ".length())), "projection");
         var error = deal.amend.CompilerProtocolJson.requireObject(deal.amend.CompilerProtocolJson.field(projected, "runtime"), "runtime");
         var message = (CanonicalJson.Str) deal.amend.CompilerProtocolJson.field(error, "message");
         if (!message.value().equals("x".repeat(8191))) throw new AssertionError("JVM diagnostic text limit");
@@ -295,6 +301,14 @@ public final class ErrorNameMessageTest {
                 "Bound", "x".repeat(8191) + "😀tail", null, null, null, null, cause);
             var originalCause = cause.cause;
             deal.codegen.jvm.JvmRuntime.reportRuntimeDiagnostic(cause);
+            var authored = new deal.codegen.jvm.JvmRuntime.DealError("E8010",
+                "return value 1 type mismatch: expected string", null, null, null, null, null);
+            var host = deal.codegen.jvm.JvmRuntime.hostContext(new deal.codegen.jvm.JvmRuntime.DealError(
+                "E8010", "parameter mismatch", null, "string", "number", null, null),
+                null, null, "(string)->string", "parameter", 1);
+            if (host.reify() != host.reify()) throw new AssertionError("host identity changed");
+            deal.codegen.jvm.JvmRuntime.reportRuntimeDiagnostic(authored);
+            deal.codegen.jvm.JvmRuntime.reportRuntimeDiagnostic(host);
             if (cause.cause != originalCause || !cause.msg.equals("x".repeat(8191) + "😀tail")) throw new AssertionError("transport mutated");
             System.out.println("projection identity unchanged");
             return;
