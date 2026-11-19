@@ -515,6 +515,7 @@ public final class JvmRuntime {
         private final String jsonReason;
         private final Map<String, String> jsonDecodeEvidence;
         private Map<String, String> hostEvidence = Map.of();
+        private Map<String, String> arrayEvidence = Map.of();
         /**
          * Whether this failure was published by a rethrow of a
          * transported Error value (never by a fresh runtime check, a
@@ -590,6 +591,7 @@ public final class JvmRuntime {
         DealError published = new DealError(transport.code, value.message, transport.origin,
             transport.expected, transport.actual, transport.frames, transport.cause, transport.jsonByteOffset, transport.jsonReason, transport.jsonDecodeEvidence);
         published.hostEvidence = transport.hostEvidence;
+        published.arrayEvidence = transport.arrayEvidence;
         published.transported = true;
         published.reified = value;
         value.transport = published;
@@ -631,6 +633,7 @@ public final class JvmRuntime {
             previous.origin, previous.expected, previous.actual,
             previous.frames, cause, previous.jsonByteOffset, previous.jsonReason, previous.jsonDecodeEvidence);
         wrapped.hostEvidence = previous.hostEvidence;
+        wrapped.arrayEvidence = previous.arrayEvidence;
         wrapped.reified = previous.reified;
         if (wrapped.reified != null) {
             wrapped.reified.transport = wrapped;
@@ -840,6 +843,8 @@ public final class JvmRuntime {
             appendRuntimeText(out, key, error.jsonDecodeEvidence.get(key), true);
         for (String key : List.of("hostDeclaration", "hostExport", "hostSignature", "hostBoundary", "hostParameter"))
             appendRuntimeText(out, key, error.hostEvidence.get(key), true);
+        for (String key : List.of("arrayIndex", "arrayLength", "arrayConstraint"))
+            appendRuntimeText(out, key, error.arrayEvidence.get(key), true);
         if (error.cause != null) {
             if (depth >= 7 || seen.contains(error.cause)) out.append(",\"causeTruncated\":true");
             else {
@@ -3160,9 +3165,15 @@ case "NUMBER_ADD" -> {
     }
 
     public static Object arrayElementGet(Array array, double index, String descriptor, String canonical, String origin) {
-        if (!Double.isFinite(index) || index != Math.rint(index) || index < 0 || index >= array.length()
-                || index >= array.elements.size() || array.elements.get((int) index) == MISSING)
-            throw arm(deal.semantic.ir.FailureArmId.ARRAY_READ_BOUNDS, java.util.Map.of(), origin, null, null);
+        int length = array.length();
+        String constraint = !Double.isFinite(index) || index != Math.rint(index) ? "finite-integer"
+            : index < 0 || index >= length ? "read-range" : null;
+        if (constraint != null || index >= array.elements.size() || array.elements.get((int) index) == MISSING) {
+            DealError error = arm(deal.semantic.ir.FailureArmId.ARRAY_READ_BOUNDS, java.util.Map.of(), origin, null, null);
+            error.arrayEvidence = Map.of("arrayIndex", Double.toHexString(index), "arrayLength", Integer.toString(length),
+                "arrayConstraint", constraint == null ? "present-element" : constraint);
+            throw error;
+        }
         Object value = array.elements.get((int) index);
         try { return bcheck(descriptor, "unknown", value, canonical); }
         catch (DealError cause) {
@@ -3319,6 +3330,8 @@ case "NUMBER_ADD" -> {
                 List.of(atom(MISSING, "missing")), null, null);
             DealError e = arm(deal.semantic.ir.FailureArmId.ARRAY_READ_BOUNDS,
                 java.util.Map.of(), origin, null, null);
+            e.arrayEvidence = Map.of("arrayIndex", Double.toHexString(index), "arrayLength", Integer.toString((int)length),
+                "arrayConstraint", !Double.isFinite(index) || index != Math.rint(index) ? "finite-integer" : "read-range");
             ev(currentModule(), bKey, "FAILURE", "BOUNDARY", bDigest, bParent,
                 List.of(), null, errtext(e));
             ev(currentModule(), opKey, "FAILURE", "INDEX_READ", digest, parent,

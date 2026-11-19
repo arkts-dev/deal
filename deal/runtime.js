@@ -49,6 +49,9 @@ const $diagnosticDecodeSet = $diagnosticDecode.set.bind($diagnosticDecode);
 const $diagnosticHost = new WeakMap();
 const $diagnosticHostGet = $diagnosticHost.get.bind($diagnosticHost);
 const $diagnosticHostSet = $diagnosticHost.set.bind($diagnosticHost);
+const $diagnosticArray = new WeakMap();
+const $diagnosticArrayGet = $diagnosticArray.get.bind($diagnosticArray);
+const $diagnosticArraySet = $diagnosticArray.set.bind($diagnosticArray);
 const $descriptorHasOwn = Object.prototype.hasOwnProperty.call.bind(Object.prototype.hasOwnProperty);
 const $diagnosticFinite = Number.isFinite;
 const $diagnosticSlice = String.prototype.slice.call.bind(String.prototype.slice);
@@ -1971,6 +1974,8 @@ const $rt = {
       if (decode !== $undefined) $diagnosticDecodeSet(value, decode);
       const host = $diagnosticHostGet(v);
       if (host !== $undefined) $diagnosticHostSet(value, host);
+      const array = $diagnosticArrayGet(v);
+      if (array !== $undefined) $diagnosticArraySet(value, array);
       return value;
     }
     if (typeof v === "object" && v !== null && v.$kind === "class" && v.$classname === "Error") {
@@ -2046,6 +2051,12 @@ const $rt = {
           append($jsonQuote(keys[i]) + ":" + $jsonQuote($diagnosticSlice(text, 0, take)));
           if (take < text.length) { append($jsonQuote(keys[i] + "Length") + ":" + text.length); append($jsonQuote(keys[i] + "Truncated") + ":true"); }
         }
+      }
+      const array = $diagnosticArrayGet(value);
+      if (array !== $undefined) {
+        append('"arrayIndex":' + $jsonQuote(own(array, "index")));
+        append('"arrayLength":' + $jsonQuote(own(array, "length")));
+        append('"arrayConstraint":' + $jsonQuote(own(array, "constraint")));
       }
       const numberKeys = ["line", "column"];
       for (let index = 0; index < numberKeys.length; index++) {
@@ -2589,9 +2600,21 @@ const $rt = {
     return value;
   },
 
+  arrayReadFailure: function(index, length, file, line, column) {
+    const error = new $DEALError("E8002", "array index out of bounds", file, line, column);
+    $diagnosticArraySet(error, {index: $numberHex(index), length: "" + length,
+      constraint: !Number.isInteger(index) ? "finite-integer" : "read-range"});
+    throw error;
+  },
+
   arrayElementGet: function(v, index, descriptor, file, line, column) {
-    if (!Number.isInteger(index) || index < 0 || index >= $rt.arrayLength(v) || !$rt.arrayHas(v, index))
-      throw new $DEALError("E8002", "array index out of bounds", file, line, column);
+    const length = $rt.arrayLength(v);
+    const constraint = !Number.isInteger(index) ? "finite-integer" : index < 0 || index >= length ? "read-range" : null;
+    if (constraint !== null || !$rt.arrayHas(v, index)) {
+      const error = new $DEALError("E8002", "array index out of bounds", file, line, column);
+      $diagnosticArraySet(error, {index: $numberHex(index), length: "" + length, constraint: constraint || "present-element"});
+      throw error;
+    }
     const value = $rt.arrayAt(v, index);
     try { return $rt.checkType(descriptor, value, file, line, column); }
     catch (cause) {

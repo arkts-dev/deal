@@ -334,6 +334,8 @@ void deal_error_snapshot_release(char *text);
  * 32 innermost frames and eight cause levels. Release with snapshot_release. */
 char *deal_error_diagnostic(const deal_error *error);
 /* Copies bounded decoder-owned path text; no managed allocation or value walk. */
+/* Captures the rejected strict-read operand without revisiting the array. */
+void deal_error_set_array_read(deal_error *error, double index, size_t length);
 /* Producer-only host rejection evidence; copies static declaration text, never host values. */
 void deal_error_set_host_context(deal_error *error, const char *signature,
                                  const char *declaration, const char *export_name,

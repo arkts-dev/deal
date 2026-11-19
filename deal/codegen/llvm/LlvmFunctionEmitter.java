@@ -5316,6 +5316,11 @@ final class LlvmFunctionEmitter {
         String error = emitTemporary(op, "call " + LlvmTypeMapper.ERROR_POINTER
             + " @deal_error_array_position(i32 " + arm.ordinal() + ","
             + " %struct.deal_origin* " + origin + ")");
+        if (arm == deal.semantic.ir.FailureArmId.ARRAY_READ_BOUNDS) {
+            session.referenceRuntimeEntry("deal_error_set_array_read");
+            emit("call void @deal_error_set_array_read(%struct.deal_error* " + error
+                + ", double " + position + ", i64 " + count + ")");
+        }
         routeFailure(emitTemporary(op, "bitcast "
             + LlvmTypeMapper.ERROR_POINTER + " " + error + " to i8*"));
         startSegment(proceed);

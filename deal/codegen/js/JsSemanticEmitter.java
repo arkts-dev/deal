@@ -1430,8 +1430,8 @@ case NUMBER_ADD -> "(" + numeric(left) + " + "
             } else {
                 String length = normalizeLengthSlot(payload.slot());
                 emit("if (!Number.isInteger(" + index + ") || " + index + " < 0 || " + index + " >= " + length
-                    + ") { $rt.fail(\"E8002\", \"array index out of bounds\","
-                    + " " + spanArgs(boundary) + "); }");
+                    + ") { $rt.arrayReadFailure(" + index + ", " + length + ", "
+                    + spanArgs(boundary) + "); }");
                 // The carrier split is $rt.arrayAt's own (a native Array
                 // first, the JSON array-marked Map second): every
                 // carrier checkArray admits reads at the checked position,

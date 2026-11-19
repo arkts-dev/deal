@@ -10,6 +10,7 @@
 #include "deal/native/platform.h"
 #include "deal/native/text.h"
 
+#include <math.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
@@ -322,6 +323,10 @@ struct deal_error {
     char *host_export;
     char *host_boundary;
     int32_t host_parameter;
+    int has_array_constraint;
+    double array_index;
+    size_t array_length;
+    const char *array_constraint;
 };
 
 /*
@@ -432,6 +437,10 @@ static deal_error *deal_error_allocate(const char *code, const char *message,
     error->json_missing_field = 0;
     error->host_signature = error->host_declaration = error->host_export = error->host_boundary = NULL;
     error->host_parameter = 0;
+    error->has_array_constraint = 0;
+    error->array_index = 0;
+    error->array_length = 0u;
+    error->array_constraint = NULL;
     if (origin != NULL) {
         error->source_file = deal_platform_duplicate(origin->source_file);
         error->line = origin->line;
@@ -990,6 +999,14 @@ static void deal_diagnostic_error(deal_snapshot_buffer *buffer, const deal_error
         (void)snprintf(parameter, sizeof(parameter), "%d", error->host_parameter);
         deal_diagnostic_text(buffer, "hostParameter", parameter, strlen(parameter), &first);
     }
+    if (error->has_array_constraint) {
+        char index[DEAL_ARM_NUMBER_TEXT_CAPACITY], length[32];
+        (void)deal_arm_number_text(error->array_index, index, sizeof(index));
+        (void)snprintf(length, sizeof(length), "%zu", error->array_length);
+        deal_diagnostic_text(buffer, "arrayIndex", index, strlen(index), &first);
+        deal_diagnostic_text(buffer, "arrayLength", length, strlen(length), &first);
+        deal_diagnostic_text(buffer, "arrayConstraint", error->array_constraint, strlen(error->array_constraint), &first);
+    }
     deal_snapshot_append_key(buffer, "frameCount", &first);
     deal_snapshot_append_integer(buffer, error->frame_count);
     deal_snapshot_append_key(buffer, "frames", &first);
@@ -1017,6 +1034,14 @@ static void deal_diagnostic_error(deal_snapshot_buffer *buffer, const deal_error
         }
     }
     deal_snapshot_append(buffer, "}", 1u);
+}
+
+void deal_error_set_array_read(deal_error *error, double index, size_t length) {
+    if (error == NULL) deal_platform_fault("error diagnostic: null array error");
+    error->has_array_constraint = 1;
+    error->array_index = index;
+    error->array_length = length;
+    error->array_constraint = isfinite(index) && index == trunc(index) ? "read-range" : "finite-integer";
 }
 
 void deal_error_set_host_context(deal_error *error, const char *signature,

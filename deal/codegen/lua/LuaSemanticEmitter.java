@@ -2006,8 +2006,9 @@ public final class LuaSemanticEmitter {
             emitStart(op);
             out.append("do local a=").append(slot(payload.arrayValue())).append("; local i=__num(")
                 .append(slot(payload.index())).append("); local n=a[__dealCarrierKeys.n] or 0; while rawget(a,n+1) ~= nil do n=n+1 end\n")
-                .append("if i~=i or i==math.huge or i==-math.huge or i~=math.floor(i) or i<0 or i>=n or rawget(a,i+1)==nil then error(__arm(\"ARRAY_READ_BOUNDS\",{},")
-                .append(luaString(originOf(op))).append("),0) end\n")
+                .append("if i~=i or i==math.huge or i==-math.huge or i~=math.floor(i) or i<0 or i>=n or rawget(a,i+1)==nil then local e=__arm(\"ARRAY_READ_BOUNDS\",{},")
+                .append(luaString(originOf(op))).append("); e.arrayIndex=__numHex(i); e.arrayLength=tostring(n); ")
+                .append("e.arrayConstraint=(i~=i or i==math.huge or i==-math.huge or i~=math.floor(i)) and 'finite-integer' or ((i<0 or i>=n) and 'read-range' or 'present-element'); error(e,0) end\n")
                 .append("local v=rawget(a,i+1); __okB,__chkB=pcall(__bcheck,").append(bcheckArgs(element, "v")).append(")\n")
                 .append("if not __okB then local failure=__arm(\"ARRAY_ELEMENT_KIND\",{oneBasedIndex=i+1},")
                 .append(luaString(originOf(op))).append(",").append(luaString(element.canonicalSpecText()))
@@ -10093,6 +10094,8 @@ local function __arrayRead(opKey, digest, parent, bKey, bDigest, bParent, desc, 
     __ev(bKey, "START", "BOUNDARY", bDigest, bParent, {__atom("missing", __MISSING)},
       nil, nil)
     local e = __arm("ARRAY_READ_BOUNDS", nil, origin, nil, nil)
+    e.arrayIndex=__numHex(index); e.arrayLength=tostring(slotName.n)
+    e.arrayConstraint=(index~=index or index==math.huge or index==-math.huge or index~=math.floor(index)) and "finite-integer" or "read-range"
     __ev(bKey, "FAILURE", "BOUNDARY", bDigest, bParent, {}, nil, __errtext(e))
     __ev(opKey, "FAILURE", "INDEX_READ", digest, parent, {}, nil, __errtext(e))
     error(e, 0)
@@ -10846,7 +10849,9 @@ function __dealRuntimeDiagnostic(error)
                             {"jsonPathTruncated", "jsonPathTruncated"}, {"jsonMissingField", "jsonMissingField"},
                             {"hostModule", "hostModule"}, {"hostExport", "hostExport"},
                             {"hostDeclaration", "hostDeclaration"}, {"hostSignature", "hostSignature"},
-                            {"hostBoundary", "hostBoundary"}, {"hostParameter", "hostParameter"}}) do
+                            {"hostBoundary", "hostBoundary"}, {"hostParameter", "hostParameter"},
+                            {"arrayIndex", "arrayIndex"}, {"arrayLength", "arrayLength"},
+                            {"arrayConstraint", "arrayConstraint"}}) do
       local text = rawget(value, pair[2])
       if type(text) == "string" then
         local take = math.min(#text, 8192)

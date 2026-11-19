@@ -1587,8 +1587,10 @@ deal_outcome_data deal_array_splice(deal_array *array, double from, double delet
 deal_outcome_data deal_array_element_get(deal_array *array, double index, deal_descriptor *element, const deal_origin *origin) {
     deal_outcome_data result = {0};
     size_t position;
-    if (!deal_container_position(index, deal_container_array_count(array), 0, &position)) {
+    size_t length = deal_container_array_count(array);
+    if (!deal_container_position(index, length, 0, &position)) {
         result.error = deal_error_array_position(DEAL_ARM_ID_ARRAY_READ_BOUNDS, origin);
+        deal_error_set_array_read(result.error, index, length);
         return result;
     }
     deal_root_scope_push();

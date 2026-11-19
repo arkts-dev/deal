@@ -185,15 +185,21 @@ public final class ErrorNameMessageTest {
         }
     }
 
-    private static void runtimeJsonScannerExports(Path root) throws Exception {
+    private static void runtimeConstraintExports(Path root) throws Exception {
         for (String[] sample : new String[][] {
                 {"trailing", "\\\"😀\\\" x", "8", "trailing content"},
                 {"duplicate", "{\\\"😀\\\":1,\\\"😀\\\":2}", "11", "duplicate key"},
-                {"eof", "\\\"😀", "6", "unterminated string"}}) {
+                {"eof", "\\\"😀", "6", "unterminated string"},
+                {"bounds", "", "1", "read-range"},
+                {"fractional", "", "1", "finite-integer"}}) {
             String parse = "let parsed:unknown=JSON.parse(\"" + sample[1] + "\");";
             if (sample[0].equals("duplicate")) parse = "try{" + parse
                     + "}catch(caught){if(caught instanceof Error){let repaired:unknown=JSON.parse(\"{\\\"😀\\\":2}\");"
                     + "console.log(JSON.stringify(repaired)??\"none\");caught.message=\"chosen message\";throw caught;}}";
+            boolean array = sample[0].equals("bounds") || sample[0].equals("fractional");
+            if (array) parse = "let values:number[]=[7];try{let rejected=values.map((value:number):number=>{"
+                + "let read=values[" + (sample[0].equals("bounds") ? "2" : "0.5") + "];return read;});}"
+                + "catch(caught){if(caught instanceof Error){console.log(String(values[0]));caught.message=\"chosen message\";throw caught;}}";
             String source = "export function main():void{" + parse + "}";
             for (Backend backend : List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM)) {
                 Path project = Files.createDirectories(root.resolve(sample[0]).resolve(backend.name()));
@@ -230,14 +236,19 @@ public final class ErrorNameMessageTest {
                         throw new AssertionError("JSON metadata changed default outcome " + backend + " " + sample[0]);
                     var document = deal.amend.CompilerProtocolJson.requireObject(deal.amend.CompilerProtocolJson.decode(line.substring(prefix.length())), "document");
                     var runtime = deal.amend.CompilerProtocolJson.requireObject(deal.amend.CompilerProtocolJson.field(document, "runtime"), "runtime");
-                    if (!deal.amend.CompilerProtocolJson.field(runtime, "jsonByteOffset").equals(new CanonicalJson.Str(sample[2]))
-                            || !deal.amend.CompilerProtocolJson.field(runtime, "jsonReason").equals(new CanonicalJson.Str(sample[3])))
+                    if (!deal.amend.CompilerProtocolJson.field(runtime, array ? "arrayLength" : "jsonByteOffset").equals(new CanonicalJson.Str(sample[2]))
+                            || !deal.amend.CompilerProtocolJson.field(runtime, array ? "arrayConstraint" : "jsonReason").equals(new CanonicalJson.Str(sample[3])))
                         throw new AssertionError("scanner-owned JSON offset/reason missing " + backend + " " + sample[0] + ": " + line);
+                    if (array && (!deal.amend.CompilerProtocolJson.field(runtime, "arrayIndex").equals(
+                            new CanonicalJson.Str(sample[0].equals("bounds") ? "0x1.0p1" : "0x1.0p-1"))
+                            || !deal.amend.CompilerProtocolJson.field(runtime, "message").equals(new CanonicalJson.Str("chosen message"))
+                            || !baseline.stdout().startsWith("7\n")))
+                        throw new AssertionError("array operand/rethrow/repair evidence missing " + backend + ": " + line);
                     if (sample[0].equals("duplicate") && (!CanonicalJson.parse(baseline.stdout().lines().filter(s -> s.startsWith("{")).findFirst().orElseThrow()).equals(CanonicalJson.parse("{\"😀\":2}"))
                             || !deal.amend.CompilerProtocolJson.field(runtime, "message").equals(new CanonicalJson.Str("chosen message"))))
                         throw new AssertionError("changed Error message lost identity or scanner provenance " + backend + ": " + line);
                 }
-                System.out.println("JSON scanner diagnostics: " + backend + " " + sample[0] + " retains byte coordinates/defaults");
+                System.out.println("Constraint diagnostics: " + backend + " " + sample[0] + " retains producer facts/defaults");
             }
         }
     }
@@ -357,7 +368,7 @@ public final class ErrorNameMessageTest {
                 .filter(f->f.corpusPath().equals(PATH)).findFirst().orElseThrow();
             LlvmConformanceTest.runInstrumented(corpus,fixture);
             runtimeDiagnosticExports(root.resolve("diagnostics"));
-            runtimeJsonScannerExports(root.resolve("json-diagnostics"));
+            runtimeConstraintExports(root.resolve("constraint-diagnostics"));
             runtimeJsonDecoderExports(root.resolve("decoder-diagnostics"));
             System.out.println("Error name/message: transported Oracle and all production backends passed");
         } finally {CompositionProductionTest.remove(root);}
