@@ -60,6 +60,13 @@ public final class ErrorNameMessageTest {
               Array.prototype.push=savedPush;Array.prototype.join=savedJoin;Array.prototype[Symbol.iterator]=savedIterator;
             }
             if(traps!==0||JSON.parse(safe).runtime.message!=='x'.repeat(8191))process.exit(9);
+            let inherited=0;const previousZero=Object.getOwnPropertyDescriptor(Array.prototype,'0');
+            Object.defineProperty(Array.prototype,'0',{configurable:true,set(){inherited++;throw Error('inherited array setter');}});
+            let isolated;
+            try{isolated=runtime.runtimeDiagnostic(longError);}finally{
+              if(previousZero)Object.defineProperty(Array.prototype,'0',previousZero);else delete Array.prototype[0];
+            }
+            if(inherited!==0||JSON.parse(isolated).runtime.code!=='Boundary')process.exit(10);
             """), Path.of("").toAbsolutePath(), Map.of());
         if (getterControl.exitCode() != 0) throw new AssertionError("runtime export invoked mutable host metadata: " + getterControl);
         List<String> jvmProjection = List.of("java", "-cp", TestClasspath.absolute(TestClasspath.EmptyEntry.OMIT),

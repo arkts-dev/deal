@@ -44,8 +44,6 @@ const $descriptorHasOwn = Object.prototype.hasOwnProperty.call.bind(Object.proto
 const $diagnosticFinite = Number.isFinite;
 const $diagnosticSlice = String.prototype.slice.call.bind(String.prototype.slice);
 const $diagnosticCharCode = String.prototype.charCodeAt.call.bind(String.prototype.charCodeAt);
-const $diagnosticPush = Array.prototype.push.call.bind(Array.prototype.push);
-const $diagnosticJoin = Array.prototype.join.call.bind(Array.prototype.join);
 
 // ===== Error spine: the module-private $DEALError class =====
 // (js-backend-runtime-artifact D8) The single constructor path every
@@ -1981,16 +1979,17 @@ const $rt = {
       const descriptor = $ownDescriptor(value, key);
       return descriptor && $descriptorHasOwn(descriptor, "value") ? descriptor.value : $undefined;
     };
-    // Eight retained metadata records at most; no mutable host Set hooks.
-    const seen = [];
+    // Eight retained metadata records at most; no mutable host collection hooks.
+    let seen = null;
     const visited = value => {
-      for (let i = 0; i < seen.length; i++) if (seen[i] === value) return true;
+      for (let node = seen; node !== null; node = node.next) if (node.value === value) return true;
       return false;
     };
     const render = (value, depth) => {
       if (value === null || typeof value !== "object" || !$diagnosticErrorHas(value) || visited(value)) return "null";
-      seen[seen.length] = value;
-      const fields = [];
+      seen = {value, next: seen};
+      let fields = "";
+      const append = field => { fields += (fields === "" ? "" : ",") + field; };
       const textKeys = ["code", "message", "file", "expected", "actual", "frames"];
       for (let index = 0; index < textKeys.length; index++) {
         const key = textKeys[index];
@@ -1999,22 +1998,24 @@ const $rt = {
         let take = text.length > 8192 ? 8192 : text.length;
         if (take < text.length && $diagnosticCharCode(text, take - 1) >= 0xD800 && $diagnosticCharCode(text, take - 1) <= 0xDBFF
             && $diagnosticCharCode(text, take) >= 0xDC00 && $diagnosticCharCode(text, take) <= 0xDFFF) take--;
-        $diagnosticPush(fields, $jsonQuote(key) + ":" + $jsonQuote($diagnosticSlice(text, 0, take)));
-        if (take < text.length) $diagnosticPush(fields, $jsonQuote(key + "Length") + ":" + text.length,
-          $jsonQuote(key + "Truncated") + ":true");
+        append($jsonQuote(key) + ":" + $jsonQuote($diagnosticSlice(text, 0, take)));
+        if (take < text.length) {
+          append($jsonQuote(key + "Length") + ":" + text.length);
+          append($jsonQuote(key + "Truncated") + ":true");
+        }
       }
       const numberKeys = ["line", "column"];
       for (let index = 0; index < numberKeys.length; index++) {
         const key = numberKeys[index];
         const number = own(value, key);
-        if (typeof number === "number" && $diagnosticFinite(number)) $diagnosticPush(fields, $jsonQuote(key) + ":" + number);
+        if (typeof number === "number" && $diagnosticFinite(number)) append($jsonQuote(key) + ":" + number);
       }
       const cause = own(value, "cause");
       if (cause !== null && typeof cause === "object") {
-        if (depth >= 7 || visited(cause) || !$diagnosticErrorHas(cause)) $diagnosticPush(fields, '"causeTruncated":true');
-        else $diagnosticPush(fields, '"cause":' + render(cause, depth + 1));
+        if (depth >= 7 || visited(cause) || !$diagnosticErrorHas(cause)) append('"causeTruncated":true');
+        else append('"cause":' + render(cause, depth + 1));
       }
-      return "{" + $diagnosticJoin(fields, ",") + "}";
+      return "{" + fields + "}";
     };
     return '{"version":2,"runtime":' + render(error, 0) + "}";
   },
