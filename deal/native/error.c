@@ -308,7 +308,9 @@ struct deal_error {
     uint32_t frame_count;
     deal_error *cause;
     char *json_byte_offset;
+    size_t json_byte_offset_length;
     char *json_reason;
+    size_t json_reason_length;
 };
 
 /*
@@ -365,8 +367,10 @@ static void deal_error_release(void *object) {
     error->cause = NULL;
     deal_platform_release(error->json_byte_offset);
     error->json_byte_offset = NULL;
+    error->json_byte_offset_length = 0u;
     deal_platform_release(error->json_reason);
     error->json_reason = NULL;
+    error->json_reason_length = 0u;
 }
 
 /* One Error record allocation. `snapshot_frames` is 0 for the host-authored
@@ -400,7 +404,9 @@ static deal_error *deal_error_allocate(const char *code, const char *message,
     error->frame_count = 0;
     error->cause = NULL;
     error->json_byte_offset = NULL;
+    error->json_byte_offset_length = 0u;
     error->json_reason = NULL;
+    error->json_reason_length = 0u;
     if (origin != NULL) {
         error->source_file = deal_platform_duplicate(origin->source_file);
         error->line = origin->line;
@@ -937,8 +943,8 @@ static void deal_diagnostic_error(deal_snapshot_buffer *buffer, const deal_error
         deal_diagnostic_text(buffer, "actual", error->actual, strlen(error->actual), &first);
     }
     if (error->json_byte_offset != NULL) {
-        deal_diagnostic_text(buffer, "jsonByteOffset", error->json_byte_offset, strlen(error->json_byte_offset), &first);
-        deal_diagnostic_text(buffer, "jsonReason", error->json_reason, strlen(error->json_reason), &first);
+        deal_diagnostic_text(buffer, "jsonByteOffset", error->json_byte_offset, error->json_byte_offset_length, &first);
+        deal_diagnostic_text(buffer, "jsonReason", error->json_reason, error->json_reason_length, &first);
     }
     deal_snapshot_append_key(buffer, "frameCount", &first);
     deal_snapshot_append_integer(buffer, error->frame_count);
@@ -1137,6 +1143,8 @@ static void deal_error_json_metadata(deal_error *error, uint32_t arm_id,
         parameters, parameter_count, "oneBasedByteOffset", sizeof("oneBasedByteOffset") - 1u));
     error->json_reason = deal_platform_duplicate(deal_arm_parameter_value(
         parameters, parameter_count, "reason", sizeof("reason") - 1u));
+    error->json_byte_offset_length = strlen(error->json_byte_offset);
+    error->json_reason_length = strlen(error->json_reason);
 }
 
 deal_error *deal_error_materialize(uint32_t arm_id,
@@ -1215,6 +1223,20 @@ deal_error *deal_error_materialize_text(uint32_t arm_id,
     deal_platform_release(error->message);
     error->message = message;
     error->message_length = length;
+    if (arm_id == DEAL_ARM_ID_JSON_PARSE_ERROR) {
+        for (size_t i = 0u; i < parameter_count; ++i) {
+            int offset = strcmp(parameters[i].name, "oneBasedByteOffset") == 0;
+            char **target = offset ? &error->json_byte_offset : &error->json_reason;
+            size_t *count = offset ? &error->json_byte_offset_length : &error->json_reason_length;
+            char *copy = deal_platform_allocate(deal_platform_checked_add(parameters[i].length, 1u));
+            if (copy == NULL) deal_platform_fault("arm render: diagnostic parameter allocation failed");
+            memcpy(copy, parameters[i].value, parameters[i].length);
+            copy[parameters[i].length] = 0;
+            deal_platform_release(*target);
+            *target = copy;
+            *count = parameters[i].length;
+        }
+    }
     return error;
 }
 

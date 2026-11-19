@@ -1399,6 +1399,20 @@ static void check_error_text_spans(void) {
     check(strstr(snapshot, "x\\u0000\\uD800y' in class '@src/model.deal/Item'") != NULL,
           "rendered Error snapshot retains its parameter suffix after NUL");
     deal_error_snapshot_release(snapshot);
+    const char reason_bytes[] = {'x', '\0', (char)0xed, (char)0xa0, (char)0x80, 'y'};
+    const deal_arm_text_parameter parser_parameters[] = {
+        {"oneBasedByteOffset", "8", 1u},
+        {"reason", reason_bytes, sizeof(reason_bytes)}
+    };
+    deal_error *parser = deal_error_materialize_text(DEAL_ARM_ID_JSON_PARSE_ERROR,
+        parser_parameters, 2u, NULL, NULL, &test_origin, error);
+    deal_root_scope_hold(parser);
+    deal_gc_collect_full();
+    char *diagnostic = deal_error_diagnostic(parser);
+    check(strstr(diagnostic, "\"jsonByteOffset\":\"8\"") != NULL
+            && strstr(diagnostic, "\"jsonReason\":\"x\\u0000\\uD800y\"") != NULL,
+          "length-delimited scanner arm facts preserve NUL/lone units after collection");
+    deal_error_snapshot_release(diagnostic);
     deal_root_scope_pop();
 }
 
