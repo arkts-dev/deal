@@ -1496,26 +1496,9 @@ cause (if applicable)
 | `undefined` | distinct language value; missing reads and void completion |
 | missing field | presence state, distinct from stored undefined |
 
-### Backend conformance contract
+Accepted implementation/declaration sources must parse as TypeScript. All backends must preserve source semantics, including host crossings; internal representations must satisfy their [backend ABI](#backend-contracts).
 
-Accepted implementation/declaration sources must parse as TypeScript. Conformance tests cover observable behavior across backends, including host ingress and egress:
-
-- compile-time diagnostics, including reserved identifiers, leading-zero literals and forbidden line breaks
-- successful runtime values
-- runtime error codes and source locations
-- module import/export behavior
-- host boundary behavior
-- null, undefined, missing-field and own-presence semantics
-- unknown extraction, checked assertions, narrowing and void results
-- class nominal identity
-- function type identity, including the async marker
-- evaluation order
-- binary64 arithmetic, signed-zero behavior, and discrete-position validation
-- JSON encoding/decoding
-
-A backend may choose its internal representation provided it preserves observable behavior and its [backend ABI](#backend-contracts).
-
-#### Typed boundaries
+### Typed boundaries
 
 A typed boundary is a point where a runtime value is accepted as, stored as, returned as, exported as, or reconstructed as a declared DEAL type.
 
@@ -1600,7 +1583,7 @@ Nullish prefixes require a non-nullish/non-unknown base. Descriptors encode cano
 
 ## Backend contracts
 
-These representation mappings preserve, and cannot override, the source semantics and [conformance contract](#backend-conformance-contract).
+These representation mappings preserve, and cannot override, source semantics and [typed boundaries](#typed-boundaries).
 
 ### LuaJIT backend contract
 
