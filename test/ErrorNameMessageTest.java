@@ -72,6 +72,39 @@ public final class ErrorNameMessageTest {
             if(inherited!==0||JSON.parse(isolated).runtime.code!=='Boundary')process.exit(10);
             """), Path.of("").toAbsolutePath(), Map.of());
         if (getterControl.exitCode() != 0) throw new AssertionError("runtime export invoked mutable host metadata: " + getterControl);
+        var hostProjection = BoundedProcess.runCaptured(List.of("node", "-e", """
+            (async()=>{
+              const rt=require('./deal/runtime');
+              let calls=0;
+              const context={module:'host/example',name:'read',declaration:'src/example.d.deal'};
+              const surface=rt.loadHost({read:()=>{calls++;return false;}},
+                {read:{$k:'function',$d:'()->string'}},context.module,'main.deal',1,1,context.declaration);
+              let caught;
+              try{surface.read.$f('main.deal',2,3);}catch(e){caught=e;}
+              if(!caught||calls!==1)throw Error('host invocation changed');
+              const carried=rt.reifyError(caught);carried.message='chosen';
+              const data=JSON.parse(rt.runtimeDiagnostic(carried)).runtime;
+              for(const [key,value] of Object.entries({hostModule:context.module,hostExport:context.name,
+                hostDeclaration:context.declaration,hostSignature:'()->string',hostBoundary:'return',message:'chosen'}))
+                if(data[key]!==value)throw Error(key+': '+JSON.stringify(data));
+              const parameter=rt.hostFunction('(string)->string',v=>{calls++;return v;});
+              try{parameter.$f(7,'main.deal',3,1);}catch(e){
+                const d=JSON.parse(rt.runtimeDiagnostic(e)).runtime;
+                if(d.hostBoundary!=='parameter'||d.hostParameter!=='1'||d.hostModule!==undefined)throw Error('parameter evidence');
+              }
+              if(calls!==1)throw Error('rejected parameter invoked host');
+              const async=rt.hostAsyncFunction('async()->string',async()=>false,context);
+              try{await async.$f('main.deal',4,1);}catch(e){
+                const d=JSON.parse(rt.runtimeDiagnostic(e)).runtime;
+                if(d.hostBoundary!=='completion'||d.hostSignature!=='async()->string')throw Error('completion evidence');
+              }
+              const authored=rt.errorValue('E8010','return value 1 type mismatch: expected string');
+              Object.defineProperty(authored,'hostSignature',{get(){throw Error('must not read user metadata');}});
+              if(JSON.parse(rt.runtimeDiagnostic(authored)).runtime.hostSignature!==undefined)throw Error('invented host facts');
+              if(parameter.$f('chosen','main.deal',5,1)!=='chosen'||calls!==2)throw Error('repair failed');
+            })().catch(e=>{console.error(e);process.exitCode=1;});
+            """), Path.of("").toAbsolutePath(), Map.of());
+        if (hostProjection.exitCode() != 0) throw new AssertionError("host provenance projection: " + hostProjection);
         List<String> jvmProjection = List.of("java", "-cp", TestClasspath.absolute(TestClasspath.EmptyEntry.OMIT),
                 ErrorNameMessageTest.class.getName(), "--diagnostic-projection");
         var disabledProjection = BoundedProcess.runCaptured(jvmProjection, Path.of("").toAbsolutePath(), Map.of("DEAL_DIAGNOSTICS_JSON", "0"));

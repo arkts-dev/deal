@@ -2962,7 +2962,7 @@ private void emitBindingLoad(SemanticOp op) {
                         payload.resolvedModule());
                     String call = "$rt.loadHost(" + loaded + ", " + declaredMap
                         + ", " + jsString(payload.rawSpecifier()) + ", "
-                        + spanArgs(op) + ")";
+                        + spanArgs(op) + ", " + jsString(payload.resolvedModule().path()) + ")";
                     if (payload.aliasCells().isEmpty()) {
                         // An operation-free import record (no source alias
                         // cell): the source declaration still validates

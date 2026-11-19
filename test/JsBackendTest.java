@@ -2820,9 +2820,9 @@ public class JsBackendTest {
                     + " }"),
                 "the declared map renders the canonical function entry: " + js);
             check(js.contains(q + "./hostmod" + q
-                    + ", " + q + "jstest-host-abi-fn.deal" + q + ", 1, 1)"),
-                "the loadHost call carries the raw specifier and the "
-                    + "import-site span: " + js);
+                    + ", " + q + "jstest-host-abi-fn.deal" + q + ", 1, 1, " + q),
+                "the loadHost call carries the raw specifier, import-site span and "
+                    + "resolved declaration module identity: " + js);
             check(js.contains(q + "hostFn" + q + "].$f("),
                 "host member calls route through the occurrence surface's "
                     + "wrapper $f: " + js);

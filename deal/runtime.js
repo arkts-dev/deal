@@ -46,6 +46,9 @@ const $diagnosticJsonSet = $diagnosticJson.set.bind($diagnosticJson);
 const $diagnosticDecode = new WeakMap();
 const $diagnosticDecodeGet = $diagnosticDecode.get.bind($diagnosticDecode);
 const $diagnosticDecodeSet = $diagnosticDecode.set.bind($diagnosticDecode);
+const $diagnosticHost = new WeakMap();
+const $diagnosticHostGet = $diagnosticHost.get.bind($diagnosticHost);
+const $diagnosticHostSet = $diagnosticHost.set.bind($diagnosticHost);
 const $descriptorHasOwn = Object.prototype.hasOwnProperty.call.bind(Object.prototype.hasOwnProperty);
 const $diagnosticFinite = Number.isFinite;
 const $diagnosticSlice = String.prototype.slice.call.bind(String.prototype.slice);
@@ -1966,6 +1969,8 @@ const $rt = {
       if (json !== $undefined) $diagnosticJsonSet(value, json);
       const decode = $diagnosticDecodeGet(v);
       if (decode !== $undefined) $diagnosticDecodeSet(value, decode);
+      const host = $diagnosticHostGet(v);
+      if (host !== $undefined) $diagnosticHostSet(value, host);
       return value;
     }
     if (typeof v === "object" && v !== null && v.$kind === "class" && v.$classname === "Error") {
@@ -2028,6 +2033,19 @@ const $rt = {
         append('"jsonPathDepth":' + $jsonQuote(decode.depth));
         append('"jsonPathTruncated":' + $jsonQuote(decode.truncated));
         append('"jsonMissingField":' + $jsonQuote(decode.missing));
+      }
+      const host = $diagnosticHostGet(value);
+      if (host !== $undefined) {
+        const keys = ["hostModule", "hostExport", "hostSignature", "hostBoundary", "hostParameter", "hostDeclaration"];
+        for (let i = 0; i < keys.length; i++) {
+          const text = own(host, keys[i]);
+          if (typeof text !== "string") continue;
+          let take = text.length > 8192 ? 8192 : text.length;
+          if (take < text.length && $diagnosticCharCode(text, take - 1) >= 0xD800 && $diagnosticCharCode(text, take - 1) <= 0xDBFF
+              && $diagnosticCharCode(text, take) >= 0xDC00 && $diagnosticCharCode(text, take) <= 0xDFFF) take--;
+          append($jsonQuote(keys[i]) + ":" + $jsonQuote($diagnosticSlice(text, 0, take)));
+          if (take < text.length) { append($jsonQuote(keys[i] + "Length") + ":" + text.length); append($jsonQuote(keys[i] + "Truncated") + ":true"); }
+        }
       }
       const numberKeys = ["line", "column"];
       for (let index = 0; index < numberKeys.length; index++) {
@@ -3099,7 +3117,7 @@ const $rt = {
   //    function never satisfies a function-typed return (assumption c
   //    — function-typed returns are never wrapped), only a byte-equal
   //    DEAL wrapper passes.
-  hostFunction: function $hostFunction(descriptor, f) {
+  hostFunction: function $hostFunction(descriptor, f, context) {
     if (typeof f !== "function") {
       $rt.fail("E8001", "expected function, got " + $kindOf(f), $undefined, $undefined, $undefined, "function", $kindOf(f));
     }
@@ -3110,6 +3128,14 @@ const $rt = {
     const $paramDescs = $parsed.$params;
     const $retDesc = $parsed.$ret;
     const $isNullRet = $retDesc === "null";
+    const fail = (boundary, parameter, code, message, file, line, column, expected, actual) => {
+      try { $rt.fail(code, message, file, line, column, expected, actual); }
+      catch (error) {
+        $diagnosticHostSet(error, {hostSignature: descriptor, hostBoundary: boundary, hostParameter: parameter,
+          hostModule: context && context.module, hostExport: context && context.name, hostDeclaration: context && context.declaration});
+        throw error;
+      }
+    };
     return {
       $kind: "function",
       $cls: "HOST",
@@ -3121,10 +3147,10 @@ const $rt = {
         const $column = $n >= 3 ? args[$n - 1] : $undefined;
         const $nargs = $n >= 3 ? $n - 3 : $n;
         if ($nargs < $paramDescs.length) {
-          $rt.fail("E8010", "expected at least " + $paramDescs.length + " arguments, got " + $nargs, $file, $line, $column);
+          fail("arity", $undefined, "E8010", "expected at least " + $paramDescs.length + " arguments, got " + $nargs, $file, $line, $column);
         }
         if ($nargs > $paramDescs.length) {
-          $rt.fail("E8010", "expected " + $paramDescs.length + " arguments, got " + $nargs, $file, $line, $column);
+          fail("arity", $undefined, "E8010", "expected " + $paramDescs.length + " arguments, got " + $nargs, $file, $line, $column);
         }
         const $checkedArgs = [];
         for (let $i = 0; $i < $paramDescs.length; $i++) {
@@ -3134,7 +3160,7 @@ const $rt = {
             if (!($e instanceof $DEALError)) {
               throw $e;
             }
-            $rt.fail("E8010", "parameter " + ($i + 1) + " type mismatch: " + $e.message, $file, $line, $column, $paramDescs[$i], $luaKindOf(args[$i]));
+            fail("parameter", "" + ($i + 1), "E8010", "parameter " + ($i + 1) + " type mismatch: " + $e.message, $file, $line, $column, $paramDescs[$i], $luaKindOf(args[$i]));
           }
         }
         // The raw host observes the declared host-facing value: each
@@ -3158,7 +3184,7 @@ const $rt = {
         const $r = $rt.reverseHostGraph($rawResult);
         if ($isNullRet) {
           if ($r === $undefined) {
-            $rt.fail("E8010", "return value 1 type mismatch: expected null, got nothing", $file, $line, $column, "null", "nothing");
+            fail("return", $undefined, "E8010", "return value 1 type mismatch: expected null, got nothing", $file, $line, $column, "null", "nothing");
           }
           try {
             return $rt.checkNull($r, $file, $line, $column);
@@ -3166,12 +3192,12 @@ const $rt = {
             if (!($e instanceof $DEALError)) {
               throw $e;
             }
-            $rt.fail("E8010", "return value 1 type mismatch: " + $e.message, $file, $line, $column, "null", $luaKindOf($r));
+            fail("return", $undefined, "E8010", "return value 1 type mismatch: " + $e.message, $file, $line, $column, "null", $luaKindOf($r));
           }
         }
         if ($r === $undefined && $retDesc === "void") return $undefined;
         if ($r === $undefined && !($retDesc === "unknown" || $retDesc === "undefined" || $retDesc === "null|undefined" || $retDesc.startsWith("!undefined") || $retDesc.startsWith("!") || $retDesc.startsWith("?!"))) {
-          $rt.fail("E8010", "return value 1 type mismatch: expected " + $retDesc + ", got nothing", $file, $line, $column, $retDesc, "nothing");
+          fail("return", $undefined, "E8010", "return value 1 type mismatch: expected " + $retDesc + ", got nothing", $file, $line, $column, $retDesc, "nothing");
         }
         try {
           const checked = $rt.checkType($retDesc, $r, $file, $line, $column);
@@ -3180,7 +3206,7 @@ const $rt = {
           if (!($e instanceof $DEALError)) {
             throw $e;
           }
-          $rt.fail("E8010", "return value 1 type mismatch: " + $e.message, $file, $line, $column, $retDesc, $luaKindOf($r));
+          fail("return", $undefined, "E8010", "return value 1 type mismatch: " + $e.message, $file, $line, $column, $retDesc, $luaKindOf($r));
         }
       },
     };
@@ -3209,7 +3235,7 @@ const $rt = {
   // await span). The two forms are told apart by the declared arity:
   // six trailing values are the call span plus the completion span,
   // three are a lone span used for both.
-  hostAsyncFunction: function $hostAsyncFunction(descriptor, f) {
+  hostAsyncFunction: function $hostAsyncFunction(descriptor, f, context) {
     if (typeof f !== "function") {
       $rt.fail("E8001", "expected function, got " + $kindOf(f), $undefined, $undefined, $undefined, "function", $kindOf(f));
     }
@@ -3219,6 +3245,14 @@ const $rt = {
     }
     const $paramDescs = $parsed.$params;
     const $retDesc = $asyncReturnDescriptor(descriptor);
+    const fail = (boundary, parameter, code, message, file, line, column, expected, actual) => {
+      try { $rt.fail(code, message, file, line, column, expected, actual); }
+      catch (error) {
+        $diagnosticHostSet(error, {hostSignature: descriptor, hostBoundary: boundary, hostParameter: parameter,
+          hostModule: context && context.module, hostExport: context && context.name, hostDeclaration: context && context.declaration});
+        throw error;
+      }
+    };
     return {
       $kind: "function",
       $cls: "HOST",
@@ -3239,10 +3273,10 @@ const $rt = {
         const $completionColumn = $trailing === 6 ? args[$n - 1] : $column;
         const $nargs = $n - $trailing;
         if ($nargs < $paramDescs.length) {
-          $rt.fail("E8010", "expected at least " + $paramDescs.length + " arguments, got " + $nargs, $file, $line, $column);
+          fail("arity", $undefined, "E8010", "expected at least " + $paramDescs.length + " arguments, got " + $nargs, $file, $line, $column);
         }
         if ($nargs > $paramDescs.length) {
-          $rt.fail("E8010", "expected " + $paramDescs.length + " arguments, got " + $nargs, $file, $line, $column);
+          fail("arity", $undefined, "E8010", "expected " + $paramDescs.length + " arguments, got " + $nargs, $file, $line, $column);
         }
         const $checkedArgs = [];
         for (let $i = 0; $i < $paramDescs.length; $i++) {
@@ -3252,7 +3286,7 @@ const $rt = {
             if (!($e instanceof $DEALError)) {
               throw $e;
             }
-            $rt.fail("E8010", "parameter " + ($i + 1) + " type mismatch: " + $e.message, $file, $line, $column, $paramDescs[$i], $luaKindOf(args[$i]));
+            fail("parameter", "" + ($i + 1), "E8010", "parameter " + ($i + 1) + " type mismatch: " + $e.message, $file, $line, $column, $paramDescs[$i], $luaKindOf(args[$i]));
           }
         }
         // The raw async host observes the declared host-facing value at
@@ -3267,7 +3301,7 @@ const $rt = {
         const $op = f(...$hostArgs);
         if (!($op && typeof $op.then === "function")) {
           const $got = $op === $undefined ? "nothing" : $carrierKind($op);
-          $rt.fail("E8010", "host async function must return an async operation, got " + $got, $file, $line, $column, "async operation", $got);
+          fail("async-shape", $undefined, "E8010", "host async function must return an async operation, got " + $got, $file, $line, $column, "async operation", $got);
         }
         const $v = $rt.reverseHostGraph(await $op);
         try {
@@ -3275,15 +3309,19 @@ const $rt = {
             $completionLine, $completionColumn);
           return $rt.admitHostArray($retDesc, checked);
         } catch ($completionError) {
+          let failure = $completionError;
           if ($completionError instanceof $DEALError
               && $completionError.actual === $kindOf($v)
               && $completionError.actual !== $completionKind($v)) {
-            throw new $DEALError($completionError.code,
+            failure = new $DEALError($completionError.code,
               $completionError.message, $completionError.file,
               $completionError.line, $completionError.column,
               $completionError.expected, $completionKind($v));
           }
-          throw $completionError;
+          if (failure instanceof $DEALError) $diagnosticHostSet(failure, {
+            hostSignature: descriptor, hostBoundary: "completion", hostModule: context && context.module,
+            hostExport: context && context.name, hostDeclaration: context && context.declaration});
+          throw failure;
         }
       },
     };
@@ -3329,7 +3367,7 @@ const $rt = {
   // ISSUE-0598 convergence). A caller that passes no module path keeps
   // the landed message forms without the module clause (the direct
   // runtime suite).
-  loadHost: function $loadHost(rawExports, declaredMap, $modulePath, file, line, column) {
+  loadHost: function $loadHost(rawExports, declaredMap, $modulePath, file, line, column, declarationModule) {
     const $inModule = typeof $modulePath === "string"
       ? " in module '" + $modulePath + "'" : "";
     if (declaredMap === null || typeof declaredMap !== "object") {
@@ -3373,8 +3411,8 @@ const $rt = {
           $rt.fail("E8011", "host export '" + $name + "'" + $inModule + " is not a function", file, line, column, "function", $rawShapeKind($v));
         }
         $surface[$name] = $parsed.$async
-            ? $rt.hostAsyncFunction($desc, $f)
-            : $rt.hostFunction($desc, $f);
+            ? $rt.hostAsyncFunction($desc, $f, {module: $modulePath, name: $name, declaration: declarationModule})
+            : $rt.hostFunction($desc, $f, {module: $modulePath, name: $name, declaration: declarationModule});
       } else if ($entry.$k === "class") {
         if ($parsed === null || $parsed.$t !== "class") {
           $rt.fail("E8011", "host export '" + $name + "'" + $inModule + " has an unsupported declared descriptor: " + $desc, file, line, column);
