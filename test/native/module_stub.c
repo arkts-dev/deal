@@ -174,6 +174,8 @@ static const char *const arm_parameters_24[] = {"actual"};
      DEAL_ARM_SCOPE_TOP_LEVEL, 1U, 1U}, \
     {25U, "E8001", "cyclic value cannot be encoded as JSON", NULL, 0U, \
      DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U}, \
+    {26U, "E8001", "expected integral digits in 0–100", NULL, 0U, \
+     DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U}, \
 
 
 #if DEAL_STUB_CASE == 8

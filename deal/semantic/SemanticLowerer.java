@@ -8330,6 +8330,14 @@ public final class SemanticLowerer {
                 }
             }
             if (call.callee() instanceof MemberAccessExpr member
+                    && checkedType(member.object()) instanceof Type.Number && member.field().equals("toFixed")) {
+                var entry = StdlibFunctionCatalog.entries().stream()
+                    .filter(row -> row.function() == StdlibFunctionId.NUMBER_TO_FIXED).findFirst().orElseThrow();
+                ValueId receiver = lowerOperand(member.object());
+                ValueId digits = lowerOperand(call.args().getFirst());
+                return emitStdlibAlgorithm(entry, List.of(receiver, digits), call.span(), slot);
+            }
+            if (call.callee() instanceof MemberAccessExpr member
                     && checkedType(member.object()) instanceof Type.String) {
                 deal.checker.StringIntrinsic intrinsic = deal.checker.StringIntrinsic.forMember(member.field());
                 if (intrinsic != null) {

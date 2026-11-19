@@ -33,6 +33,17 @@ public final class NumberSemantics {
         return (int) Math.min(available, Math.floor(value));
     }
 
+    public static boolean fixedDigits(double digits) {
+        return digits >= 0 && digits <= 100 && digits == Math.floor(digits);
+    }
+
+    /** Exact binary64 rounding, ties away from zero; callers admit digits first. */
+    public static String toFixed(double value, int digits) {
+        if (!Double.isFinite(value) || Math.abs(value) >= 1e21) return toString(value);
+        return (value < 0 ? "-" : "") + new BigDecimal(Math.abs(value))
+            .setScale(digits, RoundingMode.HALF_UP).toPlainString();
+    }
+
     public static String toString(double value) {
         if (Double.isNaN(value)) return "NaN";
         if (value == Double.POSITIVE_INFINITY) return "Infinity";

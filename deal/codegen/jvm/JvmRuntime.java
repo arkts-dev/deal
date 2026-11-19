@@ -2649,6 +2649,12 @@ case "NUMBER_ADD" -> {
                 }
 
 
+                case "NUMBER_TO_FIXED" -> {
+                    double digits = numberOf(args[1]);
+                    if (!deal.semantic.ir.NumberSemantics.fixedDigits(digits))
+                        throw new StdlibFailure(deal.semantic.ir.FailureArmId.NUMBER_FIXED_DIGITS, Map.of(), null, null);
+                    return deal.semantic.ir.NumberSemantics.toFixed(numberOf(args[0]), (int) digits);
+                }
                 case "MATH_POW" -> { return Math.pow(numberOf(args[0]), numberOf(args[1])); }
                 case "MATH_MIN" -> { return Math.min(numberOf(args[0]), numberOf(args[1])); }
                 case "MATH_MAX" -> { return Math.max(numberOf(args[0]), numberOf(args[1])); }

@@ -316,6 +316,7 @@ public class StdlibCallLoweringTest {
     private static FailurePolicyId expectedPolicy(StdlibFunctionId function) {
         return switch (function) {
             case CONSOLE_LOG, CONSOLE_ERROR -> FailurePolicyId.INFRASTRUCTURE_ONLY;
+            case NUMBER_TO_FIXED -> FailurePolicyId.NUMBER_FIXED_DIGITS;
             case STRING_LENGTH -> FailurePolicyId.NO_DEAL_FAILURE;
             case STRING_SUBSTRING, STRING_SLICE, STRING_INCLUDES_POSITION, STRING_STARTS_WITH_POSITION,
                  STRING_ENDS_WITH_POSITION, STRING_INDEX_OF, STRING_LAST_INDEX_OF -> FailurePolicyId.NO_DEAL_FAILURE;
@@ -329,8 +330,8 @@ public class StdlibCallLoweringTest {
     static void testPolicyTableSingleSource() {
         System.out.println("-- Single source: SemanticIrValidator.stdlibPolicy --");
 
-        check(StdlibFunctionId.values().length == 33,
-            "the closed StdlibFunctionId enum has exactly 33 values");
+        check(StdlibFunctionId.values().length == 34,
+            "the closed StdlibFunctionId enum has exactly 34 values");
         for (StdlibFunctionId function : StdlibFunctionId.values()) {
             check(SemanticIrValidator.stdlibPolicy(function) == expectedPolicy(function),
                 "stdlibPolicy(" + function + ") = "
@@ -433,6 +434,7 @@ public class StdlibCallLoweringTest {
                       let last: number = "abc".lastIndexOf("b",2);
                       let lower: string = "ΟΣ".toLowerCase();
                       let upper: string = "ß".toUpperCase();
+                      let fixed: string = (1.25).toFixed(1);
                       let converted: number = Number("42");
                       return null;
                     }

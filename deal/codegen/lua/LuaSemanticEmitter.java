@@ -10968,6 +10968,13 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
     local first, last = relative(__args[2]), relative(__args[3])
     return strings.substring.f(__args[1], first, math.max(first, last))
   end
+  if fn == "NUMBER_TO_FIXED" then
+    local places = __args[2]
+    if not (places >= 0 and places <= 100 and places == math.floor(places)) then
+      error(__arm("NUMBER_FIXED_DIGITS", {}, origin, nil, nil), 0)
+    end
+    return require("deal.runtime").number_fixed(__args[1], places)
+  end
   if fn == "STRING_TO_NUMBER" then return require("deal.runtime").string_to_number(__args[1]) end
   if fn == "STRING_TO_LOWER_CASE" or fn == "STRING_TO_UPPER_CASE" then
     return require("deal.runtime").string_change_case(__args[1], fn == "STRING_TO_UPPER_CASE")

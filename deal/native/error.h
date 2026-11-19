@@ -80,7 +80,8 @@
 #define DEAL_ARM_ID_JSON_TO_WALK_CYCLE             25u
 
 /* The number of arms the compiled closed repertoire declares. */
-#define DEAL_ARM_REPERTOIRE_COUNT 26U
+#define DEAL_ARM_ID_NUMBER_FIXED_DIGITS             26u
+#define DEAL_ARM_REPERTOIRE_COUNT 27U
 
 /* The two closed render scopes. */
 #define DEAL_ARM_SCOPE_TOP_LEVEL 0U

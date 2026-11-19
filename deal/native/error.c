@@ -153,6 +153,8 @@ static const deal_arm_repertoire_entry deal_arm_repertoire[] = {
     DEAL_ARM_ENTRY(JSON_STRINGIFY_UNSUPPORTED, deal_arm_parameters_24, 1U,
         DEAL_ARM_SCOPE_TOP_LEVEL, 1U, 1U),
     DEAL_ARM_ENTRY(JSON_TO_WALK_CYCLE, deal_arm_parameters_none, 0U,
+        DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U),
+    DEAL_ARM_ENTRY(NUMBER_FIXED_DIGITS, deal_arm_parameters_none, 0U,
         DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U)
 };
 

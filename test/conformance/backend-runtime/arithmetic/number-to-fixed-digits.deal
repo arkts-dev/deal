@@ -1,0 +1,7 @@
+// @spec: Standard library builtins — Number
+// @description: Invalid toFixed digits raise the range failure without expected/actual fields.
+// @expected: runtime-error E8001
+// @features: arithmetic, runtime-errors
+export function main():void {
+  let formatted=(1.25).toFixed(101);
+}

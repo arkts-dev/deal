@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "backends": ["luajit", "jvm", "js"],
+  "expected": {
+    "mode": "runtime-error",
+    "transcript": {
+      "stdout": "DEAL_ERROR_CODE: E8001\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8001\",\"message\":\"expected integral digits in 0–100\",\"sourceFile\":\"backend-runtime/arithmetic/number-to-fixed-digits.deal\",\"line\":6,\"column\":18}\n",
+      "stderr": ""
+    },
+    "exitCode": 1,
+    "error": {
+      "code": "E8001",
+      "message": "expected integral digits in 0–100",
+      "sourceFile": "backend-runtime/arithmetic/number-to-fixed-digits.deal",
+      "line": 6,
+      "column": 18
+    }
+  }
+}

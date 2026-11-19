@@ -38,6 +38,10 @@ public final class FailureContractRegistry {
             "propagation only: a propagated child/operand failure keeps its own frames",
             "only already-started child/operand failure may propagate"));
 
+        rows.put(FailurePolicyId.NUMBER_FIXED_DIGITS, makeRow(FailurePolicyId.NUMBER_FIXED_DIGITS,
+            DiagnosticCode.E8001, List.of("expected integral digits in 0–100"), List.of(),
+            ORIGIN_OPERATION, CAUSE_NONE, FRAMES_ACTIVE, "digits must be integral and in 0–100"));
+
         rows.put(FailurePolicyId.TYPE_DESCRIPTOR, makeRow(FailurePolicyId.TYPE_DESCRIPTOR,
             DiagnosticCode.E8001,
             List.of("expected {kind}",
@@ -242,6 +246,10 @@ rows.put(FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR,
     private static Map<FailureArmId, FailureArm> buildArms() {
         Map<FailureArmId, FailureArm> arms = new EnumMap<>(FailureArmId.class);
         List<FailureArm> declared = new ArrayList<>();
+
+        declared.add(arm(FailureArmId.NUMBER_FIXED_DIGITS, FailurePolicyId.NUMBER_FIXED_DIGITS, 0,
+            FailureArm.ExpectedSource.NONE, null, FailureArm.ActualProjection.NONE,
+            FailureArm.OriginConvention.BOUNDARY_CELL, FailureArm.RenderScope.TOP_LEVEL));
 
         declared.add(arm(FailureArmId.TYPED_BOUNDARY_KIND, FailurePolicyId.TYPE_DESCRIPTOR, 0,
             FailureArm.ExpectedSource.KIND_TOKEN, null, FailureArm.ActualProjection.TYPED_BOUNDARY,

@@ -1478,6 +1478,7 @@ public class SharedStdlibSemanticsTest {
             seed(StdlibFunctionId.STRING_TO_LOWER_CASE, Value.string("ΟΣ"), Value.string("ος")),
             seed(StdlibFunctionId.STRING_TO_UPPER_CASE, Value.string("ß"), Value.string("SS")),
             seed(StdlibFunctionId.STRING_TO_NUMBER, Value.string("42"), new Value.Number(42)),
+            new Seed(StdlibFunctionId.NUMBER_TO_FIXED, List.of(new Value.Number(1.25), new Value.Number(1)), Value.string("1.3")),
             new Seed(StdlibFunctionId.STRING_SLICE,
                 List.of(Value.string("abc"), new Value.Number(-2), new Value.Number(3)), Value.string("bc")));
     }
@@ -1536,6 +1537,7 @@ public class SharedStdlibSemanticsTest {
                       let last: number = "abc".lastIndexOf("b",2);
                       let lower: string = "ΟΣ".toLowerCase();
                       let upper: string = "ß".toUpperCase();
+                      let fixed: string = (1.25).toFixed(1);
                       let converted: number = Number("42");
                       return null;
                     }

@@ -109,6 +109,18 @@ public final class NumberProductionTest {
             if (number == 0) source.append("check(1/Number(\"").append(text).append("\")===")
                 .append(value.startsWith("-") ? "-1/0" : "1/0").append(");\n");
         }
+        var numbers = new java.util.ArrayList<Double>(List.of(-0.0, 0.0, -0.001, 1.25, 2.55,
+            1e21, 1e20, 1000000000000000128.0, Double.NaN, Double.POSITIVE_INFINITY,
+            Double.NEGATIVE_INFINITY, Double.MIN_VALUE));
+        for (int i = 0; i < 80; i++) numbers.add(Double.longBitsToDouble(random.nextLong()));
+        for (double number : numbers) for (int places : new int[]{0, 1, 2, 6, 50, 100}) {
+            String literal = Double.isNaN(number) ? "(0/0)" : number == Double.POSITIVE_INFINITY ? "(1/0)"
+                : number == Double.NEGATIVE_INFINITY ? "(-1/0)" : Double.toString(number);
+            String expectedFixed = run(List.of("node", "-e", "console.log((" + literal + ").toFixed(" + places + "))"), cwd).stdout().strip();
+            require(deal.semantic.ir.NumberSemantics.toFixed(number, places).equals(expectedFixed), "shared toFixed reference " + literal);
+            source.append("check((").append(literal).append(").toFixed(").append(places)
+                .append(")===\"").append(expectedFixed).append("\");\n");
+        }
         return source.append("}\n").toString();
     }
 

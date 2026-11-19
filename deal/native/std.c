@@ -100,8 +100,61 @@ static const deal_std_operation deal_std_operations[DEAL_STDLIB_OPERATION_COUNT]
     { deal_std_parameters_string, 1u, "string" },            /* STRING_TO_LOWER_CASE */
     { deal_std_parameters_string, 1u, "string" },            /* STRING_TO_UPPER_CASE */
     { deal_std_parameters_string, 1u, "number" },            /* STRING_TO_NUMBER */
-    { deal_std_parameters_numbers, 2u, "number" }            /* MATH_POW */
+    { deal_std_parameters_numbers, 2u, "number" },           /* MATH_POW */
+    { deal_std_parameters_numbers, 2u, "string" }            /* NUMBER_TO_FIXED */
 };
+
+/* Exact decimal integer expansion, rounded once at the requested decimal place.
+ * Fixed buffers cover the binary64 exponent range and at most 100 places. */
+static deal_string *deal_std_number_fixed(double value, int places) {
+    if (!isfinite(value) || fabs(value) >= 1e21) return deal_number_to_string(value);
+    unsigned char digits[1100] = {0};
+    size_t length = 0u;
+    int exponent;
+    uint64_t mantissa = (uint64_t)ldexp(frexp(fabs(value), &exponent), 53);
+    exponent -= 53;
+    do { digits[length++] = (unsigned char)(mantissa % 10u); mantissa /= 10u; } while (mantissa != 0u);
+    int scale = exponent < 0 ? -exponent : 0;
+    unsigned factor = exponent < 0 ? 5u : 2u;
+    int steps = exponent < 0 ? -exponent : exponent;
+    for (int step = 0; step < steps; step++) {
+        unsigned carry = 0u;
+        for (size_t i = 0; i < length; i++) {
+            unsigned n = digits[i] * factor + carry;
+            digits[i] = (unsigned char)(n % 10u); carry = n / 10u;
+        }
+        if (carry != 0u) {
+            if (length == sizeof(digits)) deal_platform_fault("number: exact decimal overflow");
+            digits[length++] = (unsigned char)carry;
+        }
+    }
+    int discard = scale - places;
+    if (discard > 0) {
+        unsigned carry = (size_t)discard <= length && digits[discard - 1] >= 5u;
+        size_t removed = (size_t)discard < length ? (size_t)discard : length;
+        length -= removed;
+        (void)memmove(digits, digits + removed, length);
+        if (length == 0u) digits[length++] = 0u;
+        for (size_t i = 0; carry != 0u && i < length; i++) {
+            unsigned n = digits[i] + carry; digits[i] = (unsigned char)(n % 10u); carry = n / 10u;
+        }
+        if (carry != 0u) digits[length++] = (unsigned char)carry;
+    } else if (discard < 0) {
+        size_t padding = (size_t)-discard;
+        if (length + padding > sizeof(digits)) deal_platform_fault("number: fixed decimal overflow");
+        (void)memmove(digits + padding, digits, length);
+        (void)memset(digits, 0, padding); length += padding;
+    }
+    while (length > 1u && digits[length - 1u] == 0u) length--;
+    char output[128]; size_t used = 0u;
+    if (value < 0.0) output[used++] = '-';
+    size_t total = length > (size_t)places ? length : (size_t)places + 1u;
+    for (size_t i = total; i > 0u; i--) {
+        output[used++] = (char)('0' + (i <= length ? digits[i - 1u] : 0u));
+        if (places != 0 && i == (size_t)places + 1u) output[used++] = '.';
+    }
+    return deal_text_new(output, used);
+}
 
 /* =========================================================================
  * Binary64 math primitives, computed without libm
@@ -747,6 +800,15 @@ static deal_data deal_std_evaluate(uint32_t operation_id,
     case DEAL_STDLIB_MATH_ABS_NUMBER:
         return deal_data_of_number(deal_std_abs(
             deal_std_number_argument(&arguments[0])));
+    case DEAL_STDLIB_NUMBER_TO_FIXED: {
+        double places = deal_std_number_argument(&arguments[1]);
+        if (!(places >= 0.0 && places <= 100.0 && places == floor(places))) {
+            *error = deal_error_materialize(DEAL_ARM_ID_NUMBER_FIXED_DIGITS, NULL, 0u,
+                NULL, NULL, origin, NULL);
+            return deal_data_of_undefined();
+        }
+        return deal_data_of_reference(DEAL_DATA_STRING, deal_std_number_fixed(deal_std_number_argument(&arguments[0]), (int)places));
+    }
     case DEAL_STDLIB_MATH_POW: {
         double a = deal_std_number_argument(&arguments[0]);
         double b = deal_std_number_argument(&arguments[1]);

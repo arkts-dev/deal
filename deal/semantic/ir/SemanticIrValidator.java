@@ -2634,6 +2634,7 @@ public final class SemanticIrValidator {
     /** The algorithm policy of each closed standard-library operation. */
     public static FailurePolicyId stdlibPolicy(StdlibFunctionId function) {
         return switch (function) {
+            case NUMBER_TO_FIXED -> FailurePolicyId.NUMBER_FIXED_DIGITS;
             case CONSOLE_LOG, CONSOLE_ERROR -> FailurePolicyId.INFRASTRUCTURE_ONLY;
             case STRING_TO_NUMBER, STRING_LENGTH, STRING_TO_LOWER_CASE, STRING_TO_UPPER_CASE -> FailurePolicyId.NO_DEAL_FAILURE;
             case STRING_SUBSTRING, STRING_SLICE, STRING_INCLUDES_POSITION, STRING_STARTS_WITH_POSITION,

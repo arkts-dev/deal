@@ -49,16 +49,7 @@ function __rt.string_to_number(text)
   return value or 0/0
 end
 
--- ECMAScript Number::toString: exact decimal expansion followed by the
--- shortest round-tripping, ties-to-even candidate. Shared by emitted numeric
--- conversion and deployed/emitted JSON encoders.
-function __rt.number_text(v)
-  if v ~= v then return "NaN" end
-  if v == math.huge then return "Infinity" end
-  if v == -math.huge then return "-Infinity" end
-  if v == 0 then return "0" end
-  local sign = v < 0 and "-" or ""
-  v = math.abs(v)
+local function exact_decimal(v)
   local m, e = math.frexp(v)
   local digits = string.format("%.0f", math.ldexp(m, 53))
   e = e - 53
@@ -73,13 +64,41 @@ function __rt.number_text(v)
     end
     digits = (carry > 0 and string.char(48 + carry) or "") .. table.concat(out)
   end
+  return digits, scale
+end
+
+local function decimal_increment(s)
+  local i = #s
+  while i > 0 and s:sub(i,i) == "9" do i = i - 1 end
+  if i == 0 then return "1" .. string.rep("0", #s) end
+  return s:sub(1,i-1) .. string.char(string.byte(s,i)+1) .. string.rep("0", #s-i)
+end
+
+function __rt.number_fixed(v, places)
+  if v ~= v or math.abs(v) >= 1e21 then return __rt.number_text(v) end
+  local sign = v < 0 and "-" or ""
+  local digits, scale = exact_decimal(math.abs(v))
+  local keep = #digits - scale + places
+  local rounded = keep > 0 and digits:sub(1,keep) or "0"
+  if keep >= #digits then rounded = digits .. string.rep("0", keep-#digits)
+  elseif keep >= 0 and digits:sub(keep+1,keep+1) >= "5" then rounded = decimal_increment(rounded) end
+  if places == 0 then return sign .. rounded end
+  if #rounded <= places then rounded = string.rep("0", places+1-#rounded) .. rounded end
+  return sign .. rounded:sub(1,#rounded-places) .. "." .. rounded:sub(#rounded-places+1)
+end
+
+-- ECMAScript Number::toString: exact decimal expansion followed by the
+-- shortest round-tripping, ties-to-even candidate. Shared by emitted numeric
+-- conversion and deployed/emitted JSON encoders.
+function __rt.number_text(v)
+  if v ~= v then return "NaN" end
+  if v == math.huge then return "Infinity" end
+  if v == -math.huge then return "-Infinity" end
+  if v == 0 then return "0" end
+  local sign = v < 0 and "-" or ""
+  v = math.abs(v)
+  local digits, scale = exact_decimal(v)
   local exponent = #digits - scale - 1
-  local function increment(s)
-    local i = #s
-    while i > 0 and s:sub(i,i) == "9" do i = i - 1 end
-    if i == 0 then return "1" .. string.rep("0", #s) end
-    return s:sub(1,i-1) .. string.char(string.byte(s,i)+1) .. string.rep("0", #s-i)
-  end
   local chosen, power
   for precision = 1, 17 do
     local lower = digits:sub(1,precision)
@@ -88,7 +107,7 @@ function __rt.number_text(v)
     local tail = digits:sub(precision+2):find("[1-9]") ~= nil
     local up = nextDigit ~= "" and (nextDigit > "5" or
       (nextDigit == "5" and (tail or tonumber(lower:sub(-1)) % 2 == 1)))
-    local upper = increment(lower)
+    local upper = decimal_increment(lower)
     local rounded, other = lower, upper
     if up then rounded, other = upper, lower end
     power = exponent - precision + 1

@@ -468,18 +468,18 @@ public final class LlvmProjectEmissionTest {
 
     /** The decoded text of one emitted LLVM string constant body. */
     private static String unescapeLlvmString(String body) {
-        StringBuilder text = new StringBuilder();
+        var bytes = new java.io.ByteArrayOutputStream();
         for (int index = 0; index < body.length(); index++) {
             char character = body.charAt(index);
             if (character != '\\') {
-                text.append(character);
+                bytes.write(character);
                 continue;
             }
             String hex = body.substring(index + 1, index + 3);
-            text.append((char) Integer.parseInt(hex, 16));
+            bytes.write(Integer.parseInt(hex, 16));
             index += 2;
         }
-        String value = text.toString();
+        String value = bytes.toString(StandardCharsets.UTF_8);
         return value.endsWith("\u0000")
             ? value.substring(0, value.length() - 1) : value;
     }

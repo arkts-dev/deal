@@ -43,7 +43,8 @@ public enum FailurePolicyId {
     THROW_TRANSFER,
     INFRASTRUCTURE_ONLY,
     JSON_RECONSTRUCTION,
-    ARRAY_PRESENT_ELEMENT;
+    ARRAY_PRESENT_ELEMENT,
+    NUMBER_FIXED_DIGITS;
 
     /**
      * The reserved policy names, invalid as {@code FailurePolicyId} values

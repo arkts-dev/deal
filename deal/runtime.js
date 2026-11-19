@@ -1924,6 +1924,13 @@ const $rt = {
   // is produced through it (D3/D5). Throws a $DEALError carrying code,
   // $dealCode, message (via super), and the defined location/expected/
   // actual fields (the _err absent-field convention, deal/runtime.lua:19-32).
+  numberToFixed: function $numberToFixed(value, digits, file, line, column) {
+    if (!(digits >= 0 && digits <= 100 && Math.floor(digits) === digits)) {
+      $rt.fail("E8001", "expected integral digits in 0–100", file, line, column);
+    }
+    return value.toFixed(digits);
+  },
+
   fail: function $fail(code, message, file, line, column, expected, actual) {
     throw new $DEALError(code, message, file, line, column, expected, actual);
   },

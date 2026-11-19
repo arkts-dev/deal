@@ -2306,6 +2306,7 @@ public final class TypeChecker {
         if (receiver instanceof Type.Array && List.of("map", "find", "findIndex", "filter", "some", "every",
                 "push", "pop", "splice", "slice", "includes", "indexOf", "join").contains(member.field()))
             return "Array." + member.field();
+        if (receiver instanceof Type.Number && member.field().equals("toFixed")) return "Number.toFixed";
         if (receiver instanceof Type.String && StringIntrinsic.forMember(member.field()) != null)
             return "String." + member.field();
         return "";
@@ -2393,6 +2394,14 @@ public final class TypeChecker {
 
         String field = mae.field();
 
+        if (objType instanceof Type.Number && field.equals("toFixed")) {
+            if (directBuiltinCall == null || mae != directBuiltinCall.callee()) {
+                directOnlyError("Receiver intrinsics support direct calls only", mae.span(),
+                        "Number.toFixed", "call.receiver-direct-only");
+                return Type.Error.INSTANCE;
+            }
+            return new Type.Func(List.of(Type.Number.INSTANCE), Type.String.INSTANCE);
+        }
         if (objType instanceof Type.String) {
             StringIntrinsic intrinsic = StringIntrinsic.forMember(field);
             if (intrinsic != null) {

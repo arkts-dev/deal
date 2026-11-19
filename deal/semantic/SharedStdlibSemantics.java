@@ -485,6 +485,13 @@ public final class SharedStdlibSemantics {
                 mathAbsNumber(origin, numberOf(argv, 0, function));
 
 
+            case NUMBER_TO_FIXED -> {
+                double digits = numberOf(argv, 1, function);
+                if (!deal.semantic.ir.NumberSemantics.fixedDigits(digits))
+                    yield failOf(FailurePolicyId.NUMBER_FIXED_DIGITS, 0, null, null, Map.of(), origin);
+                yield new Outcome.Success<>(Value.string(deal.semantic.ir.NumberSemantics.toFixed(
+                    numberOf(argv, 0, function), (int) digits)));
+            }
             case MATH_POW -> new Outcome.Success<>(new Value.Number(Math.pow(numberOf(argv, 0, function), numberOf(argv, 1, function))));
             case MATH_MIN -> new Outcome.Success<>(new Value.Number(Math.min(numberOf(argv, 0, function), numberOf(argv, 1, function))));
             case MATH_MAX -> new Outcome.Success<>(new Value.Number(Math.max(numberOf(argv, 0, function), numberOf(argv, 1, function))));
@@ -509,7 +516,7 @@ public final class SharedStdlibSemantics {
         return switch (function) {
             case TIME_NOW_MILLIS -> 0;
             case STRING_TO_NUMBER, CONSOLE_LOG, CONSOLE_ERROR, STRING_TO_LOWER_CASE, STRING_TO_UPPER_CASE, STRING_LENGTH, STRING_TRIM, TABLE_KEYS, JSON_PARSE, JSON_STRINGIFY, MATH_FLOOR, MATH_CEIL, MATH_SQRT, MATH_ABS_NUMBER, MATH_ROUND, NUMBER_IS_FINITE, NUMBER_IS_NAN -> 1;
-            case STRING_CONTAINS, STRING_STARTS_WITH, STRING_ENDS_WITH, STRING_SPLIT, MATH_MIN, MATH_MAX, MATH_POW -> 2;
+            case STRING_CONTAINS, STRING_STARTS_WITH, STRING_ENDS_WITH, STRING_SPLIT, MATH_MIN, MATH_MAX, MATH_POW, NUMBER_TO_FIXED -> 2;
             case STRING_SUBSTRING, STRING_SLICE, STRING_REPLACE, STRING_INCLUDES_POSITION,
                  STRING_STARTS_WITH_POSITION, STRING_ENDS_WITH_POSITION, STRING_INDEX_OF, STRING_LAST_INDEX_OF -> 3;
         };

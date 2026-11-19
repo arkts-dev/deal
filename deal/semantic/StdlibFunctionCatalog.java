@@ -138,7 +138,8 @@ public final class StdlibFunctionCatalog {
         new Entry(StdlibFunctionId.STRING_TO_LOWER_CASE, "builtin.string", "toLowerCase", List.of(STRING), STRING),
         new Entry(StdlibFunctionId.STRING_TO_UPPER_CASE, "builtin.string", "toUpperCase", List.of(STRING), STRING),
         new Entry(StdlibFunctionId.STRING_TO_NUMBER, "builtin.number", "Number", List.of(STRING), NUMBER),
-        new Entry(StdlibFunctionId.MATH_POW, "builtin.math", "pow", List.of(NUMBER, NUMBER), NUMBER)
+        new Entry(StdlibFunctionId.MATH_POW, "builtin.math", "pow", List.of(NUMBER, NUMBER), NUMBER),
+        new Entry(StdlibFunctionId.NUMBER_TO_FIXED, "builtin.number", "toFixed", List.of(NUMBER, NUMBER), STRING)
     );
 
     /** The ordinary callable subset of the closed algorithm signatures. */
