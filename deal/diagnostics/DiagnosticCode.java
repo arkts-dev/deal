@@ -355,7 +355,8 @@ public enum DiagnosticCode {
     public enum Phase {
         FRONTEND,
         BACKEND_LOWERING,
-        RUNTIME
+        RUNTIME,
+        AMENDMENT_PROTOCOL
     }
 
     private static final Map<String, DiagnosticCode> BY_CODE = new HashMap<>();
@@ -407,6 +408,7 @@ public enum DiagnosticCode {
                 case FRONTEND -> DiagnosticClassification.Responsibility.SOURCE_CONTRACT;
                 case BACKEND_LOWERING -> DiagnosticClassification.Responsibility.COMPILER_CONTRACT;
                 case RUNTIME -> DiagnosticClassification.Responsibility.RUNTIME_CONTRACT;
+                case AMENDMENT_PROTOCOL -> throw new IllegalStateException("Language code registered in protocol phase");
             };
         };
         return new DiagnosticClassification(phase, category, responsibility);

@@ -236,9 +236,9 @@ public final class CompilerProtocol {
                     relatedIds, repairScopes, request, notes, operationIndex, missingSymbols, excerpt, occurrence);
         }
 
-        /** Registered language contract only; protocol/extension codes have no invented language classification. */
+        /** Explicit language/core protocol registrations only; no classification by code prefix. */
         public deal.diagnostics.DiagnosticClassification classification() {
-            return deal.diagnostics.DiagnosticClassification.forCode(code);
+            return RepairDiagnosticRegistry.coreClassification(code);
         }
 
         public deal.diagnostics.DiagnosticEditOffer editOffer() {

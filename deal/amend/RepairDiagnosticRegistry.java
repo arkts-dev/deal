@@ -25,6 +25,16 @@ public final class RepairDiagnosticRegistry {
         }
         return new RepairDiagnosticRegistry(result);
     }
+    /** Only explicit core protocol registrations classify; extensions gain no classification by prefix. */
+    public static deal.diagnostics.DiagnosticClassification coreClassification(String code) {
+        var language = deal.diagnostics.DiagnosticClassification.forCode(code);
+        if (language != null) return language;
+        if (core().codes.get(code) != Category.PROTOCOL) return null;
+        return new deal.diagnostics.DiagnosticClassification(DiagnosticCode.Phase.AMENDMENT_PROTOCOL,
+            deal.diagnostics.DiagnosticClassification.Category.PROTOCOL,
+            deal.diagnostics.DiagnosticClassification.Responsibility.PROTOCOL_CONTRACT);
+    }
+
     public Map<String, Category> codes() { return codes; }
     public boolean contains(String code) { return codes.containsKey(code); }
 }

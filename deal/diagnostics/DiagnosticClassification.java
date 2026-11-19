@@ -7,12 +7,12 @@ public record DiagnosticClassification(DiagnosticCode.Phase phase, Category cate
                                        Responsibility responsibility) {
     public enum Category {
         SYNTAX, NAME_RESOLUTION, MODULE_RESOLUTION, CONFIGURATION, TYPE_CHECKING,
-        CONSTRUCTION, CALL, CONTROL_FLOW, LOWERING, DECLARATION_FILE, RUNTIME_BOUNDARY
+        CONSTRUCTION, CALL, CONTROL_FLOW, LOWERING, DECLARATION_FILE, RUNTIME_BOUNDARY, PROTOCOL
     }
 
     /** The contract to inspect; runtime codes alone cannot attribute source versus host blame. */
     public enum Responsibility {
-        SOURCE_CONTRACT, CONFIGURATION_CONTRACT, HOST_CONTRACT, COMPILER_CONTRACT, RUNTIME_CONTRACT
+        SOURCE_CONTRACT, CONFIGURATION_CONTRACT, HOST_CONTRACT, COMPILER_CONTRACT, RUNTIME_CONTRACT, PROTOCOL_CONTRACT
     }
 
     public DiagnosticClassification {

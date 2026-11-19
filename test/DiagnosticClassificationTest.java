@@ -129,6 +129,13 @@ public class DiagnosticClassificationTest {
         check(deal.diagnostics.DiagnosticClassification.forCode("E9999") == null
                         && deal.diagnostics.DiagnosticClassification.forCode("CP1001") == null,
                 "unknown/extension/protocol codes do not gain classifications by prefix");
+        var protocolContract = new deal.amend.CompilerProtocol.StructuredDiagnostic("CP1001", "error", "stale", range,
+                new deal.amend.CompilerProtocol.SemanticId("owner"), "", "", List.of(), List.of(), null);
+        check(protocolContract.classification().phase() == DiagnosticCode.Phase.AMENDMENT_PROTOCOL
+                && protocolContract.classification().responsibility() == deal.diagnostics.DiagnosticClassification.Responsibility.PROTOCOL_CONTRACT,
+            "explicit core protocol registration names a protocol contract, not source blame");
+        check(deal.amend.RepairDiagnosticRegistry.coreClassification("CP9999") == null,
+            "unregistered protocol-looking extension remains unclassified");
         var extension = new deal.amend.CompilerProtocol.StructuredDiagnostic("CUSTOM", "error", "opaque", range,
                 new deal.amend.CompilerProtocol.SemanticId("owner"), "", "", List.of(), List.of(), null);
         check(deal.amend.CompilerProtocolJson.encode(extension).contains("\"classification\":null"),
