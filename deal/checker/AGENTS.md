@@ -13,8 +13,9 @@ Publish exact checked facts; downstream phases must not rediscover meaning.
 - Resolve unused field annotations and reject duplicate declared fields before
   layout planning. Recursive classes are legal. Require all nonoptional literal
   fields, including nullable fields and Error name/message.
-- Void is result-only; reject inferred void array elements before type construction.
-  Functions returning void remain legal data. TypeChecker alone owns definite
+- Void and never are result-only; reject inferred result-only array elements before
+  type construction. Functions returning either remain legal data. Never terminates
+  only statement/return evaluation, not assignment compatibility or catch paths. TypeChecker alone owns definite
   returns: only void permits fallthrough; catch has no separate return obligation.
 - Preserve const/declaration/import immutability without freezing referenced
   aggregates. Let-bound functions remain mutable. Resolve signatures in enclosing
@@ -61,7 +62,7 @@ Function/arrow expression parameters may omit annotations only under an existing
 positional signature. Resolve their bindings and exact providers before body checks;
 never infer from bodies. Declaration parameters and all results stay explicit.
 Array callback contexts derive from receiver/source; ordinary shorter-arity
-adaptation remains. Void expression-bodied arrows require void expressions.
+adaptation remains. Void expression-bodied arrows require void or terminating never expressions.
 
 Conditional arms receive result context and their own guard states. Without an
 outer target, a literal arm uses its independently typed sibling's exact array/

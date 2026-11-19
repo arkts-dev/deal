@@ -16,7 +16,7 @@ Numeric prefix `++`/`--` yield the new value; postfix yields the old value.
 No line break before postfix updates; write `- -x` for double negation.
 Arrows have parenthesized parameters and
 explicit results: `(x: number): number => x * 2`. Block/expression bodies are legal;
-a void expression body must produce void. Keep async with its parameter opening
+a void expression body must produce void or terminate with never. Keep async with its parameter opening
 and the result annotation with => on the same line.
 
 Strings support character, hexadecimal-unit and Unicode escapes, preserving lone
@@ -28,7 +28,9 @@ physical CR/CRLF normalizes to LF.
 
 Data types: null, undefined, unknown, boolean, number, string,
 Record<string, unknown>, nominal classes, invariant arrays and functions.
-Null/undefined permissions are independent; void is result-only. Extract unknown
+Null/undefined permissions are independent; void and never are result-only.
+Use `never`/`Promise<never>` for always-throwing helpers; calls/awaits terminate
+statement or return evaluation, without changing exact function-result matching. Extract unknown
 with checked `as` or typeof/instanceof refinement. Assertions preserve identity,
 do not coerce and throw E8001 on mismatch.
 
@@ -154,9 +156,10 @@ Casing uses locale-independent Unicode default mappings, expansions and final si
 
 ## Builtin calls
 
-Math.floor/ceil/sqrt/abs/round take one number; Math.min/max take two. Preserve NaN
+Math.floor/ceil/sqrt/abs/round take one number; Math.min/max/pow take two. Preserve NaN
 and signed zero; round ties toward +infinity and returns binary64, not a bounded
-integer. String(number) uses ECMAScript decimal text. Number(string) uses whole-
+integer. `n.toFixed(digits)` formats with ECMAScript decimal rounding; supply an
+integral digits value in 0–100 (otherwise E8001). String(number) uses ECMAScript decimal text. Number(string) uses whole-
 string conversion: malformed -> NaN, empty/whitespace -> zero; exponents, radix
 prefixes and Infinity work. Number.isFinite/isNaN accept unknown without coercion/
 narrowing. Date.now() returns epoch milliseconds. console.log/error take strings.

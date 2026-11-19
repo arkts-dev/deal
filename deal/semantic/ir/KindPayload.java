@@ -49,6 +49,7 @@ public sealed interface KindPayload
             KindPayload.LoopPayload,
             KindPayload.ForEachPayload,
             KindPayload.TryCatchPayload,
+            KindPayload.UnreachablePayload,
             KindPayload.ThrowPayload,
             KindPayload.ReturnPayload,
             KindPayload.BreakPayload,
@@ -912,6 +913,11 @@ public sealed interface KindPayload
             Objects.requireNonNull(catchBinding, "catchBinding must not be null");
             Objects.requireNonNull(catchBlock, "catchBlock must not be null");
         }
+    }
+
+    /** No successful completion is permitted after a never-result invocation. */
+    record UnreachablePayload(ValueId completion) implements KindPayload {
+        public UnreachablePayload { Objects.requireNonNull(completion); }
     }
 
     /**

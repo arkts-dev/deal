@@ -883,6 +883,7 @@ public final class ContractSnapshotCanonicalizer {
                 CanonicalJson.e("catchBinding", semanticIdJson(p.catchBinding())),
                 CanonicalJson.e("catchBlock", semanticIdJson(p.catchBlock())),
                 CanonicalJson.e("tryBlock", semanticIdJson(p.tryBlock())));
+            case KindPayload.UnreachablePayload p -> CanonicalJson.obj(CanonicalJson.e("completion", semanticIdJson(p.completion())));
             case KindPayload.ThrowPayload p -> CanonicalJson.obj(
                 CanonicalJson.e("errorValue", semanticIdJson(p.errorValue())));
             case KindPayload.ReturnPayload p -> CanonicalJson.obj(

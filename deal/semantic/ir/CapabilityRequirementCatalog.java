@@ -113,7 +113,7 @@ public final class CapabilityRequirementCatalog {
             RequiredOperation.of("EXTERNAL_ENTRY", SemanticOpKind.EXTERNAL_ENTRY),
             RequiredOperation.of("ASYNC_START", SemanticOpKind.ASYNC_START),
             RequiredOperation.of("AWAIT", SemanticOpKind.AWAIT),
-            RequiredOperation.of("RETURN", SemanticOpKind.RETURN),
+            RequiredOperation.of("RETURN or UNREACHABLE", SemanticOpKind.RETURN, SemanticOpKind.UNREACHABLE),
             RequiredOperation.of("ENTRY_INVOKE", SemanticOpKind.ENTRY_INVOKE),
             RequiredOperation.of("FUNCTION_ADAPT", SemanticOpKind.FUNCTION_ADAPT)));
 

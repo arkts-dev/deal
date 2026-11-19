@@ -40,22 +40,37 @@ public final class ReturnAnalysis {
 
     private ReturnAnalysis() {}
 
-    /**
-     * Checks whether a block definitely returns on all reachable paths.
-     */
-    public static boolean definitelyReturns(Block block) {
-        return blockReturns(block.statements());
+    public static boolean definitelyReturns(Block block) { return definitelyReturns(block, expression -> false); }
+    public static boolean definitelyReturns(StatementNode statement) { return new Analysis(expression -> false).definitelyReturns(statement); }
+    public static boolean cannotCompleteNormally(StatementNode statement) { return cannotCompleteNormally(statement, expression -> false); }
+    public static ReturnObligation unmetObligation(Block block) { return new Analysis(expression -> false).unmetObligation(block); }
+    public static boolean definitelyReturns(Block block, java.util.function.Predicate<ExpressionNode> terminates) {
+        return new Analysis(terminates).definitelyReturns(block);
+    }
+    public static boolean cannotCompleteNormally(StatementNode statement, java.util.function.Predicate<ExpressionNode> terminates) {
+        return new Analysis(terminates).cannotCompleteNormally(statement);
     }
 
     /** Diagnostic-only unmet obligation; it is not a feasible execution witness. */
     public record ReturnObligation(Span span, String explanation) {}
+
+    private static final class Analysis {
+        private final java.util.function.Predicate<ExpressionNode> terminates;
+        Analysis(java.util.function.Predicate<ExpressionNode> terminates) { this.terminates = terminates; }
+
+    /**
+     * Checks whether a block definitely returns on all reachable paths.
+     */
+    public boolean definitelyReturns(Block block) {
+        return blockReturns(block.statements());
+    }
 
     /**
      * Labels one representative construct rejected by the existing return rule.
      * Never evaluates conditions or claims that an arm/loop is executable. A
      * later definite return discharges an earlier conditional obligation.
      */
-    public static ReturnObligation unmetObligation(Block block) {
+    public ReturnObligation unmetObligation(Block block) {
         if (definitelyReturns(block)) return null;
         StatementNode representative = block;
         for (StatementNode statement : block.statements()) {
@@ -67,7 +82,7 @@ public final class ReturnAnalysis {
             "Body's final reachable statement does not establish the required return or throw");
     }
 
-    private static ReturnObligation unmetStatementObligation(StatementNode statement) {
+    private ReturnObligation unmetStatementObligation(StatementNode statement) {
         if (statement instanceof Block block) {
             if (block.statements().isEmpty())
                 return new ReturnObligation(block.span(), "Empty body has no required return or throw");
@@ -101,7 +116,7 @@ public final class ReturnAnalysis {
     /**
      * Checks whether a statement definitely returns.
      */
-    public static boolean definitelyReturns(StatementNode stmt) {
+    public boolean definitelyReturns(StatementNode stmt) {
         return returnsOnAllPaths(stmt);
     }
 
@@ -110,7 +125,7 @@ public final class ReturnAnalysis {
      * statement that cannot complete normally decides, and the statements
      * after it are unreachable.
      */
-    private static boolean blockReturns(java.util.List<StatementNode> stmts) {
+    private boolean blockReturns(java.util.List<StatementNode> stmts) {
         for (StatementNode stmt : stmts) {
             if (!cannotCompleteNormally(stmt)) {
                 continue;
@@ -126,7 +141,8 @@ public final class ReturnAnalysis {
      * Checks whether one non-completing statement exits by a
      * {@code return}/{@code throw} on every path (the composite rule).
      */
-    private static boolean returnsOnAllPaths(StatementNode stmt) {
+    private boolean returnsOnAllPaths(StatementNode stmt) {
+        if (stmt instanceof ExpressionStatement expression && terminates.test(expression.expr())) return true;
         if (stmt instanceof ReturnStatement) return true;
         if (stmt instanceof ThrowStatement) return true;
         if (stmt instanceof BreakStatement) return false;
@@ -167,7 +183,8 @@ public final class ReturnAnalysis {
      * additionally requires the non-completing paths to exit by
      * return/throw ({@link #returnsOnAllPaths}).
      */
-    public static boolean cannotCompleteNormally(StatementNode stmt) {
+    public boolean cannotCompleteNormally(StatementNode stmt) {
+        if (stmt instanceof ExpressionStatement expression && terminates.test(expression.expr())) return true;
         if (stmt instanceof ReturnStatement) return true;
         if (stmt instanceof ThrowStatement) return true;
         if (stmt instanceof BreakStatement) return true;
@@ -200,7 +217,7 @@ public final class ReturnAnalysis {
 
     /** Checks whether a statement list cannot complete normally (its first
      * non-completing statement, if any, ends the walk). */
-    private static boolean blockCannotComplete(java.util.List<StatementNode> stmts) {
+    private boolean blockCannotComplete(java.util.List<StatementNode> stmts) {
         for (StatementNode stmt : stmts) {
             if (cannotCompleteNormally(stmt)) {
                 return true;
@@ -226,7 +243,7 @@ public final class ReturnAnalysis {
      * {@code break} behind a terminator is unreachable and never counts —
      * the spec's "unconditional return before any possible break" rule).
      */
-    private static boolean containsBreak(StatementNode stmt) {
+    private boolean containsBreak(StatementNode stmt) {
         if (stmt instanceof BreakStatement) return true;
         if (stmt instanceof Block block) {
             for (StatementNode child : block.statements()) {
@@ -252,5 +269,6 @@ public final class ReturnAnalysis {
         }
         // Nested loops and nested function bodies own their transfers.
         return false;
+    }
     }
 }

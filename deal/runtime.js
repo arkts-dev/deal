@@ -319,11 +319,11 @@ function $parseOne($d, $cps, $st, $resultPosition = false) {
     return $parseClass($d, $cps, $st);
   }
   // Primitive keywords (disjoint, so order does not matter).
-  const $keywords = ["null", "undefined", "unknown", "void", "boolean", "number", "string", "record"];
+  const $keywords = ["null", "undefined", "unknown", "void", "never", "boolean", "number", "string", "record"];
   for (let $k = 0; $k < $keywords.length; $k++) {
     if ($matchKeyword($cps, $st.$pos, $keywords[$k])) {
       const $name = $keywords[$k];
-      if ($name === "void" && !$resultPosition) return null;
+      if (($name === "void" || $name === "never") && !$resultPosition) return null;
       $st.$pos += $name.length;
       return { $t: "primitive", $name: $name };
     }
@@ -382,7 +382,7 @@ function $parseNullable($d, $cps, $st) {
   const $inner = $parseOne($d, $cps, $st);
   if ($inner === null) return null;
   if ($inner.$t === "nullable") return null;
-  if ($inner.$t === "primitive" && ($inner.$name === "unknown" || $inner.$name === "void"
+  if ($inner.$t === "primitive" && ($inner.$name === "unknown" || $inner.$name === "void" || $inner.$name === "never"
       || ($null && $inner.$name === "null") || ($undefinedAllowed && $inner.$name === "undefined"))) return null;
   return { $t: "nullable", $inner: $slice($d, $cps, $innerStart, $st.$pos), $null, $undefined: $undefinedAllowed };
 }
@@ -2347,6 +2347,9 @@ const $rt = {
       if ($parsed.$name === "string") {
         return $rt.checkString(v, file, line, column);
       }
+      if ($parsed.$name === "never") {
+        $rt.fail("E8001", "expected never", file, line, column, "never", $kindOf(v));
+      }
       if ($parsed.$name === "undefined" || $parsed.$name === "void") {
         if (v === $undefined) return v;
         $rt.fail("E8001", "expected undefined", file, line, column, "undefined", $kindOf(v));
@@ -3227,6 +3230,7 @@ const $rt = {
             fail("return", $undefined, "E8010", "return value 1 type mismatch: " + $e.message, $file, $line, $column, "null", $luaKindOf($r));
           }
         }
+        if ($retDesc === "never") return $rt.checkType("never", $r, $file, $line, $column);
         if ($r === $undefined && $retDesc === "void") return $undefined;
         if ($r === $undefined && !($retDesc === "unknown" || $retDesc === "undefined" || $retDesc === "null|undefined" || $retDesc.startsWith("!undefined") || $retDesc.startsWith("!") || $retDesc.startsWith("?!"))) {
           fail("return", $undefined, "E8010", "return value 1 type mismatch: expected " + $retDesc + ", got nothing", $file, $line, $column, $retDesc, "nothing");

@@ -753,7 +753,7 @@ declared.add(arm(FailureArmId.ARRAY_ELEMENT_KIND,
     // =========================================================================
 
     /** The closed typed-boundary kind tokens (P2 item 1). */
-    private static final Set<String> KIND_TOKENS = Set.of("null", "undefined", "unknown", "void", "boolean",
+    private static final Set<String> KIND_TOKENS = Set.of("null", "undefined", "unknown", "void", "never", "boolean",
         "number", "string", "table", "array", "function", "class");
 
     /**
@@ -763,7 +763,7 @@ declared.add(arm(FailureArmId.ARRAY_ELEMENT_KIND,
      * {@code class} — and a foreign text never derives a DEAL-visible
      * token.
      */
-    private static final Set<String> KIND_TEXTS = Set.of("null", "undefined", "unknown", "void", "boolean",
+    private static final Set<String> KIND_TEXTS = Set.of("null", "undefined", "unknown", "void", "never", "boolean",
         "number", "string", "table", "array", "function",
         "class instance");
 
@@ -1040,7 +1040,7 @@ declared.add(arm(FailureArmId.ARRAY_ELEMENT_KIND,
     }
 
     /** The closed scalar spellings shared by both descriptor dialects. */
-    private static final List<String> DESCRIPTOR_PRIMITIVES = List.of("null", "undefined", "unknown", "void", "boolean",
+    private static final List<String> DESCRIPTOR_PRIMITIVES = List.of("null", "undefined", "unknown", "void", "never", "boolean",
         "number", "string", "record");
 
     /**

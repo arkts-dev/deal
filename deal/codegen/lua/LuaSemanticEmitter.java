@@ -1599,6 +1599,8 @@ public final class LuaSemanticEmitter {
                 case LOOP -> emitLoop(op);
                 case FOR_EACH -> emitForEach(op);
                 case TRY_CATCH -> emitTryCatch(op);
+                case UNREACHABLE -> out.append("error(__arm(\"TYPED_BOUNDARY_KIND\", {kind=\"never\"}, ")
+                    .append(luaString(originOf(op))).append(", \"never\", \"undefined\"), 0)\n");
                 case THROW -> emitThrow(op);
                 case RETURN -> emitReturn(op);
                 case BREAK -> emitBreak(op);
@@ -7236,6 +7238,8 @@ local function __hostCellAtom(kind, v)
   return __atom(kind, v)
 end
 local function __hostReturnCell(desc, v, origin, nothing)
+  if desc == "never" then return error(__arm("TYPED_BOUNDARY_KIND", {kind="never"}, origin,
+    "never", __typedActual("ref", v)), 0) end
   if nothing and v == nil then
     return error(__arm("HOST_SYNC_RETURN_NOTHING", {expected = desc}, origin, desc,
       "nothing"), 0)
@@ -7432,6 +7436,7 @@ local function __hostError(e, origin)
   end
   return __failExpr(e.code, e.message, o, e.expected, e.actual)
 end
+__factories.__hostError = __hostError
 """;
 
     /**
@@ -8916,14 +8921,14 @@ end
 -- The closed field shapes of the arm declaration (P2): a caller-supplied
 -- expected/actual token outside its arm's declared shape is a producer
 -- defect — the renderer never publishes a fabricated field.
-local __kindTokens = {["null"] = true, ["undefined"] = true, ["unknown"] = true, ["void"] = true, ["boolean"] = true,
+local __kindTokens = {["never"] = true, ["null"] = true, ["undefined"] = true, ["unknown"] = true, ["void"] = true, ["boolean"] = true,
   ["number"] = true, ["string"] = true, ["table"] = true,
   ["array"] = true, ["function"] = true, ["class"] = true}
 -- The closed typed-boundary kind *texts* (P2 item 3): the {kind} parameter
 -- of a KIND_TOKEN arm is one of these (a class projects "class instance"
 -- while its token is "class"), so an invented kind text never derives a
 -- DEAL-visible token through the authority.
-local __kindTexts = {["null"] = true, ["undefined"] = true, ["unknown"] = true, ["void"] = true, ["boolean"] = true,
+local __kindTexts = {["never"] = true, ["null"] = true, ["undefined"] = true, ["unknown"] = true, ["void"] = true, ["boolean"] = true,
   ["number"] = true, ["string"] = true, ["table"] = true,
   ["array"] = true, ["function"] = true, ["class instance"] = true}
 local __typedTokens = {["nil"] = true, ["undefined"] = true, ["null"] = true, ["boolean"] = true,
@@ -8942,7 +8947,7 @@ local __carrierTokens = {["nil"] = true, ["undefined"] = true, ["table"] = true,
 -- decoder consumes and the emitters' internal dialect — built once in a
 -- private scope so the chunk's own local-variable budget is untouched.
 local __isClassAtom, __isDescriptorText = (function()
-local __descriptorPrimitives = {"null", "undefined", "unknown", "void", "boolean", "number", "string",
+local __descriptorPrimitives = {"null", "undefined", "unknown", "void", "never", "boolean", "number", "string",
   "record"}
 -- One class-atom segment: '@' plus text up to ')' / ']' / ',' (the canonical
 -- decoder's own stop set; the dialect function's ';' separator also
@@ -9040,7 +9045,7 @@ __canonicalDesc = function(s, i)
     if inner == nil then return nil end
     local innerText = string.sub(s, start, inner - 1)
     local prefix = string.sub(innerText, 1, 1)
-    if prefix == "?" or prefix == "!" or innerText == "unknown" or innerText == "void"
+    if prefix == "?" or prefix == "!" or innerText == "unknown" or innerText == "void" or innerText == "never"
       or innerText == "null|undefined" or innerText == "null" and nullAllowed
       or innerText == "undefined" and undefinedAllowed then return nil end
     return inner
@@ -9116,7 +9121,7 @@ __dialectDesc = function(s, i)
       local innerText = string.sub(s, i + #wrapper, inner - 1)
       local nullAllowed = wrapper ~= "undefinedable("
       local undefinedAllowed = wrapper ~= "nullable("
-      if innerText == "unknown" or innerText == "void"
+      if innerText == "unknown" or innerText == "void" or innerText == "never"
         or innerText == "null" and nullAllowed or innerText == "undefined" and undefinedAllowed
         or string.sub(innerText, 1, 8) == "nullable"
         or string.sub(innerText, 1, 13) == "undefinedable" then return nil end
@@ -9754,6 +9759,7 @@ local function __bcheckLeaf(desc, staticKind, v, csig, completion, classSeen)
   local function fail(expected)
     return failKind(expected, expected)
   end
+  if desc == "never" then return fail("never") end
   if desc == "undefined" or desc == "void" then
     if v == __UNDEFINED then return v end
     return fail("undefined")
@@ -10356,7 +10362,11 @@ local function __adaptInvoke(w, origin, ...)
         __hf, __hl, __hc = __mf, tonumber(__ml), tonumber(__mc)
       end
     end
-    __okA, __vA = pcall(__fnv.f, unpack(__cargs, 1, __count), __hf, __hl, __hc)
+    local __hostArgs = {}
+    for i = 1, __count do __hostArgs[i] = __cargs[i] end
+    __hostArgs[__count + 1], __hostArgs[__count + 2], __hostArgs[__count + 3] = __hf, __hl, __hc
+    __okA, __vA = pcall(__fnv.f, unpack(__hostArgs, 1, __count + 3))
+    if not __okA then __vA = __factories.__hostError(__vA, origin or "-") end
   else
     __okA, __vA = pcall(__fnv, unpack(__cargs, 1, __count))
   end

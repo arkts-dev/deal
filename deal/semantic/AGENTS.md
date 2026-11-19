@@ -25,7 +25,8 @@ remain distinct dialects.
 ## Bindings and control
 
 - Entry invokes the selected synchronous void main once through ordinary CALL and
-  ENTRY_INVOKE; void completion synthesizes no null/data projection.
+  ENTRY_INVOKE; void completion synthesizes no null/data projection. Never call/await
+  statements and returns end in UNREACHABLE, without a data conversion.
 - Mutable function bindings use evaluated dynamic carriers, including await.
   Declarations, recursion and fixed adapters retain recorded static callees.
   Resolve by identity/execution class, not spelling or descriptor.

@@ -1,0 +1,22 @@
+// @spec: Functions
+// @description: Result-only never terminates guards, calls and awaited flow without hiding catch paths.
+// @expected: runtime-ok
+// @features: functions, async, optional-chaining
+function reject():never { throw {name:"STOP",message:"reject"}; }
+function text(x:unknown):string { if(typeof x!=="string") { reject(); } return x; }
+function viaReturn():number { return reject(); }
+function viaTail():number { reject(); }
+async function asyncReject():Promise<never> { throw {name:"STOP",message:"async"}; }
+export async function run():Promise<number> {
+  try { await asyncReject(); } catch(e) { let error=e as Error; if(error.name!=="STOP") { throw error; } return 17; }
+}
+export function main():void {
+  if(text("ok")!=="ok") { throw {name:"TEST",message:"text"}; }
+  try { viaReturn(); } catch(e) { let error=e as Error; if(error.name!=="STOP") { throw error; } }
+  try { viaTail(); } catch(e) { let error=e as Error; if(error.name!=="STOP") { throw error; } }
+  let invoke=(optional:(()=>never)|undefined):void=>{ let skipped:undefined=optional?.(); };
+  invoke(undefined);
+  try { invoke(reject); } catch(e) { let error=e as Error; if(error.name!=="STOP") { throw error; } }
+  let funcs:(()=>never)[]=[reject];
+  try { funcs[0](); } catch(e) { let error=e as Error; if(error.name!=="STOP") { throw error; } }
+}

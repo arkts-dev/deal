@@ -238,6 +238,10 @@ static int deal_host_grammar_function(const deal_host_grammar *grammar,
         return 0;
     }
     cursor += 2u;
+    if (deal_host_grammar_literal(grammar, cursor, "never")) {
+        *position = cursor + 5u;
+        return 1;
+    }
     if (deal_host_grammar_literal(grammar, cursor, "void")) {
         *position = cursor + 4u;
         return 1;
@@ -2580,7 +2584,8 @@ deal_outcome_data deal_host_invoke_sync(const deal_host_export *exported,
      * that function descriptor, and the result-only `void` is the no-value
      * position. The text is never re-parsed as a signature. */
     deal_descriptor *declared = deal_host_signature_result(signature_descriptor);
-    int declares_data = deal_descriptor_type(declared) != DEAL_DESCRIPTOR_VOID;
+    int declares_data = deal_descriptor_type(declared) != DEAL_DESCRIPTOR_VOID
+        && deal_descriptor_type(declared) != DEAL_DESCRIPTOR_NEVER;
     deal_host_crossing *crossing = deal_host_crossing_push(origin);
     deal_value *carriers = NULL;
     if (argument_count != 0u) {

@@ -62,7 +62,8 @@ public enum SemanticOpKind {
     EXPORT_READ,
     EXPORT_PUBLISH,
     ENTRY_INVOKE,
-    JSON_PARSE;
+    JSON_PARSE,
+    UNREACHABLE;
 
     /**
      * The exact mandatory {@link KindPayload} shape of this kind. The
@@ -119,6 +120,7 @@ public enum SemanticOpKind {
             case LOOP -> KindPayload.LoopPayload.class;
             case FOR_EACH -> KindPayload.ForEachPayload.class;
             case TRY_CATCH -> KindPayload.TryCatchPayload.class;
+            case UNREACHABLE -> KindPayload.UnreachablePayload.class;
             case THROW -> KindPayload.ThrowPayload.class;
             case RETURN -> KindPayload.ReturnPayload.class;
             case BREAK -> KindPayload.BreakPayload.class;

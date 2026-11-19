@@ -753,7 +753,7 @@ final class LlvmSession extends EmitterSessionBase {
                 + " carries no descriptor");
         }
         if (LlvmTypeMapper.isStaticSingleton(descriptor)
-                || descriptor instanceof RuntimeDescriptor.Void) {
+                || descriptor instanceof RuntimeDescriptor.Void || descriptor instanceof RuntimeDescriptor.Never) {
             return java.util.Optional.empty();
         }
         java.util.Optional<String> representation =

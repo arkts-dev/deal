@@ -88,9 +88,9 @@ public enum ConstructKind {
     VARIABLE_DECLARATION("allocation, initializer, boundary, initialization",
         List.of(SemanticOpKind.BINDING_ALLOC, SemanticOpKind.BINDING_INIT, SemanticOpKind.BOUNDARY)),
 
-    /** Required common form: {@code RETURN} (D13) or {@code DISCARD}. */
-    RETURN_EXPRESSION_STATEMENT("RETURN (D13) or DISCARD",
-        List.of(SemanticOpKind.RETURN, SemanticOpKind.DISCARD)),
+    /** Required common form: return, discard, or a never-result terminator. */
+    RETURN_EXPRESSION_STATEMENT("RETURN, DISCARD, or UNREACHABLE",
+        List.of(SemanticOpKind.RETURN, SemanticOpKind.DISCARD, SemanticOpKind.UNREACHABLE)),
 
     /** Required common form: {@code BRANCH}, {@code LOOP}, or {@code FOR_EACH}. */
     IF_WHILE_FOR_FOR_OF("BRANCH, LOOP, or FOR_EACH",

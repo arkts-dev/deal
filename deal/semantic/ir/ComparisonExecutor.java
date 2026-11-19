@@ -209,6 +209,7 @@ case NUMBER_EQ -> numberView(left).value() == numberView(right).value();
         return switch (inner) {
             case RuntimeDescriptor.Undefined ignored -> left == right;
             case RuntimeDescriptor.Unknown ignored -> throw new Defect("Unknown is not an equality base");
+            case RuntimeDescriptor.Never ignored -> throw new Defect("Never cannot be compared");
             case RuntimeDescriptor.Void ignored -> throw new Defect("Void cannot be compared");
             case RuntimeDescriptor.Number ignored -> numberEq(left, right);
             case RuntimeDescriptor.String ignored -> stringEq(left, right);

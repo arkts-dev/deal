@@ -6,8 +6,10 @@ Oracle, emitters and tests together.
 
 ## Admission
 
-- Enforce descriptor position recursively: void is result/completion-only, never a
-  field/element/parameter. Functions returning void remain legal data.
+- Enforce descriptor position recursively: void/never are result/completion-only,
+  not field/element/parameter types. Functions returning either remain legal data.
+  UNREACHABLE consumes an earlier same-block never invocation/completion; it has
+  no data result. Normal never completion rejects with E8001.
 - Typed/raw/text surfaces carry complete facts and identical first failures.
   Validate registry identity, body membership, captures, binding registrations,
   module/init/export links and construction. Raw materialization has no independent

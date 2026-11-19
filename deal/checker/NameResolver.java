@@ -843,14 +843,14 @@ public final class NameResolver {
     private void rejectVoidDataAnnotation(TypeNode node) {
         switch (node) {
             case NamedType named -> {
-                if (named.name().equals("void")) error(DiagnosticCode.E3005,
-                    "void is allowed only in function result positions", named.span());
+                if (named.name().equals("void") || named.name().equals("never")) error(DiagnosticCode.E3005,
+                    named.name() + " is allowed only in function result positions", named.span());
             }
             case deal.ast.ArrayType array -> rejectVoidDataAnnotation(array.elementType());
             case deal.ast.NullableType nullable -> rejectVoidDataAnnotation(nullable.innerType());
             case deal.ast.FunctionType function -> {
                 for (FunctionTypeParam parameter : function.params()) rejectVoidDataAnnotation(parameter.type());
-                if (!(function.returnType() instanceof NamedType named && named.name().equals("void")))
+                if (!(function.returnType() instanceof NamedType named && (named.name().equals("void") || named.name().equals("never"))))
                     rejectVoidDataAnnotation(function.returnType());
             }
             case QualifiedType ignored -> {}
@@ -859,6 +859,7 @@ public final class NameResolver {
 
     public Type resolveResultTypeNode(TypeNode tn) {
         if (tn instanceof NamedType named && named.name().equals("void")) return Type.Void.INSTANCE;
+        if (tn instanceof NamedType named && named.name().equals("never")) return Type.Never.INSTANCE;
         return resolveTypeNode(tn);
     }
 
@@ -866,8 +867,8 @@ public final class NameResolver {
         if (tn == null) return Type.Error.INSTANCE; // Contextual expression parameter; resolved by the checker.
         return switch (tn) {
             case NamedType nt -> {
-                if (nt.name().equals("void")) {
-                    error(DiagnosticCode.E3005, "void is allowed only in function result positions", nt.span());
+                if (nt.name().equals("void") || nt.name().equals("never")) {
+                    error(DiagnosticCode.E3005, nt.name() + " is allowed only in function result positions", nt.span());
                     yield Type.Error.INSTANCE;
                 }
                 yield resolveNamedType(nt);

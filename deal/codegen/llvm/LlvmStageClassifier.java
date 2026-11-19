@@ -102,7 +102,7 @@ public final class LlvmStageClassifier {
         return switch (kind) {
             case CONST, UNARY, BINARY, BINDING_ALLOC, BINDING_INIT, BINDING_LOAD,
                  BINDING_STORE, ASSIGN, CALL, CLOSURE_NEW, BRANCH, LOOP, RETURN,
-                 BREAK, CONTINUE, DISCARD, TRY_CATCH, THROW, MODULE_INIT,
+                 BREAK, CONTINUE, DISCARD, TRY_CATCH, THROW, UNREACHABLE, MODULE_INIT,
                  MODULE_IMPORT, EXPORT_READ, EXPORT_PUBLISH, ENTRY_INVOKE,
                  STRING_CONCAT, ARRAY_NEW, TABLE_NEW, ARRAY_LENGTH, ARRAY_POP, ARRAY_SPLICE, ARRAY_SLICE, ARRAY_CONCAT, ARRAY_SEARCH, ARRAY_JOIN, ARRAY_ELEMENT_GET, ARRAY_HAS, OBJECT_KEYS, MEMBER_READ,
                  MEMBER_WRITE, MEMBER_DELETE, INDEX_NORMALIZE, INDEX_READ,
@@ -196,6 +196,7 @@ public final class LlvmStageClassifier {
         map.put(KindPayload.ForEachPayload.class, STAGED);
         map.put(KindPayload.TryCatchPayload.class, STAGED);
         map.put(KindPayload.ThrowPayload.class, STAGED);
+        map.put(KindPayload.UnreachablePayload.class, STAGED);
         map.put(KindPayload.ClassNewPayload.class, STATIC_ONLY);
         map.put(KindPayload.ClassFactoryPayload.class, REJECTED);
         map.put(KindPayload.FieldReadPayload.class, STAGED);
@@ -404,6 +405,7 @@ public final class LlvmStageClassifier {
                     : boundaryReason(unit, op, boundary);
             case KindPayload.ReturnPayload returned ->
                 returnedValueReason(unit, op, returned.value());
+            case KindPayload.UnreachablePayload ignored -> Optional.empty();
             case KindPayload.DiscardPayload ignored -> Optional.empty();
             case KindPayload.ModuleImportPayload imported ->
                 importKind(imported.kind()) == STAGED
@@ -941,7 +943,7 @@ public final class LlvmStageClassifier {
             // boundary is the identity of that singleton and needs no check.
             return Optional.empty();
         }
-        if (declared instanceof RuntimeDescriptor.Void) {
+        if (declared instanceof RuntimeDescriptor.Void || declared instanceof RuntimeDescriptor.Never) {
             // A result-only `void` position carries no data slot and no
             // check: its completion projects to undefined through the result
             // protocol (C4), never through a value descriptor.
@@ -1441,7 +1443,7 @@ public final class LlvmStageClassifier {
             }
         }
         RuntimeDescriptor result = signature.returnType();
-        return result instanceof RuntimeDescriptor.Void
+        return result instanceof RuntimeDescriptor.Void || result instanceof RuntimeDescriptor.Never
             || LlvmTypeMapper.isStagedRepresentation(result);
     }
 
@@ -1456,7 +1458,7 @@ public final class LlvmStageClassifier {
             }
         }
         RuntimeDescriptor result = signature.returnType();
-        return result instanceof RuntimeDescriptor.Void
+        return result instanceof RuntimeDescriptor.Void || result instanceof RuntimeDescriptor.Never
             || LlvmTypeMapper.isStagedRepresentation(result);
     }
 

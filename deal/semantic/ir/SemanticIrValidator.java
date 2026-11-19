@@ -2281,6 +2281,26 @@ public final class SemanticIrValidator {
                             origin(R_ENUM, "CONDITIONAL requires a preceding boolean condition, two owned value-producing branches and a compatible result"));
                 }
             }
+            case "UNREACHABLE" -> {
+                ValueId completion = payloadValue(payload, "completion") instanceof CanonicalJson.Obj value
+                    ? parseValueIdQuiet(value) : null;
+                boolean found = false;
+                for (RawOp producer : unit.ops()) {
+                    if (producer.opId().equals(op.opId())) break;
+                    if (completion != null && completion.equals(producer.resultValue()) && "never".equals(producer.resultType())
+                            && ("CALL".equals(producer.kind()) || "CALLBACK_INVOKE".equals(producer.kind()) || "AWAIT".equals(producer.kind()) || "BOUNDARY".equals(producer.kind()))
+                            && unit.bodyTable() != null) {
+                        BlockId block = unit.bodyTable().opBlocks().get(op.opId());
+                        List<OpId> members = block == null ? List.of() : unit.bodyTable().blockOps().getOrDefault(block, List.of());
+                        int index = members.indexOf(op.opId());
+                        found = index > 0 && members.subList(0, index).contains(producer.opId())
+                            && Objects.equals(block, unit.bodyTable().opBlocks().get(producer.opId()));
+                    }
+                }
+                if (!found || op.resultValue() != null || op.resultType() != null)
+                    return fail(op, unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
+                        origin(R_ENUM, "UNREACHABLE requires a preceding never-result completion and no result"));
+            }
             case "JSON_PARSE" -> {
                 ValueId text = parseValueIdQuiet(payloadValue(payload, "jsonString") instanceof CanonicalJson.Obj obj ? obj : null);
                 RawOp source = null;
@@ -2414,7 +2434,7 @@ public final class SemanticIrValidator {
         RuntimeDescriptor result = parseDescriptorQuiet(target), value = parseDescriptorQuiet(source);
         if (result == null || value == null) return false;
         if (result.equals(value)) return true;
-        if (result instanceof RuntimeDescriptor.Unknown) return !(value instanceof RuntimeDescriptor.Void);
+        if (result instanceof RuntimeDescriptor.Unknown) return !(value instanceof RuntimeDescriptor.Void || value instanceof RuntimeDescriptor.Never);
         if (result instanceof RuntimeDescriptor.Nullable n) {
             if (n.inner() instanceof RuntimeDescriptor.Void || value instanceof RuntimeDescriptor.Void) return false;
             if (n.inner().equals(value)) return true;

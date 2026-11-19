@@ -1,0 +1,30 @@
+// @spec: Functions
+// @description: Normal host return and successful async completion at never boundaries reject catchably.
+// @expected: runtime-ok
+// @features: functions, host-abi, async
+import * as host from "host/never_completion";
+export async function run():Promise<number> {
+  try { await host.badAsync(); }
+  catch(e) { let error=e as Error; if(error.name!=="E8001" || error.message!=="expected never") { throw error; } return 19; }
+}
+export function main():void {
+  let caught=false;
+  try { host.bad(); }
+  catch(e) { let error=e as Error; if(error.name!=="E8001" || error.message!=="expected never") { throw error; } caught=true; }
+  if(!caught) { throw {name:"FAIL",message:"never host returned"}; }
+  caught=false;
+  try { host.nothing(); }
+  catch(e) { let error=e as Error; if(error.name!=="E8001" || error.message!=="expected never") { throw error; } caught=true; }
+  if(!caught) { throw {name:"FAIL",message:"never host fell through"}; }
+  let fields:Record<string,unknown>={f:host.bad};
+  let dynamic=fields.f as ()=>never;
+  caught=false;
+  try { dynamic(); }
+  catch(e) { let error=e as Error; if(error.name!=="E8001" || error.message!=="expected never") { throw error; } caught=true; }
+  if(!caught) { throw {name:"FAIL",message:"dynamic never host returned"}; }
+  let adapted:(n:number)=>never=host.bad;
+  caught=false;
+  try { adapted(1); }
+  catch(e) { let error=e as Error; if(error.name!=="E8001" || error.message!=="expected never") { throw error; } caught=true; }
+  if(!caught) { throw {name:"FAIL",message:"adapted never host returned"}; }
+}

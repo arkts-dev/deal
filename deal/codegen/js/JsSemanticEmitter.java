@@ -1072,6 +1072,7 @@ public final class JsSemanticEmitter {
                 case LOOP -> emitLoop(op);
                 case FOR_EACH -> emitForEach(op);
                 case TRY_CATCH -> emitTryCatch(op);
+                case UNREACHABLE -> emit("$rt.fail(\"E8001\", \"expected never\", " + spanArgs(op) + ", \"never\", \"undefined\");");
                 case THROW -> emitThrow(op);
                 case RETURN -> emitReturn(op);
                 case BREAK -> emitBreakContinue(op, true);

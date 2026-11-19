@@ -28,6 +28,8 @@ public final class JsonDecodingSemantics {
             switch (next) {
                 case RuntimeDescriptor.Func ignored ->
                     throw new IllegalArgumentException("JSON decoding target contains a function type");
+                case RuntimeDescriptor.Never ignored ->
+                    throw new IllegalArgumentException("JSON decoding target is not a data type");
                 case RuntimeDescriptor.Void ignored ->
                     throw new IllegalArgumentException("JSON decoding target is not a data type");
                 case RuntimeDescriptor.Nullable nullable -> pending.push(nullable.inner());

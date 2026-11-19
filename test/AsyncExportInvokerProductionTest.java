@@ -841,6 +841,7 @@ public class AsyncExportInvokerProductionTest {
             testRepresentationFailureBothTargets();
             testDelayedHostCompletionBothTargets();
             testTypedCompletionRejectionBothTargets();
+            testNeverCompletionBothTargets();
             testUnchangedErrorFieldsBothTargets();
             testLineTerminatorSourcePathBothTargets();
             testAsyncArityExtensionArgumentOrderBothTargets();
@@ -2113,6 +2114,32 @@ public class AsyncExportInvokerProductionTest {
      * generated fail/run functions — with the program streams empty and
      * the host marker decoded through the shared wire codec.
      */
+    private static void testNeverCompletionBothTargets() throws Exception {
+        for (String backend : List.of("luajit", "jvm")) {
+            Project project = compile("never-completion-" + backend, backend,
+                EXTERNALS_HEADER.formatted(backend),
+                "import * as host from \"host/probe\";export function main():void{}"
+                    + "export async function run():Promise<never>{await host.bad();}",
+                "export function bad():Promise<never>;",
+                "jvm".equals(backend)
+                    ? "final class HostProbe{public static Object bad(){return java.util.concurrent.CompletableFuture.completedFuture(42.0);}}"
+                    : "local rt=require('deal.runtime');return {bad=function() return rt.async_start(function() return 42 end) end}");
+            try {
+                var detail = errorDetail(invoke(project, "run", "never"));
+                check(detail != null, "never completion produces a DEAL error: " + backend);
+                if (detail != null) {
+                    checkEq("E8001", detail.code(), "never completion code: " + backend);
+                    checkEq("expected never", detail.message(), "never completion message: " + backend);
+                    checkEq("never", detail.expected(), "never completion expected type: " + backend);
+                    checkEq("number", detail.actual(), "never completion actual type: " + backend);
+                    checkEq(project.root().resolve("src/main.deal").toString(), detail.file(),
+                        "never completion keeps the await source: " + backend);
+                    checkEq(1, detail.line(), "never completion keeps the await line: " + backend);
+                }
+            } finally { deleteRecursively(project.root()); }
+        }
+    }
+
     private static void testCornerCaseAwaitErrorsBothTargets() throws Exception {
         System.out.println("-- the retained corner-case public-await errors"
             + " (direct and rethrow) --");

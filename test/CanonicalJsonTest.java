@@ -933,6 +933,7 @@ public class CanonicalJsonTest {
             case FOR_EACH -> new KindPayload.ForEachPayload(IterationMode.ARRAY_VALUES,
                 v0, new BindingId(0), 0, b0);
             case TRY_CATCH -> new KindPayload.TryCatchPayload(b0, new BindingId(0), new BlockId(1));
+            case UNREACHABLE -> new KindPayload.UnreachablePayload(v0);
             case THROW -> new KindPayload.ThrowPayload(v0);
             case RETURN -> new KindPayload.ReturnPayload(null, new FunctionId(0), o0, o1);
             case BREAK -> new KindPayload.BreakPayload(o0);

@@ -348,6 +348,9 @@ public final class LlvmRuntimeAbiMirrorTest {
         // descriptor group.
         String descriptorHeader = Files.readString(
             REPO.resolve("deal/native/descriptor.h"), StandardCharsets.UTF_8);
+        check(descriptorHeader.contains("DEAL_DESCRIPTOR_FUNCTION,\n    DEAL_DESCRIPTOR_NEVER"),
+            "never appends the result-only descriptor without renumbering");
+        checkEq(12, LlvmRuntimeAbi.DESCRIPTOR_NEVER, "never descriptor ABI discriminant");
         checkEq("uint32_t presentation; uint32_t unicode_defect; deal_data datum;"
                 + " const char *class_atom; const char *signature",
             structFields(rtHeader, "deal_check_input"),

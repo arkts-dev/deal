@@ -72,6 +72,7 @@ public final class CanonicalTypeText {
             case Type.Undefined ignored -> "undefined";
             case Type.Unknown ignored -> "unknown";
             case Type.Void ignored -> "void";
+            case Type.Never ignored -> "never";
             case Type.Boolean ignored -> "boolean";
 
             case Type.Number ignored -> "number";
@@ -223,7 +224,7 @@ public final class CanonicalTypeText {
 
     private static String renderNamed(String name, Context context) {
         return switch (name) {
-            case "null", "undefined", "unknown", "void", "boolean", "number", "string", "Record<string, unknown>" -> name;
+            case "null", "undefined", "unknown", "void", "never", "boolean", "number", "string", "Record<string, unknown>" -> name;
             case "Error" -> "Error";
             default -> {
                 if (!context.declaredClasses().contains(name)) {

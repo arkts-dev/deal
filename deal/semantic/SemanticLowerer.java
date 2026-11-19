@@ -4507,6 +4507,7 @@ public final class SemanticLowerer {
                 case "undefined" -> Type.Undefined.INSTANCE;
                 case "unknown" -> Type.Unknown.INSTANCE;
                 case "void" -> Type.Void.INSTANCE;
+                case "never" -> Type.Never.INSTANCE;
                 case "Error" -> deal.types.Types.classType("Error",
                     deal.checker.NameResolver.intrinsicErrorIdentity());
                 default -> {
@@ -11258,6 +11259,13 @@ public final class SemanticLowerer {
             boolean adaptedPosition = false;
             if (statement.expr().isPresent()) {
                 ExpressionNode expr = statement.expr().get();
+                if (checkedType(expr) instanceof Type.Never) {
+                    ValueId completion = lowerExpression(expr);
+                    emitNullOp(SemanticOpKind.UNREACHABLE, new KindPayload.UnreachablePayload(completion),
+                        statement.span(), FailurePolicyId.NO_DEAL_FAILURE, SourceOriginKind.SYNTHETIC, currentParent());
+                    terminateBlock();
+                    return;
+                }
                 RuntimeDescriptor declaredReturn = context.signature.returnType();
                 if (positionAdapts(expr, declaredReturn)) {
                     // The return position's arity extension: exactly one
@@ -12301,6 +12309,10 @@ public final class SemanticLowerer {
          * never inferred away.
          */
         private void lowerDiscard(ExpressionStatement statement) {
+            if (checkedType(statement.expr()) instanceof Type.Never) {
+                lowerReturn(new ReturnStatement(statement.span(), java.util.Optional.of(statement.expr())));
+                return;
+            }
             ValueId value = lowerExpression(statement.expr());
             emitNullOp(SemanticOpKind.DISCARD,
                 new KindPayload.DiscardPayload(value), statement.span(),
@@ -13524,7 +13536,15 @@ public final class SemanticLowerer {
             if(at==guards.size()) {
                 if(deletion) lowerDelete(new DeleteStatement(chain.span(),chain.expression()));
                 else {
-                    ValueId value=lowerExpression(chain.expression(),voidResult?null:slot);
+                    boolean neverResult=checkedType(chain.expression()) instanceof Type.Never;
+                    ValueId value=lowerExpression(chain.expression(),voidResult||neverResult?null:slot);
+                    if(neverResult) {
+                        emitNullOp(SemanticOpKind.UNREACHABLE,new KindPayload.UnreachablePayload(value),chain.span(),
+                            FailurePolicyId.NO_DEAL_FAILURE,SourceOriginKind.SYNTHETIC,currentParent());
+                        terminateBlock();
+                        return emitValueOp(SemanticOpKind.CONST,new KindPayload.ConstPayload(ScalarValue.Undefined.INSTANCE),
+                            chain.span(),RuntimeDescriptor.Undefined.INSTANCE,FailurePolicyId.NO_DEAL_FAILURE,null);
+                    }
                     if(!voidResult) return value;
                     emitNullOp(SemanticOpKind.DISCARD,new KindPayload.DiscardPayload(value),chain.span(),
                         FailurePolicyId.NO_DEAL_FAILURE,SourceOriginKind.SYNTHETIC,currentParent());

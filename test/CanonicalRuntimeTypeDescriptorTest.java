@@ -74,7 +74,7 @@ public class CanonicalRuntimeTypeDescriptorTest {
         List<String> contexts = List.of("%s", "[%s]", "?%s", "!%s", "?!%s",
             "(%s)->number", "async(%s)->void", "(string,%s)->void", "()->%s", "async()->%s");
         for (String context : contexts) {
-            for (String illegal : List.of("[void]", "(void)->void")) {
+            for (String illegal : List.of("[void]", "(void)->void", "[never]", "(never)->never")) {
                 String text = context.formatted(illegal);
                 check(CanonicalRuntimeTypeDescriptor.parseResult(text) instanceof DescriptorSyntaxError,
                     "canonical rejects positional void " + text);
@@ -85,13 +85,14 @@ public class CanonicalRuntimeTypeDescriptorTest {
                     check(true, "IR rejects " + text);
                 }
             }
-            for (String legal : List.of("[()->void]", "(()->void)->void")) {
+            for (String legal : List.of("[()->void]", "(()->void)->void", "[()->never]", "(()->never)->never")) {
                 String text = context.formatted(legal);
                 check(CanonicalRuntimeTypeDescriptor.parse(text) instanceof DescriptorAst, "legal canonical " + text);
                 check(RuntimeDescriptor.parseCanonicalText(text).canonicalSpecText().equals(text), "legal IR " + text);
             }
         }
         check(RuntimeDescriptor.parseResultText("void") == RuntimeDescriptor.Void.INSTANCE, "IR void completion");
+        check(RuntimeDescriptor.parseResultText("never") == RuntimeDescriptor.Never.INSTANCE, "IR never completion");
         for (Runnable illegal : List.<Runnable>of(
                 () -> RuntimeDescriptor.parseCanonicalText("void"),
                 () -> new RuntimeDescriptor.Array(RuntimeDescriptor.Void.INSTANCE),
@@ -101,7 +102,7 @@ public class CanonicalRuntimeTypeDescriptorTest {
         }
         var runtime = new deal.codegen.jvm.JvmRuntime.FunctionValue(ignored -> null, "()->void");
         check(deal.codegen.jvm.JvmRuntime.validateData(runtime, false) == runtime, "JVM legal callable ingress");
-        for (String text : List.of("(void)->number", "([void])->number", "()->[void]")) {
+        for (String text : List.of("(void)->number", "([void])->number", "()->[void]", "(never)->number", "()->[never]")) {
             var malformed = new deal.codegen.jvm.JvmRuntime.FunctionValue(ignored -> 1, text);
             check(!deal.codegen.jvm.JvmRuntime.validFunction(malformed), "JVM malformed signature " + text);
             try { deal.codegen.jvm.JvmRuntime.validateData(malformed, false); fail("JVM ingress", text); }

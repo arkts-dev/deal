@@ -119,7 +119,7 @@ public final class CanonicalRuntimeTypeDescriptor {
 
     /** The canonical primitive keywords, in grammar order. */
     private static final List<String> PRIMITIVE_KEYWORDS =
-        List.of("null", "undefined", "unknown", "void", "boolean", "number", "string", "record");
+        List.of("null", "undefined", "unknown", "void", "never", "boolean", "number", "string", "record");
 
     // =========================================================================
     // Per-compilation encode service
@@ -165,6 +165,7 @@ public final class CanonicalRuntimeTypeDescriptor {
             case Type.Undefined ignored -> "undefined";
             case Type.Unknown ignored -> "unknown";
             case Type.Void ignored -> "void";
+            case Type.Never ignored -> "never";
             case Type.Boolean ignored -> "boolean";
 
             case Type.Number ignored -> "number";
@@ -368,9 +369,9 @@ public final class CanonicalRuntimeTypeDescriptor {
             // Primitive keywords (disjoint, so order does not matter).
             for (String keyword : PRIMITIVE_KEYWORDS) {
                 if (matchKeyword(keyword)) {
-                    if (keyword.equals("void") && !resultPosition)
+                    if ((keyword.equals("void") || keyword.equals("never")) && !resultPosition)
                         return new DescriptorSyntaxError(pos, DescriptorSyntaxError.Kind.UNEXPECTED_CHARACTER,
-                            "void is only legal in a function result at scalar offset " + pos);
+                            keyword + " is only legal in a function result at scalar offset " + pos);
                     pos += keyword.length();
                     return new DescriptorAst.PrimitiveAtom(keyword);
                 }
@@ -480,7 +481,7 @@ public final class CanonicalRuntimeTypeDescriptor {
                     "nested nullable at scalar offset " + innerStart);
             }
             if (innerAst instanceof DescriptorAst.PrimitiveAtom p
-                    && (p.name().equals("unknown") || p.name().equals("void")
+                    && (p.name().equals("unknown") || p.name().equals("void") || p.name().equals("never")
                         || (admitsNull && p.name().equals("null"))
                         || (admitsUndefined && p.name().equals("undefined")))) {
                 return new DescriptorSyntaxError(

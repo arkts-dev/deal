@@ -15,9 +15,9 @@
  *     array      := "[" descriptor "]"
  *     nullish    := ("?" | "!" | "?!") descriptor | "null|undefined"
  *     function   := "async"? "(" (descriptor ("," descriptor)*)? ")" "->"
- *                   (descriptor | "void")
+ *                   (descriptor | "void" | "never")
  *
- * `void` is result-only: it is rejected in a data, array, element and
+ * `void` and `never` are result-only: it is rejected in a data, array, element and
  * parameter position. A nullish prefix needs a non-nullish, non-unknown base
  * and does not nest, `?null`, `!undefined` and `null|undefined` carry the
  * canonical nullish forms of the shared type system, and source `Promise<R>`
@@ -70,9 +70,9 @@
 /* An interned canonical descriptor atom; the layout is private to the group. */
 typedef struct deal_descriptor deal_descriptor;
 
-/* The closed descriptor kinds of the canonical grammar (R4). `void` is the
- * result-only kind: it admits exactly `undefined` and exists in no data,
- * array, element or parameter position. */
+/* The closed descriptor kinds of the canonical grammar (R4). `void` and
+ * `never` are result-only: void admits undefined; never admits no completion.
+ * Neither exists in a data, array, element or parameter position. */
 typedef enum {
     DEAL_DESCRIPTOR_NULL = 0,
     DEAL_DESCRIPTOR_UNDEFINED,
@@ -85,7 +85,8 @@ typedef enum {
     DEAL_DESCRIPTOR_CLASS,
     DEAL_DESCRIPTOR_ARRAY,
     DEAL_DESCRIPTOR_NULLISH,
-    DEAL_DESCRIPTOR_FUNCTION
+    DEAL_DESCRIPTOR_FUNCTION,
+    DEAL_DESCRIPTOR_NEVER
 } deal_descriptor_kind;
 
 /* Interns canonical descriptor text and answers its one atom: identical text

@@ -58,7 +58,8 @@ tags, class atoms and function signatures before admission; requested descriptor
 cannot manufacture identity. Class identification must work without reading fields,
 including empty classes. Array reads use `deal_array_present_element`/live-layout
 authority before unboxing. Function metadata defects reject catchably before
-interning or publication. Void is result-only; missing is never admitted data.
+interning or publication. Void/never are result-only; normal never completion
+rejects with E8001. Missing is never admitted data.
 
 Graph checks use operation-local identity-and-descriptor guards, not lasting
 certificates. An unknown/Record visit cannot discharge a stronger class/array

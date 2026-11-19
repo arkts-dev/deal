@@ -190,6 +190,8 @@ public final class BoundaryExecutor {
     /** HOST_SYNC_RETURN: no value first, then the host return cell arm. */
     private static BoundaryOutcome checkHostSyncReturn(RuntimeDescriptor descriptor,
                                                        BoundaryValueView view) {
+        if (descriptor instanceof RuntimeDescriptor.Never)
+            return descriptorKindOutcome(tdProjection(), core(descriptor, view));
         if (view.kind() == ActualKind.NOTHING && descriptor instanceof RuntimeDescriptor.Void) {
             return new BoundaryOutcome.Pass(BoundaryValueView.of(ActualKind.UNDEFINED));
         }
@@ -440,6 +442,7 @@ public final class BoundaryExecutor {
         }
         return switch (descriptor) {
             case RuntimeDescriptor.Undefined ignored -> view.kind() == ActualKind.UNDEFINED ? pass(view) : kindFail(descriptor, view);
+            case RuntimeDescriptor.Never ignored -> kindFail(descriptor, view);
             case RuntimeDescriptor.Void ignored -> view.kind() == ActualKind.UNDEFINED ? pass(view) : kindFail(descriptor, view);
             case RuntimeDescriptor.Unknown ignored -> switch (view.kind()) {
                 case NULL, UNDEFINED, BOOLEAN, NUMBER, STRING, TABLE, ARRAY, CLASS, FUNCTION -> coreData(descriptor, view);

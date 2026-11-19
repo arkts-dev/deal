@@ -161,6 +161,7 @@ static const deal_descriptor_keyword deal_descriptor_keywords[] = {
     {"null", DEAL_DESCRIPTOR_NULL},
     {"undefined", DEAL_DESCRIPTOR_UNDEFINED},
     {"void", DEAL_DESCRIPTOR_VOID},
+    {"never", DEAL_DESCRIPTOR_NEVER},
     {"boolean", DEAL_DESCRIPTOR_BOOLEAN},
     {"number", DEAL_DESCRIPTOR_NUMBER},
     {"string", DEAL_DESCRIPTOR_STRING},
@@ -289,7 +290,7 @@ static deal_descriptor *deal_descriptor_parse_nullish(const char *text,
     cursor = deal_descriptor_parse_at(text, length, cursor, 0, &base);
     if (base->kind == DEAL_DESCRIPTOR_NULLISH
             || base->kind == DEAL_DESCRIPTOR_UNKNOWN
-            || base->kind == DEAL_DESCRIPTOR_VOID
+            || base->kind == DEAL_DESCRIPTOR_VOID || base->kind == DEAL_DESCRIPTOR_NEVER
             || flags == 0u
             || (base->kind == DEAL_DESCRIPTOR_NULL
                 && (flags & DEAL_DESCRIPTOR_ADMITS_NULL) != 0u)
@@ -372,7 +373,7 @@ static size_t deal_descriptor_parse_at(const char *text, size_t length,
         if (!deal_descriptor_terminator(text, length, cursor)) {
             continue;
         }
-        if (keyword->kind == DEAL_DESCRIPTOR_VOID && !allow_void) {
+        if ((keyword->kind == DEAL_DESCRIPTOR_VOID || keyword->kind == DEAL_DESCRIPTOR_NEVER) && !allow_void) {
             deal_platform_fault("descriptor: void outside a function result");
         }
         *out = deal_descriptor_intern_atom(deal_descriptor_make(text, position,
@@ -495,6 +496,7 @@ const char *deal_descriptor_kind_text(deal_descriptor *atom) {
     switch ((deal_descriptor_kind)atom->kind) {
     case DEAL_DESCRIPTOR_NULL: return deal_descriptor_null_text;
     case DEAL_DESCRIPTOR_UNDEFINED: return deal_descriptor_undefined_text;
+    case DEAL_DESCRIPTOR_NEVER: return "never";
     case DEAL_DESCRIPTOR_VOID: return deal_descriptor_undefined_text;
     case DEAL_DESCRIPTOR_BOOLEAN: return deal_descriptor_boolean_text;
     case DEAL_DESCRIPTOR_NUMBER: return deal_descriptor_number_text;
@@ -822,6 +824,7 @@ static deal_check_case deal_check_core(deal_descriptor *descriptor,
     failure->actual = deal_check_typed_token(value);
     if (value->opaque) return DEAL_CHECK_KIND_MISMATCH;
     switch ((deal_descriptor_kind)descriptor->kind) {
+    case DEAL_DESCRIPTOR_NEVER: return DEAL_CHECK_KIND_MISMATCH;
     case DEAL_DESCRIPTOR_UNDEFINED:
     case DEAL_DESCRIPTOR_VOID:
         return value->kind == DEAL_KIND_UNDEFINED
@@ -1202,7 +1205,8 @@ deal_outcome deal_check_value(deal_descriptor *expected, deal_check_input input,
         return outcome;
     }
     failure.case_kind = case_kind;
-    outcome.error = deal_check_render(boundary_kind, &failure, &value, context);
+    outcome.error = deal_check_render(expected->kind == DEAL_DESCRIPTOR_NEVER
+        ? DEAL_BOUNDARY_TYPE_DESCRIPTOR : boundary_kind, &failure, &value, context);
     return outcome;
 }
 

@@ -48,8 +48,9 @@ mutation hooks or let an assertion mask a later parameter/element failure.
   invalidation across calls, writes, await, functions, loops and catch snapshots.
   Test contextual parameters/literal arms with exact imported providers; retain
   declaration/result annotations and insufficient-context negatives.
-- Void is completion-only. Distinguish null/undefined/presence, recursive
-  data/result descriptor positions and legal arrays of void-returning functions.
+- Void/never are result-only. Distinguish null/undefined/presence, recursive
+  data/result descriptor positions and legal arrays of functions returning either.
+  Never completion rejection stays catchable across direct/dynamic/adapted calls.
   Entry is exported synchronous zero-arity main():void. Invoke async exports
   through public completion consumers, not main alone.
 - Closures/adapters: mutable/aggregate/dynamic recursion, fresh escaped cells,

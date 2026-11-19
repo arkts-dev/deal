@@ -16,10 +16,12 @@ public final class Types {
 
     private Types() { /* utility class */ }
 
-    /** Data positions exclude result-only void. Error remains a recovery type. */
+    /** Data positions exclude result-only void/never. Error remains a recovery type. */
+    public static boolean resultOnly(Type type) { return type instanceof Type.Void || type instanceof Type.Never; }
+
     public static void requireDataType(Type type) {
-        if (type == null || type instanceof Type.Void)
-            throw new IllegalArgumentException("Data type required; void is result-only");
+        if (type == null || type instanceof Type.Void || type instanceof Type.Never)
+            throw new IllegalArgumentException("Data type required; void/never are result-only");
     }
 
     // =========================================================================
@@ -80,6 +82,7 @@ public final class Types {
             case Type.Undefined ignored -> true;
             case Type.Unknown ignored -> true;
             case Type.Void ignored -> true;
+            case Type.Never ignored -> true;
             case Type.Boolean ignored -> true;
 
             case Type.Number ignored -> true;
@@ -183,6 +186,7 @@ public final class Types {
      * Convenience overload: checks if any function type is assignable to another.
      */
     public static boolean isAssignable(Type actual, Type target) {
+        if (actual instanceof Type.Never || target instanceof Type.Never) return target == actual;
         if (target instanceof Type.Unknown) return !(actual instanceof Type.Void);
         if (equals(actual, target)) return true;
         if (target instanceof Type.Nullable n) {

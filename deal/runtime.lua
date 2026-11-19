@@ -792,7 +792,7 @@ end
 -- the canonical parser accepts no legacy spelling at any point.
 
 local CANONICAL_PRIMITIVES = {
-  "null", "undefined", "unknown", "void", "boolean", "number", "string", "record",
+  "null", "undefined", "unknown", "void", "never", "boolean", "number", "string", "record",
 }
 
 --- Strict canonical recursive-descent parser (total; never throws).
@@ -1018,7 +1018,7 @@ local function parse_descriptor(text, result_position)
       if inner.kind == "nullable" then
         return nil  -- nested nullable ("??T")
       end
-      if inner.kind == "primitive" and (inner.name == "unknown" or inner.name == "void"
+      if inner.kind == "primitive" and (inner.name == "unknown" or inner.name == "void" or inner.name == "never"
           or (admitsNull and inner.name == "null") or (admitsUndefined and inner.name == "undefined")) then return nil end
       return { kind = "nullable", inner = inner, admitsNull = admitsNull,
         admitsUndefined = admitsUndefined, text = string.sub(text, start, pos - 1) }
@@ -1035,7 +1035,7 @@ local function parse_descriptor(text, result_position)
     for i = 1, #CANONICAL_PRIMITIVES do
       local kw = CANONICAL_PRIMITIVES[i]
       if string.sub(text, pos, pos + #kw - 1) == kw then
-        if kw == "void" and not allow_void then return nil end
+        if (kw == "void" or kw == "never") and not allow_void then return nil end
         pos = pos + #kw
         return { kind = "primitive", name = kw, text = kw }
       end
@@ -1101,6 +1101,9 @@ local function check_canonical_ast(ast, v, file, line, column, seen)
       return __rt.check_string(v, file, line, column)
     elseif name == "record" then
       return __rt.check_table(v, file, line, column)
+    elseif name == "never" then
+      error(__rt._armErr("TYPED_BOUNDARY_KIND", {kind="never"}, "E8001", "expected never",
+        file, line, column, "never", __rt.typed_kind(v)), 0)
     elseif name == "undefined" or name == "void" then
       if v == __rt.__UNDEFINED or v == __rt.__MISSING then return __rt.__UNDEFINED end
       error(__rt._armErr("TYPED_BOUNDARY_KIND", {kind = "undefined"}, "E8001", "expected undefined",
@@ -1538,6 +1541,8 @@ function __rt.from_lua_function(sig, raw_f, context)
             "async operation", r)
         end
       end
+    elseif ret_descriptor == "never" then
+      return __rt.check_type("never", results[1], file, line, column)
     elseif ret_descriptor == "void" and nresults == 0 then
       return __rt.__UNDEFINED
     elseif not is_null_ret then

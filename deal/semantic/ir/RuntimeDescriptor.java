@@ -5,7 +5,7 @@ import java.util.List;
 import java.util.Objects;
 
 public sealed interface RuntimeDescriptor extends OpResultType
-    permits RuntimeDescriptor.Null, RuntimeDescriptor.Undefined, RuntimeDescriptor.Unknown, RuntimeDescriptor.Void,
+    permits RuntimeDescriptor.Null, RuntimeDescriptor.Undefined, RuntimeDescriptor.Unknown, RuntimeDescriptor.Void, RuntimeDescriptor.Never,
             RuntimeDescriptor.Boolean,
             RuntimeDescriptor.Number,
             RuntimeDescriptor.String,
@@ -141,16 +141,16 @@ public sealed interface RuntimeDescriptor extends OpResultType
             return parseFunc(text, pos, false);
         }
         // Fixed scalar spellings.
-        java.lang.String[] fixed = {"null", "undefined", "unknown", "void", "boolean", "number", "string", "record"};
-        RuntimeDescriptor[] mapped = {Null.INSTANCE, Undefined.INSTANCE, Unknown.INSTANCE, Void.INSTANCE, Boolean.INSTANCE,
+        java.lang.String[] fixed = {"null", "undefined", "unknown", "void", "never", "boolean", "number", "string", "record"};
+        RuntimeDescriptor[] mapped = {Null.INSTANCE, Undefined.INSTANCE, Unknown.INSTANCE, Void.INSTANCE, Never.INSTANCE, Boolean.INSTANCE,
             Number.INSTANCE, String.INSTANCE, Table.INSTANCE};
         for (int i = 0; i < fixed.length; i++) {
             if (text.startsWith(fixed[i], pos[0])) {
                 int end = pos[0] + fixed[i].length();
                 if (end == text.length() || text.charAt(end) == ')'
                         || text.charAt(end) == ']' || text.charAt(end) == ',') {
-                    if (mapped[i] instanceof Void && !resultPosition) {
-                        throw new SemanticIrTextDecodeException("void outside a function result: " + text);
+                    if ((mapped[i] instanceof Void || mapped[i] instanceof Never) && !resultPosition) {
+                        throw new SemanticIrTextDecodeException(fixed[i] + " outside a function result: " + text);
                     }
                     pos[0] = end;
                     return mapped[i];
@@ -226,7 +226,8 @@ public sealed interface RuntimeDescriptor extends OpResultType
     /** Validates a data slot. Compound constructors enforce child positions recursively. */
     static RuntimeDescriptor requireData(RuntimeDescriptor descriptor) {
         Objects.requireNonNull(descriptor, "descriptor must not be null");
-        if (descriptor instanceof Void) throw new IllegalArgumentException("void outside a function result");
+        if (descriptor instanceof Void || descriptor instanceof Never)
+            throw new IllegalArgumentException(descriptor.canonicalSpecText() + " outside a function result");
         return descriptor;
     }
 
@@ -266,6 +267,11 @@ public sealed interface RuntimeDescriptor extends OpResultType
     enum Unknown implements RuntimeDescriptor {
         INSTANCE;
         public java.lang.String canonicalSpecText() { return "unknown"; }
+    }
+
+    enum Never implements RuntimeDescriptor {
+        INSTANCE;
+        public java.lang.String canonicalSpecText() { return "never"; }
     }
 
     enum Void implements RuntimeDescriptor {
@@ -372,7 +378,7 @@ public sealed interface RuntimeDescriptor extends OpResultType
         public Nullable(RuntimeDescriptor inner) { this(inner, true, false); }
         public Nullable {
             Objects.requireNonNull(inner, "inner must not be null");
-            if (inner instanceof Nullable || inner instanceof Unknown || inner instanceof Void
+            if (inner instanceof Nullable || inner instanceof Unknown || inner instanceof Void || inner instanceof Never
                     || (!admitsNull && !admitsUndefined)
                     || (inner instanceof Null && admitsNull)
                     || (inner instanceof Undefined && admitsUndefined)) {

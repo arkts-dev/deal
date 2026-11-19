@@ -533,6 +533,7 @@ public final class RawUnitMaterializer {
             case TRY_CATCH -> new KindPayload.TryCatchPayload(
                 blockIdAt(p, "tryBlock", where), bindingIdAt(p, "catchBinding", where),
                 blockIdAt(p, "catchBlock", where));
+            case UNREACHABLE -> new KindPayload.UnreachablePayload(valueIdAt(p, "completion", where));
             case THROW -> new KindPayload.ThrowPayload(valueIdAt(p, "errorValue", where));
             case RETURN -> new KindPayload.ReturnPayload(
                 optionalValueId(p, "value", where), functionIdAt(p, "function", where),

@@ -748,7 +748,7 @@ public final class LlvmTypeMapper {
         if (actual instanceof RuntimeDescriptor.Nullable nullable) {
             return hasDatumForm(nullable.inner());
         }
-        return !(actual instanceof RuntimeDescriptor.Void);
+        return !(actual instanceof RuntimeDescriptor.Void || actual instanceof RuntimeDescriptor.Never);
     }
 
     /**
@@ -762,6 +762,7 @@ public final class LlvmTypeMapper {
                                  RuntimeDescriptor actual) {
         Objects.requireNonNull(declared, "declared must not be null");
         Objects.requireNonNull(actual, "actual must not be null");
+        if (declared instanceof RuntimeDescriptor.Never) return false;
         if (declared.equals(actual)) {
             return true;
         }
@@ -882,7 +883,7 @@ public final class LlvmTypeMapper {
     public static String outcomeType(RuntimeDescriptor returnDescriptor) {
         Objects.requireNonNull(returnDescriptor, "returnDescriptor must not be null");
         if (isStaticSingleton(returnDescriptor)
-                || returnDescriptor instanceof RuntimeDescriptor.Void) {
+                || returnDescriptor instanceof RuntimeDescriptor.Void || returnDescriptor instanceof RuntimeDescriptor.Never) {
             return "%struct.deal_outcome";
         }
         return switch (returnDescriptor) {

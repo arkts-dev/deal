@@ -1893,6 +1893,9 @@ record NumValue(double value) implements Value {
                 case LOOP -> executeLoop(op);
                 case FOR_EACH -> executeForEach(op);
                 case TRY_CATCH -> executeTryCatch(op);
+                case UNREACHABLE -> throw DealFailure.of(FailureContractRegistry.render(
+                    FailureArmId.TYPED_BOUNDARY_KIND, Map.of("kind", "never"), "never", "undefined", null),
+                    op.origin(), List.copyOf(frames));
                 case THROW -> executeThrow(op);
                 case RETURN -> executeReturn(op);
                 case BREAK -> executeBreak(op);

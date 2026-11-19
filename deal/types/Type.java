@@ -5,7 +5,7 @@ import deal.identity.CanonicalClassIdentity;
 import java.util.List;
 
 public sealed interface Type
-    permits Type.Null, Type.Undefined, Type.Unknown, Type.Void,
+    permits Type.Null, Type.Undefined, Type.Unknown, Type.Void, Type.Never,
            Type.Boolean,
            Type.Number,
            Type.String,
@@ -23,6 +23,7 @@ public sealed interface Type
     enum Undefined implements Type { INSTANCE }
     enum Unknown implements Type { INSTANCE }
     enum Void implements Type { INSTANCE }
+    enum Never implements Type { INSTANCE }
 
     enum Boolean implements Type { INSTANCE }
     enum Number implements Type { INSTANCE }
@@ -59,7 +60,7 @@ public sealed interface Type
         public Nullable(Type inner) { this(inner, true, false); }
         public Nullable {
             if (inner == null || inner instanceof Nullable || inner instanceof Unknown
-                    || inner instanceof Void || (!admitsNull && !admitsUndefined)
+                    || inner instanceof Void || inner instanceof Never || (!admitsNull && !admitsUndefined)
                     || (inner instanceof Null && admitsNull)
                     || (inner instanceof Undefined && admitsUndefined)) {
                 throw new IllegalArgumentException("Invalid canonical nullish type");

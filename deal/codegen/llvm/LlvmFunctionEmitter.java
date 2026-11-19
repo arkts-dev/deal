@@ -352,7 +352,7 @@ final class LlvmFunctionEmitter {
         }
         RuntimeDescriptor result = function.descriptor().returnType();
         boolean carriesValue = !(LlvmTypeMapper.isStaticSingleton(result)
-            || result instanceof RuntimeDescriptor.Void);
+            || result instanceof RuntimeDescriptor.Void || result instanceof RuntimeDescriptor.Never);
         startSegment(functionEndLabel());
         if (carriesValue) {
             throw new IllegalStateException("the lowered function "
@@ -710,6 +710,18 @@ final class LlvmFunctionEmitter {
             case BRANCH -> emitBranch(op);
             case LOOP -> emitLoop(op);
             case TRY_CATCH -> emitTryCatch(op);
+            case UNREACHABLE -> {
+                session.referenceRuntimeEntry("deal_error_materialize");
+                String parameter = newAlloca("%struct.deal_arm_parameter", "neverkind");
+                emit("store %struct.deal_arm_parameter { " + session.data.operand(session.data.intern("kind"))
+                    + ", " + session.data.operand(session.data.intern("never"))
+                    + " }, %struct.deal_arm_parameter* " + parameter);
+                String error = emitTemporary(op, "call %struct.deal_error* @deal_error_materialize(i32 0, %struct.deal_arm_parameter* "
+                    + parameter + ", i64 1, " + session.data.operand(session.data.intern("never"))
+                    + ", " + session.data.operand(session.data.intern("undefined")) + ", %struct.deal_origin* "
+                    + originValue(op) + ", %struct.deal_error* null)");
+                routeFailure(emitTemporary(op, "bitcast %struct.deal_error* " + error + " to i8*"));
+            }
             case THROW -> emitThrow(op);
             case RETURN -> emitReturn(op);
             case BREAK, CONTINUE -> emitBreakContinue(op,
@@ -2386,7 +2398,7 @@ final class LlvmFunctionEmitter {
             "extractvalue %struct.deal_outcome_data " + outcome + ", 0");
         branchOnFailure(op, error, "hostcall");
         if (LlvmTypeMapper.isStaticSingleton(returned)
-                || returned instanceof RuntimeDescriptor.Void) {
+                || returned instanceof RuntimeDescriptor.Void || returned instanceof RuntimeDescriptor.Never) {
             return;
         }
         String datum = emitTemporary(op, "extractvalue"
@@ -2711,7 +2723,7 @@ final class LlvmFunctionEmitter {
 
     /** Whether one descriptor has the staged boxed apply form. */
     private static boolean thunkBoxable(RuntimeDescriptor descriptor) {
-        return descriptor instanceof RuntimeDescriptor.Void
+        return descriptor instanceof RuntimeDescriptor.Void || descriptor instanceof RuntimeDescriptor.Never
             || descriptor instanceof RuntimeDescriptor.Null
             || descriptor instanceof RuntimeDescriptor.Undefined
             || LlvmTypeMapper.representationOf(descriptor).isPresent()
@@ -3063,7 +3075,7 @@ final class LlvmFunctionEmitter {
         branchOnFailure(op, "%callerr" + op.opId().id(), "call");
         RuntimeDescriptor returned = calleeFunction.descriptor().returnType();
         if (LlvmTypeMapper.isStaticSingleton(returned)
-                || returned instanceof RuntimeDescriptor.Void) {
+                || returned instanceof RuntimeDescriptor.Void || returned instanceof RuntimeDescriptor.Never) {
             return;
         }
         String extracted = emitTemporary(op, "extractvalue " + outcome + " "
@@ -4403,7 +4415,7 @@ final class LlvmFunctionEmitter {
                 entry = "deal_data_of_reference";
                 arguments = "i32 " + tag + ", i8* %reference";
             }
-            case RuntimeDescriptor empty when empty instanceof RuntimeDescriptor.Void
+            case RuntimeDescriptor empty when empty instanceof RuntimeDescriptor.Void || empty instanceof RuntimeDescriptor.Never
                 || empty instanceof RuntimeDescriptor.Undefined -> {
                 entry = "deal_data_of_undefined";
                 arguments = "";
@@ -4852,7 +4864,7 @@ final class LlvmFunctionEmitter {
         RuntimeDescriptor result = function.descriptor().returnType();
         String outcome = LlvmTypeMapper.outcomeType(result);
         if (LlvmTypeMapper.isStaticSingleton(result)
-                || result instanceof RuntimeDescriptor.Void) {
+                || result instanceof RuntimeDescriptor.Void || result instanceof RuntimeDescriptor.Never) {
             emitEpilogue();
             terminate("ret " + outcome + " { i8* null }");
             return;

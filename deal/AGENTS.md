@@ -18,8 +18,8 @@ facts into validated semantic IR; backends never fall back to ASTs.
   pairs and retains lone units. Reject malformed byte transport, not legal units.
 - Refined consumers use admitted results at the recorded read origin, not stale
   raw values. Typed boundaries retain their own projections.
-- Descriptors enforce recursive data/result positions. Void is completion-only;
-  functions returning void are legal data. Null/undefined/absence stay distinct;
+- Descriptors enforce recursive data/result positions. Void/never are result-only;
+  functions returning either are legal data. Never admits no normal completion. Null/undefined/absence stay distinct;
   missing reads become undefined. Required nullable fields still require presence.
 - Class construction checks supplied values before publication, with omitted
   optionals absent. No initializer/default hooks or synthetic helper exports.

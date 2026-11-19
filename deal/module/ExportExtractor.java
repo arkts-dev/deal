@@ -259,6 +259,7 @@ public final class ExportExtractor {
             case "unknown" -> Type.Unknown.INSTANCE;
             case "undefined" -> Type.Undefined.INSTANCE;
             case "void" -> Type.Void.INSTANCE;
+            case "never" -> Type.Never.INSTANCE;
             case "Error" -> errorClassType();
             default -> {
                 if (classMap.containsKey(name)) {

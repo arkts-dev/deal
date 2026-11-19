@@ -377,6 +377,7 @@ final class JvmHostAbiEmission {
             case Type.Unknown ignored -> "java.lang.Object";
             case Type.Undefined ignored -> "java.lang.Object";
             case Type.Void ignored -> "java.lang.Object";
+            case Type.Never ignored -> "java.lang.Object";
             case Type.Boolean ignored -> "boolean";
 
             case Type.Number ignored -> "double";
@@ -878,6 +879,10 @@ final class JvmHostAbiEmission {
                     + " __hostKind(__r));\n");
             out.append("    }\n");
             out.append("    return __r;\n");
+            return;
+        }
+        if (ret instanceof Type.Never) {
+            out.append("    throw JvmRuntime.arm(deal.semantic.ir.FailureArmId.TYPED_BOUNDARY_KIND, java.util.Map.of(\"kind\", \"never\"), oFile + \":\" + oLine + \":\" + oCol, \"never\", __hostKind(__r));\n");
             return;
         }
         boolean nullable = ret instanceof Type.Nullable;

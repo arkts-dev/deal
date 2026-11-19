@@ -2205,8 +2205,8 @@ public class ControlFlowLoweringTest {
                 .equals(List.of(SemanticOpKind.TRY_CATCH, SemanticOpKind.THROW)),
             "TRY_CATCH_THROW maps to [TRY_CATCH, THROW]");
         check(coverage.get(ConstructKind.RETURN_EXPRESSION_STATEMENT)
-                .equals(List.of(SemanticOpKind.RETURN, SemanticOpKind.DISCARD)),
-            "RETURN_EXPRESSION_STATEMENT maps to [RETURN, DISCARD]");
+                .equals(List.of(SemanticOpKind.RETURN, SemanticOpKind.DISCARD, SemanticOpKind.UNREACHABLE)),
+            "RETURN_EXPRESSION_STATEMENT maps to [RETURN, DISCARD, UNREACHABLE]");
 
         // The whole slice lowers with the detected rows end-to-end
         // (R-COVERAGE green on the real produced op set).

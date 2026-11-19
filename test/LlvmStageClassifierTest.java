@@ -214,7 +214,7 @@ public final class LlvmStageClassifierTest {
                 "RECURSIVE_GROUP_INIT", "BRANCH", "LOOP", "FOR_EACH",
                 "TRY_CATCH", "THROW", "RETURN", "BREAK", "CONTINUE",
                 "DISCARD", "CLASS_NEW", "FIELD_READ", "FIELD_WRITE",
-                "FIELD_DELETE", "JSON_PARSE",
+                "FIELD_DELETE", "JSON_PARSE", "UNREACHABLE",
                 "MODULE_INIT", "MODULE_IMPORT", "EXPORT_READ",
                 "EXPORT_PUBLISH", "ENTRY_INVOKE", "STDLIB_CALL",
                 "ASYNC_START", "AWAIT", "OPTIONAL_READ"),

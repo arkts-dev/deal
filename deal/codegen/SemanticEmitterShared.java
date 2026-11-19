@@ -83,6 +83,7 @@ public final class SemanticEmitterShared {
      */
     public static String descriptorText(RuntimeDescriptor descriptor) {
         if (descriptor instanceof RuntimeDescriptor.Undefined) return "undefined";
+        if (descriptor instanceof RuntimeDescriptor.Never) return "never";
         if (descriptor instanceof RuntimeDescriptor.Void) return "void";
         if (descriptor instanceof RuntimeDescriptor.Unknown) return "unknown";
         if (descriptor instanceof RuntimeDescriptor.Null) {

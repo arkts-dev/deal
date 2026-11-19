@@ -53,6 +53,9 @@ public final class LlvmRuntimeAbi {
     public static final int BOUNDARY_HOST_SYNC_RETURN = 3;
     public static final int BOUNDARY_ASYNC_COMPLETION = 4;
 
+    /** Appended result-only descriptor discriminant ({@code descriptor.h}). */
+    public static final int DESCRIPTOR_NEVER = 12;
+
     private static final String DECLARATION_TEXT = """
 deal_status deal_null(deal_value *out)
 deal_status deal_undefined(deal_value *out)

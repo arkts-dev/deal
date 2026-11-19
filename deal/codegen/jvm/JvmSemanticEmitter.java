@@ -1044,6 +1044,7 @@ public final class JvmSemanticEmitter {
                 case RuntimeDescriptor.Undefined ignored -> "undefined";
                 case RuntimeDescriptor.Unknown ignored -> "unknown";
                 case RuntimeDescriptor.Void ignored -> "void";
+                case RuntimeDescriptor.Never ignored -> "never";
                 case RuntimeDescriptor.Boolean ignored -> "boolean";
 
                 case RuntimeDescriptor.Number ignored -> "number";
@@ -1317,7 +1318,7 @@ public final class JvmSemanticEmitter {
          */
         private boolean completesNormally(SemanticOp op) {
             return switch (op.kind()) {
-                case THROW, BREAK, CONTINUE, RETURN -> false;
+                case UNREACHABLE, THROW, BREAK, CONTINUE, RETURN -> false;
                 case TRY_CATCH -> {
                     KindPayload.TryCatchPayload payload =
                         (KindPayload.TryCatchPayload) op.payload();
@@ -1500,6 +1501,8 @@ public final class JvmSemanticEmitter {
                 case LOOP -> emitLoop(op, indent);
                 case FOR_EACH -> emitForEach(op, indent);
                 case TRY_CATCH -> emitTryCatch(op, indent);
+                case UNREACHABLE -> out.append(indent(indent)).append("throw JvmRuntime.arm(deal.semantic.ir.FailureArmId.TYPED_BOUNDARY_KIND, java.util.Map.of(\"kind\",\"never\"), ")
+                    .append(javaString(originOf(op))).append(", \"never\", \"undefined\");\n");
                 case THROW -> emitThrow(op, indent);
                 case RETURN -> emitReturn(op, indent);
                 case BREAK -> emitBreak(op, indent);
@@ -4829,10 +4832,12 @@ public final class JvmSemanticEmitter {
                     String target = slot((ValueId) op.result());
                     out.append(indent(indent)).append("if (((Boolean) ").append(condition).append(").booleanValue()) {\n");
                     emitBlockOps(payload.selectedBlock(), indent + 1);
-                    out.append(indent(indent + 1)).append(target).append(" = ").append(slot(payload.selectedValue())).append(";\n");
+                    if (blockCompletesNormally(payload.selectedBlock()))
+                        out.append(indent(indent + 1)).append(target).append(" = ").append(slot(payload.selectedValue())).append(";\n");
                     out.append(indent(indent)).append("} else {\n");
                     emitBlockOps(payload.alternateBlock(), indent + 1);
-                    out.append(indent(indent + 1)).append(target).append(" = ").append(slot(payload.alternateValue())).append(";\n");
+                    if (blockCompletesNormally(payload.alternateBlock()))
+                        out.append(indent(indent + 1)).append(target).append(" = ").append(slot(payload.alternateValue())).append(";\n");
                     out.append(indent(indent)).append("}\n");
                     emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType(), indent);
                 }

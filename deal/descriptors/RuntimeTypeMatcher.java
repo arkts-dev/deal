@@ -158,6 +158,7 @@ public final class RuntimeTypeMatcher {
                 }
                 return failure("E8001", "expected number, got " + actualKind(value, range), range);
             }
+            case "never" -> { return false; }
             case "undefined", "void" -> {
                 if (model.isUndefined(value)) return value;
                 return failure("E8001", "expected undefined, got " + actualKind(value, range), range);

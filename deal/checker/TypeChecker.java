@@ -293,7 +293,7 @@ public final class TypeChecker {
             case ForOfStatement fos      -> checkForOfStatement(fos);
             case BreakStatement bs       -> checkBreak(bs);
             case ContinueStatement cs    -> checkContinue(cs);
-            case ExpressionStatement es  -> checkExpression(es.expr());
+            case ExpressionStatement es  -> checkTerminatingPosition(es.expr());
             case ImportDeclaration id    -> { /* already resolved */ }
             case ExportDeclaration ed    -> walkStatement(ed.declaration());
             case DeleteStatement ds      -> checkDeleteStatement(ds);
@@ -648,7 +648,7 @@ public final class TypeChecker {
             }
         }
         Type exprType = checkContextualReadPosition(vd.initializer());
-        if (exprType instanceof Type.Void) {
+        if (Types.resultOnly(exprType)) {
             voidDataError(DiagnosticCode.E3001, "Void results cannot initialize bindings",
                     vd.initializer().span(), vd.initializer(), "binding.initialize");
             exprType = Type.Error.INSTANCE;
@@ -842,7 +842,7 @@ public final class TypeChecker {
             // Analyze reachable statements, including unconditional-return loops.
             Type retType = funcType.returnType();
             if (!(retType instanceof Type.Void)
-                    && !ReturnAnalysis.definitelyReturns(fd.body())) {
+                    && !ReturnAnalysis.definitelyReturns(fd.body(), this::neverExpression)) {
                 diagnostics.add(missingReturnDiagnostic(
                     "Function '" + fd.name() + "' must return a value on all paths",
                     fd.span(), retType, fd.returnType(), fd.body()));
@@ -873,6 +873,10 @@ public final class TypeChecker {
             : diagnostic.withNote(obligation.explanation(), obligation.span().range());
     }
 
+    private boolean neverExpression(ExpressionNode expression) {
+        return typeMap.get(expression) instanceof Type.Never;
+    }
+
     private void checkReturnStatement(ReturnStatement rs) {
         if (rs.expr().isPresent()) {
             if (currentReturnType == null) {
@@ -891,11 +895,11 @@ public final class TypeChecker {
                     && contextualClassDecl == null) {
                 contextualClassDecl = currentReturnContext;
             }
-            Type exprType = checkContextualReadPosition(rs.expr().get());
+            Type exprType = checkTerminatingPosition(rs.expr().get());
             expectedType = savedExpected;
             contextualClassDecl = savedContextual;
 
-            if (exprType == Type.Error.INSTANCE) return;
+            if (exprType == Type.Error.INSTANCE || exprType instanceof Type.Never) return;
 
             if (currentReturnType instanceof Type.Void || !isAssignable(currentReturnType, exprType)) {
                 if (!reportClassProviderCrossing(currentReturnType, exprType,
@@ -954,10 +958,10 @@ public final class TypeChecker {
             }
         }
         NullNarrowing elseNarrowing = narrowing;
-        boolean thenStops = ReturnAnalysis.cannotCompleteNormally(is.thenBlock());
+        boolean thenStops = ReturnAnalysis.cannotCompleteNormally(is.thenBlock(), this::neverExpression);
         boolean elseStops = is.elseBranch().isPresent() && switch (is.elseBranch().get()) {
-            case Either.Left<IfStatement, Block> left -> ReturnAnalysis.cannotCompleteNormally(left.value());
-            case Either.Right<IfStatement, Block> right -> ReturnAnalysis.cannotCompleteNormally(right.value());
+            case Either.Left<IfStatement, Block> left -> ReturnAnalysis.cannotCompleteNormally(left.value(), this::neverExpression);
+            case Either.Right<IfStatement, Block> right -> ReturnAnalysis.cannotCompleteNormally(right.value(), this::neverExpression);
         };
         if (thenStops && !elseStops) narrowing = elseNarrowing;
         else if (elseStops && !thenStops) narrowing = thenNarrowing;
@@ -1249,8 +1253,8 @@ public final class TypeChecker {
         // replaces a same-spelled enclosing binding's refinement.
         walkStatement(ts.catchBlock());
         if (catchScope != null) narrowing.invalidate(catchScope.resolveLocal(ts.catchVar()));
-        boolean tryStops = ReturnAnalysis.cannotCompleteNormally(ts.tryBlock());
-        boolean catchStops = ReturnAnalysis.cannotCompleteNormally(ts.catchBlock());
+        boolean tryStops = ReturnAnalysis.cannotCompleteNormally(ts.tryBlock(), this::neverExpression);
+        boolean catchStops = ReturnAnalysis.cannotCompleteNormally(ts.catchBlock(), this::neverExpression);
         if (!tryStops) narrowing = catchStops ? normalExit : mergeFlows(normalExit, narrowing);
 
         closeTryAssignments(assigned, afterCatchScope);
@@ -1371,6 +1375,15 @@ public final class TypeChecker {
     // Expression checking
     // =======================================================================
 
+    private ExpressionNode terminatingPosition;
+
+    private Type checkTerminatingPosition(ExpressionNode expression) {
+        ExpressionNode saved = terminatingPosition;
+        terminatingPosition = expression;
+        try { return checkContextualReadPosition(expression); }
+        finally { terminatingPosition = saved; }
+    }
+
     private Type checkExpression(ExpressionNode expr) {
         // Only a read position's own outermost expression is direct: the
         // marker is consumed here, so every expression this check descends
@@ -1401,6 +1414,11 @@ public final class TypeChecker {
                     if (operand != null) conditionFlows.put(expr,
                         new ConditionFlow(operand.whenFalse(), operand.whenTrue()));
                 }
+            }
+            if (t instanceof Type.Never && expr != terminatingPosition
+                    && expr != directAwaitCallee
+                    && expr != optionalTerminal) {
+                error(DiagnosticCode.E3001, "Never expressions are allowed only as statements or return bodies", expr.span());
             }
             typeMap.put(expr, t);
             // A class-typed expression the enclosing annotations did not
@@ -2117,7 +2135,7 @@ public final class TypeChecker {
             return Type.Error.INSTANCE;
         }
         if (!(arguments.getFirst() instanceof Type.Func mapper) || mapper.isAsync()
-                || mapper.returnType() instanceof Type.Void) {
+                || Types.resultOnly(mapper.returnType())) {
             if (arguments.getFirst() != Type.Error.INSTANCE)
                 intrinsicCallError(DiagnosticCode.E5001, "Array.map requires a synchronous data-result mapper", call, 0,
                     "Array.map", "call.array-map.mapper", "synchronous function with non-void result",
@@ -2161,7 +2179,7 @@ public final class TypeChecker {
             return Type.Error.INSTANCE;
         }
         if (!(arguments.get(1) instanceof Type.Func mapper) || mapper.isAsync()
-                || mapper.returnType() instanceof Type.Void) {
+                || Types.resultOnly(mapper.returnType())) {
             if (arguments.get(1) != Type.Error.INSTANCE)
                 intrinsicCallError(DiagnosticCode.E5001, "Array.from requires a synchronous data-result mapper", call, 1,
                     "Array.from", "call.array-from.mapper", "synchronous function with non-void result",
@@ -2685,7 +2703,7 @@ public final class TypeChecker {
         boolean mixed = false;
         for (ExpressionNode elem : elements) {
             Type elemType = checkExpression(elem);
-            if (elemType instanceof Type.Void) {
+            if (Types.resultOnly(elemType)) {
                 voidDataError(DiagnosticCode.E3001, "Void results cannot be stored in arrays",
                         elem.span(), elem, "array.element");
                 mixed = true;
@@ -2736,7 +2754,7 @@ public final class TypeChecker {
                 if (!(key instanceof Type.String) && key != Type.Error.INSTANCE)
                     error(DiagnosticCode.E3018, "Record key must be string", prop.key().span());
             }
-            if (checkExpression(prop.value()) instanceof Type.Void)
+            if (Types.resultOnly(checkExpression(prop.value())))
                 voidDataError(DiagnosticCode.E3001, "Void results cannot be stored in records",
                         prop.value().span(), prop.value(), "record.field");
         }
@@ -3074,7 +3092,8 @@ public final class TypeChecker {
         }
         if (fe.expressionBody() && returnType instanceof Type.Void
                 && fe.body().statements().getFirst() instanceof ExpressionStatement expression
-                && !(typeOf(expression.expr()) instanceof Type.Void)) {
+                && !(typeOf(expression.expr()) instanceof Type.Void)
+                && !(typeOf(expression.expr()) instanceof Type.Never)) {
             diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E5003,
                     "Void arrow body requires a void expression", expression.span()).withFacts(
                             new deal.diagnostics.DiagnosticFacts("return.void-arrow-data", "return",
@@ -3089,7 +3108,7 @@ public final class TypeChecker {
         loopDepth = savedLoopDepth;
 
         if (!(returnType instanceof Type.Void)
-                && !ReturnAnalysis.definitelyReturns(fe.body())) {
+                && !ReturnAnalysis.definitelyReturns(fe.body(), this::neverExpression)) {
             diagnostics.add(missingReturnDiagnostic(
                 "Function expression must return a value on all paths", fe.span(), returnType, fe.returnType(), fe.body()));
         }
@@ -3218,13 +3237,20 @@ public final class TypeChecker {
         return base;
     }
 
+    private ExpressionNode optionalTerminal;
+
     private Type checkOptionalChain(OptionalChainExpr chain) {
         NullNarrowing skipped = narrowing.branch();
-        Type type = checkExpression(chain.expression());
+        ExpressionNode saved = optionalTerminal;
+        optionalTerminal = chain.expression();
+        Type type;
+        try { type = checkExpression(chain.expression()); }
+        finally { optionalTerminal = saved; }
         skipped.merge(narrowing);
         narrowing = skipped;
         recordExactClassDecl(chain, type, exactClassDecls.get(chain.expression()));
-        return type instanceof Type.Void || type instanceof Type.Error ? type : Types.optionalRead(type);
+        return type instanceof Type.Never ? Type.Undefined.INSTANCE
+            : type instanceof Type.Void || type instanceof Type.Error ? type : Types.optionalRead(type);
     }
 
     private Type checkCoalesce(BinaryExpr binary) {
@@ -3265,6 +3291,10 @@ public final class TypeChecker {
         if (consequent == Type.Error.INSTANCE || alternate == Type.Error.INSTANCE) return Type.Error.INSTANCE;
         if (context != null && isAssignable(context, consequent) && isAssignable(context, alternate)) return context;
         if (Types.equals(consequent, alternate)) return consequent;
+        if (consequent instanceof Type.Never || alternate instanceof Type.Never) {
+            error(DiagnosticCode.E3006, "Never expressions are not conditional data", span);
+            return Type.Error.INSTANCE;
+        }
         if (consequent instanceof Type.Void || alternate instanceof Type.Void) {
             error(DiagnosticCode.E3006, "Void conditional branches must both return void", span);
             return Type.Error.INSTANCE;
@@ -3529,20 +3559,26 @@ public final class TypeChecker {
 
     private void voidDataError(DiagnosticCode code, String message, Span span, ExpressionNode producer,
                                String operation) {
-        var facts = new deal.diagnostics.DiagnosticFacts("void.data-use", operation, "data value", "void",
-                List.of("Use the void call as a statement, or choose an intended data-producing expression; no result value or return-type change is inferred."));
+        boolean never = typeMap.get(producer) instanceof Type.Never;
+        String result = never ? "never" : "void";
+        String reason = result + ".data-use";
+        if (never) message = message.replace("Void", "Never");
+        var facts = new deal.diagnostics.DiagnosticFacts(reason, operation, "data value", result,
+                List.of(never
+                    ? "Use the never call as a statement or return body; it cannot produce data."
+                    : "Use the void call as a statement, or choose an intended data-producing expression; no result value or return-type change is inferred."));
         ExpressionNode value = producer;
         if (value instanceof AwaitExpression awaited) value = awaited.callee();
         if (value instanceof OptionalChainExpr chain) value = chain.expression();
         FunctionDeclaration declaration = null;
         if (value instanceof CallExpr call && typeMap.get(call.callee()) instanceof Type.Func signature) {
-            facts = facts.withCall(callFacts("void.data-use", call, signature, -1, "data value", "void").call());
+            facts = facts.withCall(callFacts(reason, call, signature, -1, "data value", result).call());
             Symbol.FunctionSymbol symbol = calleeDeclarationOf(call);
             declaration = symbol == null ? null : symbol.declaration();
         }
         CompilerDiagnostic diagnostic = CompilerDiagnostic.error(code, message, span).withFacts(facts);
         if (declaration != null)
-            diagnostic = diagnostic.withNote("Void producer result annotation", declaration.returnType().span().range());
+            diagnostic = diagnostic.withNote((never ? "Never" : "Void") + " producer result annotation", declaration.returnType().span().range());
         diagnostics.add(diagnostic);
     }
 
@@ -4038,6 +4074,7 @@ public final class TypeChecker {
             case Type.Undefined ignored -> "undefined";
             case Type.Unknown ignored -> "unknown";
             case Type.Void ignored -> "void";
+            case Type.Never ignored -> "never";
             case Type.Boolean ignored -> "boolean";
 
             case Type.Number ignored -> "number";

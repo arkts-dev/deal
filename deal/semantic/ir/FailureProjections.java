@@ -134,6 +134,7 @@ public final class FailureProjections {
             case RuntimeDescriptor.Undefined ignored -> "undefined";
             case RuntimeDescriptor.Unknown ignored -> "unknown";
             case RuntimeDescriptor.Void ignored -> "undefined";
+            case RuntimeDescriptor.Never ignored -> "never";
             case RuntimeDescriptor.Boolean ignored -> "boolean";
 
             case RuntimeDescriptor.Number ignored -> "number";

@@ -64,6 +64,7 @@ public final class DescriptorService {
             case Type.Undefined ignored -> RuntimeDescriptor.Undefined.INSTANCE;
             case Type.Unknown ignored -> RuntimeDescriptor.Unknown.INSTANCE;
             case Type.Void ignored -> RuntimeDescriptor.Void.INSTANCE;
+            case Type.Never ignored -> RuntimeDescriptor.Never.INSTANCE;
             case Type.Boolean ignored -> RuntimeDescriptor.Boolean.INSTANCE;
 
             case Type.Number ignored -> RuntimeDescriptor.Number.INSTANCE;

@@ -1580,6 +1580,7 @@ public final class JvmRuntime {
         if (v == MISSING) v = UNDEFINED;
         String actual = v == UNDEFINED ? "undefined" : completion ? completionActualOf(staticKind, v)
             : actualOf(staticKind, v);
+        if ("never".equals(desc)) throw kindFailure("never", actual, completion);
         if ("undefined".equals(desc) || "void".equals(desc)) {
             if (v == UNDEFINED) return v;
             throw kindFailure("undefined", actual, completion);
