@@ -960,6 +960,10 @@ public final class Parser {
         if (nameToken == null) return null;
 
         if (!match(TokenType.COLON)) {
+            if (peek().type() != TokenType.COMMA && peek().type() != TokenType.RPAREN) {
+                expectedToken(DiagnosticCode.E1008, "Expected ':' after parameter name", TokenType.COLON);
+                return null;
+            }
             return new Parameter(spanBetween(nameToken, nameToken), nameToken.lexeme(), null);
         }
         TypeNode type = parseType();

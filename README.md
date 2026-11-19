@@ -84,6 +84,21 @@ Only production classes in `build/deal` count; tests and generated probes do not
 Minima: **85% lines**, **75% branches**. Reports: `build/coverage.csv`,
 `build/coverage.xml`, `build/coverage-html/index.html`.
 
+## Diagnostics
+
+`compile` and `native build|run` accept `--diagnostics-json <path>` for JSON v2:
+source diagnostics include full UTF-16 ranges, notes, producer-owned facts,
+classification and available snapshot excerpts/occurrence IDs. Operational
+failures and actual compilation/publication outcomes are separate fields.
+Amendment uses `compiler-protocol-v3` with revision-pinned context requests;
+context reads do not grant edits.
+
+Set `DEAL_DIAGNOSTICS_JSON=1` before execution to append a bounded
+`DEAL_RUNTIME_DIAGNOSTIC:` JSON v2 record on uncaught runtime errors across all
+four backends. It retains available Error metadata, causes/frames and original
+JSON scanner byte offsets/reasons without traversing user values. Default
+terminal output and exit behavior remain unchanged when disabled.
+
 ## Embedded timing
 
 Scope `deal.module.CompilationTiming.observe((phase, nanos) -> ...)` with

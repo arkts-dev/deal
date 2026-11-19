@@ -246,6 +246,13 @@ public class ParserTest {
                             && rejected.diagnostics().getFirst().facts().reason().equals("syntax.expression-required"),
                     "comma-only and EOF-terminated malformed lists remain rejected and terminate: " + sample);
         }
+        assertNoParseErrors(parse("let f=(x,y:number):number=>y;"),
+                "omitted contextual parameter remains admitted alongside annotated parameter");
+        var malformedContextual = parse("let f=function(x number,y:string):string{return y;};let later=1;");
+        check(malformedContextual.diagnostics().size() == 1
+                        && malformedContextual.diagnostics().getFirst().facts().expected().equals("COLON")
+                        && malformedContextual.program().statements().size() == 2,
+                "malformed contextual annotation recovers locally rather than masquerading as omitted annotation");
         var typeRequired = parse(prefix + "function f(x:,y:number):void{}");
         check(typeRequired.diagnostics().size() == 1
                         && typeRequired.diagnostics().getFirst().facts().reason().equals("syntax.type-required")

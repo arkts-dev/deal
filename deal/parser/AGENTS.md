@@ -12,6 +12,8 @@ Keep checker/backend policy outside parsing; add focused positive/negative fixtu
   call/parameter/type lists admit one trailing comma, not holes/comma-only lists.
 - Arrows require parenthesized parameters and explicit results. Expression
   parameters may omit annotations for contextual checking; declarations may not.
+  Recover malformed annotation tokens locally without treating them as omitted
+  contextual parameters or consuming later list elements.
   Preserve block/expression forms for void checks. No line break after async or
   before =>, including comment-contained breaks. Unannotated arrow lookahead must
   recognize a complete result annotation plus =>, not a ternary colon.

@@ -4,6 +4,10 @@ Production Java supports `--release 21`; release/test tooling uses Java 25.
 Preserve deterministic diagnostics and transactional publication. Lower checked
 facts into validated semantic IR; backends never fall back to ASTs.
 
+- Diagnostics retain producer-owned facts, source snapshot identities and exact
+  ranges without reconstructing evidence from prose or changing validation order.
+  JSON v2 and amendment protocol v3 are the sole current transports. Runtime
+  export is opt-in, bounded and must not invoke user hooks or change Error identity.
 - Private metadata owns identities/descriptors/presence/order, never user string
   keys. Normalize documented host shapes at ingress and validate complete live
   graphs before publication, preserving sharing/cycles and rollback.
