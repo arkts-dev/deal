@@ -56,6 +56,8 @@ const $descriptorHasOwn = Object.prototype.hasOwnProperty.call.bind(Object.proto
 const $diagnosticFinite = Number.isFinite;
 const $diagnosticSlice = String.prototype.slice.call.bind(String.prototype.slice);
 const $diagnosticCharCode = String.prototype.charCodeAt.call.bind(String.prototype.charCodeAt);
+const $diagnosticNumberText = Number.prototype.toString.call.bind(Number.prototype.toString);
+const $diagnosticPow = Math.pow, $diagnosticFloor = Math.floor, $diagnosticLog2 = Math.log2;
 
 // ===== Error spine: the module-private $DEALError class =====
 // (js-backend-runtime-artifact D8) The single constructor path every
@@ -1737,21 +1739,21 @@ function $numberHex($v) {
   const $sign = ($v < 0 || ($v === 0 && 1 / $v < 0)) ? "-" : "";
   const $magnitude = $v < 0 ? -$v : $v;
   if ($magnitude === 0) return $sign + "0x0.0p0";
-  if ($magnitude < $Math.pow(2, -1022)) {
+  if ($magnitude < $diagnosticPow(2, -1022)) {
     // A subnormal keeps Java's fixed-exponent denormal spelling: two
     // exact power-of-two scalings recover its integer significand
     // (magnitude * 2^1074), never the normalized 2^52-scale form.
-    const $scaled = $magnitude * $Math.pow(2, 537) * $Math.pow(2, 537);
+    const $scaled = $magnitude * $diagnosticPow(2, 537) * $diagnosticPow(2, 537);
     return $sign + "0x0." + $hexDigits($scaled) + "p-1022";
   }
-  let $exponent = $Math.floor($Math.log2($magnitude));
-  if ($magnitude >= $Math.pow(2, $exponent + 1)) {
+  let $exponent = $diagnosticFloor($diagnosticLog2($magnitude));
+  if ($magnitude >= $diagnosticPow(2, $exponent + 1)) {
     $exponent += 1;
-  } else if ($magnitude < $Math.pow(2, $exponent)) {
+  } else if ($magnitude < $diagnosticPow(2, $exponent)) {
     $exponent -= 1;
   }
   const $fraction =
-    ($magnitude / $Math.pow(2, $exponent) - 1) * 4503599627370496;
+    ($magnitude / $diagnosticPow(2, $exponent) - 1) * 4503599627370496;
   return $sign + "0x1." + $hexDigits($fraction) + "p" + $exponent;
 }
 
@@ -1759,10 +1761,10 @@ function $numberHex($v) {
 // double's significand, trailing zeros stripped, never empty ("0" for a
 // zero fraction — Java's "0x1.0p<exp>").
 function $hexDigits($fraction) {
-  let $text = $fraction.toString(16);
+  let $text = $diagnosticNumberText($fraction, 16);
   while ($text.length < 13) $text = "0" + $text;
-  while ($text.length > 1 && $text.charAt($text.length - 1) === "0") {
-    $text = $text.slice(0, $text.length - 1);
+  while ($text.length > 1 && $diagnosticCharCode($text, $text.length - 1) === 48) {
+    $text = $diagnosticSlice($text, 0, $text.length - 1);
   }
   return $text;
 }

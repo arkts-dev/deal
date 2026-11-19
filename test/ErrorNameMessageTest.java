@@ -70,6 +70,12 @@ public final class ErrorNameMessageTest {
               if(previousZero)Object.defineProperty(Array.prototype,'0',previousZero);else delete Array.prototype[0];
             }
             if(inherited!==0||JSON.parse(isolated).runtime.code!=='Boundary')process.exit(10);
+            const originalPow=Math.pow,originalFloor=Math.floor,originalLog=Math.log2,originalNumber=Number.prototype.toString;
+            Math.pow=Math.floor=Math.log2=Number.prototype.toString=trap;
+            let bounds;
+            try{runtime.arrayElementGet([7],0.5,'number','read.deal',1,1);}catch(e){bounds=e;}
+            finally{Math.pow=originalPow;Math.floor=originalFloor;Math.log2=originalLog;Number.prototype.toString=originalNumber;}
+            if(traps!==0||!bounds||JSON.parse(runtime.runtimeDiagnostic(bounds)).runtime.arrayIndex!=='0x1.0p-1')process.exit(12);
             """), Path.of("").toAbsolutePath(), Map.of());
         if (getterControl.exitCode() != 0) throw new AssertionError("runtime export invoked mutable host metadata: " + getterControl);
         var hostProjection = BoundedProcess.runCaptured(List.of("node", "-e", """
