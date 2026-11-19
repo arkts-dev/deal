@@ -271,7 +271,8 @@ public final class AmendWorkspace {
                 var target = analysis.targets().get(node.id());
                 var owner = analysis.symbolsById().get(node.ownerId());
                 yield new SemanticSlice(revision(analysis), node.id(), node.kind(), sliceSource(analysis, target),
-                        owner == null ? List.of() : List.of(owner), List.of(node), List.of(descriptor(analysis, target)));
+                        owner == null ? List.of() : List.of(owner), List.of(node),
+                        readOnlyOwner(target) ? List.of() : List.of(descriptor(analysis, target)));
             }
         };
         return new CompilerProtocol.ContextResult(true, revision(analysis), slice, List.of());
@@ -354,7 +355,7 @@ public final class AmendWorkspace {
                 sliceSource(analysis, target),
                 owner == null ? List.of() : List.of(owner),
                 List.of(node),
-                List.of(descriptor(analysis, target)));
+                readOnlyOwner(target) ? List.of() : List.of(descriptor(analysis, target)));
     }
 
     /** Canonical text a slice owns; the queried target's span, never whitespace outside it. */
@@ -1446,6 +1447,7 @@ public final class AmendWorkspace {
                     .map(FunctionInfo::id).ifPresent(calledIds::add));
             callees.put(info.id(), calledIds);
             collectBlocks(info, info.function().body(), "body", sourceDigest, index, targets, nodes, true);
+            collectSemanticOwners(info, sourceDigest, index, targets, nodes);
         }
         Map<SemanticId, Set<SemanticId>> callers = new LinkedHashMap<>();
         callees.forEach((caller, values) -> values.forEach(callee ->
@@ -1562,6 +1564,22 @@ public final class AmendWorkspace {
                 collectBlocks(owner, value.catchBlock(), path + "/catch", sourceDigest, index, targets, nodes, false);
             }
             default -> { }
+        }
+    }
+
+    private static void collectSemanticOwners(FunctionInfo owner, String sourceDigest, SourceIndex index,
+            Map<SemanticId, Target> targets, List<NodeSnapshot> nodes) {
+        // One walk per function; read-only owners create no nested edit authority.
+        for (var semantic : DeclarationReferences.semanticOwners(owner.function().body())) {
+            Span span = semantic.span();
+            if (!span.hasScalarOffsets()) continue;
+            String semanticPath = "semantic/" + semantic.kind() + "/" + span.startScalarOffset() + "/" + span.endScalarOffset();
+            SemanticId id = nodeId(sourceDigest, owner.id(), semanticPath);
+            if (targets.containsKey(id)) continue;
+            int start = index.offset(span.startLine(), span.startColumn());
+            int end = index.offsetAfter(span.endLine(), span.endColumn());
+            targets.put(id, new Target(id, owner.id(), semantic.kind(), span.range(), start, end, start, end));
+            nodes.add(new NodeSnapshot(id, owner.id(), semantic.kind(), span.range(), digest(index.slice(span))));
         }
     }
 
@@ -1688,6 +1706,12 @@ public final class AmendWorkspace {
             if (smallest != null) scopes = List.of(new RepairScope(REPLACE_BLOCK_BODY, smallest.id()));
         }
         var compilerRange = value.range();
+        Target semanticOwner = null;
+        for (Target target : targets) {
+            if (!target.ownerId().equals(ownerId) || !readOnlyOwner(target) || !encloses(target.range(), value.range())) continue;
+            if (semanticOwner == null || target.range().scalarLength() < semanticOwner.range().scalarLength()) semanticOwner = target;
+        }
+        if (semanticOwner != null) ownerId = semanticOwner.id();
         return new StructuredDiagnostic(
                 value.code(),
                 value.severity(),
@@ -1700,6 +1724,11 @@ public final class AmendWorkspace {
                 scopes,
                 null,
                 value.notes()).withFacts(value.facts());
+    }
+
+    private static boolean readOnlyOwner(Target target) {
+        return target.kind().equals("nested-function") || target.kind().equals("nested-class")
+                || target.kind().equals("function-expression");
     }
 
     /** Correlate producer-owned secondary ranges with existing local declaration targets only. */
@@ -2019,7 +2048,7 @@ public final class AmendWorkspace {
         }
         for (NodeSnapshot node : nodes) {
             Target target = analysis.targets().get(node.id());
-            if (target != null) result.add(descriptor(analysis, target));
+            if (target != null && !readOnlyOwner(target)) result.add(descriptor(analysis, target));
         }
         return List.copyOf(result);
     }

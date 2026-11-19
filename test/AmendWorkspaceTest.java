@@ -312,6 +312,22 @@ public final class AmendWorkspaceTest {
             catch (IllegalArgumentException expected) { wrongFile = true; }
             check(wrongFile, "syntax offer rejects another module");
         }
+        for (String nested : List.of("let inner=():number=>{return \"bad\";};",
+                "let inner=function():number{return \"bad\";};")) {
+            String nestedSource = "// 😀\r\nexport function outer():void{" + nested + "}";
+            var nestedInspection = AmendWorkspace.inspect(nestedSource, "nested.deal");
+            var nestedDiagnostic = nestedInspection.diagnostics().stream().filter(d -> d.code().equals("E5003")).findFirst().orElseThrow(() -> new AssertionError(nestedInspection.diagnostics()));
+            var nestedOwner = nestedInspection.nodes().stream().filter(n -> n.id().equals(nestedDiagnostic.ownerId())).findFirst().orElseThrow();
+            check(nestedOwner.kind().equals("function-expression"),
+                "nested callable is the semantic owner instead of the outer function");
+            var nestedContext = AmendWorkspace.queryContext(nestedSource, "nested.deal", nestedDiagnostic.contextRequest());
+            check(nestedContext.accepted() && nestedContext.slice().source().contains("return \"bad\"")
+                    && nestedContext.slice().allowedOperations().isEmpty(), "smallest owner is inspectable without inventing edit authority");
+            check(nestedDiagnostic.repairScopes().stream().noneMatch(scope -> scope.ownerId().equals(nestedOwner.id())),
+                "semantic-only owner is not advertised as a writable target");
+            check(AmendWorkspace.inspect(nestedSource.replace("return \"bad\"", "return 2"), "nested.deal").diagnostics().isEmpty(),
+                "explicit nested result repair rechecks under existing module authority");
+        }
         String relatedSource = "// 😀\r\nfunction consume(value:number):void{}\r\nexport function run():void{consume(\"bad\");}";
         var relatedInspection = AmendWorkspace.inspect(relatedSource, "related.deal");
         var relatedDiagnostic = relatedInspection.diagnostics().stream().filter(d -> d.code().equals("E5001")).findFirst().orElseThrow();

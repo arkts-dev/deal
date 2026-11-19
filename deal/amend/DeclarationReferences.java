@@ -7,6 +7,14 @@ import java.util.*;
 final class DeclarationReferences {
     record Reference(String kind, String name) {}
     private final Set<Reference> references = new LinkedHashSet<>();
+    record SemanticOwner(Span span, String kind) {}
+    private final List<SemanticOwner> owners = new ArrayList<>();
+
+    static List<SemanticOwner> semanticOwners(StatementNode node) {
+        var visitor = new DeclarationReferences();
+        visitor.statement(node, new HashSet<>());
+        return List.copyOf(visitor.owners);
+    }
 
     static Set<Reference> collect(StatementNode node, Set<String> bindings) {
         var visitor = new DeclarationReferences();
@@ -15,6 +23,7 @@ final class DeclarationReferences {
     }
 
     private void type(TypeNode node) {
+        if (node == null) return; // Contextually typed expression parameter.
         switch (node) {
             case NamedType n -> references.add(new Reference("class", n.name()));
             case ArrayType n -> type(n.elementType());
@@ -34,8 +43,14 @@ final class DeclarationReferences {
     private void statement(StatementNode node, Set<String> scope) {
         switch (node) {
             case ExportDeclaration n -> statement(n.declaration(), scope);
-            case FunctionDeclaration n -> function(n.params(), n.returnType(), n.body(), scope);
-            case ClassDeclaration n -> n.fields().forEach(f -> type(f.type()));
+            case FunctionDeclaration n -> {
+                owners.add(new SemanticOwner(n.span(), "nested-function"));
+                function(n.params(), n.returnType(), n.body(), scope);
+            }
+            case ClassDeclaration n -> {
+                owners.add(new SemanticOwner(n.span(), "nested-class"));
+                n.fields().forEach(f -> type(f.type()));
+            }
             case Block n -> {
                 var local = new HashSet<>(scope);
                 n.statements().forEach(s -> statement(s, local));
@@ -91,7 +106,10 @@ final class DeclarationReferences {
                 if (p.key() != null) expression(p.key(), scope);
                 expression(p.value(), scope);
             });
-            case FunctionExpr n -> function(n.params(), n.returnType(), n.body(), scope);
+            case FunctionExpr n -> {
+                owners.add(new SemanticOwner(n.span(), "function-expression"));
+                function(n.params(), n.returnType(), n.body(), scope);
+            }
             case HasExpr n -> { expression(n.object(), scope); expression(n.key(), scope); }
             case AssignmentExpr n -> { expression(n.target(), scope); expression(n.value(), scope); }
             case TemplateLiteralExpr n -> n.parts().forEach(e -> expression(e, scope));
