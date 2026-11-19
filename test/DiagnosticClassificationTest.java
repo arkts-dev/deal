@@ -120,8 +120,12 @@ public class DiagnosticClassificationTest {
                 "configuration is distinguished from module lookup");
         check(DiagnosticCode.E6005.classification().responsibility() == deal.diagnostics.DiagnosticClassification.Responsibility.COMPILER_CONTRACT,
                 "lowering labels the compiler contract, not a guessed source repair");
-        check(DiagnosticCode.E8011.classification().responsibility() == deal.diagnostics.DiagnosticClassification.Responsibility.RUNTIME_CONTRACT,
-                "runtime code alone assigns no source versus host blame");
+        check(DiagnosticCode.E8011.classification().responsibility() == deal.diagnostics.DiagnosticClassification.Responsibility.HOST_CONTRACT,
+                "registered host-export rejection identifies its contract without attributing propagated Errors");
+        check(DiagnosticCode.E2010.classification().responsibility() == deal.diagnostics.DiagnosticClassification.Responsibility.CONFIGURATION_CONTRACT,
+                "configuration is not mislabeled as a source edit");
+        check(DiagnosticCode.E8001.classification().responsibility() == deal.diagnostics.DiagnosticClassification.Responsibility.RUNTIME_CONTRACT,
+                "shared runtime type code alone cannot prove host responsibility");
         check(deal.diagnostics.DiagnosticClassification.forCode("E9999") == null
                         && deal.diagnostics.DiagnosticClassification.forCode("CP1001") == null,
                 "unknown/extension/protocol codes do not gain classifications by prefix");

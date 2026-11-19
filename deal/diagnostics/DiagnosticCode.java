@@ -400,10 +400,14 @@ public enum DiagnosticCode {
             case E7001 -> DiagnosticClassification.Category.DECLARATION_FILE;
             case E8001, E8002, E8003, E8006, E8007, E8010, E8011 -> DiagnosticClassification.Category.RUNTIME_BOUNDARY;
         };
-        var responsibility = switch (phase) {
-            case FRONTEND -> DiagnosticClassification.Responsibility.SOURCE_CONTRACT;
-            case BACKEND_LOWERING -> DiagnosticClassification.Responsibility.COMPILER_CONTRACT;
-            case RUNTIME -> DiagnosticClassification.Responsibility.RUNTIME_CONTRACT;
+        var responsibility = switch (this) {
+            case E2010 -> DiagnosticClassification.Responsibility.CONFIGURATION_CONTRACT;
+            case E8011 -> DiagnosticClassification.Responsibility.HOST_CONTRACT;
+            default -> switch (phase) {
+                case FRONTEND -> DiagnosticClassification.Responsibility.SOURCE_CONTRACT;
+                case BACKEND_LOWERING -> DiagnosticClassification.Responsibility.COMPILER_CONTRACT;
+                case RUNTIME -> DiagnosticClassification.Responsibility.RUNTIME_CONTRACT;
+            };
         };
         return new DiagnosticClassification(phase, category, responsibility);
     }

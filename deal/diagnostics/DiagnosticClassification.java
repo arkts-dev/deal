@@ -11,7 +11,9 @@ public record DiagnosticClassification(DiagnosticCode.Phase phase, Category cate
     }
 
     /** The contract to inspect; runtime codes alone cannot attribute source versus host blame. */
-    public enum Responsibility { SOURCE_CONTRACT, COMPILER_CONTRACT, RUNTIME_CONTRACT }
+    public enum Responsibility {
+        SOURCE_CONTRACT, CONFIGURATION_CONTRACT, HOST_CONTRACT, COMPILER_CONTRACT, RUNTIME_CONTRACT
+    }
 
     public DiagnosticClassification {
         Objects.requireNonNull(phase, "phase");
