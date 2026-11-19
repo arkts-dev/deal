@@ -1352,14 +1352,24 @@ end
 -- supplied call origin — and compose no failure text of their own. An
 -- unregistered renderer (the runtime driven outside a production
 -- artifact) is a fail-closed producer defect, never a textual fallback.
-local function host_arm_failure(id, values, file, line, column, expected, subject)
+local function host_arm_failure(id, values, file, line, column, expected, subject, signature, context)
   local render = __rt.__hostArm
   if render == nil then
     error("the host failure-arm renderer is not registered on the deployed "
       .. "runtime (the emitted chunk registers it at load; a producer "
       .. "defect)", 0)
   end
-  error(render(id, values, file, line, column, expected, subject), 0)
+  local failure = render(id, values, file, line, column, expected, subject)
+  failure.hostSignature = signature
+  failure.hostBoundary = id == "HOST_PARAMETER_CELL" and "parameter"
+    or (id == "ASYNC_SHAPE" and "async-shape" or "return")
+  if id == "HOST_PARAMETER_CELL" then failure.hostParameter = tostring(values.index) end
+  if context ~= nil then
+    failure.hostModule = context.module
+    failure.hostExport = context.name
+    failure.hostDeclaration = context.declaration
+  end
+  error(failure, 0)
 end
 
 --- Wrap a plain Lua function with runtime parameter and return type checks.
@@ -1395,7 +1405,7 @@ end
 -- DEAL has no rest parameters: the parameter list is exact. A legacy
 -- "...T" descriptor entry never parses under the canonical grammar, so a
 -- signature carrying one is rejected here at wrap time (E8010).
-function __rt.from_lua_function(sig, raw_f)
+function __rt.from_lua_function(sig, raw_f, context)
   if type(raw_f) ~= "function" then
     error(__rt._err("E8001", "expected function, got " .. type(raw_f), nil, nil, nil, "function", type(raw_f)))
   end
@@ -1415,6 +1425,10 @@ function __rt.from_lua_function(sig, raw_f)
   local ret_descriptor = ret_atom.text
   local is_null_ret = ret_atom.kind == "primitive" and ret_atom.name == "null"
   local is_async = parsed.isAsync == true
+  local render_failure = host_arm_failure
+  local function host_arm_failure(id, values, file, line, column, expected, subject)
+    return render_failure(id, values, file, line, column, expected, subject, sig, context)
+  end
 
   return __rt.function_(sig, function(...)
     local nargs_full = select("#", ...)
@@ -1591,7 +1605,7 @@ end
 -- for legal declared maps (every emitted Type.Func descriptor is a
 -- canonical function atom); call-time violations raise E8010 inside the
 -- wrapped functions.
-function __rt.load_host(module_path, declared, file, line, column)
+function __rt.load_host(module_path, declared, file, line, column, declaration_module)
   if type(declared) ~= "table" then
     error(__rt._err("E8011", "host module declarations must be a table", file, line, column, "table", type(declared)))
   end
@@ -1617,7 +1631,8 @@ function __rt.load_host(module_path, declared, file, line, column)
     if parsed ~= nil and parsed.kind == "function" then
       if type(v) == "function" then
         -- Raw Lua function: wrap with parameter/return/async-shape checks.
-        exports[name] = __rt.from_lua_function(descriptor, v)
+        exports[name] = __rt.from_lua_function(descriptor, v,
+          {module = module_path, name = name, declaration = declaration_module})
       elseif type(v) == "table" and (v[__K.kind] == "function"
           or v.__kind == "function") then
         -- Pre-wrapped export: the declared descriptor is the only trusted
@@ -1634,7 +1649,8 @@ function __rt.load_host(module_path, declared, file, line, column)
         if type(v.f) ~= "function" then
           error(__rt._err("E8011", "host export '" .. tostring(name) .. "' in module '" .. tostring(module_path) .. "' has non-function .f", file, line, column, "function", type(v.f)))
         end
-        exports[name] = __rt.from_lua_function(descriptor, v.f)
+        exports[name] = __rt.from_lua_function(descriptor, v.f,
+          {module = module_path, name = name, declaration = declaration_module})
       else
         error(__rt._err("E8011", "host export '" .. tostring(name) .. "' in module '" .. tostring(module_path) .. "' is not a function", file, line, column, "function", type(v)))
       end

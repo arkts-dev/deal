@@ -1014,7 +1014,7 @@ public class HostModuleLoadEmissionTest {
                     + declaredMapLiteral(fixture.surface(), module) + ", "
                     + luaString(op.origin().sourceId()) + ", "
                     + op.origin().span().startLine() + ", "
-                    + op.origin().span().startColumn() + ")";
+                    + op.origin().span().startColumn() + ", " + key + ")";
                 check(lua.contains(load), specifier + ": guarded load with declared ABI and origin");
                 check(lua.indexOf(load) > lua.indexOf("__dealMain = function()"),
                     specifier + ": load inside init walk");
@@ -6635,6 +6635,33 @@ public class HostModuleLoadEmissionTest {
         return out;
     }
 
+    private static void testLuaHostDiagnosticContext() throws Exception {
+        Path root = Files.createTempDirectory("host-diagnostic-lua");
+        try {
+            Path out = publishLuaHost(root, "diagnostic", "export function read():string;",
+                """
+                import * as host from "host/diagnostic";
+                export function main():void {
+                  try { host.read(); }
+                  catch(error) { let caught:Error=error as Error; caught.message="chosen"; throw caught; }
+                }
+                """, "return {read=function() return false end}", "host diagnostic context");
+            if (out == null) return;
+            var command = List.of("luajit", "app.lua");
+            var enabled = BoundedProcess.runCaptured(command, out, Map.of("DEAL_DIAGNOSTICS_JSON", "1"));
+            var disabled = BoundedProcess.runCaptured(command, out, Map.of("DEAL_DIAGNOSTICS_JSON", "0"));
+            check(enabled.exitCode() == 1 && disabled.exitCode() == 1
+                    && enabled.stdout().equals(disabled.stdout())
+                    && enabled.stderr().contains("\"hostExport\":\"read\"")
+                    && enabled.stderr().contains("\"hostSignature\":\"()->string\"")
+                    && enabled.stderr().contains("\"hostBoundary\":\"return\"")
+                    && enabled.stderr().contains("\"hostDeclaration\":")
+                    && enabled.stderr().contains("\"message\":\"chosen\"")
+                    && !disabled.stderr().contains("DEAL_RUNTIME_DIAGNOSTIC:"),
+                "Lua host rejection preserves context/rethrow/default behavior: " + enabled);
+        } finally { deleteRecursively(root); }
+    }
+
     private static void deployRuntime(Path workspace) throws Exception {
         Path runtime = Path.of("deal", "runtime.lua");
         Path runtimeTarget = workspace.resolve("deal").resolve("runtime.lua");
@@ -6844,6 +6871,7 @@ public class HostModuleLoadEmissionTest {
             testJvmToolchain(carrierHost);
             testJvmMissingExport(missing, cfg);
             testJvmDeclaredArrayElementProjection(array);
+            testLuaHostDiagnosticContext();
         } finally {
             for (Path root : roots) {
                 deleteRecursively(root);

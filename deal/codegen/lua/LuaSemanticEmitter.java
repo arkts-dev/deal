@@ -3660,6 +3660,20 @@ public final class LuaSemanticEmitter {
          * surface at the call origin, and each host-facing projection (H7)
          * lands in {@code __hbT[i]}. Returns the position count.
          */
+        private void emitHostDiagnosticContext(SemanticOp op, KindPayload.CallPayload payload,
+                String error, String crossing, Integer parameter) {
+            FunctionExecutionBinding binding = payload.callee() instanceof KindPayload.CallCallee.Dynamic
+                ? null : callBinding(op, payload);
+            String module = binding instanceof FunctionExecutionBinding.HostFunction host ? host.hostModuleId().path()
+                : binding instanceof FunctionExecutionBinding.HostFunctionValue host ? host.hostModuleId().path() : null;
+            String export = binding instanceof FunctionExecutionBinding.HostFunction host ? host.exportName() : null;
+            out.append(error).append(".hostSignature = ").append(luaString(payload.signature().canonicalSpecText())).append("\n")
+                .append(error).append(".hostBoundary = ").append(luaString(crossing)).append("\n");
+            if (module != null) out.append(error).append(".hostDeclaration = ").append(luaString(module)).append("\n");
+            if (export != null) out.append(error).append(".hostExport = ").append(luaString(export)).append("\n");
+            if (parameter != null) out.append(error).append(".hostParameter = ").append(luaString(parameter.toString())).append("\n");
+        }
+
         private int emitHostParameterCells(SemanticOp op, KindPayload.CallPayload payload) {
             out.append("__hbT = {}\n");
             // One crossing memo per host call: every declared parameter
@@ -3690,6 +3704,7 @@ public final class LuaSemanticEmitter {
                         .append(")\n");
                 }
                 out.append("if not __okB then\n");
+                emitHostDiagnosticContext(op, payload, "__chkB", "parameter", index);
                 emitFailureEvent(boundary.opId(), "BOUNDARY", boundary,
                     "__errtext(__chkB)");
                 emitFailureEvent(op.opId(), op.kind().name(), op,
@@ -6495,7 +6510,7 @@ private void emitStdlib(SemanticOp op) {
                 .append("__exportSurfaces[").append(key).append("] or ")
                 .append("__rt.load_host(").append(luaString(payload.rawSpecifier()))
                 .append(", ").append(hostDeclaredMap(facts)).append(", ")
-                .append(loadOriginArgs(op)).append(")\n");
+                .append(loadOriginArgs(op)).append(", ").append(key).append(")\n");
             out.append("__nsSurface(__exportSurfaces[").append(key).append("])\n");
             // The loaded table is the import's namespace value, and its
             // declared function exports are its entries in declaration
@@ -10828,7 +10843,10 @@ function __dealRuntimeDiagnostic(error)
                             {"expected", "e"}, {"actual", "a"}, {"frames", "f"},
                             {"jsonByteOffset", "jsonByteOffset"}, {"jsonReason", "jsonReason"},
                             {"jsonPath", "jsonPath"}, {"jsonPathDepth", "jsonPathDepth"},
-                            {"jsonPathTruncated", "jsonPathTruncated"}, {"jsonMissingField", "jsonMissingField"}}) do
+                            {"jsonPathTruncated", "jsonPathTruncated"}, {"jsonMissingField", "jsonMissingField"},
+                            {"hostModule", "hostModule"}, {"hostExport", "hostExport"},
+                            {"hostDeclaration", "hostDeclaration"}, {"hostSignature", "hostSignature"},
+                            {"hostBoundary", "hostBoundary"}, {"hostParameter", "hostParameter"}}) do
       local text = rawget(value, pair[2])
       if type(text) == "string" then
         local take = math.min(#text, 8192)
