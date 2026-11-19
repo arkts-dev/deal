@@ -163,7 +163,7 @@ ParameterList ::= Parameter (',' Parameter)* ','?
 
 Parameter ::= Identifier TypeAnnotation?
 
-ReturnType ::= Type | 'void' | 'Promise' '<' (Type | 'void') '>'
+ReturnType ::= Type | 'void' | 'never' | 'Promise' '<' (Type | 'void' | 'never') '>'
 
 VariableDeclaration ::= ('let' | 'const') Identifier TypeAnnotation? '=' Expression ';'
 
@@ -328,7 +328,7 @@ Type := null | undefined | boolean | number | string | unknown
       | RecordValue | Error | ClassName | Array<Type>
       | Nullish<Base, flags> | Function(sync, params, result)
       | Function(async, params, result)
-Result := Type | void
+Result := Type | void | never
 ```
 
 `RecordValue` spells `Record<string, unknown>`. Nullish flags add null/undefined to a base. Unknown accepts all data but authorizes no unchecked operations.
@@ -358,7 +358,7 @@ Constraints:
 
 - Permit `T | null`, `T | undefined`, `T | null | undefined` and `null | undefined`. Flatten parentheses; reject duplicates, canonicalize null before undefined. Unknown absorbs nullish members. Reject other unions.
 - Record/Promise applications are closed builtins, not general generics. `Promise<R>` denotes an async signature with result R, requiring async on implementation bodies but not external declarations. Reject promise variables, nesting and unions.
-- Void is result-only, including `Promise<void>`; discard void calls as statements, never data.
+- Void and never are result-only, including `Promise<void>` and `Promise<never>`; neither is a data type. Discard void calls as statements.
 - Error is builtin nominal and cannot be redeclared.
 
 ### Narrowing and checked assertions
@@ -497,8 +497,8 @@ Strings compare lexicographically by UTF-16 code-unit value; a proper prefix sor
 | record member/index read | see [Records](#reading-and-writing-fields) |
 | class member `a.p` | see [Field access](#field-access) |
 | `JSON.parse(s)` | see [JSON decoding](#json-decoding) |
-| other sync call `f(...)` | declared result, including void |
-| `await f(...)` for `f: (...) => Promise<R>` | `R`, including void |
+| other sync call `f(...)` | declared result, including void/never |
+| `await f(...)` for `f: (...) => Promise<R>` | `R`, including void/never |
 | `typeof e` / `e instanceof C` | `string` / `boolean` |
 | `e as T` | `T` |
 | `e.name` where `e: Error` | `string` |
@@ -671,8 +671,19 @@ function name(p1: T1, p2: T2): R {
 
 ### Return type requirements
 
-- Value returns satisfy normal assignment compatibility with the result type, unwrapping Promise for async implementations.
-- Only void-result bodies may fall through or use bare return; both produce undefined. Reject value returns from them. This applies equally to `Promise<void>`. `return null;` is an explicit null result.
+- Value returns satisfy normal assignment compatibility with the result type, unwrapping Promise for async implementations. Never expressions may terminate any return/arrow body without assignment compatibility.
+- Only void-result bodies may fall through or use bare return; both produce undefined. Reject value returns from them; void-result expression arrows otherwise require void. This applies equally to `Promise<void>`. `return null;` is an explicit null result.
+- Never-result bodies must neither fall through nor return a value under [definite return analysis](#definite-return-analysis). Never expressions terminate normal flow; use them only as statements or return/arrow bodies. Call/await refinement invalidation still applies. Throws remain catchable; check catch paths normally. These rules also apply to awaited `Promise<never>`.
+
+```ts
+function reject(message: string): never {
+ throw { name: "INVALID", message: message };
+}
+function text(value: unknown): string {
+ if (typeof value !== "string") { reject("Expected string"); }
+ return value;
+}
+```
 
 ```ts
 function f(): null { // ok
@@ -692,7 +703,7 @@ function findName(): string | null { // ok: returns null or string
 An `M`-parameter function is assignable to an `N`-parameter function target **iff**:
 
 - Async status matches, as determined by the signature's Promise result notation.
-- Result types are identical, including void and nullish members.
+- Result types are identical, including void, never and nullish members.
 - `M <= N`.
 - Corresponding first `M` parameter types are identical.
 
@@ -738,7 +749,7 @@ let f: (x: number) => number = function(x: number): number {
 };
 ```
 
-Arrow expression bodies act as returns; void-result arrows require a void expression.
+Arrow expression bodies follow [Return type requirements](#return-type-requirements).
 
 ```ts
 const double = (x: number): number => x * 2;
@@ -859,9 +870,10 @@ Declaration order:
 
 ### Definite return analysis
 
-For bodies requiring a value under [Return type requirements](#return-type-requirements), definitely-returning statements are:
+For non-void bodies under [Return type requirements](#return-type-requirements), definitely-returning statements are:
 
 - `return` or `throw`
+- expression statement whose expression has result never
 - `if`/`else` or `try`/`catch` where both arms definitely return
 - block whose final reachable statement definitely returns
 - `while (true)` whose body definitely returns, with no reachable `break` targeting that loop
@@ -993,7 +1005,7 @@ if (b) { }
 `condition ? a : b` evaluates only the selected branch.
 
 - Branches receive contextual types; otherwise, either array/object literal arm receives the independently typed other's exact array/class/Record type.
-- Infer identical types, permitted nullish unions, or unknown if either branch is unknown and neither is void.
+- Infer identical types, permitted nullish unions, or unknown if either branch is unknown and neither is void/never.
 - Reject other combinations.
 
 ```ts
@@ -1009,7 +1021,7 @@ For `a ?? b`:
 - Propagate the contextual target to b; otherwise, a's non-nullish array/class/Record type supplies the target for array/object literals.
 - Combine a's non-nullish type with b's type using [conditional](#conditional) rules; if a is nullish-only, use b's type.
 
-Check each optional access, call or deletion on its receiver/callee's non-nullish type. Add undefined only to the completed chain's non-void result. Reject async calls in optional chains.
+Check each optional access, call or deletion on its receiver/callee's non-nullish type. Add undefined only to the completed chain's non-void result; optional calls of never-result functions have type undefined, completing only when skipped. Reject async calls in optional chains.
 
 ### While
 
@@ -1121,7 +1133,7 @@ Require `await E` inside async bodies, where E is a call with signature `(...) =
 
 Async calls create internal operations, not data: no storage, passing, returning, comparison or inspection, including through unknown.
 
-Each operation completes once with the Promise result (undefined for void), or an Error.
+Each operation completes once with an Error or a non-never Promise result (undefined for void), subject to [boundary checks](#typed-boundaries).
 
 Await yields the completion value or raises the identical completion Error at the await expression, handled by ordinary catch rules.
 
@@ -1273,7 +1285,7 @@ Rules:
 
 Builtin functions require no imports and support direct calls only, not value references.
 
-The listed string and array members are **receiver intrinsics**, selected by the receiver's static type.
+The listed string, number and array members are **receiver intrinsics**, selected by the receiver's static type.
 
 #### Object
 
@@ -1362,9 +1374,12 @@ s has type string; `length` is read-only. Follow corresponding [ECMAScript Strin
 ```txt
 Number.isFinite(value: unknown): boolean
 Number.isNaN(value: unknown): boolean
+n.toFixed(digits: number): string
 ```
 
 Follow ECMAScript [isFinite](https://262.ecma-international.org/16.0/#sec-number.isfinite) and [isNaN](https://262.ecma-international.org/16.0/#sec-number.isnan).
+
+n has type number. Require integral digits in 0–100, otherwise E8001. Formatting follows ECMAScript [toFixed](https://262.ecma-international.org/16.0/#sec-number.prototype.tofixed).
 
 #### JSON
 
@@ -1406,6 +1421,7 @@ Math.abs(x: number): number
 Math.min(a: number, b: number): number
 Math.max(a: number, b: number): number
 Math.round(value: number): number
+Math.pow(base: number, exponent: number): number
 ```
 
 Follow corresponding [ECMAScript Math operations](https://262.ecma-international.org/16.0/#sec-math-object).
@@ -1503,7 +1519,7 @@ A backend may choose its internal representation provided it preserves observabl
 
 A typed boundary is a point where a runtime value is accepted as, stored as, returned as, exported as, or reconstructed as a declared DEAL type.
 
-Validate every typed boundary unless the backend proves the value satisfies the type despite any untyped ingress; type erasure cannot weaken validation.
+Validate every typed boundary unless the backend proves the value satisfies the type despite any untyped ingress; type erasure cannot weaken validation. Normal return or successful async completion at a never-result boundary raises E8001.
 
 Typed boundaries are:
 
@@ -1550,7 +1566,7 @@ NullishDescriptor :=
 FunctionDescriptor :=
  AsyncMarker? "(" ParamDescriptorList? ")" "->" ResultDescriptor
 
-ResultDescriptor := RuntimeTypeDescriptor | "void"
+ResultDescriptor := RuntimeTypeDescriptor | "void" | "never"
 
 AsyncMarker :=
  "async"
@@ -1580,7 +1596,7 @@ async(number)->string // (x:number)=>Promise<string>
 async()->void // () => Promise<void>
 ```
 
-Nullish prefixes require a non-nullish/non-unknown base. Descriptors encode canonical types from [Type grammar](#type-grammar-normative), including result-only void. They are internal ABI text, not source syntax.
+Nullish prefixes require a non-nullish/non-unknown base. Descriptors encode canonical types from [Type grammar](#type-grammar-normative). They are internal ABI text, not source syntax.
 
 ## Backend contracts
 
