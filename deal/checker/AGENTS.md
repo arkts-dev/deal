@@ -48,7 +48,7 @@ consuming boundaries revalidate stale values.
 
 Direct declared fields use receiver-binding/field identity, not aliases or nested
 paths. Writes/deletions/calls clear property facts in evaluation order, including
-exceptional snapshots. Write/delete context affects only the outer storage target;
+exceptional snapshots. Diagnostic-only invalidation evidence uses the owning operation/range and exact subject; ambiguous joins and superseding effects drop attribution without changing flow. Write/delete context affects only the outer storage target;
 receivers/keys/asserted descendants remain reads. While entries reapply fresh guards;
 body facts cannot cross back-edges or force stale first-entry admission.
 

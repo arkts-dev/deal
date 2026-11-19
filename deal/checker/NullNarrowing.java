@@ -20,7 +20,8 @@ public final class NullNarrowing {
     }
 
     /** Diagnostic evidence only; never participates in type or flow decisions. */
-    public record LostRefinement(Type previous, deal.diagnostics.DiagnosticRange awaitRange) {}
+    public enum Invalidation { AWAIT, CALL, ASSIGNMENT, DELETE }
+    public record LostRefinement(Type previous, deal.diagnostics.DiagnosticRange range, Invalidation operation) {}
     private final Map<Subject, LostRefinement> lostRefinements = new HashMap<>();
     private final Map<Subject, Type> narrowed = new HashMap<>();
     private Object propertyEpoch = new Object();
@@ -122,6 +123,10 @@ public final class NullNarrowing {
     public Type getNarrowedType(Subject subject) { return narrowed.get(subject); }
     public void onAssignment(Symbol binding) { invalidate(binding); }
     public LostRefinement lostRefinement(Subject subject) { return lostRefinements.get(subject); }
+    /** Cleanup of a snapshot already invalidated at the owning assignment. */
+    public void discardRefinement(Symbol binding) {
+        narrowed.keySet().removeIf(key -> key.binding() == binding);
+    }
     public void invalidate(Symbol binding) {
         narrowed.keySet().removeIf(key -> key.binding() == binding);
         lostRefinements.keySet().removeIf(key -> key.binding() == binding);
@@ -131,13 +136,29 @@ public final class NullNarrowing {
         lostRefinements.keySet().removeIf(key -> key.field() != null);
         propertyEpoch = new Object();
     }
+    public void invalidateAtAssignment(Symbol binding, deal.diagnostics.DiagnosticRange range) {
+        invalidateWithEvidence(subject -> subject.binding() == binding, range, Invalidation.ASSIGNMENT);
+    }
+    public void invalidatePropertiesAt(deal.diagnostics.DiagnosticRange range, Invalidation operation) {
+        invalidateWithEvidence(subject -> subject.field() != null, range, operation);
+        propertyEpoch = new Object();
+    }
+    private void invalidateWithEvidence(java.util.function.Predicate<Subject> affected,
+            deal.diagnostics.DiagnosticRange range, Invalidation operation) {
+        // An intervening invalidation supersedes old evidence even if no refinement remained.
+        lostRefinements.keySet().removeIf(affected);
+        narrowed.forEach((subject, type) -> {
+            if (affected.test(subject)) lostRefinements.put(subject, new LostRefinement(type, range, operation));
+        });
+        narrowed.keySet().removeIf(affected);
+    }
     public void invalidateAll() {
         narrowed.clear();
         lostRefinements.clear();
         propertyEpoch = new Object();
     }
     public void invalidateAtAwait(deal.diagnostics.DiagnosticRange range) {
-        narrowed.forEach((subject, type) -> lostRefinements.put(subject, new LostRefinement(type, range)));
+        narrowed.forEach((subject, type) -> lostRefinements.put(subject, new LostRefinement(type, range, Invalidation.AWAIT)));
         narrowed.clear();
         propertyEpoch = new Object();
     }

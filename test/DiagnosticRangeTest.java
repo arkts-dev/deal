@@ -104,6 +104,7 @@ public class DiagnosticRangeTest {
         testTemplateInterpolationRebasing();
         testCheckerProducerRanges();
         testAwaitRefinementEvidence();
+        testMutationRefinementEvidence();
         testCycleEvidence();
         testAssertionConstraintEvidence();
         testRawRecordReadEvidence();
@@ -1161,6 +1162,41 @@ public class DiagnosticRangeTest {
             check(checkerDiagnostics(prefix + "async function f(x:string|null):Promise<void>{" + body + "}",
                     "await.deal").isEmpty(), "guarded/repaired/nested-function positive: " + body);
         }
+    }
+
+    private static void testMutationRefinementEvidence() {
+        String prefix = "// 😀\r\nclass C{value:string|null;other:number;}function touch():void{}";
+        for (String[] sample : new String[][] {
+                {"touch();", "call", "touch()"},
+                {"c.other=1;", "assignment", "c.other=1"}}) {
+            String source = prefix + "function f(c:C):void{if(c.value!==null){" + sample[0] + "let n=c.value.length;}}";
+            var diagnostic = checkerDiag(checkerDiagnostics(source, "invalidation.deal"), "E3003");
+            check(diagnostic != null && diagnostic.notes().stream().anyMatch(note ->
+                note.message().contains("invalidated by this " + sample[1]) && note.range() != null
+                    && note.range().startScalarOffset() == source.lastIndexOf(sample[2])
+                    && note.range().endScalarOffset() == source.lastIndexOf(sample[2]) + sample[2].length()),
+                "direct field lost-refinement producer and exact UTF-16 range: " + sample[1]);
+            String repaired = source.replace("let n=c.value.length;", "if(c.value!==null){let n=c.value.length;}");
+            check(checkerDiagnostics(repaired, "invalidation.deal").isEmpty(), "chosen post-effect guard rechecks: " + sample[1]);
+        }
+        String exceptional = "function f(x:string|null):void{if(x!==null){try{x=null;}catch(e){let n=x.length;}}}";
+        var assignment = checkerDiag(checkerDiagnostics(exceptional, "invalidation.deal"), "E3003");
+        check(assignment != null && assignment.notes().stream().anyMatch(note ->
+            note.message().contains("invalidated by this assignment") && note.range().startScalarOffset() == exceptional.indexOf("x=null")),
+            "exceptional snapshot retains exact binding-assignment cause");
+        String deletion = "class C{value:string|null;other?:number;}function f(c:C):void{if(c.value!==null){delete c.other;let n=c.value.length;}}";
+        var deleted = checkerDiag(checkerDiagnostics(deletion, "invalidation.deal"), "E3003");
+        check(deleted != null && deleted.notes().stream().anyMatch(note ->
+            note.message().contains("invalidated by this delete") && note.range().startScalarOffset() == deletion.indexOf("delete c.other")),
+            "delete producer retains direct-field invalidation evidence");
+        String ambiguous = prefix + "function f(c:C,flag:boolean):void{if(c.value!==null){if(flag){touch();}let n=c.value.length;}}";
+        check(checkerDiagnostics(ambiguous, "invalidation.deal").stream().flatMap(d -> d.notes().stream())
+            .noneMatch(note -> note.message().contains("invalidated by this call")), "branch-dependent call cause is not asserted");
+        String superseded = prefix + "function f(c:C):void{if(c.value!==null){touch();touch();let n=c.value.length;}}";
+        check(checkerDiagnostics(superseded, "invalidation.deal").stream().flatMap(d -> d.notes().stream())
+                .noneMatch(note -> note.message().contains("invalidated by this call")), "no stale property cause after another call");
+        String binding = "function touch():void{}function f(x:string|null):void{if(x!==null){touch();let n=x.length;}}";
+        check(checkerDiagnostics(binding, "invalidation.deal").isEmpty(), "calls preserve binding refinements");
     }
 
     private static void testRawRecordReadEvidence() {

@@ -759,11 +759,11 @@ public final class TypeChecker {
      * try-local declaration's same-named binding is not an assignment to
      * the enclosing binding.
      */
-    private void recordAssignment(String varName) {
+    private void recordAssignment(String varName, Span span) {
         Symbol binding = resolveVisibleBinding(varName);
         if (binding == null) return;
-        narrowing.onAssignment(binding);
-        for (NullNarrowing entry : tryEntryFacts) entry.invalidate(binding);
+        narrowing.invalidateAtAssignment(binding, span.range());
+        for (NullNarrowing entry : tryEntryFacts) entry.invalidateAtAssignment(binding, span.range());
         if (!loopAssignments.isEmpty()) {
             loopAssignments.peek().add(binding);
         }
@@ -1015,10 +1015,10 @@ public final class TypeChecker {
             : declaredReadTypes.get(expression);
     }
 
-    private void invalidatePropertyNarrowing() {
-        narrowing.invalidateProperties();
-        for (NullNarrowing entry : tryEntryFacts) entry.invalidateProperties();
-        for (NullNarrowing saved : loopSavedNarrowing) saved.invalidateProperties();
+    private void invalidatePropertyNarrowing(Span span, NullNarrowing.Invalidation operation) {
+        narrowing.invalidatePropertiesAt(span.range(), operation);
+        for (NullNarrowing entry : tryEntryFacts) entry.invalidatePropertiesAt(span.range(), operation);
+        for (NullNarrowing saved : loopSavedNarrowing) saved.invalidatePropertiesAt(span.range(), operation);
     }
 
     // =======================================================================
@@ -1246,7 +1246,7 @@ public final class TypeChecker {
         narrowing = tryEntry;
         for (Symbol binding : assigned) {
             if (resolveVisibleBinding(afterCatchScope, binding.name()) == binding)
-                narrowing.invalidate(binding);
+                narrowing.discardRefinement(binding);
         }
 
         // A catch identifier owns independent facts; it never restores or
@@ -1364,7 +1364,7 @@ public final class TypeChecker {
             }
             // Table delete: any field is allowed (no further check needed)
         }
-        invalidatePropertyNarrowing();
+        invalidatePropertyNarrowing(ds.span(), NullNarrowing.Invalidation.DELETE);
         // A-D10 (assignment-delete-address-chains): table index delete
         // keys must have static type string — the write-context
         // checkIndex gate enforces E3018 for IndexExpr delete targets
@@ -1399,7 +1399,8 @@ public final class TypeChecker {
         try {
             conditionFlows.remove(expr);
             Type t = computeExpressionType(expr);
-            if (expr instanceof CallExpr || expr instanceof HasExpr) invalidatePropertyNarrowing();
+            if (expr instanceof CallExpr || expr instanceof HasExpr)
+                invalidatePropertyNarrowing(expr.span(), NullNarrowing.Invalidation.CALL);
             if (t instanceof Type.Boolean && !conditionFlows.containsKey(expr)) {
                 NullNarrowing after = narrowing;
                 narrowing = after.branch();
@@ -2567,8 +2568,9 @@ public final class TypeChecker {
         var lost = lostRefinementReads.get(expression);
         if (lost != null) diagnostic = diagnostic.withNote(
                 "Earlier refinement to " + typeName(lost.previous())
-                        + " was invalidated by this await; inspect or guard the current value again before use",
-                lost.awaitRange());
+                        + " was invalidated by this " + lost.operation().name().toLowerCase(java.util.Locale.ROOT)
+                        + "; inspect or guard the current value again before use",
+                lost.range());
         ExpressionNode receiver = expression instanceof MemberAccessExpr member ? member.object()
                 : expression instanceof IndexExpr index ? index.array() : null;
         if (receiver != null && typeMap.get(receiver) instanceof Type.Table
@@ -3513,7 +3515,7 @@ public final class TypeChecker {
             declaredClassOf(assign.value()), valueType, assign.span());
 
         if (assign.target() instanceof IdentifierExpr id) {
-            recordAssignment(id.name());
+            recordAssignment(id.name(), assign.span());
         }
 
         // Normal target/value checking ran above (typeMap stays populated);
@@ -3522,7 +3524,7 @@ public final class TypeChecker {
             return Type.Error.INSTANCE;
         }
 
-        invalidatePropertyNarrowing();
+        invalidatePropertyNarrowing(assign.span(), NullNarrowing.Invalidation.ASSIGNMENT);
         if (assign.target() instanceof IdentifierExpr id && isAssignable(declaredTarget, valueType))
             refineAssignedBinding(resolveVisibleBinding(id.name()), declaredTarget, valueType);
         return valueType;
