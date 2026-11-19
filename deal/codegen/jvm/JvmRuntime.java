@@ -511,6 +511,8 @@ public final class JvmRuntime {
         public final String actual;
         public final String frames;
         public final DealError cause;
+        private final String jsonByteOffset;
+        private final String jsonReason;
         /**
          * Whether this failure was published by a rethrow of a
          * transported Error value (never by a fresh runtime check, a
@@ -526,6 +528,11 @@ public final class JvmRuntime {
 
         public DealError(String code, String msg, String origin, String expected,
                          String actual, String frames, DealError cause) {
+            this(code, msg, origin, expected, actual, frames, cause, null, null);
+        }
+
+        DealError(String code, String msg, String origin, String expected,
+                  String actual, String frames, DealError cause, String jsonByteOffset, String jsonReason) {
             super(msg, cause);
             this.code = code;
             this.msg = msg;
@@ -534,6 +541,8 @@ public final class JvmRuntime {
             this.actual = actual;
             this.frames = frames;
             this.cause = cause;
+            this.jsonByteOffset = jsonByteOffset;
+            this.jsonReason = jsonReason;
         }
 
         /**
@@ -570,7 +579,7 @@ public final class JvmRuntime {
             return transport;
         }
         DealError published = new DealError(transport.code, value.message, transport.origin,
-            transport.expected, transport.actual, transport.frames, transport.cause);
+            transport.expected, transport.actual, transport.frames, transport.cause, transport.jsonByteOffset, transport.jsonReason);
         published.transported = true;
         published.reified = value;
         value.transport = published;
@@ -610,7 +619,7 @@ public final class JvmRuntime {
     public static DealError wrap(DealError previous, DealError cause) {
         DealError wrapped = new DealError(previous.code, previous.msg,
             previous.origin, previous.expected, previous.actual,
-            previous.frames, cause);
+            previous.frames, cause, previous.jsonByteOffset, previous.jsonReason);
         wrapped.reified = previous.reified;
         if (wrapped.reified != null) {
             wrapped.reified.transport = wrapped;
@@ -801,6 +810,8 @@ public final class JvmRuntime {
         appendRuntimeText(out, "expected", error.expected, true);
         appendRuntimeText(out, "actual", error.actual, true);
         appendRuntimeText(out, "frames", error.frames, true);
+        appendRuntimeText(out, "jsonByteOffset", error.jsonByteOffset, true);
+        appendRuntimeText(out, "jsonReason", error.jsonReason, true);
         if (error.cause != null) {
             if (depth >= 7 || seen.contains(error.cause)) out.append(",\"causeTruncated\":true");
             else {
@@ -1001,7 +1012,9 @@ public final class JvmRuntime {
             deal.semantic.ir.FailureContractRegistry.render(id, parameters, expected, actual,
                 null);
         return new DealError(failure.code().name(), failure.message(), origin,
-            failure.expected(), failure.actual(), framesText(), null);
+            failure.expected(), failure.actual(), framesText(), null,
+            id == deal.semantic.ir.FailureArmId.JSON_PARSE_ERROR ? parameters.get("oneBasedByteOffset") : null,
+            id == deal.semantic.ir.FailureArmId.JSON_PARSE_ERROR ? parameters.get("reason") : null);
     }
 
     /** The typed-boundary kind text of one canonical descriptor text (P2 item 1). */

@@ -42,6 +42,9 @@ public final class ErrorNameMessageTest {
             while(chain.cause){chain=chain.cause;depth++;}
             if(depth!==8||!chain.causeTruncated)process.exit(5);
             if(JSON.parse(runtime.runtimeDiagnostic({code:'Forged',message:'not an Error'})).runtime!==null)process.exit(6);
+            const authored=runtime.errorValue('E8001','JSON parse error at position 8: trailing content');
+            Object.defineProperty(authored,'jsonByteOffset',{get(){reads++;throw Error('invented offset');}});
+            if(JSON.parse(runtime.runtimeDiagnostic(authored)).runtime.jsonByteOffset!==undefined||reads!==0)process.exit(11);
             const savedHas=WeakSet.prototype.has, savedOwn=Object.prototype.hasOwnProperty, savedFinite=Number.isFinite;
             WeakSet.prototype.has=Object.prototype.hasOwnProperty=Number.isFinite=()=>{throw Error('mutable host hook');};
             const captured=runtime.runtimeDiagnostic(nested);
@@ -143,6 +146,63 @@ public final class ErrorNameMessageTest {
         }
     }
 
+    private static void runtimeJsonScannerExports(Path root) throws Exception {
+        for (String[] sample : new String[][] {
+                {"trailing", "\\\"😀\\\" x", "8", "trailing content"},
+                {"duplicate", "{\\\"😀\\\":1,\\\"😀\\\":2}", "11", "duplicate key"},
+                {"eof", "\\\"😀", "6", "unterminated string"}}) {
+            String parse = "let parsed:unknown=JSON.parse(\"" + sample[1] + "\");";
+            if (sample[0].equals("duplicate")) parse = "try{" + parse
+                    + "}catch(caught){if(caught instanceof Error){let repaired:unknown=JSON.parse(\"{\\\"😀\\\":2}\");"
+                    + "console.log(JSON.stringify(repaired)??\"none\");caught.message=\"chosen message\";throw caught;}}";
+            String source = "export function main():void{" + parse + "}";
+            for (Backend backend : List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM)) {
+                Path project = Files.createDirectories(root.resolve(sample[0]).resolve(backend.name()));
+                Path src = Files.createDirectories(project.resolve("src")), out = project.resolve("out");
+                Path entry = src.resolve("main.deal");
+                Files.writeString(entry, source);
+                var compiler = new deal.module.CompilationOrchestrator(entry, out, false, false, false,
+                        backend, null, List.of(src), null);
+                if (!compiler.compile()) throw new AssertionError(compiler.diagnostics());
+                List<List<String>> launches = new ArrayList<>();
+                if (backend == Backend.LLVM) {
+                    for (int level : new int[] {0, 2}) {
+                        Path product = project.resolve("native" + level);
+                        NativeCompiler.build(new deal.toolchain.NativeBuildRequest(out, product, level, List.of(), null), List.of());
+                        launches.add(List.of(product.toString()));
+                    }
+                } else if (backend == Backend.JVM) {
+                    Path classes = Files.createDirectories(project.resolve("classes"));
+                    String cp = TestClasspath.absolute(TestClasspath.EmptyEntry.OMIT);
+                    var command = new ArrayList<>(List.of("javac", "--release", "25", "-proc:none", "-cp", cp, "-d", classes.toString()));
+                    try (var files = Files.walk(out)) { files.filter(p -> p.toString().endsWith(".java")).sorted().forEach(p -> command.add(p.toString())); }
+                    var built = deal.test.conformance.JvmCompilation.compile(command, out);
+                    if (built.exitCode() != 0) throw new AssertionError(built.stderr());
+                    launches.add(List.of("java", "-cp", classes + java.io.File.pathSeparator + cp,
+                            deal.codegen.jvm.JvmNames.classNameFor("main")));
+                } else launches.add(List.of(backend == Backend.JS ? "node" : "luajit", backend == Backend.JS ? "main.js" : "main.lua"));
+                for (var launch : launches) for (String stress : backend == Backend.LLVM ? List.of("0", "1") : List.of("0")) {
+                    var baseline = BoundedProcess.runCaptured(launch, out, Map.of("DEAL_DIAGNOSTICS_JSON", "0", "DEAL_GC_STRESS", stress));
+                    var enabled = BoundedProcess.runCaptured(launch, out, Map.of("DEAL_DIAGNOSTICS_JSON", "1", "DEAL_GC_STRESS", stress));
+                    String prefix = "DEAL_RUNTIME_DIAGNOSTIC: ";
+                    String line = enabled.stderr().lines().filter(s -> s.startsWith(prefix)).findFirst().orElseThrow(() -> new AssertionError(enabled));
+                    if (baseline.exitCode() != 1 || enabled.exitCode() != baseline.exitCode()
+                            || !baseline.stdout().equals(enabled.stdout()) || !enabled.stderr().replace(line + "\n", "").equals(baseline.stderr()))
+                        throw new AssertionError("JSON metadata changed default outcome " + backend + " " + sample[0]);
+                    var document = deal.amend.CompilerProtocolJson.requireObject(deal.amend.CompilerProtocolJson.decode(line.substring(prefix.length())), "document");
+                    var runtime = deal.amend.CompilerProtocolJson.requireObject(deal.amend.CompilerProtocolJson.field(document, "runtime"), "runtime");
+                    if (!deal.amend.CompilerProtocolJson.field(runtime, "jsonByteOffset").equals(new CanonicalJson.Str(sample[2]))
+                            || !deal.amend.CompilerProtocolJson.field(runtime, "jsonReason").equals(new CanonicalJson.Str(sample[3])))
+                        throw new AssertionError("scanner-owned JSON offset/reason missing " + backend + " " + sample[0] + ": " + line);
+                    if (sample[0].equals("duplicate") && (!CanonicalJson.parse(baseline.stdout().lines().filter(s -> s.startsWith("{")).findFirst().orElseThrow()).equals(CanonicalJson.parse("{\"😀\":2}"))
+                            || !deal.amend.CompilerProtocolJson.field(runtime, "message").equals(new CanonicalJson.Str("chosen message"))))
+                        throw new AssertionError("changed Error message lost identity or scanner provenance " + backend + ": " + line);
+                }
+                System.out.println("JSON scanner diagnostics: " + backend + " " + sample[0] + " retains byte coordinates/defaults");
+            }
+        }
+    }
+
     public static void main(String[] args) throws Exception {
         if (args.length == 1 && args[0].equals("--diagnostic-projection")) {
             var cause = new deal.codegen.jvm.JvmRuntime.DealError("Leaf", "leaf", null, null, null, null, null);
@@ -198,6 +258,7 @@ public final class ErrorNameMessageTest {
                 .filter(f->f.corpusPath().equals(PATH)).findFirst().orElseThrow();
             LlvmConformanceTest.runInstrumented(corpus,fixture);
             runtimeDiagnosticExports(root.resolve("diagnostics"));
+            runtimeJsonScannerExports(root.resolve("json-diagnostics"));
             System.out.println("Error name/message: transported Oracle and all production backends passed");
         } finally {CompositionProductionTest.remove(root);}
     }

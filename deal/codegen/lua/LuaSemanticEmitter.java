@@ -9413,8 +9413,12 @@ local function __arm(id, values, origin, expected, actual)
   __checkExpectedField(id, arm, values, expected)
   __checkActualField(id, arm, actual)
   __checkFieldBinding(id, arm, values, expected, actual)
-  return __failExpr(arm.c, __renderTemplate(id, values), origin, expected, actual,
-    true)
+  local failure = __failExpr(arm.c, __renderTemplate(id, values), origin, expected, actual, true)
+  if id == "JSON_PARSE_ERROR" then
+    failure.jsonByteOffset = values.oneBasedByteOffset
+    failure.jsonReason = values.reason
+  end
+  return failure
 end
 -- An inner-only arm's message text (the host arms' inner reasons).
 local function __innerArm(id, values)
@@ -10801,7 +10805,8 @@ function __dealRuntimeDiagnostic(error)
     seen[value] = true
     local parts = {}
     for _, pair in ipairs({{"code", "code"}, {"message", "m"}, {"origin", "o"},
-                            {"expected", "e"}, {"actual", "a"}, {"frames", "f"}}) do
+                            {"expected", "e"}, {"actual", "a"}, {"frames", "f"},
+                            {"jsonByteOffset", "jsonByteOffset"}, {"jsonReason", "jsonReason"}}) do
       local text = rawget(value, pair[2])
       if type(text) == "string" then
         local take = math.min(#text, 8192)

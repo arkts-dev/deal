@@ -40,6 +40,9 @@ const $ownDescriptor = Object.getOwnPropertyDescriptor;
 const $diagnosticErrors = new WeakSet();
 const $diagnosticErrorHas = $diagnosticErrors.has.bind($diagnosticErrors);
 const $diagnosticErrorAdd = $diagnosticErrors.add.bind($diagnosticErrors);
+const $diagnosticJson = new WeakMap();
+const $diagnosticJsonGet = $diagnosticJson.get.bind($diagnosticJson);
+const $diagnosticJsonSet = $diagnosticJson.set.bind($diagnosticJson);
 const $descriptorHasOwn = Object.prototype.hasOwnProperty.call.bind(Object.prototype.hasOwnProperty);
 const $diagnosticFinite = Number.isFinite;
 const $diagnosticSlice = String.prototype.slice.call.bind(String.prototype.slice);
@@ -1049,8 +1052,10 @@ function $parseJsonText($text, $file, $line, $column) {
   let $bytes = 0;
   const $fail = function ($reason, $offset) {
     const $at = $offset === $undefined ? $bytes + 1 : $offset;
-    $rt.fail("E8001", "JSON parse error at position " + $at + ": " + $reason,
+    const error = new $DEALError("E8001", "JSON parse error at position " + $at + ": " + $reason,
       $file, $line, $column);
+    $diagnosticJsonSet(error, {offset: "" + $at, reason: $reason});
+    throw error;
   };
   const $atEnd = function () {
     return $pos >= $text.length;
@@ -1952,8 +1957,11 @@ const $rt = {
   // member is total.
   reifyError: function $reifyError(v) {
     if (v instanceof $DEALError) {
-      return $rt.errorValue(v.code, v.message, v.file, v.line, v.column,
+      const value = $rt.errorValue(v.code, v.message, v.file, v.line, v.column,
         v.expected, v.actual, v.frames, v.cause);
+      const json = $diagnosticJsonGet(v);
+      if (json !== $undefined) $diagnosticJsonSet(value, json);
+      return value;
     }
     if (typeof v === "object" && v !== null && v.$kind === "class" && v.$classname === "Error") {
       return v;
@@ -2003,6 +2011,11 @@ const $rt = {
           append($jsonQuote(key + "Length") + ":" + text.length);
           append($jsonQuote(key + "Truncated") + ":true");
         }
+      }
+      const json = $diagnosticJsonGet(value);
+      if (json !== $undefined) {
+        append('"jsonByteOffset":' + $jsonQuote(json.offset));
+        append('"jsonReason":' + $jsonQuote(json.reason));
       }
       const numberKeys = ["line", "column"];
       for (let index = 0; index < numberKeys.length; index++) {

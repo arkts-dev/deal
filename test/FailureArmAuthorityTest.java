@@ -2239,7 +2239,10 @@ public class FailureArmAuthorityTest {
             new ParseCase("\"\\u12", 6, "invalid escape"),
             new ParseCase("\"abc\\", 6, "unterminated string"),
             new ParseCase("true false", 6, "trailing content"),
-            new ParseCase("{\"é\":1,\"é\":2}", 9, "duplicate key"));
+            new ParseCase("{\"é\":1,\"é\":2}", 9, "duplicate key"),
+            new ParseCase("\"😀\" x", 8, "trailing content"),
+            new ParseCase("{\"😀\":1,\"😀\":2}", 11, "duplicate key"),
+            new ParseCase("\"😀", 6, "unterminated string"));
         StringBuilder body = new StringBuilder();
         for (int i = 0; i < cases.size(); i++) {
             ParseCase fixture = cases.get(i);
@@ -2252,8 +2255,8 @@ public class FailureArmAuthorityTest {
                         new SourceSpan("arm-battery.deal", 1, 1, 1, 1),
                         SourceOriginKind.USER, new AnchorId(1), null), origin, Map.of()));
             body.append("do local ok,value=pcall(__stdlib,\"JSON_PARSE\",\"JSON_PARSE\",\"op\",\"digest\",\"parent\",")
-                .append(luaString(origin)).append(',').append(luaString(fixture.text()))
-                .append("); row(\"parse-").append(i).append("\",ok,value) end\n");
+                .append(luaString(origin)).append(",require(\"deal.runtime\").string_normalize(").append(luaString(fixture.text()))
+                .append(")); row(\"parse-").append(i).append("\",ok,value) end\n");
         }
         List<String> rows = runPreludeProbe(body.toString(), "json-scanner-arms", cases.size());
         checkEq(cases.size(), rows.size(), "every scanner failure is observed exactly once");

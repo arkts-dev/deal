@@ -1,6 +1,6 @@
 # LuaJIT Backend
 
-Capture diagnostic opt-in at chunk initialization before module bodies; never re-read environment state while enriching a failure. Opt-in uncaught runtime diagnostics project only raw existing error metadata fields, bounded to 8192 bytes without splitting UTF-8 sequences and eight cause levels; text omission carries byte counts and truncation. Never walk user data or use metatable hooks; preserve ordinary stdout/exit, frame order and captured causes.
+Capture diagnostic opt-in at chunk initialization before module bodies; never re-read environment state while enriching a failure. Opt-in uncaught runtime diagnostics project only raw existing error metadata fields, bounded to 8192 bytes without splitting UTF-8 sequences and eight cause levels; text omission carries byte counts and truncation. Closed JSON_PARSE_ERROR materialization retains the scanner's decimal byte offset/reason independently of mutable message text; the shared scanner converts paired-unit language storage to UTF-8 transport before counting cursor bytes. Never walk user data or use metatable hooks; preserve ordinary stdout/exit, frame order and captured causes.
 
 LuaSemanticEmitter renders validated IR, preserving ABI, evaluation order, host loading, async completion, errors and origins. Verify Oracle parity through luajit; never restore AST emission.
 

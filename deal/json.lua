@@ -588,6 +588,10 @@ end
 -- The trailing span triplet belongs to the JSON.parse expression.
 function json.scan(s, file, line, column, nullValue)
   __rt.check_string(s, file, line, column)
+  -- Language strings may store valid pairs as two WTF-8 units. Scan the
+  -- corresponding UTF-8 transport so cursor positions count bytes in the
+  -- JSON document, not bytes in Lua's internal unit representation.
+  s = __rt.string_transport(s, false)
   nullValue = nullValue or __rt.__NULL
   -- Scalar scanning with an explicit container-frame stack.
   local pos = 1

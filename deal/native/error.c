@@ -307,6 +307,8 @@ struct deal_error {
     char **frames;
     uint32_t frame_count;
     deal_error *cause;
+    char *json_byte_offset;
+    char *json_reason;
 };
 
 /*
@@ -361,6 +363,10 @@ static void deal_error_release(void *object) {
     }
     error->frame_count = 0;
     error->cause = NULL;
+    deal_platform_release(error->json_byte_offset);
+    error->json_byte_offset = NULL;
+    deal_platform_release(error->json_reason);
+    error->json_reason = NULL;
 }
 
 /* One Error record allocation. `snapshot_frames` is 0 for the host-authored
@@ -393,6 +399,8 @@ static deal_error *deal_error_allocate(const char *code, const char *message,
     error->frames = NULL;
     error->frame_count = 0;
     error->cause = NULL;
+    error->json_byte_offset = NULL;
+    error->json_reason = NULL;
     if (origin != NULL) {
         error->source_file = deal_platform_duplicate(origin->source_file);
         error->line = origin->line;
@@ -928,6 +936,10 @@ static void deal_diagnostic_error(deal_snapshot_buffer *buffer, const deal_error
     if (error->actual != NULL) {
         deal_diagnostic_text(buffer, "actual", error->actual, strlen(error->actual), &first);
     }
+    if (error->json_byte_offset != NULL) {
+        deal_diagnostic_text(buffer, "jsonByteOffset", error->json_byte_offset, strlen(error->json_byte_offset), &first);
+        deal_diagnostic_text(buffer, "jsonReason", error->json_reason, strlen(error->json_reason), &first);
+    }
     deal_snapshot_append_key(buffer, "frameCount", &first);
     deal_snapshot_append_integer(buffer, error->frame_count);
     deal_snapshot_append_key(buffer, "frames", &first);
@@ -1118,6 +1130,15 @@ void deal_arm_text_release(char *text) {
     deal_platform_release(text);
 }
 
+static void deal_error_json_metadata(deal_error *error, uint32_t arm_id,
+    const deal_arm_parameter *parameters, size_t parameter_count) {
+    if (arm_id != DEAL_ARM_ID_JSON_PARSE_ERROR) return;
+    error->json_byte_offset = deal_platform_duplicate(deal_arm_parameter_value(
+        parameters, parameter_count, "oneBasedByteOffset", sizeof("oneBasedByteOffset") - 1u));
+    error->json_reason = deal_platform_duplicate(deal_arm_parameter_value(
+        parameters, parameter_count, "reason", sizeof("reason") - 1u));
+}
+
 deal_error *deal_error_materialize(uint32_t arm_id,
                                    const deal_arm_parameter *parameters,
                                    size_t parameter_count, const char *expected,
@@ -1152,6 +1173,7 @@ deal_error *deal_error_materialize(uint32_t arm_id,
         deal_error_set_expected(error, expected);
         deal_error_set_actual(error, actual);
         deal_error_set_cause(error, cause);
+        deal_error_json_metadata(error, arm_id, parameters, parameter_count);
         deal_root_scope_release(slot);
         deal_root_scope_pop();
         deal_arm_text_release(message);
@@ -1160,6 +1182,7 @@ deal_error *deal_error_materialize(uint32_t arm_id,
     deal_error *error = deal_error_allocate(record->code, message, origin, 1);
     deal_error_set_expected(error, expected);
     deal_error_set_actual(error, actual);
+    deal_error_json_metadata(error, arm_id, parameters, parameter_count);
     deal_arm_text_release(message);
     return error;
 }

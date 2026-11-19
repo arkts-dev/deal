@@ -377,6 +377,16 @@ static void observe_parse_failure(const char *label, const char *json) {
         printf("ERROR\t");
         print_failure(parsed.error);
         printf("\n");
+        char *diagnostic = deal_error_diagnostic(parsed.error);
+        check(strstr(diagnostic, "\"jsonByteOffset\":\"") != NULL
+                && strstr(diagnostic, "\"jsonReason\":\"") != NULL,
+            "scanner failure retains structured offset and reason");
+        if (strcmp(label, "supplementary-offset") == 0) {
+            check(strstr(diagnostic, "\"jsonByteOffset\":\"9\"") != NULL
+                    && strstr(diagnostic, "\"jsonReason\":\"unexpected character\"") != NULL,
+                "structured scanner position counts supplementary UTF-8 bytes");
+        }
+        deal_error_snapshot_release(diagnostic);
     }
     deal_root_scope_pop();
 }
