@@ -1597,7 +1597,7 @@ public final class TypeChecker {
         }
 
         if (sym instanceof Symbol.IntrinsicSymbol && List.of("String", "Number").contains(id.name())) {
-            error(DiagnosticCode.E3001, "Builtin operations support direct calls only", id.span());
+            directOnlyError("Builtin operations support direct calls only", id.span(), id.name(), "call.builtin-direct-only");
             return Type.Error.INSTANCE;
         }
         if (sym instanceof Symbol.ModuleSymbol || sym instanceof Symbol.ClassSymbol) {
@@ -2348,12 +2348,22 @@ public final class TypeChecker {
     // Member access
     // =======================================================================
 
+    private void directOnlyError(String message, Span span, String selected, String reason) {
+        diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E3001, message, span).withFacts(
+                new deal.diagnostics.DiagnosticFacts(reason, "call.form", "direct invocation", selected, List.of(
+                        "This selected builtin/receiver operation is not a first-class function value. "
+                                + "If a callable value is intended, explicitly declare a wrapper with chosen parameter/result annotations "
+                                + "and invoke the operation directly inside it; no wrapper signature or capture behavior is inferred. "
+                                + "See docs/spec-v1.6.md#function-values-calls-and-wrappers."))));
+    }
+
     private Type checkMemberAccess(MemberAccessExpr mae) {
         if (mae.object() instanceof IdentifierExpr builtinNamespace) {
             BuiltinCall builtin = BuiltinCall.resolve(builtinNamespace.name(), mae.field());
             if (builtin != null) {
                 if (directBuiltinCall == null || mae != directBuiltinCall.callee()) {
-                    error(DiagnosticCode.E3001, "Builtin operations support direct calls only", mae.span());
+                    directOnlyError("Builtin operations support direct calls only", mae.span(),
+                            builtinNamespace.name() + "." + mae.field(), "call.builtin-direct-only");
                     return Type.Error.INSTANCE;
                 }
                 typeMap.put(mae.object(), Type.Table.INSTANCE);
@@ -2383,19 +2393,20 @@ public final class TypeChecker {
             StringIntrinsic intrinsic = StringIntrinsic.forMember(field);
             if (intrinsic != null) {
                 if (directBuiltinCall == null || mae != directBuiltinCall.callee()) {
-                    error(DiagnosticCode.E3001, "Receiver intrinsics support direct calls only", mae.span());
+                    directOnlyError("Receiver intrinsics support direct calls only", mae.span(),
+                            "String." + field, "call.receiver-direct-only");
                     return Type.Error.INSTANCE;
                 }
                 return intrinsic.signature(directBuiltinCall.args().size());
             }
         }
         if (objType instanceof Type.Array && List.of("map", "find", "findIndex", "filter", "some", "every").contains(field)) {
-            error(DiagnosticCode.E3001, "Receiver intrinsics support direct calls only", mae.span());
+            directOnlyError("Receiver intrinsics support direct calls only", mae.span(), "Array." + field, "call.receiver-direct-only");
             return Type.Error.INSTANCE;
         }
         if (objType instanceof Type.Array array && List.of("push", "pop", "splice", "slice", "includes", "indexOf", "join").contains(field)) {
             if (directBuiltinCall == null || mae != directBuiltinCall.callee()) {
-                error(DiagnosticCode.E3001, "Receiver intrinsics support direct calls only", mae.span());
+                directOnlyError("Receiver intrinsics support direct calls only", mae.span(), "Array." + field, "call.receiver-direct-only");
                 return Type.Error.INSTANCE;
             }
             return switch (field) {

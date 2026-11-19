@@ -1225,6 +1225,25 @@ public class DiagnosticRangeTest {
 
     private static void testSelectedIntrinsicCallNames() {
         for (String[] sample : new String[][] {
+                {"let op=Math.floor;", "Math.floor", "call.builtin-direct-only"},
+                {"let op=String;", "String", "call.builtin-direct-only"},
+                {"let value=\"abc\";let op=value.slice;", "String.slice", "call.receiver-direct-only"},
+                {"let values=[1];let op=values.map;", "Array.map", "call.receiver-direct-only"},
+                {"let values=[1];let op=values.push;", "Array.push", "call.receiver-direct-only"}}) {
+            var diagnostic = checkerDiag(checkerDiagnostics("function f():void{" + sample[0] + "}", "intrinsic-values.deal"), "E3001");
+            check(diagnostic != null && diagnostic.facts().reason().equals(sample[2])
+                            && diagnostic.facts().actual().equals(sample[1]) && diagnostic.facts().expected().equals("direct invocation")
+                            && diagnostic.facts().call() == null
+                            && diagnostic.facts().guidance().getFirst().contains("no wrapper signature or capture behavior is inferred"),
+                    "detached intrinsic retains selected operation and intent-dependent wrapper help without a guessed signature");
+        }
+        for (String chosen : List.of(
+                "function f():void{let op=(n:number):number=>Math.floor(n);op(2.5);}",
+                "function f():void{let text=\"abc\";let op=(start:number):string=>text.slice(start);op(1);}",
+                "function f():void{let values=[1];let op=(n:number):number=>values.push(n);op(2);}",
+                "class C{map:()=>number;}function f(c:C):void{let ordinary=c.map;ordinary();}"))
+            check(checkerDiagnostics(chosen, "intrinsic-values.deal").isEmpty(), "explicit intended wrapper rechecks without changing direct-only rules");
+        for (String[] sample : new String[][] {
                 {"let a=[1];a.map((n:string):number=>1);", "Array.map", "E5001"},
                 {"let a=[1];a.find((n:number):number=>n);", "Array.find", "E5001"},
                 {"let a=[1];a.filter();", "Array.filter", "E3009"},
