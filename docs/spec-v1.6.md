@@ -79,7 +79,7 @@ Keyword ::= 'let' | 'const' | 'class' | 'function' | 'await' | 'return' | 'if' |
           | 'try' | 'catch' | 'throw'
 
 Identifier ::= [a-zA-Z_$] [a-zA-Z0-9_$]*
-/* async/as/from/of are contextual identifiers; grammar determines keyword uses.
+/* async/as/from/of/readonly are contextual identifiers; grammar determines keyword uses.
    Property names also admit TypeScript keywords. */
 
 Literal ::= NullLiteral | UndefinedLiteral | BooleanLiteral | NumberLiteral | StringLiteral | TemplateLiteral
@@ -151,7 +151,7 @@ Block ::= '{' Statement* '}'
 
 ClassDeclaration ::= 'class' Identifier '{' ClassField* '}'
 
-ClassField ::= Identifier '?'? ':' Type ';' /* field name cannot be 'constructor' */
+ClassField ::= 'readonly'? Identifier '?'? ':' Type ';' /* field name cannot be 'constructor' */
 
 FunctionDeclaration ::= AsyncPrefix? 'function' Identifier '(' ParameterList? ')' ':' ReturnType Block
 
@@ -299,7 +299,9 @@ Require grammatical semicolons; no automatic insertion. Forbid line terminators,
 
 ### Assignment targets
 
-Only [reassignable variables](#variables), declared class fields, Record keys and array elements are assignable; otherwise compile-time error. Optional chains are not assignment targets.
+Only [reassignable variables](#variables), writable declared class fields, Record keys and writable array elements are assignable; otherwise compile-time error. Optional chains are not assignment targets.
+
+`const` and `readonly` mutation restrictions are compile-time only and impose no runtime write protection.
 
 Evaluation follows ECMAScript [compound assignment](https://262.ecma-international.org/16.0/#sec-assignment-operators) and [update](https://262.ecma-international.org/16.0/#sec-update-expressions) semantics. Binary operand rules apply; updates require number operands.
 
@@ -325,7 +327,7 @@ export function main(): void {
 
 ```txt
 Type := null | undefined | boolean | number | string | unknown
-      | RecordValue | Error | ClassName | Array<Type>
+      | RecordValue | Error | ClassName | Array<Type> | ReadonlyArray<Type>
       | Nullish<Base, flags> | Function(sync, params, result)
       | Function(async, params, result)
 Result := Type | void | never
@@ -341,7 +343,7 @@ Type ::= FunctionType | NullishType
 NullishType ::= (NullishMember '|')* ArrayType ('|' NullishMember)*
 NullishMember ::= 'null' | 'undefined'
 
-ArrayType ::= PrimaryType ('[' ']')*
+ArrayType ::= PrimaryType ('[' ']')* | 'readonly' PrimaryType ('[' ']')+
 
 PrimaryType ::= BuiltinType | Identifier | Identifier '.' Identifier | '(' Type ')'
  | 'Record' '<' 'string' ',' 'unknown' '>'
@@ -363,7 +365,7 @@ Constraints:
 
 ### Narrowing and checked assertions
 
-Initialization and successful assignment replace local/parameter refinements with RHS types; declared write types stay fixed. Adapted functions retain target signatures.
+Initialization and successful assignment replace local/parameter refinements with RHS types; declared write types stay fixed. When an RHS refinement has an array base and the declared base is readonly, retain the declared array base; preserve the RHS nullish members. Adapted functions retain target signatures.
 
 Guards narrow bindings and `obj.field`: local/parameter receiver, declared class field. Exclude nested paths, computed accesses and optional chains. Narrowing `a.field` does not narrow `b.field`, even when `a === b`.
 
@@ -399,7 +401,7 @@ Narrowing invalidation:
 
 `typeof x` returns `undefined`, `boolean`, `number`, `string`, `function`, or `object` (null/arrays/Records/classes/Errors). Direct tests `typeof x === "kind"` narrow unknown in the matching branch for the first four kinds; `!==` narrows the else branch. Other branches stay unknown; no object/function structural inference. `instanceof C` tests nominal tags (including Error) and narrows the true branch to C; other values yield false, never retagging records.
 
-`e as T` evaluates once, descriptor-checks data type T, and raises E8001 on mismatch; no coercion/construction. Allow unknown sources or compatibility in either direction. Array checks require a compatible persistent element descriptor, not merely currently matching elements.
+`e as T` evaluates once, descriptor-checks data type T, and raises E8001 on mismatch; no coercion/construction. Allow unknown sources or compatibility in either direction. Array checks follow [Array type and semantics](#array-type-and-semantics).
 
 ```ts
 let x: string | null = "a";
@@ -493,7 +495,7 @@ Strings compare lexicographically by UTF-16 code-unit value; a proper prefix sor
 | array literal `[e1, ..., eN]` | see [Array literals](#array-literals) |
 | record literal `{ p: e, ... }` | `Record<string, unknown>` with target context |
 | class body `{ ... }` with target `ClassName` | `ClassName` (contextual) |
-| index `a[b]` where `a: T[]`, `b: number` | `T` |
+| index `a[b]` where `a: T[]` or `readonly T[]`, `b: number` | `T` |
 | record member/index read | see [Records](#reading-and-writing-fields) |
 | class member `a.p` | see [Field access](#field-access) |
 | `JSON.parse(s)` | see [JSON decoding](#json-decoding) |
@@ -512,8 +514,9 @@ let x: T_target = expr;
 
 1. Infer the RHS type, using target context for literals and [JSON decoding](#json-decoding).
 2. Accept equal types, nullish widening with an unchanged base, singleton null/undefined into a target admitting that member, or any data value into unknown.
-3. Accept direct function compatibility under [Function type compatibility](#function-type-compatibility), not lifted through arrays/nullish wrappers.
-4. Otherwise reject.
+3. Accept writable/readonly array bases into `readonly T[]` when their element types assign to T without function adaptation; target nullish members must cover source members.
+4. Accept direct function compatibility under [Function type compatibility](#function-type-compatibility), not lifted through arrays/nullish wrappers.
+5. Otherwise reject.
 
 ---
 
@@ -646,7 +649,9 @@ u = t; // Error
 
 ### Class assignment semantics
 
-Only optional fields can be deleted; deletion makes them missing. Assignment restores presence. Writes follow [Field access](#field-access), including at host boundaries:
+Readonly fields initialize during construction and cannot subsequently be assigned to or deleted.
+
+Only optional writable fields can be deleted; deletion makes them missing. Assignment restores presence. Writes follow [Field access](#field-access), including at host boundaries:
 
 ```ts
 class Options { label?: string; raw?: string | undefined; }
@@ -804,7 +809,7 @@ if (n !== null) {
 
 ## Variables
 
-`const` uses `let` typing but forbids binding reassignment at compile time; referenced data remains mutable.
+`const` uses `let` typing but only forbids binding reassignment at compile time.
 
 ```ts
 let x: number = 1;
@@ -927,9 +932,11 @@ Deletion removes an own key. Stored classes/arrays/functions retain their tags, 
 
 `T[]` is invariant in T; persistent element descriptors check writes through all aliases. See [checked assertions](#narrowing-and-checked-assertions).
 
+`readonly T[]` prohibits outermost writes/deletion/mutators, not mutation through mutable aliases or of elements. Views preserve identity/storage descriptors; reached reads validate storage types before widening. Existing element descriptors must equal T for writable checks; readonly checks require `S[]` assignable to `readonly T[]`, where S is the stored element type. Thus `readonly unknown[]` accepts every valid array.
+
 ### Array literals
 
-With a target `T[]`, check elements against `T` by normal assignment rules. Without a target, require a nonempty literal whose elements have identical types; infer `T[]`.
+With a target `T[]` or `readonly T[]`, assignment-check elements against T; infer that target and establish element descriptor T. Without a target, require a nonempty literal whose elements have identical types; infer `T[]`.
 
 ### Indexing
 
@@ -1005,8 +1012,8 @@ if (b) { }
 `condition ? a : b` evaluates only the selected branch.
 
 - Branches receive contextual types; otherwise, either array/object literal arm receives the independently typed other's exact array/class/Record type.
-- Infer identical types, permitted nullish unions, or unknown if either branch is unknown and neither is void/never.
-- Reject other combinations.
+- With a readonly array target, possibly nullish, assignment-check both arms; infer their nullish members and the target's array base only if either arm has an array base.
+- Otherwise infer identical types, permitted nullish unions, or unknown if either branch is unknown and neither is void/never; reject other combinations.
 
 ```ts
 let result = condition ? a : b;
@@ -1019,7 +1026,8 @@ Evaluation follows ECMAScript [coalescing](https://262.ecma-international.org/16
 For `a ?? b`:
 
 - Propagate the contextual target to b; otherwise, a's non-nullish array/class/Record type supplies the target for array/object literals.
-- Combine a's non-nullish type with b's type using [conditional](#conditional) rules; if a is nullish-only, use b's type.
+- For readonly array targets, possibly nullish, assignment-check a's non-nullish part, if any, and b; infer b's nullish members and the target's array base only if either operand has an array base.
+- Otherwise combine a's non-nullish type with b's type using [conditional](#conditional) rules; if a is nullish-only, use b's type.
 
 Check each optional access, call or deletion on its receiver/callee's non-nullish type. Add undefined only to the completed chain's non-void result; optional calls of never-result functions have type undefined, completing only when skipped. Reject async calls in optional chains.
 
@@ -1046,7 +1054,7 @@ for (let c of s) {
 }
 ```
 
-Evaluate the `T[]` or `string` iterable once. Arrays visit successive indexes from zero using live length/contents: appends and unvisited replacements are observed; variable reassignment cannot redirect traversal. Strings follow JavaScript string iteration. Infer `T` or `string`; reject binding annotations. See [Closures](#closures-and-captured-variables) for binding freshness. Supports `break` and `continue`.
+Evaluate the `T[]`, `readonly T[]` or `string` iterable once. Arrays visit successive indexes from zero using live length/contents: appends and unvisited replacements are observed; variable reassignment cannot redirect traversal. Strings follow JavaScript string iteration. Infer `T` or `string`; reject binding annotations. See [Closures](#closures-and-captured-variables) for binding freshness. Supports `break` and `continue`.
 
 ---
 
@@ -1304,26 +1312,26 @@ Both accept Records or class instances. `hasOwn` tests own presence without narr
 xs.push(value: E): number
 xs.pop(): E | undefined
 xs.splice(start: number, deleteCount: number): E[]
-xs.map(mapper: (value: E, index: number, array: E[]) => R): R[]
-xs.filter(predicate: (value: E, index: number, array: E[]) => boolean): E[]
+xs.map(mapper: (value: E, index: number, array: A) => R): R[]
+xs.filter(predicate: (value: E, index: number, array: A) => boolean): E[]
 xs.includes(value: E): boolean
 xs.includes(value: E, fromIndex: number): boolean
 xs.indexOf(value: E): number
 xs.indexOf(value: E, fromIndex: number): number
-xs.find(predicate: (value: E, index: number, array: E[]) => boolean): E | undefined
-xs.findIndex(predicate: (value: E, index: number, array: E[]) => boolean): number
-xs.some(predicate: (value: E, index: number, array: E[]) => boolean): boolean
-xs.every(predicate: (value: E, index: number, array: E[]) => boolean): boolean
-xs.concat(other: E[]): E[]
+xs.find(predicate: (value: E, index: number, array: A) => boolean): E | undefined
+xs.findIndex(predicate: (value: E, index: number, array: A) => boolean): number
+xs.some(predicate: (value: E, index: number, array: A) => boolean): boolean
+xs.every(predicate: (value: E, index: number, array: A) => boolean): boolean
+xs.concat(other: readonly E[]): E[]
 xs.toSorted(compare: (a: E, b: E) => number): E[]
 xs.slice(): E[]
 xs.slice(start: number): E[]
 xs.slice(start: number, end: number): E[]
 ss.join(separator: string): string
-Array.from(xs: E[], mapper: (value: E, index: number) => R): R[]
+Array.from(xs: readonly E[], mapper: (value: E, index: number) => R): R[]
 ```
 
-For xs of type E[] and ss of type string[], E and R denote data types, not source generics; R is the synchronous mapper's explicit result type.
+A is xs's static type, `E[]` or `readonly E[]`; ss permits both string-array forms. Readonly receivers exclude `push`, `pop` and `splice`. E, R and A are not source generics; R is the synchronous mapper's explicit result type.
 
 Listed receiver operations follow corresponding [ECMAScript semantics](https://262.ecma-international.org/16.0/#sec-array-objects), except `map`, `find` and `findIndex` raise E8002 instead of skipping or reading missing elements. `push`, `pop` and `splice` validate affected elements before mutation.
 
@@ -1398,7 +1406,7 @@ Without a target, or with target `unknown`, the result has type `unknown` and co
 
 A decoding target containing function types is a compile-time error, including within optional fields; `unknown` stops schema traversal. Recursive class schemas are allowed; encoding follows [runtime cycle rejection](#json-encoding).
 
-Decode recursively without coercion. Records require objects; arrays require arrays and receive fresh storage with validated target descriptors. Classes require objects and follow [construction](#construction) field validation, decoding fields in declaration order into fresh nominal instances.
+Decode recursively without coercion. Records require objects; arrays require arrays and receive fresh storage with validated element descriptors. Classes require objects and follow [construction](#construction) field validation, decoding fields in declaration order into fresh nominal instances.
 
 ```ts
 class OpaqueRef { payload: unknown; }
@@ -1453,7 +1461,7 @@ See [Backend contracts](#backend-contracts) for backend-specific representations
 
 #### Boundary checks
 
-Host arrays without DEAL descriptors acquire them on first typed admission; existing descriptors survive crossings.
+Descriptorless arrays acquire element descriptor T under `T[]`/`readonly T[]`, or unknown under unknown admission; existing descriptors survive crossings.
 
 Unknown preserves supported data identity, not opaque hosts. Cycle-safe validation rejects unsupported leaves before publication, including unread Record/container descendants; cycles/sharing retain original identities. See [assertions](#narrowing-and-checked-assertions) and [Typed boundaries](#typed-boundaries).
 
@@ -1540,7 +1548,7 @@ ModuleRelativePath := /* path components from module root to defining file */
 ExternalSpecifier := /* raw import specifier: a key in deal.json.externals */
 
 ArrayDescriptor :=
- "[" RuntimeTypeDescriptor "]"
+ "[" RuntimeTypeDescriptor "]" | "readonly[" RuntimeTypeDescriptor "]"
 
 NullishDescriptor :=
  ("?" | "!" | "?!") RuntimeTypeDescriptor /* null, undefined, both */
@@ -1598,7 +1606,7 @@ These representation mappings preserve, and cannot override, source semantics an
 | `string` | Lua string |
 | `Record<string, unknown>` | Lua table |
 | `ClassName` | Lua table tagged with class symbol |
-| `T[]` | Lua table with 1-based contiguous storage |
+| `T[]` / `readonly T[]` | Lua table with 1-based contiguous storage |
 | nullish / unknown | base value or applicable sentinel / validated tagged data |
 | `(params) => R` | wrapper table `{ __kind = "function", sig, f }` |
 | module type | Lua export table |
@@ -1632,7 +1640,7 @@ Missing fields use nil/metadata; translate missing reads and void completion to 
 | `string` | non-null `java.lang.String` |
 | `Record<string, unknown>` | `DealTable` runtime object |
 | `ClassName` | generated record class or `TClassObject` runtime shape |
-| `T[]` | `DealArray<T>` runtime object or specialized primitive array |
+| `T[]` / `readonly T[]` | `DealArray<T>` runtime object or specialized primitive array |
 | nullish / unknown | nullable/tagged payload with distinct undefined / boxed validated data |
 | `(params) => R` | generated `DealFunction` wrapper with descriptor |
 | `(params) => Promise<R>` | `DealAsyncFunction` wrapper with async descriptor |
