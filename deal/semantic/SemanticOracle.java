@@ -3527,7 +3527,7 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
             facts.put("hostExport", host.exportName());
             facts.put("hostSignature", host.descriptor().canonicalSpecText());
             facts.put("hostBoundary", crossing);
-            facts.put("hostDirection", "host-to-deal");
+            facts.put("hostDirection", crossing.equals("parameter") ? "deal-to-host" : "host-to-deal");
             facts.put("hostStage", crossing.equals("completion") ? "completion" : "invocation");
             String specifier = null;
             boolean ambiguous = false;
@@ -4089,8 +4089,30 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                 SemanticOp boundary = opOf(boundaryIds.get(i));
                 Value arg = valueOf(
                     ((KindPayload.BoundaryPayload) boundary.payload()).input());
-                checked.add(runBoundaryChild(boundary, arg,
-                    BoundaryContext.parameter(i + 1)));
+                try {
+                    checked.add(runBoundaryChild(boundary, arg, BoundaryContext.parameter(i + 1)));
+                } catch (DealFailure failure) {
+                    // Read only the callee identity already recorded/evaluated for this call.
+                    // A parameter failure must not execute resolution or a host operation.
+                    KindPayload.CallCallee callee = switch (op.payload()) {
+                        case KindPayload.CallPayload call -> call.callee();
+                        case KindPayload.AsyncStartPayload start -> start.callee();
+                        default -> null;
+                    };
+                    FunctionExecutionBinding binding = switch (callee) {
+                        case KindPayload.CallCallee.Static known -> known.binding();
+                        case KindPayload.CallCallee.Indirect indirect -> bindingsByValue.get(valueOf(indirect.callee()));
+                        case KindPayload.CallCallee.Dynamic dynamic -> bindingsByValue.get(valueOf(dynamic.callee()));
+                        case null -> null;
+                    };
+                    retainHostContext(failure, binding, "parameter");
+                    if (failure.metadata.containsKey("hostBoundary")) {
+                        var facts = new LinkedHashMap<>(failure.metadata);
+                        facts.put("hostParameter", Integer.toString(i + 1));
+                        failure.metadata = SemanticRuntimeModel.ErrorSnapshot.approvedMetadata(facts);
+                    }
+                    throw failure;
+                }
             }
             return checked;
         }

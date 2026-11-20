@@ -6645,13 +6645,15 @@ public class HostModuleLoadEmissionTest {
 
     private static void testOracleHostDiagnosticContext(List<Path> roots) throws Exception {
         var fixture = compileProject(Map.of(
-            "src/diagnostic.d.deal", "export function read():string;export function complete():Promise<string>;",
+            "src/diagnostic.d.deal", "export function read():string;export function complete():Promise<string>;"
+                + "export function corrupt(values:string[]):void;export function consume(values:string[]):void;",
             "src/app.deal", """
                 import * as host from "host/diagnostic";
                 export function direct():string{return host.read();}
                 export function stored():string{let read=host.read;return read();}
                 export function adapted():string{let read:(ignored:number)=>string=host.read;return read(7);}
                 export async function completion():Promise<string>{return await host.complete();}
+                export function parameter():void{let values:string[]=["valid"];host.corrupt(values);host.consume(values);}
                 export function main():void{}
                 """), Map.of("host/diagnostic", "src/diagnostic.d.deal"));
         roots.add(fixture.root());
@@ -6695,6 +6697,31 @@ public class HostModuleLoadEmissionTest {
                         "Oracle selected host rejection versus authored failure: " + entry + " " + rejected.error().diagnosticJson());
                 } else fail("Oracle missed host rejection: " + run.comparisonReport());
             }
+        }
+        for (boolean repair : List.of(false, true)) {
+            int[] consumed = {0};
+            var responder = new SemanticOracle.HostResponder() {
+                public SyncOutcome call(ModuleId module, String export, RuntimeDescriptor.Func signature,
+                                        List<SemanticOracle.Value> args) {
+                    if (export.equals("corrupt")) {
+                        var array = (SemanticOracle.Value.ArrayValue) args.getFirst();
+                        array.elements().set(0, repair ? new SemanticOracle.Value.StrValue("fixed")
+                            : new SemanticOracle.Value.BoolValue(false));
+                    } else if (export.equals("consume")) consumed[0]++;
+                    return new SyncOutcome.Returned(SemanticOracle.Value.UndefinedValue.INSTANCE);
+                }
+            };
+            var run = SemanticOracle.invokeSyncEntry(result.project(), result.tables(), result.registries(), responder,
+                result.project().entryModule(), "parameter", List.of());
+            if (repair) check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success && consumed[0] == 1,
+                "chosen host parameter repair executes the consumer once");
+            else if (run.terminal() instanceof SemanticRuntimeModel.Terminal.DealFailure rejected) {
+                var facts = rejected.error().metadata();
+                check("consume".equals(facts.get("hostExport")) && "parameter".equals(facts.get("hostBoundary"))
+                        && "1".equals(facts.get("hostParameter")) && "deal-to-host".equals(facts.get("hostDirection"))
+                        && "host/diagnostic".equals(facts.get("hostModule")) && consumed[0] == 0,
+                    "selected parameter rejection retains provenance without invoking the consumer: " + rejected.error().diagnosticJson());
+            } else fail("Oracle missed host parameter rejection: " + run.comparisonReport());
         }
     }
 
