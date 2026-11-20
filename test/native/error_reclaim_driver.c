@@ -372,7 +372,7 @@ int main(void) {
     deal_outcome started = deal_project_start();
     check(started.error == NULL, "scanner reclamation installs the closed arm table");
     const size_t parser_baseline = platform_live();
-    deal_root_frame_enter(1u);
+    deal_root_frame_enter(2u);
     const deal_origin parser_origin = {"parser.deal", 3, 7};
     const deal_arm_parameter parser_parameters[] = {
         {"oneBasedByteOffset", "8"}, {"reason", "trailing content"}
@@ -437,7 +437,24 @@ int main(void) {
             && strstr(diagnostic, "\"validationMissingField\":\"true\"") != NULL,
           "validation path survives rooted collection with exact explicit length");
     deal_error_snapshot_release(diagnostic);
+    deal_error_set_unicode_position(parser_error, 6u);
+    deal_error *projected = deal_error_create("E8001", "expected table", &parser_origin);
+    deal_root_frame_write(1u, projected);
+    size_t projected_baseline = platform_live();
+    deal_error_copy_validation_context(projected, parser_error);
+    check(platform_live() == projected_baseline + 1u, "projection owns one independent path copy");
+    deal_error_copy_validation_context(projected, parser_error);
+    check(platform_live() == projected_baseline + 1u, "projection replacement releases previous copy");
     deal_root_frame_write(0u, NULL);
+    deal_gc_collect_full();
+    diagnostic = deal_error_diagnostic(projected);
+    check(strstr(diagnostic, "\"validationPath\":\"/items/0/na\\u0000me\"") != NULL
+            && strstr(diagnostic, "\"unicodeByteOffset\":\"6\"") != NULL
+            && strstr(diagnostic, "\"jsonByteOffset\"") == NULL
+            && strstr(diagnostic, "\"hostModule\"") == NULL,
+          "projection retains only copied validation/Unicode evidence after original reclamation");
+    deal_error_snapshot_release(diagnostic);
+    deal_root_frame_write(1u, NULL);
     deal_gc_collect_full();
     check(platform_live() == parser_baseline,
           "reclaiming scanner Error releases both diagnostic parameter copies");

@@ -2323,7 +2323,13 @@ const $rt = {
       let kind = parsed.$t === "primitive" ? parsed.$name : parsed.$t;
       if (kind === "record") kind = "table";
       const text = kind === "class" ? "class instance" : kind;
-      $rt.fail("E8001", "expected " + text, file, line, column, kind, $kindOf(v));
+      try {
+        $rt.fail("E8001", "expected " + text, file, line, column, kind, $kindOf(v));
+      } catch (projected) {
+        const evidence = $diagnosticValidationGet(error);
+        if (evidence) $diagnosticValidationSet(projected, evidence);
+        throw projected;
+      }
     }
   },
 

@@ -66,6 +66,13 @@ public final class ErrorNameMessageTest {
               if(!d||d.validationPath!='/items/0/name')throw e;
             }
             err.name='fixed';if(rt.checkType('record',record)!==record)throw Error('Error repair identity');
+            const untyped=[false];
+            try{rt.assertType('[number]',untyped);throw Error('invalid assertion admitted');}catch(e){
+              const d=JSON.parse(rt.runtimeDiagnostic(e)).runtime;
+              if(!d||d.code!=='E8001'||d.message!=='expected array'||d.expected!=='array'||d.actual!=='array'
+                  ||d.validationPath!='/0')throw e;
+            }
+            untyped[0]=7;if(rt.assertType('[number]',untyped)!==untyped)throw Error('assertion repair identity');
             console.log('PATH-OK');
             """), Path.of(".").toAbsolutePath());
         if (validationControl.exitCode()!=0 || !validationControl.stdout().equals("PATH-OK\n"))

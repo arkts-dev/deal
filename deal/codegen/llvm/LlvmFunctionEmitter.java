@@ -6,6 +6,7 @@ import deal.semantic.ir.BindingGeneration;
 import deal.semantic.ir.BindingId;
 import deal.semantic.ir.BlockId;
 import deal.semantic.ir.BoundaryKind;
+import deal.semantic.ir.ClassId;
 import deal.semantic.ir.FunctionId;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredFunction;
@@ -1708,6 +1709,8 @@ final class LlvmFunctionEmitter {
             // presentation, not the failed check's signature-specific token.
             session.referenceRuntimeEntry("deal_check_token");
             session.referenceRuntimeEntry("deal_error_materialize");
+            String rejectedErrorValue = emitTemporary(op, "bitcast i8* " + error + " to %struct.deal_error*");
+            String rejected = rootedOperand(new RuntimeDescriptor.Class(ClassId.ERROR), "%struct.deal_error*", rejectedErrorValue, op);
             String actual = emitTemporary(op, "call i8* @deal_check_token(%struct.deal_check_input* " + inputSlot + ")");
             String parameter = newAlloca("%struct.deal_arm_parameter", "assertionkind");
             emit("store %struct.deal_arm_parameter { "
@@ -1718,6 +1721,9 @@ final class LlvmFunctionEmitter {
                 + parameter + ", i64 1, " + session.data.operand(session.data.intern(
                     deal.semantic.ir.FailureProjections.kindToken(declared)))
                 + ", i8* " + actual + ", %struct.deal_origin* " + originValue(op) + ", %struct.deal_error* null)");
+            session.referenceRuntimeEntry("deal_error_copy_validation_context");
+            emit("call void @deal_error_copy_validation_context(%struct.deal_error* " + assertionError
+                + ", %struct.deal_error* " + rejected + ")");
             error = emitTemporary(op, "bitcast %struct.deal_error* " + assertionError + " to i8*");
         } else if (op.payload() instanceof KindPayload.BoundaryPayload boundary
                 && boundary.kind() == deal.semantic.ir.BoundaryKind.ARRAY_LITERAL_ELEMENT) {

@@ -2594,6 +2594,7 @@ public final class JvmSemanticEmitter {
                     .append(javaString(originOf(op)))
                     .append(", __be.expected, __be.actual, __be.frames, null);\n");
             }
+            out.append(indent(indent)).append("  JvmRuntime.validationContext(__bre, __be);\n");
             if (trace) {
                 emitFailureEvent(op.opId(), "BOUNDARY", op,
                     "JvmRuntime.errtext(__bre)", indent + 1);

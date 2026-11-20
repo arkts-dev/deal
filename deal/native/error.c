@@ -1099,6 +1099,15 @@ void deal_error_set_validation_path(deal_error *error, const char *path, size_t 
     error->validation_missing = missing;
 }
 
+void deal_error_copy_validation_context(deal_error *projected, const deal_error *rejected) {
+    if (projected == NULL || rejected == NULL || projected == rejected) return;
+    if (rejected->validation_path != NULL)
+        deal_error_set_validation_path(projected, rejected->validation_path,
+            rejected->validation_path_length, rejected->validation_path_depth,
+            rejected->validation_path_truncated, rejected->validation_missing);
+    projected->unicode_byte_offset = rejected->unicode_byte_offset;
+}
+
 void deal_error_set_fixed_digits(deal_error *error, double digits) {
     if (error == NULL) deal_platform_fault("error diagnostic: null numeric error");
     error->has_fixed_digits = 1;

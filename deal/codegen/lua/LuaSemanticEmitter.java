@@ -2765,12 +2765,13 @@ public final class LuaSemanticEmitter {
                 .append(")\n");
             out.append("if not __okB then\n");
             if (payload.kind() == BoundaryKind.ASSERTION) {
-                out.append("  __chk = __arm(\"TYPED_BOUNDARY_KIND\", {kind = ")
+                out.append("  local __rejected = __chk\n  __chk = __arm(\"TYPED_BOUNDARY_KIND\", {kind = ")
                     .append(luaString(deal.semantic.ir.FailureProjections.kindText(payload.descriptor())))
                     .append("}, ").append(luaString(originOf(op))).append(", ")
                     .append(luaString(deal.semantic.ir.FailureProjections.kindToken(payload.descriptor())))
                     .append(", __typedBoundaryKind(\"\", ").append(slot(payload.input()))
                     .append("))\n");
+                out.append("  if type(__rejected) == \"table\" then for _, key in ipairs({\"validationPath\",\"validationPathDepth\",\"validationPathTruncated\",\"validationMissingField\",\"unicodeByteOffset\",\"unicodeConstraint\"}) do __chk[key] = rawget(__rejected, key) end end\n");
             }
             out.append("  __chk.o = ").append(luaString(originOf(op))).append("\n");
             emitFailureEvent(op.opId(), "BOUNDARY", op, "__errtext(__chk)");

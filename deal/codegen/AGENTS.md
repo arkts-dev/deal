@@ -18,7 +18,7 @@ their operation's origin, never a raw exception.
   absent. No defaults hooks, generated JSON helpers or `C$fields` exports.
 - Preserve persistent array descriptors, aliases and null/undefined/absence.
   Validate before mutation/publication. Array failures retain source-index
-  E8003 and the unwrapped leaf cause; assertions own E8001. Rejected positions
+  E8003 and the unwrapped leaf cause; assertions own E8001 and retain the rejecting check's validation/Unicode evidence when reprojected. Rejected positions
   retain the original binary64 index, observed length and read/write constraint
   without replaying the check or reading storage. Validation paths use current walk frames only, bounded independently of traversal depth; retain exact depth/missing status through re-projection and rethrow.
 - Pop validates before shrink; splice validates the entire removal range before
