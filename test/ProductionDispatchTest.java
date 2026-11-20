@@ -897,7 +897,7 @@ public class ProductionDispatchTest {
         }
     }
 
-    private record ProjectOutcome(int exitCode, String stderr) {
+    private record ProjectOutcome(int exitCode, String stderr, String stdout) {
     }
 
     /** Runs the release-owned production CLI in-process. */
@@ -918,17 +918,22 @@ public class ProductionDispatchTest {
 
     private static ProjectOutcome runCli(CliCall call) throws Exception {
         ByteArrayOutputStream err = new ByteArrayOutputStream();
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        PrintStream originalOut = System.out;
         PrintStream originalErr = System.err;
         int exitCode;
         try {
             System.setErr(new PrintStream(err, true, StandardCharsets.UTF_8));
+            System.setOut(new PrintStream(out, true, StandardCharsets.UTF_8));
             exitCode = call.run();
             System.err.flush();
+            System.out.flush();
         } finally {
             System.setErr(originalErr);
+            System.setOut(originalOut);
         }
         return new ProjectOutcome(exitCode,
-            err.toString(StandardCharsets.UTF_8).trim());
+            err.toString(StandardCharsets.UTF_8).trim(), out.toString(StandardCharsets.UTF_8));
     }
 
     private record ProcessOutcome(int exitCode, String output) {
@@ -7380,7 +7385,46 @@ public class ProductionDispatchTest {
         }
     }
 
+    private static void testRetainedDetailCli() throws Exception {
+        Path project = Files.createTempDirectory("diagnostic-detail-cli-");
+        try {
+            write(project, "deal.json", DEAL_JSON_LUA);
+            write(project, "src/main.deal", "import * as lib from \"./lib\";export function main():void{lib.absent;}");
+            StringBuilder exports = new StringBuilder();
+            for (int i = 0; i < 40; i++) exports.append("export function field").append(i).append("():void{}\n");
+            write(project, "src/lib.deal", exports.toString());
+            Path report = project.resolve("report.json");
+            var result = runProductionCli("compile", project.resolve("src/main.deal").toString(),
+                    "--diagnostics-json", report.toString());
+            check(result.exitCode() != 0, "detail producer retains ordinary compilation rejection");
+            var root = (CanonicalJson.Obj) CanonicalJson.parse(Files.readString(report));
+            var diagnostics = (CanonicalJson.Arr) jsonField(root, "diagnostics");
+            var diagnostic = diagnostics.items().stream().map(value -> (CanonicalJson.Obj) value)
+                    .filter(value -> jsonString(jsonField(value, "code")).equals("E2004")).findFirst().orElseThrow();
+            var facts = (CanonicalJson.Obj) jsonField(diagnostic, "facts");
+            var surface = (CanonicalJson.Obj) jsonField(facts, "exports");
+            var descriptor = (CanonicalJson.Obj) jsonField(surface, "details");
+            String id = jsonString(jsonField(descriptor, "inventoryId"));
+            String archiveBefore = Files.readString(Path.of(report + ".details.json"));
+            Files.delete(project.resolve("src/lib.deal"));
+            Files.delete(project.resolve("src/main.deal"));
+            var page = runProductionCli("diagnostic-details", report.toString(), id, "32", "32");
+            check(page.exitCode() == 0 && page.stderr().isEmpty(), "CLI retrieves retained facts after sources disappear");
+            var value = (CanonicalJson.Obj) CanonicalJson.parse(page.stdout().strip());
+            checkEq(40, jsonInt(jsonField(value, "total")), "CLI detail page retains exact total");
+            checkEq(8, ((CanonicalJson.Arr) jsonField(value, "items")).items().size(), "CLI retrieves omitted export tail");
+            checkEq(CanonicalJson.nullValue(), jsonField(value, "nextOffset"), "CLI detail end is explicit");
+            var stale = runProductionCli("diagnostic-details", report.toString(), "stale", "0", "1");
+            check(stale.exitCode() == 1 && stale.stdout().isEmpty() && stale.stderr().contains("inventory unavailable"),
+                    "CLI stale detail identity fails without invented observations");
+            var geometry = runProductionCli("diagnostic-details", report.toString(), id, "0", "33");
+            check(geometry.exitCode() == 1 && geometry.stdout().isEmpty(), "CLI rejects over-limit detail request");
+            checkEq(archiveBefore, Files.readString(Path.of(report + ".details.json")), "detail reads never mutate retained observations");
+        } finally { deleteRecursively(project); }
+    }
+
     public static void main(String[] args) throws Exception {
+        testRetainedDetailCli();
         System.out.println("=== Production Dispatch and Cutover Acceptance "
             + "Tests (ISSUE-0643) ===\n");
 

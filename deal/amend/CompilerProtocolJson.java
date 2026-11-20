@@ -18,6 +18,17 @@ public final class CompilerProtocolJson {
         return CanonicalJson.serializeText(toValue(value));
     }
 
+    /** JSON request/response seam over the retained diagnostics of one response, never a source query. */
+    public static String queryDiagnosticDetails(List<CompilerProtocol.StructuredDiagnostic> diagnostics, String requestJson) {
+        var request = requireObject(decode(requestJson), "Diagnostic detail request");
+        if (request.entries().size() != 3 || request.entries().stream().anyMatch(entry ->
+                !List.of("inventoryId", "offset", "limit").contains(entry.key())))
+            throw new IllegalArgumentException("Diagnostic detail request requires inventoryId, offset and limit only");
+        return encode(AmendWorkspace.queryDiagnosticDetails(diagnostics,
+                new deal.diagnostics.DiagnosticDetails.Request(stringField(request, "inventoryId"),
+                        intField(request, "offset"), intField(request, "limit"))));
+    }
+
     public static CanonicalJson.Value decode(String value) {
         return CanonicalJson.parse(value);
     }

@@ -48,6 +48,23 @@ public final class Main {
         }
 
         String command = args[0];
+        if (command.equals("diagnostic-details")) {
+            if (args.length != 5) {
+                System.err.println("Usage: deal diagnostic-details <report.json> <inventoryId> <offset> <limit>");
+                return 1;
+            }
+            try {
+                var request = new deal.diagnostics.DiagnosticDetails.Request(args[2],
+                        Integer.parseInt(args[3]), Integer.parseInt(args[4]));
+                var page = deal.diagnostics.DiagnosticDetailArchive.page(
+                        Files.readString(Path.of(args[1] + ".details.json")), request);
+                System.out.println(deal.amend.CompilerProtocolJson.encode(page));
+                return 0;
+            } catch (IllegalArgumentException | IOException failure) {
+                System.err.println("deal: cannot read diagnostic details: " + failure.getMessage());
+                return 1;
+            }
+        }
         if (command.equals("native")) {
             return runNative(Arrays.copyOfRange(args, 1, args.length));
         }
@@ -381,9 +398,9 @@ public final class Main {
             System.err.println(failure.diagnostic());
             if (diagnosticsJsonPath != null) {
                 try {
-                    Files.writeString(diagnosticsJsonPath, DiagnosticStructuredOutput.toJson(
+                    DiagnosticStructuredOutput.write(diagnosticsJsonPath,
                             deal.diagnostics.DiagnosticOrder.canonical(orchestrator.diagnostics()),
-                            List.of(failure.structuredDiagnostic()), orchestrator.outcome()));
+                            List.of(failure.structuredDiagnostic()), orchestrator.outcome());
                 } catch (IOException e) {
                     System.err.println("deal: cannot write diagnostics JSON to '"
                             + diagnosticsJsonPath + "': " + e.getMessage());
@@ -464,8 +481,7 @@ public final class Main {
             return 1;
         }
         try {
-            Files.writeString(diagnosticsJsonPath,
-                DiagnosticStructuredOutput.toJson(diagnostics));
+            DiagnosticStructuredOutput.write(diagnosticsJsonPath, diagnostics, List.of(), null);
         } catch (IOException e) {
             System.err.println("deal: cannot write diagnostics JSON to '"
                 + diagnosticsJsonPath + "': " + e.getMessage());
@@ -475,6 +491,7 @@ public final class Main {
 
     private static void printUsage() {
         System.err.println("Usage: deal compile <entry.deal> [--output <dir>] [--backend <lua|luajit|jvm|js|llvm>] [--verbose] [--dump-ir] [--source-map] [--diagnostics-json <path>]");
+        System.err.println("       deal diagnostic-details <report.json> <inventoryId> <offset> <limit>");
         System.err.println("       deal native <build|run> <entry.deal> [--output <artifactsDir>] [--product <productDir>] [--opt-level 0|2] [--host <file.c>]... [--verbose] [--diagnostics-json <path>]");
         System.err.println();
         System.err.println("Options:");

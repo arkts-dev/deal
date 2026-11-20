@@ -103,6 +103,12 @@ Embedded callers page `facts.<context>.details().page(new DiagnosticDetails.Requ
 (up to 32 observations per page); lookup observations use `observationDetails`.
 Inventory IDs pin immutable producer observations; stale IDs reject, unavailable
 inventories are null, and retrieval never repeats checks, searches or tool runs.
+CLI reports retain inventories in `<report>.details.json`; retrieve an omitted page
+with `deal diagnostic-details <report> <inventoryId> <offset> <limit>` (limit 1–32).
+Keep the report and its detail file together; stale/unavailable inventory IDs reject.
+Amendment JSON consumers call `CompilerProtocolJson.queryDiagnosticDetails` with
+the retained response diagnostics and `{inventoryId, offset, limit}`; reads grant
+no edit authority and require no source reanalysis.
 Amendment uses `compiler-protocol-v3` with revision-pinned context requests;
 context reads do not grant edits. Missing-semicolon diagnostics can carry exact,
 source-revision-pinned insertion offers; explicitly chosen offers still require

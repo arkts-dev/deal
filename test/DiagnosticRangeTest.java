@@ -141,6 +141,33 @@ public class DiagnosticRangeTest {
         var json = deal.amend.CompilerProtocolJson.encode(details);
         check(json.contains(descriptor.inventoryId()) && !json.contains("observed-32"),
             "protocol advertises retained inventory without unbounded inline expansion");
+        var facts = deal.diagnostics.DiagnosticFacts.EMPTY.withResolution(new deal.diagnostics.DiagnosticFacts.ResolutionContext(
+                "missing", "observed", List.of("observed-0"), 70, true, details));
+        String archive = deal.diagnostics.DiagnosticDetailArchive.encode(List.of(facts));
+        var restored = deal.diagnostics.DiagnosticDetailArchive.page(archive,
+                new deal.diagnostics.DiagnosticDetails.Request(descriptor.inventoryId(), 31, 3));
+        check(restored.equals(deal.amend.CompilerProtocolJson.toValue(details.page(
+                new deal.diagnostics.DiagnosticDetails.Request(descriptor.inventoryId(), 31, 3)))),
+                "persisted detail retrieval crosses storage-page boundaries without reanalysis");
+        try { deal.diagnostics.DiagnosticDetailArchive.page(archive,
+                new deal.diagnostics.DiagnosticDetails.Request("stale", 0, 1)); fail("stale archive inventory accepted"); }
+        catch (IllegalArgumentException expected) { check(true, "persisted details reject unknown inventory identity"); }
+        try { deal.diagnostics.DiagnosticDetailArchive.page(archive.replace("\"nextOffset\":32", "\"nextOffset\":31"), request);
+            fail("corrupt detail continuation accepted"); }
+        catch (IllegalArgumentException expected) { check(true, "persisted details reject inconsistent continuation"); }
+        var inspection = deal.amend.AmendWorkspace.inspect("let foo:number=1;foa;", "detail.deal");
+        var nameDiagnostic = inspection.diagnostics().stream().filter(d -> d.facts().names() != null).findFirst().orElseThrow();
+        var nameDetails = nameDiagnostic.facts().names().details();
+        var query = new deal.diagnostics.DiagnosticDetails.Request(nameDetails.descriptor().inventoryId(), 0, 1);
+        check(deal.amend.CompilerProtocolJson.queryDiagnosticDetails(inspection.diagnostics(),
+                    deal.amend.CompilerProtocolJson.encode(query)).equals(deal.amend.CompilerProtocolJson.encode(nameDetails.page(query))),
+                "JSON amendment detail request returns exact retained typed observations");
+        try { deal.amend.CompilerProtocolJson.queryDiagnosticDetails(inspection.diagnostics(),
+                "{\"inventoryId\":\"stale\",\"offset\":0,\"limit\":1,\"source\":\"ignored\"}");
+            fail("unrecognized detail request operand accepted"); }
+        catch (IllegalArgumentException expected) { check(true, "detail query rejects non-query operands"); }
+        check(inspection.diagnostics().equals(deal.amend.AmendWorkspace.inspect("let foo:number=1;foa;", "detail.deal").diagnostics()),
+                "detail reads do not change diagnostics or grant edits");
     }
 
     private static void checkEq(Object expected, Object actual,

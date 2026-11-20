@@ -665,9 +665,8 @@ public final class CompilationOrchestrator {
                 // D1 (deterministic-diagnostics): the document receives
                 // the canonical report-ordered list; the internal
                 // emission-order collection is unchanged.
-                Files.writeString(diagnosticsJsonPath,
-                    DiagnosticStructuredOutput.toJson(
-                        DiagnosticOrder.canonical(diagnostics()), operations, outcome()));
+                DiagnosticStructuredOutput.write(diagnosticsJsonPath,
+                        DiagnosticOrder.canonical(diagnostics()), operations, outcome());
             } catch (IOException e) {
                 System.err.println("deal: cannot write diagnostics JSON to '"
                     + diagnosticsJsonPath + "': " + e.getMessage());

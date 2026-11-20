@@ -212,6 +212,14 @@ public final class AmendWorkspace {
                 target.kind().equals("module") ? sourceDigest : digest(source.substring(target.start(), target.end())));
     }
 
+    /** Read retained response facts without reanalysis or additional edit authority. */
+    public static deal.diagnostics.DiagnosticDetails.Page<?> queryDiagnosticDetails(
+            List<CompilerProtocol.StructuredDiagnostic> diagnostics,
+            deal.diagnostics.DiagnosticDetails.Request request) {
+        return deal.diagnostics.DiagnosticDetailArchive.page(
+                diagnostics.stream().map(CompilerProtocol.StructuredDiagnostic::facts).toList(), request);
+    }
+
     public static CompilerProtocol.ContextResult queryContext(String source, String modulePath,
             CompilerProtocol.ContextRequest request) {
         return queryContext(source, modulePath, request, rejectingResolver(), SourceAdapter.IDENTITY);

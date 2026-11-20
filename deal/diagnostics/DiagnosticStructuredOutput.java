@@ -55,6 +55,17 @@ import java.util.Objects;
  */
 public final class DiagnosticStructuredOutput {
 
+    /** Write retained observations first, then their bounded report; neither operation reruns analysis. */
+    public static void write(java.nio.file.Path path, List<CompilerDiagnostic> diagnostics,
+                             List<OperationalDiagnostic> operations, CompilationOutcome outcome) throws java.io.IOException {
+        var facts = new java.util.ArrayList<DiagnosticFacts>();
+        diagnostics.forEach(diagnostic -> facts.add(diagnostic.facts()));
+        operations.forEach(operation -> facts.add(operation.facts()));
+        java.nio.file.Files.writeString(java.nio.file.Path.of(path.toString() + ".details.json"),
+                DiagnosticDetailArchive.encode(facts));
+        java.nio.file.Files.writeString(path, toJson(diagnostics, operations, outcome));
+    }
+
     /** No instances: the structured output is a pure static utility. */
     private DiagnosticStructuredOutput() {
     }
