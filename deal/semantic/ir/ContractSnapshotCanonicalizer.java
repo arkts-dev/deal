@@ -135,7 +135,7 @@ public final class ContractSnapshotCanonicalizer {
      *
      */
     public static String digest(OperationContractSnapshot snapshot) {
-        return CanonicalJson.sha256Hex(serialize(snapshot));
+        return CanonicalJson.digest(toJson(snapshot));
     }
 
     /**
@@ -1913,7 +1913,7 @@ public final class ContractSnapshotCanonicalizer {
      *
      */
     public static String recomputeSnapshotDigest(CanonicalJson.Obj snapshot) {
-        return CanonicalJson.sha256Hex(CanonicalJson.serializeBytes(snapshot));
+        return CanonicalJson.digest(snapshot);
     }
 
     private static CanonicalJson.Value bindingJson(RawBinding binding) {

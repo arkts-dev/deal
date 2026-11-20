@@ -221,17 +221,71 @@ public final class CanonicalJson {
      */
     public static byte[] serializeBytes(Value value) {
         Objects.requireNonNull(value, "value must not be null");
-        StringBuilder sb = new StringBuilder();
-        append(sb, value);
-        return sb.toString().getBytes(StandardCharsets.UTF_8);
+        return serializeText(value).getBytes(StandardCharsets.UTF_8);
     }
 
     /** Serializes the value to canonical JSON text (debug/trace surface only). */
     public static String serializeText(Value value) {
-        return new String(serializeBytes(value), StandardCharsets.UTF_8);
+        Objects.requireNonNull(value, "value must not be null");
+        TextSink sink = new TextSink();
+        append(sink, value);
+        return sink.text.toString();
     }
 
-    private static void append(StringBuilder sb, Value value) {
+    /** Hash the same canonical UTF-8 stream without materializing document text or bytes. */
+    public static String digest(Value value) {
+        Objects.requireNonNull(value, "value must not be null");
+        DigestSink sink = new DigestSink();
+        append(sink, value);
+        sink.flush();
+        return HexFormat.of().formatHex(sink.digest.digest());
+    }
+
+    private interface Sink {
+        void append(char value);
+        void append(String value);
+        void appendCodePoint(int value);
+    }
+
+    private static final class TextSink implements Sink {
+        private final StringBuilder text = new StringBuilder();
+        public void append(char value) { text.append(value); }
+        public void append(String value) { text.append(value); }
+        public void appendCodePoint(int value) { text.appendCodePoint(value); }
+    }
+
+    private static final class DigestSink implements Sink {
+        private final MessageDigest digest = newDigest();
+        private final byte[] buffer = new byte[1024];
+        private int size;
+
+        private void put(int value) {
+            if (size == buffer.length) flush();
+            buffer[size++] = (byte) value;
+        }
+        private void flush() {
+            digest.update(buffer, 0, size);
+            size = 0;
+        }
+        public void append(char value) { appendCodePoint(value); }
+        public void append(String value) {
+            for (int i = 0; i < value.length(); i++) append(value.charAt(i));
+        }
+        public void appendCodePoint(int value) {
+            if (value < 0x80) put(value);
+            else if (value < 0x800) {
+                put(0xc0 | value >> 6); put(0x80 | value & 0x3f);
+            } else if (value < 0x10000) {
+                put(0xe0 | value >> 12); put(0x80 | value >> 6 & 0x3f);
+                put(0x80 | value & 0x3f);
+            } else {
+                put(0xf0 | value >> 18); put(0x80 | value >> 12 & 0x3f);
+                put(0x80 | value >> 6 & 0x3f); put(0x80 | value & 0x3f);
+            }
+        }
+    }
+
+    private static void append(Sink sb, Value value) {
         switch (value) {
             case Null ignored -> sb.append("null");
             case Bool b -> sb.append(b.value() ? "true" : "false");
@@ -265,7 +319,7 @@ public final class CanonicalJson {
         }
     }
 
-    private static void appendString(StringBuilder sb, String s) {
+    private static void appendString(Sink sb, String s) {
         sb.append('"');
         for (int i = 0; i < s.length(); ) {
             int cp = s.codePointAt(i);
@@ -280,7 +334,10 @@ public final class CanonicalJson {
                 case '\t' -> sb.append("\\t");
                 default -> {
                     if (cp < 0x20 || cp >= 0xd800 && cp <= 0xdfff) {
-                        sb.append(String.format("\\u%04x", cp));
+                        sb.append("\\u");
+                        for (int shift = 12; shift >= 0; shift -= 4) {
+                            sb.append("0123456789abcdef".charAt(cp >> shift & 0xf));
+                        }
                     } else {
                         sb.appendCodePoint(cp);
                     }
@@ -303,9 +360,12 @@ public final class CanonicalJson {
      */
     public static String sha256Hex(byte[] bytes) {
         Objects.requireNonNull(bytes, "bytes must not be null");
+        return HexFormat.of().formatHex(newDigest().digest(bytes));
+    }
+
+    private static MessageDigest newDigest() {
         try {
-            MessageDigest md = MessageDigest.getInstance("SHA-256");
-            return HexFormat.of().formatHex(md.digest(bytes));
+            return MessageDigest.getInstance("SHA-256");
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 is unavailable on this platform", e);
         }

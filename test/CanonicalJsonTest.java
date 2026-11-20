@@ -495,6 +495,24 @@ public class CanonicalJsonTest {
 
     }
 
+    static void testStreamingDigest() {
+        StringBuilder units = new StringBuilder();
+        for (int i = 0; i <= 0xffff; i++) units.append((char) i);
+        var document = CanonicalJson.obj(
+            CanonicalJson.e("\ud800key", CanonicalJson.str(units.toString())),
+            CanonicalJson.e("numbers", CanonicalJson.arr(
+                CanonicalJson.number(-0.0), CanonicalJson.number(Double.NaN),
+                CanonicalJson.number(Double.POSITIVE_INFINITY),
+                CanonicalJson.number(Double.MIN_VALUE), CanonicalJson.intValue(-1))),
+            CanonicalJson.e("nested", compositeDocument()));
+        check(CanonicalJson.digest(document).equals(
+                CanonicalJson.sha256Hex(CanonicalJson.serializeBytes(document))),
+            "streamed digest matches canonical bytes across all UTF-16 units and buffer boundaries");
+        check(CanonicalJson.serializeText(document).equals(new String(
+                CanonicalJson.serializeBytes(document), StandardCharsets.UTF_8)),
+            "direct text and UTF-8 transport remain identical");
+    }
+
     static void testFieldAccessContracts() {
         var explicitNull = CanonicalJson.nullValue();
         var text = CanonicalJson.str("\u0000\ud800value");
@@ -997,6 +1015,7 @@ public class CanonicalJsonTest {
         testFieldAccessContracts();
         testDecodeFailures();
         testDigest();
+        testStreamingDigest();
         testLoweringContextHash();
         testResultTypeDistinctions();
 
