@@ -4299,12 +4299,7 @@ public final class SemanticIrValidator {
         if (owner == null) {
             return null;
         }
-        for (RawOp op : owner.ops()) {
-            if (op.opId().equals(opId)) {
-                return op;
-            }
-        }
-        return null;
+        return owner.operation(opId);
     }
 
     private static boolean isKind(RawOp op, BoundaryKind kind) {

@@ -1687,6 +1687,18 @@ public class SemanticIrValidatorTest {
             "re-serializing the reparsed unit is byte-stable");
         checkEq(raw, reparsed,
             "the complete raw unit round-trips exactly through the canonical text");
+        checkEq(raw.hashCode(), reparsed.hashCode(),
+            "raw operation indexing does not change record hash semantics");
+        checkEq(List.copyOf(raw.ops()), raw.ops(),
+            "raw operations retain ordered list equality");
+        checkEq(raw.ops(), raw.ops().stream().toList(),
+            "raw operation stream retains transport order");
+        try {
+            raw.ops().set(0, raw.ops().get(0));
+            check(false, "raw operations must remain immutable");
+        } catch (UnsupportedOperationException expected) {
+            check(true, "raw operations remain immutable");
+        }
         checkEq(unit.bodyTable(), reparsed.bodyTable(), "typed body membership survives");
         checkEq(unit.classFactories(), reparsed.classFactories(), "typed factories survive");
         checkEq(unit.classBindingFacts(), reparsed.classBindingFacts(), "typed binding facts survive");

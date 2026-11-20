@@ -83,10 +83,34 @@ public record RawUnit(
         Objects.requireNonNull(moduleInit, "moduleInit must not be null");
         exportPlan = List.copyOf(Objects.requireNonNull(exportPlan, "exportPlan must not be null"));
         bindings = List.copyOf(Objects.requireNonNull(bindings, "bindings must not be null"));
-        ops = List.copyOf(Objects.requireNonNull(ops, "ops must not be null"));
+        ops = new IndexedOperations(Objects.requireNonNull(ops, "ops must not be null"));
         Objects.requireNonNull(bodyTable, "bodyTable must not be null");
         Objects.requireNonNull(classFactories, "classFactories must not be null");
         Objects.requireNonNull(classBindingFacts, "classBindingFacts must not be null");
+    }
+
+    /** Lookup preserves the first occurrence; duplicate admission still walks the ordered list. */
+    RawOp operation(OpId id) {
+        return ((IndexedOperations) ops).byId.get(id);
+    }
+
+    /** Immutable ordered transport facts plus an invocation-local lookup accelerator. */
+    private static final class IndexedOperations extends java.util.AbstractList<RawOp>
+            implements java.util.RandomAccess {
+        private final List<RawOp> ordered;
+        private final Map<OpId, RawOp> byId;
+
+        IndexedOperations(List<RawOp> operations) {
+            ordered = List.copyOf(operations);
+            var index = new java.util.HashMap<OpId, RawOp>();
+            for (RawOp op : ordered) index.putIfAbsent(op.opId(), op);
+            byId = java.util.Collections.unmodifiableMap(index);
+        }
+
+        @Override public RawOp get(int index) { return ordered.get(index); }
+        @Override public int size() { return ordered.size(); }
+        @Override public java.util.Iterator<RawOp> iterator() { return ordered.iterator(); }
+        @Override public java.util.Spliterator<RawOp> spliterator() { return ordered.spliterator(); }
     }
 
     /**

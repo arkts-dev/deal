@@ -511,11 +511,20 @@ public class CanonicalJsonTest {
             "string extraction preserves NUL and lone UTF-16 units");
         check(ContractSnapshotCanonicalizer.requireStringOrNull(explicitNull, "present") == null,
             "nullable string extraction accepts explicit null");
+        check(ContractSnapshotCanonicalizer.hasKey(obj, "present"),
+            "explicit null counts as a present key");
+        check(!ContractSnapshotCanonicalizer.hasKey(obj, "missing"),
+            "absent key remains absent");
+        ContractSnapshotCanonicalizer.checkKeys(obj, "text", "present", "text");
         List<Runnable> invalid = List.of(
+            () -> ContractSnapshotCanonicalizer.checkKeys(obj, "missing", "present"),
+            () -> ContractSnapshotCanonicalizer.checkKeys(obj, "text", "first", "second", "present"),
             () -> ContractSnapshotCanonicalizer.entryValue(obj, "missing"),
             () -> ContractSnapshotCanonicalizer.requireString(obj, "present"),
             () -> ContractSnapshotCanonicalizer.requireInt(obj, "text"));
         List<String> messages = List.of(
+            "unknown field \"text\" (pinned field set is [missing, present])",
+            "missing field \"first\" (pinned field set is [text, first, second, present])",
             "missing field \"missing\"",
             "the \"present\" field must be a string, got null",
             "the \"text\" field must be a canonical signed32 integer, got string (\""

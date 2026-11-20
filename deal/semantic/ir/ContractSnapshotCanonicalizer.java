@@ -2305,9 +2305,16 @@ public final class ContractSnapshotCanonicalizer {
      *
      */
     public static void checkKeys(CanonicalJson.Obj obj, String... pinned) {
-        Set<String> set = new LinkedHashSet<>(List.of(pinned));
-        for (CanonicalJson.Entry entry : obj.entries()) {
-            if (!set.contains(entry.key())) {
+        for (int i = 0; i < obj.entries().size(); i++) {
+            CanonicalJson.Entry entry = obj.entries().get(i);
+            boolean known = false;
+            for (String key : pinned) {
+                if (entry.key().equals(key)) {
+                    known = true;
+                    break;
+                }
+            }
+            if (!known) {
                 throw new SemanticIrTextDecodeException(
                     "unknown field \"" + entry.key() + "\" (pinned field set is "
                         + List.of(pinned) + ")");
@@ -2323,21 +2330,13 @@ public final class ContractSnapshotCanonicalizer {
 
     /** True iff the object carries the given key. */
     public static boolean hasKey(CanonicalJson.Obj obj, String key) {
-        for (CanonicalJson.Entry entry : obj.entries()) {
-            if (entry.key().equals(key)) {
-                return true;
-            }
-        }
-        return false;
+        return payloadValue(obj, key) != null;
     }
 
     /** The value of a pinned key (decode failure when absent). */
     public static CanonicalJson.Value entryValue(CanonicalJson.Obj obj, String key) {
-        for (CanonicalJson.Entry entry : obj.entries()) {
-            if (entry.key().equals(key)) {
-                return entry.value();
-            }
-        }
+        CanonicalJson.Value value = payloadValue(obj, key);
+        if (value != null) return value;
         throw new SemanticIrTextDecodeException("missing field \"" + key + "\"");
     }
 
@@ -2613,7 +2612,11 @@ public final class ContractSnapshotCanonicalizer {
 
     /** The value of a payload field, or {@code null} when absent. */
     public static CanonicalJson.Value payloadValue(CanonicalJson.Obj obj, String key) {
-        for (CanonicalJson.Entry entry : obj.entries()) {
+        // Payloads are small immutable lists: indexed traversal avoids allocating
+        // an iterator at every field decode during admission.
+        List<CanonicalJson.Entry> entries = obj.entries();
+        for (int i = 0; i < entries.size(); i++) {
+            CanonicalJson.Entry entry = entries.get(i);
             if (entry.key().equals(key)) {
                 return entry.value();
             }
