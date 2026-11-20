@@ -16,9 +16,11 @@ COVERAGE_WRAPPER="$(mktemp -d)"
 trap 'rm -rf "$COVERAGE_WRAPPER"' EXIT
 export DEAL_COVERAGE_JAVA="$JAVA_BIN"
 export DEAL_COVERAGE_AGENT="$JACOCO_DIR/jacocoagent.jar"
-export DEAL_COVERAGE_EXEC="$PWD/build/jacoco.exec"
-printf '%s\n' '#!/bin/bash' \
-  'exec "$DEAL_COVERAGE_JAVA" "-javaagent:$DEAL_COVERAGE_AGENT=destfile=$DEAL_COVERAGE_EXEC,append=true,includes=deal.*" "$@"' \
+export DEAL_COVERAGE_DIR="$PWD/build/jacoco-processes"
+printf '%s\n' '#!/bin/bash' 'set -e' \
+  'mkdir -p "$DEAL_COVERAGE_DIR"' \
+  'data="$(mktemp "$DEAL_COVERAGE_DIR/process-XXXXXXXXXXXX.exec")"' \
+  'exec "$DEAL_COVERAGE_JAVA" "-javaagent:$DEAL_COVERAGE_AGENT=destfile=$data,append=false,includes=deal.*" "$@"' \
   > "$COVERAGE_WRAPPER/java"
 chmod +x "$COVERAGE_WRAPPER/java"
 PATH="$COVERAGE_WRAPPER:$PATH" ./run_tests.sh "$@"

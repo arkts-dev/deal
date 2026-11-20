@@ -23,7 +23,7 @@ node test/typescript/check-syntax.cjs
 
 The test runner compiles with `javac --release 25`, enables assertions and runs
 `tools/gate-manifest.sh`. `--jobs` bounds concurrent suites (default four);
-nested work and coverage stay serial. Conformance and compositions execute
+nested work stays serial, including under coverage. Conformance and compositions execute
 without exclusions. Missing tools, hosts, completions or runtime-requirement
 evidence fail the run.
 
@@ -76,10 +76,13 @@ is part of the development gate.
 Use Java-25-compatible JaCoCo agent/CLI jars (tested with 0.8.14):
 
 ```bash
-JACOCO_DIR=/path/to/jacoco ./coverage.sh --jobs 1
+JACOCO_DIR=/path/to/jacoco ./coverage.sh --jobs 4
 ```
 
-Coverage uses the same test selection and instruments Java subprocesses.
+Coverage uses the same selection and suite budget, including Java subprocesses.
+Each Java process writes its own file in `build/jacoco-processes`; after all suites
+succeed, bounded JaCoCo merges produce `build/jacoco.exec`. Empty files from killed
+processes contain no dump; malformed nonempty dumps fail the merge.
 Only production classes in `build/deal` count; tests and generated probes do not.
 Minima: **85% lines**, **75% branches**. Reports: `build/coverage.csv`,
 `build/coverage.xml`, `build/coverage-html/index.html`.

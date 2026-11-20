@@ -19,8 +19,6 @@ case "$JOBS" in
   ''|*[!0-9]*|0) echo "ERROR: --jobs requires a positive integer" >&2; exit 2 ;;
 esac
 
-# JaCoCo's shared append file is not a concurrent-writer protocol.
-if [ -n "${DEAL_COVERAGE_AGENT:-}" ]; then JOBS=1; fi
 echo "=== DEAL test process budget: jobs=$JOBS (nested jobs=1) ==="
 source tools/gate-manifest.sh
 

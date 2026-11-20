@@ -42,10 +42,14 @@ public final class GateRunnerTest {
                   'bg|long|java -ea -cp build third'
                 )
                 """);
-            Map<String, String> env = Map.of("PATH", bin + ":" + System.getenv("PATH"));
+            // The coverage marker must no longer silently override the suite budget.
+            Map<String, String> env = Map.of("PATH", bin + ":" + System.getenv("PATH"),
+                "DEAL_COVERAGE_AGENT", "isolated-by-launcher");
             var passed = BoundedProcess.runCaptured(
                 List.of("/bin/bash", "run_tests.sh", "--jobs", "2"), scratch, env);
             check(passed.exitCode() == 0, "successful selection passes: " + passed);
+            check(passed.stdout().contains("active=2"),
+                "coverage marker preserves requested parallel suite budget: " + passed);
             for (String name : List.of("first", "second", "third", "fourth")) {
                 check(passed.stdout().contains("executed:" + name), "every suite executes: " + name);
             }
@@ -85,6 +89,9 @@ public final class GateRunnerTest {
                 }
             }
         }
+        var coverage = BoundedProcess.runCaptured(
+            List.of("python3", "test/coverage_controls.py"), Path.of("."), Map.of());
+        check(coverage.exitCode() == 0, "coverage workflow controls: " + coverage);
         System.out.println("Gate runner controls: passed");
     }
 
