@@ -5082,19 +5082,24 @@ private static IllegalStateException dynamicFunctionValueDefect(
                 throw new IllegalStateException("the async host responder returned no "
                     + "start outcome (the E7 host seam fails closed, producer defect)");
             }
+            FunctionExecutionBinding hostBinding = exportName.startsWith("@value#") ? null
+                : new FunctionExecutionBinding.HostFunction(hostModuleId, exportName, descriptor);
             switch (outcome) {
-                case HostResponder.AsyncStartOutcome.Absent ignored ->
-                    throw armFailure(op, FailureArmId.ASYNC_SHAPE,
-                        "async operation", "nothing");
-                case HostResponder.AsyncStartOutcome.InvalidHandle invalid ->
-                    throw armFailure(op, FailureArmId.ASYNC_SHAPE, "async operation",
-                        BoundaryExecutor.hostCarrierKind(
-                            carrierViewOfValue(invalid.value())));
+                case HostResponder.AsyncStartOutcome.Absent ignored -> {
+                    DealFailure failure = armFailure(op, FailureArmId.ASYNC_SHAPE, "async operation", "nothing");
+                    retainHostContext(failure, hostBinding, "async-shape");
+                    throw failure;
+                }
+                case HostResponder.AsyncStartOutcome.InvalidHandle invalid -> {
+                    DealFailure failure = armFailure(op, FailureArmId.ASYNC_SHAPE, "async operation",
+                        BoundaryExecutor.hostCarrierKind(carrierViewOfValue(invalid.value())));
+                    retainHostContext(failure, hostBinding, "async-shape");
+                    throw failure;
+                }
                 case HostResponder.AsyncStartOutcome.Operation operation -> {
                     hostOperations.put(token.tokenId(), operation.label());
                     Task task = new Task(token, null);
-                    if (!exportName.startsWith("@value#"))
-                        task.hostRejectionBinding = new FunctionExecutionBinding.HostFunction(hostModuleId, exportName, descriptor);
+                    task.hostRejectionBinding = hostBinding;
                     tasks.put(token.tokenId(), task);
                 }
             }

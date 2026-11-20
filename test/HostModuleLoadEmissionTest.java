@@ -6698,6 +6698,42 @@ public class HostModuleLoadEmissionTest {
                 } else fail("Oracle missed host rejection: " + run.comparisonReport());
             }
         }
+        for (int control = 0; control < 3; control++) {
+            final int selected = control;
+            int[] started = {0}, completed = {0};
+            var responder = new SemanticOracle.HostResponder() {
+                public AsyncStartOutcome startAsync(ModuleId module, String export, RuntimeDescriptor.Func signature,
+                                                     List<SemanticOracle.Value> args, String label) {
+                    started[0]++;
+                    return selected == 0 ? new AsyncStartOutcome.Absent()
+                        : selected == 1 ? new AsyncStartOutcome.InvalidHandle(new SemanticOracle.Value.BoolValue(false))
+                        : new AsyncStartOutcome.Operation(label);
+                }
+                public SyncOutcome completeAsync(String label) {
+                    completed[0]++;
+                    return new SyncOutcome.Returned(new SemanticOracle.Value.StrValue("fixed"));
+                }
+            };
+            var run = SemanticOracle.invokeAsyncEntry(result.project(), result.tables(), responder,
+                result.project().entryModule(), "completion", List.of());
+            check(started[0] == 1 && completed[0] == (control == 2 ? 1 : 0),
+                "host handle check starts once and never completes a rejected operation");
+            if (control == 2) check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                "chosen async handle repair completes normally: " + run.comparisonReport());
+            else if (run.terminal() instanceof SemanticRuntimeModel.Terminal.DealFailure rejected) {
+                var error = rejected.error();
+                var facts = error.metadata();
+                check("E8010".equals(error.code()) && "async operation".equals(error.expected())
+                        && (control == 0 ? "nothing" : "boolean").equals(error.actual())
+                        && "async-shape".equals(facts.get("hostBoundary"))
+                        && "complete".equals(facts.get("hostExport"))
+                        && "async()->string".equals(facts.get("hostSignature"))
+                        && "host/diagnostic".equals(facts.get("hostModule"))
+                        && "host-to-deal".equals(facts.get("hostDirection"))
+                        && "invocation".equals(facts.get("hostStage")) && !facts.containsKey("hostParameter"),
+                    "selected async handle rejection keeps exact rule and provenance: " + error.diagnosticJson());
+            } else fail("Oracle missed async handle rejection: " + run.comparisonReport());
+        }
         for (boolean repair : List.of(false, true)) {
             int[] consumed = {0};
             var responder = new SemanticOracle.HostResponder() {
