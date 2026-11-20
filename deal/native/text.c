@@ -77,16 +77,19 @@ static int deal_text_continuations(const unsigned char *bytes, size_t length,
 }
 
 static int deal_text_encoding_valid(const void *bytes, size_t length,
-                                     int allow_surrogates) {
+                                     int allow_surrogates, size_t *failure) {
+    if (failure != NULL) *failure = 0u;
     if (length == 0u) {
         return 1;
     }
     if (bytes == NULL) {
+        if (failure != NULL) *failure = 1u;
         return 0;
     }
     const unsigned char *cursor = bytes;
     size_t index = 0u;
     while (index < length) {
+        if (failure != NULL) *failure = index + 1u;
         unsigned char lead = cursor[index];
         if (lead < 0x80u) {
             index += 1u;
@@ -129,15 +132,22 @@ static int deal_text_encoding_valid(const void *bytes, size_t length,
         }
         return 0;           /* 0x80..0xC1 lead and 0xF5..0xFF are never valid */
     }
+    if (failure != NULL) *failure = 0u;
     return 1;
 }
 
 int deal_text_is_scalar_sequence(const void *bytes, size_t length) {
-    return deal_text_encoding_valid(bytes, length, 0);
+    return deal_text_encoding_valid(bytes, length, 0, NULL);
 }
 
 int deal_text_is_code_units(const void *bytes, size_t length) {
-    return deal_text_encoding_valid(bytes, length, 1);
+    return deal_text_encoding_valid(bytes, length, 1, NULL);
+}
+
+size_t deal_text_code_units_failure(const void *bytes, size_t length) {
+    size_t failure = 0u;
+    (void)deal_text_encoding_valid(bytes, length, 1, &failure);
+    return failure;
 }
 
 /* Three-byte encodings preserve every UTF-16 unit, including lone units. */

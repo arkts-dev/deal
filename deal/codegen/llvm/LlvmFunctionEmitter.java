@@ -1621,7 +1621,7 @@ final class LlvmFunctionEmitter {
     /**
      * The checked value of one assertion, through the one descriptor-driven
      * {@code deal_check_value} entry (R4). The published prototype passes its
-     * forty-eight-byte {@code deal_check_input} by value, so the emitted call
+     * fifty-six-byte {@code deal_check_input} by value, so the emitted call
      * names the record's C ABI spelling ({@code byval}); the eight-byte
      * {@code deal_outcome} it returns fits one eightbyte and crosses in
      * registers. On success the checked value is the input's own datum, so

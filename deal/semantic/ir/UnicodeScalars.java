@@ -142,56 +142,47 @@ public final class UnicodeScalars {
      * stops at the first defect.
      */
     public static Defect utf8Defect(byte[] utf8) {
+        EncodingFailure failure = utf8Failure(utf8);
+        return failure == null ? null : failure.defect();
+    }
+
+    /** First rejected sequence start, one-based in the original byte transport. */
+    public record EncodingFailure(Defect defect, int byteOffset) {
+        public EncodingFailure {
+            Objects.requireNonNull(defect, "defect");
+            if (byteOffset < 1) throw new IllegalArgumentException("byte offset must be positive");
+        }
+    }
+
+    public static EncodingFailure utf8Failure(byte[] utf8) {
         Objects.requireNonNull(utf8, "utf8 must not be null");
         int n = utf8.length;
         int i = 0;
         while (i < n) {
             int b1 = utf8[i] & 0xFF;
             int len;
-            if (b1 < 0x80) {
-                len = 1;
-            } else if (b1 >= 0xC2 && b1 <= 0xDF) {
-                len = 2;
-            } else if (b1 >= 0xE0 && b1 <= 0xEF) {
-                len = 3;
-            } else if (b1 >= 0xF0 && b1 <= 0xF4) {
-                len = 4;
-            } else {
-                // A stray 80..BF continuation lead, a C0/C1 overlong
-                // 2-byte lead, or an F5..FF above-U+10FFFF lead.
-                return Defect.MALFORMED;
-            }
-            if (i + len > n) {
-                return Defect.MALFORMED; // truncated
-            }
+            if (b1 < 0x80) len = 1;
+            else if (b1 >= 0xC2 && b1 <= 0xDF) len = 2;
+            else if (b1 >= 0xE0 && b1 <= 0xEF) len = 3;
+            else if (b1 >= 0xF0 && b1 <= 0xF4) len = 4;
+            else return new EncodingFailure(Defect.MALFORMED, i + 1);
+            if (len > n - i) return new EncodingFailure(Defect.MALFORMED, i + 1);
             if (len >= 2) {
                 int b2 = utf8[i + 1] & 0xFF;
-                if (b2 < 0x80 || b2 > 0xBF) {
-                    return Defect.MALFORMED; // bad continuation
-                }
+                if (b2 < 0x80 || b2 > 0xBF)
+                    return new EncodingFailure(Defect.MALFORMED, i + 1);
                 if (len == 3) {
                     int b3 = utf8[i + 2] & 0xFF;
-                    if (b3 < 0x80 || b3 > 0xBF) {
-                        return Defect.MALFORMED; // bad continuation
-                    }
-                    if (b1 == 0xE0 && b2 < 0xA0) {
-                        return Defect.MALFORMED; // overlong
-                    }
-                    if (b1 == 0xED && b2 > 0x9F) {
-                        return Defect.SURROGATE; // U+D800..U+DFFF
-                    }
+                    if (b3 < 0x80 || b3 > 0xBF || b1 == 0xE0 && b2 < 0xA0)
+                        return new EncodingFailure(Defect.MALFORMED, i + 1);
+                    if (b1 == 0xED && b2 > 0x9F)
+                        return new EncodingFailure(Defect.SURROGATE, i + 1);
                 } else if (len == 4) {
                     int b3 = utf8[i + 2] & 0xFF;
                     int b4 = utf8[i + 3] & 0xFF;
-                    if (b3 < 0x80 || b3 > 0xBF || b4 < 0x80 || b4 > 0xBF) {
-                        return Defect.MALFORMED; // bad continuation
-                    }
-                    if (b1 == 0xF0 && b2 < 0x90) {
-                        return Defect.MALFORMED; // overlong
-                    }
-                    if (b1 == 0xF4 && b2 > 0x8F) {
-                        return Defect.MALFORMED; // above U+10FFFF
-                    }
+                    if (b3 < 0x80 || b3 > 0xBF || b4 < 0x80 || b4 > 0xBF
+                            || b1 == 0xF0 && b2 < 0x90 || b1 == 0xF4 && b2 > 0x8F)
+                        return new EncodingFailure(Defect.MALFORMED, i + 1);
                 }
             }
             i += len;

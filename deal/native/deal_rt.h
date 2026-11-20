@@ -370,6 +370,7 @@ typedef struct {
     deal_data datum;           /* the persistent tagged datum of a DATUM */
     const char *class_atom;    /* a CLASS datum's carried canonical class atom */
     const char *signature;     /* a FUNCTION datum's carried canonical signature */
+    size_t unicode_byte_offset; /* observed first rejected sequence start; 0 unavailable */
 } deal_check_input;
 
 /* The closed check boundary kinds: the projection sets of the failure-arm

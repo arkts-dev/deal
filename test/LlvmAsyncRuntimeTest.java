@@ -738,6 +738,11 @@ public final class LlvmAsyncRuntimeTest {
                 for (String stress : List.of("0", "1")) {
                     var detailed = NativeCompiler.execute(product, scratch, Map.of("DEAL_DIAGNOSTICS_JSON", "1", "DEAL_GC_STRESS", stress));
                     checkEq(run.stdout(), detailed.stdout(), "completion diagnostics preserve ordinary snapshot");
+                    if (arm[0].equals("malformed"))
+                        check(detailed.stderr().contains("\"unicodeByteOffset\":\"1\"")
+                            && detailed.stderr().contains("\"unicodeConstraint\":\"well-formed-byte-transport\""),
+                            "malformed completion retains scanner-owned position across collection: " + detailed.describe());
+                    else check(!detailed.stderr().contains("unicodeByteOffset"), "wrong kind invents no byte position");
                     check(detailed.stderr().contains("\"hostModule\":\"host/async\"")
                         && detailed.stderr().contains("\"hostBoundary\":\"completion\"")
                         && detailed.stderr().contains("\"hostStage\":\"completion\"")

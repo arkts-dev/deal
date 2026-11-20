@@ -1011,7 +1011,7 @@ final class JvmHostAbiEmission {
         out.append("    try {\n");
         out.append("      return __hostCheckValue(desc, v, oFile, oLine, oCol);\n");
         out.append("    } catch (JvmRuntime.DealError __inner) {\n");
-        out.append("      if (completion) { throw JvmRuntime.arm(deal.semantic.ir.FailureArmId.ASYNC_COMPLETION_KIND, java.util.Map.of(\"expected\", __hostKindText(desc)), oFile + \":\" + oLine + \":\" + oCol, __hostKindToken(desc), __hostKind(v)); }\n");
+        out.append("      if (completion) { throw JvmRuntime.validationContext(JvmRuntime.arm(deal.semantic.ir.FailureArmId.ASYNC_COMPLETION_KIND, java.util.Map.of(\"expected\", __hostKindText(desc)), oFile + \":\" + oLine + \":\" + oCol, __hostKindToken(desc), __hostKind(v)), __inner); }\n");
         out.append("      throw JvmRuntime.validationContext(JvmRuntime.hostContext(JvmRuntime.arm(deal.semantic.ir.FailureArmId.HOST_SYNC_RETURN_CELL, java.util.Map.of(\"inner\", __hostInnerMessage(desc, v, __inner)), oFile + \":\" + oLine + \":\" + oCol, desc, __hostKind(v)), null, null, null, \"return\", null), __inner);\n");
         out.append("    }\n");
         out.append("  }\n\n");
@@ -1457,7 +1457,7 @@ final class JvmHostAbiEmission {
         // check_number admit it; the declared return carrier's normalization
         // then settles the admitted value as the production Double.
         out.append("    if (d.equals(\"number\")) { if (v instanceof java.lang.Double || v instanceof java.lang.Long || v instanceof java.lang.Integer) return v; throw __hostFail(JvmRuntime.kindReason(\"number\"), d, v, oFile, oLine, oCol); }\n");
-        out.append("    if (d.equals(\"string\")) { if (v instanceof java.lang.String) return v; if (v instanceof byte[] __b) { java.lang.String __r = JvmRuntime.hostStringReason(__b); if (__r != null) throw __hostFail(__r, d, v, oFile, oLine, oCol); return new java.lang.String(__b, java.nio.charset.StandardCharsets.UTF_8); } throw __hostFail(JvmRuntime.kindReason(\"string\"), d, v, oFile, oLine, oCol); }\n");
+        out.append("    if (d.equals(\"string\")) { if (v instanceof java.lang.String) return v; if (v instanceof byte[] __b) { JvmRuntime.DealError __r = JvmRuntime.checkHostStringBytes(__b, oFile + \":\" + oLine + \":\" + oCol); if (__r != null) throw __r; return new java.lang.String(__b, java.nio.charset.StandardCharsets.UTF_8); } throw __hostFail(JvmRuntime.kindReason(\"string\"), d, v, oFile, oLine, oCol); }\n");
         out.append("    if (d.equals(\"record\")) { if (v instanceof JvmRuntime.Table) return JvmRuntime.validateData(v, false); throw __hostFail(JvmRuntime.kindReason(\"record\"), d, v, oFile, oLine, oCol); }\n");
         out.append("    if (d.startsWith(\"[\")) { return __hostCheckArrayPlan(d, v, oFile, oLine, oCol, __pending, __memo); }\n");
         out.append("    if (d.startsWith(\"(\") || d.startsWith(\"async(\")) {\n");
@@ -1541,7 +1541,7 @@ final class JvmHostAbiEmission {
         out.append("    for (int __i = 0; __i < __arr.elements.size(); __i++) {\n");
         out.append("      java.lang.Object __e = __arr.elements.get(__i);\n");
         out.append("      try { __checked.add(__hostCheckPlan(__inner, __e, oFile, oLine, oCol, __pending, __memo)); }\n");
-        out.append("      catch (JvmRuntime.DealError __leaf) { throw JvmRuntime.arm(deal.semantic.ir.FailureArmId.ARRAY_ELEMENT_KIND, java.util.Map.of(\"oneBasedIndex\", java.lang.Integer.toString(__i + 1)), oFile + \":\" + oLine + \":\" + oCol, __inner, __hostKind(__e)); }\n");
+        out.append("      catch (JvmRuntime.DealError __leaf) { throw JvmRuntime.validationContext(JvmRuntime.arm(deal.semantic.ir.FailureArmId.ARRAY_ELEMENT_KIND, java.util.Map.of(\"oneBasedIndex\", java.lang.Integer.toString(__i + 1)), oFile + \":\" + oLine + \":\" + oCol, __inner, __hostKind(__e)), __leaf); }\n");
         out.append("    }\n");
         out.append("    for (int __i = 0; __i < __checked.size(); __i++) { __pending.add(new java.lang.Object[]{ __arr, java.lang.Integer.valueOf(__i), __checked.get(__i) }); }\n");
         out.append("    return __arr;\n");

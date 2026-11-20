@@ -81,7 +81,8 @@ mutation hooks or let an assertion mask a later parameter/element failure.
   later cycles, original E8003 leaf causes and same-graph repair after collection.
 - Host transport: signed wrappers versus raw callables/opaque nondata, complete
   unread graph admission, nonstring keys before hidden values, malformed bytes
-  versus legal lone units, closed statuses and exactly-once await rejection.
+  versus legal lone units, scanner-owned sequence positions, closed statuses and
+  exactly-once await rejection.
   Test generated and deployed consumers separately without dummy companions.
 
 TypeScript parser/grammar checks are separate from DEAL typing/runtime tests.

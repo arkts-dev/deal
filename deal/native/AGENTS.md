@@ -78,7 +78,8 @@ a NULL field-value output must not load/classify unrelated data.
 ## Text, numbers and JSON
 
 Preserve embedded NUL and lone UTF-16 units with explicit lengths; reject malformed
-byte transport, not legal language text. Lossless Error consumers use borrowed
+byte transport, not legal language text. Rejecting scanners retain the first
+sequence's one-based byte position; defect-only carriers invent none. Lossless Error consumers use borrowed
 length-delimited accessors, not legacy C strings. Snapshots escape controls/lone
 units; failure parameters use the closed-arm renderer.
 

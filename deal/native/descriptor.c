@@ -1230,6 +1230,8 @@ deal_outcome deal_check_value(deal_descriptor *expected, deal_check_input input,
     failure.case_kind = case_kind;
     outcome.error = deal_check_render(expected->kind == DEAL_DESCRIPTOR_NEVER
         ? DEAL_BOUNDARY_TYPE_DESCRIPTOR : boundary_kind, &failure, &value, context);
+    if (input.presentation == DEAL_PRESENT_INVALID_UNICODE && input.unicode_byte_offset != 0u)
+        deal_error_set_unicode_position(outcome.error, input.unicode_byte_offset);
     return outcome;
 }
 
@@ -1382,10 +1384,14 @@ static int deal_live_seen(deal_live_walk *walk, const void *object,
 static deal_check_input deal_live_datum(deal_data datum) {
     deal_check_input input;
     deal_host_present_datum(datum, &input);
-    if (datum.tag == DEAL_DATA_STRING && !deal_text_is_code_units(
-            deal_text_bytes(datum.reference), deal_text_byte_length(datum.reference))) {
-        input.presentation = DEAL_PRESENT_INVALID_UNICODE;
-        input.unicode_defect = DEAL_UNICODE_MALFORMED;
+    if (datum.tag == DEAL_DATA_STRING) {
+        size_t position = deal_text_code_units_failure(
+            deal_text_bytes(datum.reference), deal_text_byte_length(datum.reference));
+        if (position != 0u) {
+            input.presentation = DEAL_PRESENT_INVALID_UNICODE;
+            input.unicode_defect = DEAL_UNICODE_MALFORMED;
+            input.unicode_byte_offset = position;
+        }
     }
     return input;
 }
@@ -1555,10 +1561,12 @@ static deal_outcome deal_check_live_value_core(deal_descriptor *expected, deal_c
                     ? deal_error_name_bytes(datum.reference, &length)
                     : deal_error_message_bytes(datum.reference, &length);
                 int present = bytes != NULL;
-                if (present && deal_text_is_code_units(bytes, length)) continue;
+                size_t position = present ? deal_text_code_units_failure(bytes, length) : 0u;
+                if (present && position == 0u) continue;
                 deal_check_input field = {0};
                 field.presentation = present ? DEAL_PRESENT_INVALID_UNICODE : DEAL_PRESENT_MISSING;
                 field.unicode_defect = DEAL_UNICODE_MALFORMED;
+                field.unicode_byte_offset = position;
                 outcome = deal_check_value(deal_descriptor_intern("string"), field,
                     DEAL_BOUNDARY_TYPE_DESCRIPTOR, context);
                 if (outcome.error != NULL) {
@@ -1856,12 +1864,9 @@ deal_outcome_number deal_check_number(const deal_data *datum,
     if (datum == NULL) {
         deal_platform_fault("check: null datum at a number boundary");
     }
-    deal_check_input input;
+    deal_check_input input = {0};
     input.presentation = DEAL_PRESENT_DATUM;
-    input.unicode_defect = DEAL_UNICODE_MALFORMED;
     input.datum = *datum;
-    input.class_atom = NULL;
-    input.signature = NULL;
     outcome.error = deal_check_value(deal_descriptor_intern("number"), input,
         DEAL_BOUNDARY_TYPE_DESCRIPTOR, context).error;
     if (outcome.error == NULL) {
@@ -1877,12 +1882,9 @@ deal_outcome_boolean deal_check_boolean(const deal_data *datum,
     if (datum == NULL) {
         deal_platform_fault("check: null datum at a boolean boundary");
     }
-    deal_check_input input;
+    deal_check_input input = {0};
     input.presentation = DEAL_PRESENT_DATUM;
-    input.unicode_defect = DEAL_UNICODE_MALFORMED;
     input.datum = *datum;
-    input.class_atom = NULL;
-    input.signature = NULL;
     outcome.error = deal_check_value(deal_descriptor_intern("boolean"), input,
         DEAL_BOUNDARY_TYPE_DESCRIPTOR, context).error;
     if (outcome.error == NULL) {
@@ -1898,12 +1900,9 @@ deal_outcome_string deal_check_string(const deal_data *datum,
     if (datum == NULL) {
         deal_platform_fault("check: null datum at a string boundary");
     }
-    deal_check_input input;
+    deal_check_input input = {0};
     input.presentation = DEAL_PRESENT_DATUM;
-    input.unicode_defect = DEAL_UNICODE_MALFORMED;
     input.datum = *datum;
-    input.class_atom = NULL;
-    input.signature = NULL;
     outcome.error = deal_check_value(deal_descriptor_intern("string"), input,
         DEAL_BOUNDARY_TYPE_DESCRIPTOR, context).error;
     if (outcome.error == NULL) {

@@ -1353,6 +1353,19 @@ public class BoundaryExecutorTest {
                 == UnicodeScalars.Defect.SURROGATE,
             "the INVALID_UNICODE factory carries the explicit surrogate class");
 
+        var encoding = UnicodeScalars.utf8Failure(new byte[] {65, (byte)0xF0, (byte)0x9F, (byte)0x98, (byte)0x80, (byte)0xE2, (byte)0x82});
+        check(encoding.byteOffset() == 6 && encoding.defect() == UnicodeScalars.Defect.MALFORMED,
+            "first rejected sequence position counts original bytes, not UTF-16 units");
+        var positioned = BoundaryValueView.fromEncodingFailure(encoding);
+        var rejectedBytes = (BoundaryOutcome.Fail)checkCell(FailurePolicyId.TYPE_DESCRIPTOR, STRING, positioned);
+        check(rejectedBytes.failure().metadata().get("unicodeByteOffset").equals("6")
+                && rejectedBytes.failure().metadata().get("unicodeConstraint").equals("well-formed-byte-transport"),
+            "producer-owned byte position survives Oracle boundary projection");
+        check(UnicodeScalars.utf8Failure(new byte[] {65, 66}) == null,
+            "explicitly repaired byte transport is admitted");
+        check(UnicodeScalars.utf8Failure(new byte[] {(byte)0xED,(byte)0xA0,(byte)0x80}).defect() == UnicodeScalars.Defect.SURROGATE,
+            "strict scalar byte transport preserves its existing surrogate classification");
+
         // The decoded-array mark is ARRAY-only and legal there: a decoded
         // array view carries it, an unmarked array view does not.
         check(BoundaryValueView.ofDecodedArray(BoundaryValueView.ofNumber(1))

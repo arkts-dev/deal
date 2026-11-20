@@ -416,10 +416,10 @@ public final class BoundaryExecutor {
      * element index of an E8003 leaf, and the leaf failure.
      */
     private record CoreFail(FailureCase caseKind, RuntimeDescriptor descriptor,
-                            String actualToken, int elementIndex, CoreFail cause, List<String> path, int pathDepth, boolean missing)
+                            String actualToken, int elementIndex, CoreFail cause, List<String> path, int pathDepth, boolean missing, Integer unicodeByteOffset)
         implements CoreResult {
         CoreFail(FailureCase kind, RuntimeDescriptor descriptor, String actual, int index, CoreFail cause) {
-            this(kind, descriptor, actual, index, cause, List.of(), 0, false);
+            this(kind, descriptor, actual, index, cause, List.of(), 0, false, null);
         }
     }
     private static CoreFail atField(CoreFail failure, String segment, boolean missing) {
@@ -427,9 +427,15 @@ public final class BoundaryExecutor {
         path.add(segment);
         path.addAll(failure.path().subList(0, Math.min(31, failure.path().size())));
         return new CoreFail(failure.caseKind(), failure.descriptor(), failure.actualToken(), failure.elementIndex(), failure.cause(),
-            List.copyOf(path), failure.pathDepth() + 1, missing || failure.missing());
+            List.copyOf(path), failure.pathDepth() + 1, missing || failure.missing(), failure.unicodeByteOffset());
     }
     private static BoundaryFailure withPath(BoundaryFailure failure, CoreFail rejected) {
+        if (rejected.unicodeByteOffset() != null) {
+            var metadata = new LinkedHashMap<>(failure.metadata());
+            metadata.put("unicodeByteOffset", rejected.unicodeByteOffset().toString());
+            metadata.put("unicodeConstraint", "well-formed-byte-transport");
+            failure = new BoundaryFailure(failure.policy(), failure.code(), failure.message(), failure.expected(), failure.actual(), metadata, failure.cause());
+        }
         if (rejected.pathDepth() == 0) return failure;
         deal.semantic.RuntimeValidationPath path = null;
         for (String part : rejected.path()) path = deal.semantic.RuntimeValidationPath.child(path, part);
@@ -489,7 +495,7 @@ public final class BoundaryExecutor {
                 view.kind() == ActualKind.STRING ? pass(view)
                     : view.kind() == ActualKind.INVALID_UNICODE
                         ? new CoreFail(FailureCase.INVALID_UNICODE, descriptor,
-                            "invalid-unicode", 0, null)
+                            "invalid-unicode", 0, null, List.of(), 0, false, view.unicodeByteOffset())
                         : kindFail(descriptor, view);
             case RuntimeDescriptor.Table ignored ->
                 view.kind() == ActualKind.TABLE ? coreData(descriptor, view) : kindFail(descriptor, view);
@@ -513,7 +519,7 @@ public final class BoundaryExecutor {
                 case NULL, UNDEFINED, MISSING, BOOLEAN, NUMBER, STRING, TABLE, ARRAY, CLASS, FUNCTION -> {}
                 case INVALID_UNICODE -> {
                     return new CoreFail(FailureCase.INVALID_UNICODE, RuntimeDescriptor.String.INSTANCE,
-                        "invalid-unicode", 0, null);
+                        "invalid-unicode", 0, null, List.of(), 0, false, view.unicodeByteOffset());
                 }
                 default -> { return kindFail(descriptor, view); }
             }
@@ -576,7 +582,7 @@ public final class BoundaryExecutor {
                     ? elementFail.cause() : elementFail;
                 CoreFail rejected = atField(elementFail, Integer.toString(i), false);
                 return new CoreFail(FailureCase.ELEMENT, descriptor.element(),
-                    elementReferenceToken(element), i + 1, leaf, rejected.path(), rejected.pathDepth(), rejected.missing());
+                    elementReferenceToken(element), i + 1, leaf, rejected.path(), rejected.pathDepth(), rejected.missing(), rejected.unicodeByteOffset());
             }
         }
         return pass(view);

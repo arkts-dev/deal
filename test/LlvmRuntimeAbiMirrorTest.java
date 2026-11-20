@@ -352,10 +352,10 @@ public final class LlvmRuntimeAbiMirrorTest {
             "never appends the result-only descriptor without renumbering");
         checkEq(12, LlvmRuntimeAbi.DESCRIPTOR_NEVER, "never descriptor ABI discriminant");
         checkEq("uint32_t presentation; uint32_t unicode_defect; deal_data datum;"
-                + " const char *class_atom; const char *signature",
+                + " const char *class_atom; const char *signature; size_t unicode_byte_offset",
             structFields(rtHeader, "deal_check_input"),
             "deal_check_input's published field order");
-        checkEq("{ i32, i32, %struct.deal_data, i8*, i8* }",
+        checkEq("{ i32, i32, %struct.deal_data, i8*, i8*, i64 }",
             LlvmTypeMapper.recordLayout("deal_check_input").orElse(""),
             "the emitted check-input layout follows that field order");
         checkEq(declaratorCount(structFields(rtHeader, "deal_check_input")),

@@ -87,6 +87,8 @@ with the unique MODULE_IMPORT alias cell; stdlib once-only surfaces invent none.
 Canonical binary64 atoms preserve signed zero/subnormals/infinities/NaN; integer IDs
 cannot substitute for scalars. StringSemantics owns UTF-16 operations. Console-only
 lone-unit replacement must not change language text or lossless traces.
+Malformed byte views retain scanner-owned one-based sequence positions when known;
+explicit defect-only views invent none, and reprojection preserves observations.
 
 Nominal/callable checks validate complete current plans, payloads and signatures,
 including unread descendants, with operation-local cycle guards. Required fields

@@ -25,6 +25,12 @@ public final class ErrorNameMessageTest {
               }
             }
             """.replace("LARGE_MESSAGE", "x".repeat(9000));
+        var jvmUnicode = BoundedProcess.runCaptured(List.of("java", "-cp", TestClasspath.absolute(TestClasspath.EmptyEntry.OMIT),
+            "deal.test.ErrorNameMessageTest", "--unicode-position"), Path.of(".").toAbsolutePath(), Map.of("DEAL_DIAGNOSTICS_JSON","1"));
+        if (jvmUnicode.exitCode()!=0 || !jvmUnicode.stdout().equals("UNICODE-OK\n")
+                || !jvmUnicode.stderr().contains("\"unicodeByteOffset\":\"6\"")
+                || !jvmUnicode.stderr().contains("\"message\":\"chosen\""))
+            throw new AssertionError("JVM observed byte position survives mutable rethrow: " + jvmUnicode);
         var jvmPath = BoundedProcess.runCaptured(List.of("java", "-cp", TestClasspath.absolute(TestClasspath.EmptyEntry.OMIT),
             "deal.test.ErrorNameMessageTest", "--validation-path"), Path.of(".").toAbsolutePath(), Map.of("DEAL_DIAGNOSTICS_JSON","1"));
         if (jvmPath.exitCode()!=0 || !jvmPath.stdout().equals("PATH-OK\n")
@@ -355,6 +361,19 @@ public final class ErrorNameMessageTest {
     }
 
     public static void main(String[] args) throws Exception {
+        if (args.length == 1 && args[0].equals("--unicode-position")) {
+            var rejected = deal.codegen.jvm.JvmRuntime.checkHostStringBytes(new byte[] {65,(byte)0xF0,(byte)0x9F,(byte)0x98,(byte)0x80,(byte)0xE2,(byte)0x82}, "unicode.deal:1:1");
+            var value = rejected.reify();
+            value.message = "chosen";
+            var projected = deal.codegen.jvm.JvmRuntime.validationContext(
+                new deal.codegen.jvm.JvmRuntime.DealError("E8010","outer",null,null,null,null,null), rejected);
+            deal.codegen.jvm.JvmRuntime.reportRuntimeDiagnostic(deal.codegen.jvm.JvmRuntime.rethrow(value));
+            deal.codegen.jvm.JvmRuntime.reportRuntimeDiagnostic(projected);
+            if (deal.codegen.jvm.JvmRuntime.checkHostStringBytes(new byte[] {65,66}, null) != null
+                    || value != rejected.reify()) throw new AssertionError("repair or Error identity changed");
+            System.out.println("UNICODE-OK");
+            return;
+        }
         if (args.length == 1 && args[0].equals("--validation-path")) {
             var fields = new java.util.LinkedHashMap<String,Object>();
             fields.put("name/~", "ok");

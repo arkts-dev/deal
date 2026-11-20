@@ -6312,6 +6312,10 @@ public class HostModuleLoadEmissionTest {
                 deal.codegen.jvm.JvmRuntime.Array malformed = new deal.codegen.jvm.JvmRuntime.Array(2);
                 malformed.elements.add("ok");
                 malformed.elements.add(new byte[] {(byte)0xE2, (byte)0x82});
+                try { App.__hostParamCheck(1, "[string]", malformed, "probe.deal", 3, 1); }
+                catch (deal.codegen.jvm.JvmRuntime.DealError rejected) {
+                  deal.codegen.jvm.JvmRuntime.reportRuntimeDiagnostic(rejected);
+                }
                 expect("E8010", "parameter 1 type mismatch: array element 2 type mismatch",
                     "[string]", "table", () -> App.__hostParamCheck(1, "[string]", malformed,
                         "probe.deal", 3, 1));
@@ -6666,6 +6670,18 @@ public class HostModuleLoadEmissionTest {
                     && enabled.stderr().contains("\"message\":\"chosen\"")
                     && !disabled.stderr().contains("DEAL_RUNTIME_DIAGNOSTIC:"),
                 "Lua host rejection preserves context/rethrow/default behavior: " + enabled);
+            Files.writeString(out.resolve("host/diagnostic.lua"),
+                "return {read=function() return string.char(65,240,159,152,128,226,130) end}");
+            var malformed = BoundedProcess.runCaptured(command, out, Map.of("DEAL_DIAGNOSTICS_JSON", "1"));
+            check(malformed.exitCode()==1 && malformed.stderr().contains("\"unicodeByteOffset\":\"6\"")
+                    && malformed.stderr().contains("\"unicodeConstraint\":\"well-formed-byte-transport\"")
+                    && malformed.stderr().contains("\"message\":\"chosen\"")
+                    && malformed.stderr().contains("\"hostModule\":\"host/diagnostic\""),
+                "Lua malformed host transport retains rejecting-scanner evidence through rethrow: " + malformed);
+            Files.writeString(out.resolve("host/diagnostic.lua"), "return {read=function() return 'chosen repair' end}");
+            var repaired = BoundedProcess.runCaptured(command, out, Map.of("DEAL_DIAGNOSTICS_JSON", "1"));
+            check(repaired.exitCode()==0 && !repaired.stderr().contains("DEAL_RUNTIME_DIAGNOSTIC:"),
+                "explicitly chosen host byte repair succeeds without changing signature");
         } finally { deleteRecursively(root); }
     }
 
@@ -6747,6 +6763,14 @@ public class HostModuleLoadEmissionTest {
                 classes + java.io.File.pathSeparator + classpath, driver), workspace, false);
             check(run.exitCode() == 0 && run.stdout().contains("PROBE-OK")
                     && run.stderr().isEmpty(), label + ": real java: " + run.output());
+            if (template.equals("HostArrayProbeMain")) {
+                var detailed = BoundedProcess.runCaptured(List.of("java", "-cp",
+                    classes + java.io.File.pathSeparator + classpath, driver), workspace,
+                    Map.of("DEAL_DIAGNOSTICS_JSON", "1"));
+                check(detailed.exitCode()==0 && detailed.stderr().contains("\"unicodeByteOffset\":\"1\"")
+                        && detailed.stderr().contains("\"hostBoundary\":\"parameter\""),
+                    "generated nested JVM host rejection retains byte evidence across both reprojections: " + detailed);
+            }
             if (template.equals("HostModuleLoadProbe")) {
                 var diagnosticCommand = List.of("java", "-cp",
                     classes + java.io.File.pathSeparator + classpath, driver, "--host-diagnostic");

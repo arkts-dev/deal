@@ -336,6 +336,9 @@ void deal_error_snapshot_release(char *text);
 char *deal_error_diagnostic(const deal_error *error);
 /* Copies bounded decoder-owned path text; no managed allocation or value walk. */
 /* Captures the rejected strict-read operand without revisiting the array. */
+/* Producer-observed byte position only; no rejected carrier is revisited. */
+void deal_error_set_unicode_position(deal_error *error, size_t byte_offset);
+
 void deal_error_set_array_read(deal_error *error, double index, size_t length);
 void deal_error_set_array_position(deal_error *error, double index, size_t length, int32_t operation);
 /* The rejected NUMBER_TO_FIXED digits operand; scalar-only, no text allocation. */

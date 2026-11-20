@@ -10,6 +10,8 @@ int deal_text_is_scalar_sequence(const void *bytes, size_t length);
 /* Well-formed WTF-8 admission: lone UTF-16 units are permitted; overlong,
  * truncated, stray-continuation and out-of-range encodings are rejected. */
 int deal_text_is_code_units(const void *bytes, size_t length);
+/* First rejected sequence start, one-based bytes; zero means admitted/unavailable. */
+size_t deal_text_code_units_failure(const void *bytes, size_t length);
 
 /* Copies admitted UTF-8/WTF-8 into canonical per-unit storage. Supplementary
  * scalars become two three-byte units. A malformed input is an invariant fault;

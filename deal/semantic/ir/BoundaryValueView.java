@@ -16,8 +16,24 @@ public record BoundaryValueView(
     RuntimeDescriptor arrayElementDescriptor,
     List<BoundaryValueView> dataChildren,
     List<ClassField> classFields,
-    boolean callableValid
+    boolean callableValid,
+    Integer unicodeByteOffset
 ) {
+    public BoundaryValueView(ActualKind kind, String classId, Double numberValue,
+                             RuntimeDescriptor.Func functionSignature,
+                             List<BoundaryValueView> elements, boolean decodedArrayMark,
+                             UnicodeScalars.Defect unicodeDefect, RuntimeDescriptor arrayElementDescriptor,
+                             List<BoundaryValueView> dataChildren, List<ClassField> classFields, boolean callableValid) {
+        this(kind, classId, numberValue, functionSignature, elements, decodedArrayMark, unicodeDefect,
+            arrayElementDescriptor, dataChildren, classFields, callableValid, null);
+    }
+
+    /** Retain only the scanner's observation; explicit defect-only views have no position. */
+    public static BoundaryValueView fromEncodingFailure(UnicodeScalars.EncodingFailure failure) {
+        Objects.requireNonNull(failure, "failure");
+        return new BoundaryValueView(ActualKind.INVALID_UNICODE, null, null, null, null, false,
+            failure.defect(), null, List.of(), List.of(), true, failure.byteOffset());
+    }
     /** One complete checked-layout field; presence is independent of the stored value. */
     public record ClassField(String name, RuntimeDescriptor descriptor, boolean required,
                              boolean present, java.util.function.Supplier<BoundaryValueView> value) {
@@ -61,7 +77,7 @@ public record BoundaryValueView(
     /** Lazy own data children for whole-graph ingress validation, including keys. */
     public BoundaryValueView withDataChildren(int count, IntFunction<BoundaryValueView> producer) {
         return new BoundaryValueView(kind, classId, numberValue, functionSignature, elements,
-            decodedArrayMark, unicodeDefect, arrayElementDescriptor, new LazyElementViews(count, producer), classFields, callableValid);
+            decodedArrayMark, unicodeDefect, arrayElementDescriptor, new LazyElementViews(count, producer), classFields, callableValid, unicodeByteOffset);
     }
 
     public BoundaryValueView(ActualKind kind, String classId, Double numberValue,
@@ -94,6 +110,8 @@ public record BoundaryValueView(
 
     public BoundaryValueView {
         Objects.requireNonNull(kind, "kind must not be null");
+        if (unicodeByteOffset != null && (kind != ActualKind.INVALID_UNICODE || unicodeByteOffset < 1))
+            throw new IllegalArgumentException("Unicode position requires an invalid byte presentation");
         classFields = List.copyOf(classFields);
         Objects.requireNonNull(dataChildren, "dataChildren must not be null");
         if (!(dataChildren instanceof LazyElementViews)) dataChildren = List.copyOf(dataChildren);

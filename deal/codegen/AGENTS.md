@@ -47,7 +47,8 @@ Numeric predicates do not coerce; rounding is binary64 with ties toward +infinit
 Direct-only selectors create no callable exports. Rejected numeric domains retain original binary64 operands and failed constraints at the producing check, independently of mutable messages.
 
 String operations count UTF-16 units; clamp positions before casts and preserve
-lone units. LastIndexOf treats NaN position as infinity. Casing uses pinned
+lone units. Byte-transport rejections retain the rejecting scanner's first sequence
+position without rescanning; defect-only carriers invent none. LastIndexOf treats NaN position as infinity. Casing uses pinned
 Unicode 17.0 default mappings, expansions and Final_Sigma context, not ambient
 locale/version tables. Regenerate data with `tools/generate-unicode-case.py`.
 

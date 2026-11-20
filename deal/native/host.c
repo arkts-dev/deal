@@ -372,7 +372,7 @@ static int deal_host_descriptor_is_class_atom(const char *text) {
 /* The text group owns structural UTF-8/WTF-8 admission. */
 static int deal_host_bytes_are_units(const void *bytes, size_t length,
                                       uint32_t *defect) {
-    if (deal_text_is_code_units(bytes, length)) {
+    if (deal_text_code_units_failure(bytes, length) == 0u) {
         return 1;
     }
     if (defect != NULL) {
@@ -484,6 +484,7 @@ typedef struct deal_host_box {
     deal_host_function function;
     deal_async_token token;
     uint32_t unicode_defect;
+    size_t unicode_byte_offset;
     /* Published identity, rooted by the crossing. Never set for a partial
      * conversion; boxed contents remain the host's own presentation. */
     int materialized;
@@ -1424,6 +1425,7 @@ static deal_error *deal_host_materialize_array(deal_host_crossing *crossing,
                                         ? DEAL_PRESENT_OPAQUE
                                         : DEAL_PRESENT_INVALID_UNICODE;
                 presented.unicode_defect = inner->unicode_defect;
+                presented.unicode_byte_offset = inner->unicode_byte_offset;
                 deal_check_context context;
                 context.origin = &crossing->origin;
                 context.parameter_index = 0;
@@ -1516,9 +1518,9 @@ static deal_error *deal_host_materialize_record(deal_host_crossing *crossing,
                 key, DEAL_BOUNDARY_HOST_SYNC_RETURN, &context);
             if (rejected.error != NULL) return rejected.error;
         }
-        uint32_t defect = 0u;
-        if (!deal_host_bytes_are_units(member->key_bytes, member->key_length,
-                &defect)) {
+        uint32_t defect = DEAL_UNICODE_MALFORMED;
+        size_t position = deal_text_code_units_failure(member->key_bytes, member->key_length);
+        if (position != 0u) {
             /* A malformed record key is never admitted (R2/R11): the inner
              * reason is the pinned host-string arm, never invented text. */
             char *inner = deal_arm_message(defect == DEAL_UNICODE_SURROGATE
@@ -1528,6 +1530,7 @@ static deal_error *deal_host_materialize_record(deal_host_crossing *crossing,
             deal_error *error = deal_error_materialize(
                 DEAL_ARM_ID_HOST_SYNC_RETURN_CELL, &parameter, 1u,
                 "", "invalid-unicode", &crossing->origin, NULL);
+            deal_error_set_unicode_position(error, position);
             deal_arm_text_release(inner);
             return error;
         }
@@ -1556,6 +1559,7 @@ static deal_error *deal_host_materialize_record(deal_host_crossing *crossing,
                                 ? DEAL_PRESENT_ASYNC_OPERATION
                                 : DEAL_PRESENT_INVALID_UNICODE;
                 presented.unicode_defect = inner->unicode_defect;
+                presented.unicode_byte_offset = inner->unicode_byte_offset;
                 return deal_host_record_reject(crossing, &presented);
             }
             default:
@@ -1984,6 +1988,7 @@ static deal_status deal_host_classify_into(deal_host_crossing *crossing,
     case DEAL_HOST_BOX_INVALID_UNICODE:
         out->presentation = DEAL_PRESENT_INVALID_UNICODE;
         out->unicode_defect = box->unicode_defect;
+        out->unicode_byte_offset = box->unicode_byte_offset;
         return DEAL_OK;
     case DEAL_HOST_BOX_RAW_FUNCTION:
         out->presentation = DEAL_PRESENT_RAW_FUNCTION;
@@ -2009,9 +2014,11 @@ static deal_status deal_host_classify_into(deal_host_crossing *crossing,
         return DEAL_OK;
     case DEAL_HOST_BOX_STRING: {
         uint32_t defect = 0u;
-        if (!deal_host_bytes_are_units(box->bytes, box->length, &defect)) {
+        size_t position = deal_text_code_units_failure(box->bytes, box->length);
+        if (position != 0u) {
             out->presentation = DEAL_PRESENT_INVALID_UNICODE;
             out->unicode_defect = defect;
+            out->unicode_byte_offset = position;
             return DEAL_OK;
         }
         deal_string *text = deal_text_new(box->bytes, box->length);
@@ -2992,7 +2999,8 @@ deal_status deal_string_new(const void *bytes, size_t length, deal_value *out) {
     }
     box->length = length;
     uint32_t defect = 0u;
-    if (!deal_host_bytes_are_units(box->bytes, length, &defect)) {
+    box->unicode_byte_offset = deal_text_code_units_failure(box->bytes, length);
+    if (box->unicode_byte_offset != 0u) {
         box->kind = DEAL_HOST_BOX_INVALID_UNICODE;
         box->unicode_defect = defect;
     }
@@ -3951,8 +3959,12 @@ deal_status deal_field_get(deal_value object, const char *field,
         return deal_host_publish_box(DEAL_HOST_BOX_NOTHING, out);
     case DEAL_PRESENT_ASYNC_OPERATION:
         return deal_host_publish_box(DEAL_HOST_BOX_ASYNC_OPERATION, out);
-    case DEAL_PRESENT_INVALID_UNICODE:
-        return deal_host_publish_box(DEAL_HOST_BOX_INVALID_UNICODE, out);
+    case DEAL_PRESENT_INVALID_UNICODE: {
+        deal_host_box *box = deal_host_box_new(deal_host_crossing_current(), DEAL_HOST_BOX_INVALID_UNICODE);
+        box->unicode_defect = checked.unicode_defect;
+        box->unicode_byte_offset = checked.unicode_byte_offset;
+        return deal_host_box_publish(box, out);
+    }
     case DEAL_PRESENT_RAW_FUNCTION:
     case DEAL_PRESENT_OPAQUE:
         return DEAL_STATUS_KIND;

@@ -247,6 +247,18 @@ test("check_string accepts multi-byte UTF-8 scalar sequences", function()
     == "a\xC3\xA9\xE4\xB8\xAD\xF0\x9F\x98\x80b")
 end)
 
+test("check_string retains first rejected sequence byte position without rejecting lone units", function()
+  local bytes="a\xF0\x9F\x98\x80\xE2\x82"
+  local status, position=__rt.utf8_status(bytes)
+  assert(status=='invalid' and position==6)
+  local ok, failure=pcall(__rt.check_string,bytes)
+  assert(not ok and failure.unicodeByteOffset=='6' and failure.unicodeConstraint=='well-formed-byte-transport')
+  failure.message='chosen'
+  assert(failure.unicodeByteOffset=='6')
+  assert(__rt.check_string('repaired')=='repaired')
+  assert(__rt.check_string('\xED\xA0\x80')=='\xED\xA0\x80')
+end)
+
 test("check_string rejects stray continuation byte with E8001", function()
   assert_error(function() __rt.check_string("a\x80b") end, "E8001")
 end)

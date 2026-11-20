@@ -264,7 +264,7 @@ static void run_check(const char *descriptor, uint32_t boundary_kind,
 
 /* One check input of a persistent tagged datum. */
 static deal_check_input datum_input(deal_data datum) {
-    deal_check_input input;
+    deal_check_input input = {0};
     input.presentation = DEAL_PRESENT_DATUM;
     input.unicode_defect = DEAL_UNICODE_MALFORMED;
     input.datum = datum;
@@ -275,7 +275,7 @@ static deal_check_input datum_input(deal_data datum) {
 
 /* One check input of a non-data presentation. */
 static deal_check_input plain_input(uint32_t presentation, uint32_t unicode_defect) {
-    deal_check_input input;
+    deal_check_input input = {0};
     input.presentation = presentation;
     input.unicode_defect = unicode_defect;
     input.datum = deal_data_of_undefined();
@@ -1125,6 +1125,9 @@ static void check_live_graphs(void) {
     if (bounded.error != NULL) {
         (void)deal_root_scope_hold(bounded.error);
         char *detail = deal_error_diagnostic(bounded.error);
+        check(strstr(detail, "\"unicodeByteOffset\":\"1\"") != NULL
+                && strstr(detail, "\"unicodeConstraint\":\"well-formed-byte-transport\"") != NULL,
+              "live malformed leaf retains producer-observed byte position");
         check(strstr(detail, "\"validationPathDepth\":\"33\"") != NULL
                 && strstr(detail, "\"validationPathTruncated\":\"true\"") != NULL,
               "escaped prefix stays within byte cap and retains exact full depth");
@@ -1512,7 +1515,7 @@ static const char *const class_user = "@src/app/user.deal/User";
 #if DEAL_BOUNDARY_CASE == 13 || DEAL_BOUNDARY_CASE == 15 \
         || DEAL_BOUNDARY_CASE == 16
 static deal_check_input datum_input(deal_data datum) {
-    deal_check_input input;
+    deal_check_input input = {0};
     input.presentation = DEAL_PRESENT_DATUM;
     input.unicode_defect = DEAL_UNICODE_MALFORMED;
     input.datum = datum;

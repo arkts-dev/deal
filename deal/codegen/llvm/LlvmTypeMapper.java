@@ -147,7 +147,7 @@ public final class LlvmTypeMapper {
         map.put("deal_outcome_string", "{ i8*, i8* }");
         map.put("deal_outcome_data", "{ i8*, %struct.deal_data }");
         map.put("deal_outcome_reference", "{ i8*, i8* }");
-        map.put("deal_check_input", "{ i32, i32, %struct.deal_data, i8*, i8* }");
+        map.put("deal_check_input", "{ i32, i32, %struct.deal_data, i8*, i8*, i64 }");
         map.put("deal_check_context", "{ %struct.deal_origin*, i32 }");
         map.put("deal_class_field", "{ i8*, i8*, i32 }");
         map.put("deal_class_layout", "{ i8*, %struct.deal_class_field*, i64 }");

@@ -15,7 +15,8 @@ facts into validated semantic IR; backends never fall back to ASTs.
 - Keep binary64 specials/signed zero. Integral positions validate before access,
   never truncate. Diagnostic numbers use shared hexadecimal spelling.
 - Strings retain UTF-16 units: length/order/slicing count units; iteration combines
-  pairs and retains lone units. Reject malformed byte transport, not legal units.
+  pairs and retains lone units. Reject malformed byte transport, not legal units;
+  retain available rejecting-scanner byte positions without revisiting rejected bytes.
 - Refined consumers use admitted results at the recorded read origin, not stale
   raw values. Typed boundaries retain their own projections.
 - Descriptors enforce recursive data/result positions. Void/never are result-only;

@@ -517,6 +517,7 @@ public final class JvmRuntime {
         private Map<String, String> hostEvidence = Map.of();
         private Map<String, String> arrayEvidence = Map.of();
         private Map<String, String> numericEvidence = Map.of();
+        private Map<String, String> unicodeEvidence = Map.of();
         private Map<String, String> validationEvidence = Map.of();
         /**
          * Whether this failure was published by a rethrow of a
@@ -595,6 +596,7 @@ public final class JvmRuntime {
         published.hostEvidence = transport.hostEvidence;
         published.arrayEvidence = transport.arrayEvidence;
         published.numericEvidence = transport.numericEvidence;
+        published.unicodeEvidence = transport.unicodeEvidence;
         published.validationEvidence = transport.validationEvidence;
         published.transported = true;
         published.reified = value;
@@ -639,6 +641,7 @@ public final class JvmRuntime {
         wrapped.hostEvidence = previous.hostEvidence;
         wrapped.arrayEvidence = previous.arrayEvidence;
         wrapped.numericEvidence = previous.numericEvidence;
+        wrapped.unicodeEvidence = previous.unicodeEvidence;
         wrapped.validationEvidence = previous.validationEvidence;
         wrapped.reified = previous.reified;
         if (wrapped.reified != null) {
@@ -674,6 +677,7 @@ public final class JvmRuntime {
     /** Transfer only evidence from the check that this producer is reprojecting. */
     public static DealError validationContext(DealError projected, DealError rejected) {
         projected.validationEvidence = rejected.validationEvidence;
+        projected.unicodeEvidence = rejected.unicodeEvidence;
         return projected;
     }
 
@@ -870,6 +874,8 @@ public final class JvmRuntime {
             appendRuntimeText(out, key, error.arrayEvidence.get(key), true);
         for (String key : List.of("validationPath", "validationPathDepth", "validationPathTruncated", "validationMissingField"))
             appendRuntimeText(out, key, error.validationEvidence.get(key), true);
+        for (String key : List.of("unicodeByteOffset", "unicodeConstraint"))
+            appendRuntimeText(out, key, error.unicodeEvidence.get(key), true);
         for (String key : List.of("numericOperand", "numericParameter", "numericConstraint"))
             appendRuntimeText(out, key, error.numericEvidence.get(key), true);
         if (error.cause != null) {
@@ -1136,6 +1142,17 @@ public final class JvmRuntime {
             deal.semantic.ir.UnicodeScalars.utf8Defect(utf8);
         return defect == null ? null : stringCarrierReason(
             defect == deal.semantic.ir.UnicodeScalars.Defect.SURROGATE);
+    }
+
+    /** The rejecting host byte scanner supplies both reason and position in one walk. */
+    public static DealError checkHostStringBytes(byte[] bytes, String origin) {
+        var failure = deal.semantic.ir.UnicodeScalars.utf8Failure(bytes);
+        if (failure == null) return null;
+        String reason = stringCarrierReason(failure.defect() == deal.semantic.ir.UnicodeScalars.Defect.SURROGATE);
+        DealError error = new DealError("E8001", reason, origin, "string", "string", framesText(), null);
+        error.unicodeEvidence = Map.of("unicodeByteOffset", Integer.toString(failure.byteOffset()),
+            "unicodeConstraint", "well-formed-byte-transport");
+        return error;
     }
 
     /** The array-element inner reason (the element arm's own text). */

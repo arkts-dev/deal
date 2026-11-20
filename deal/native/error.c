@@ -334,6 +334,7 @@ struct deal_error {
     const char *array_constraint;
     int has_fixed_digits;
     double fixed_digits;
+    size_t unicode_byte_offset;
     char *validation_path;
     size_t validation_path_length, validation_path_depth;
     int validation_path_truncated, validation_missing;
@@ -459,6 +460,7 @@ static deal_error *deal_error_allocate(const char *code, const char *message,
     error->validation_path_truncated = error->validation_missing = 0;
     error->has_fixed_digits = 0;
     error->fixed_digits = 0;
+    error->unicode_byte_offset = 0u;
     error->array_index = 0;
     error->array_length = 0u;
     error->array_constraint = NULL;
@@ -1041,6 +1043,12 @@ static void deal_diagnostic_error(deal_snapshot_buffer *buffer, const deal_error
         deal_diagnostic_text(buffer, "validationPathTruncated", truncated, strlen(truncated), &first);
         deal_diagnostic_text(buffer, "validationMissingField", missing, strlen(missing), &first);
     }
+    if (error->unicode_byte_offset != 0u) {
+        char position[32];
+        (void)snprintf(position, sizeof(position), "%zu", error->unicode_byte_offset);
+        deal_diagnostic_text(buffer, "unicodeByteOffset", position, strlen(position), &first);
+        deal_diagnostic_text(buffer, "unicodeConstraint", "well-formed-byte-transport", 26u, &first);
+    }
     if (error->has_fixed_digits) {
         char operand[DEAL_ARM_NUMBER_TEXT_CAPACITY];
         (void)deal_arm_number_text(error->fixed_digits, operand, sizeof(operand));
@@ -1095,6 +1103,10 @@ void deal_error_set_fixed_digits(deal_error *error, double digits) {
     if (error == NULL) deal_platform_fault("error diagnostic: null numeric error");
     error->has_fixed_digits = 1;
     error->fixed_digits = digits;
+}
+
+void deal_error_set_unicode_position(deal_error *error, size_t byte_offset) {
+    if (error != NULL) error->unicode_byte_offset = byte_offset;
 }
 
 void deal_error_set_array_read(deal_error *error, double index, size_t length) {

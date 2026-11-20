@@ -429,26 +429,26 @@ function __rt.utf8_status(s)
     elseif b1 >= 0xF0 and b1 <= 0xF4 then
       len = 4
     else
-      return "invalid"
+      return "invalid", i
     end
     if i + len - 1 > n then
-      return "invalid"
+      return "invalid", i
     end
     if len >= 2 then
       local b2 = string.byte(s, i + 1)
-      if b2 == nil or b2 < 0x80 or b2 > 0xBF then return "invalid" end
+      if b2 == nil or b2 < 0x80 or b2 > 0xBF then return "invalid", i end
       if len == 3 then
         local b3 = string.byte(s, i + 2)
-        if b3 == nil or b3 < 0x80 or b3 > 0xBF then return "invalid" end
-        if b1 == 0xE0 and b2 < 0xA0 then return "invalid" end  -- overlong
+        if b3 == nil or b3 < 0x80 or b3 > 0xBF then return "invalid", i end
+        if b1 == 0xE0 and b2 < 0xA0 then return "invalid", i end  -- overlong
       end
       if len == 4 then
         local b3 = string.byte(s, i + 2)
         local b4 = string.byte(s, i + 3)
-        if b3 == nil or b3 < 0x80 or b3 > 0xBF then return "invalid" end
-        if b4 == nil or b4 < 0x80 or b4 > 0xBF then return "invalid" end
-        if b1 == 0xF0 and b2 < 0x90 then return "invalid" end  -- overlong
-        if b1 == 0xF4 and b2 > 0x8F then return "invalid" end  -- > U+10FFFF
+        if b3 == nil or b3 < 0x80 or b3 > 0xBF then return "invalid", i end
+        if b4 == nil or b4 < 0x80 or b4 > 0xBF then return "invalid", i end
+        if b1 == 0xF0 and b2 < 0x90 then return "invalid", i end  -- overlong
+        if b1 == 0xF4 and b2 > 0x8F then return "invalid", i end  -- > U+10FFFF
       end
     end
     i = i + len
@@ -594,10 +594,14 @@ function __rt.check_string(v, file, line, column)
       "expected string", file, line, column, "string", __rt.typed_kind(v)))
   end
   -- Structural byte defects use the owning closed boundary arm.
-  if __rt.utf8_status(v) == "invalid" then
-    error(__rt._armErr("HOST_STRING_INVALID_UTF8", {}, "E8001",
+  local status, position = __rt.utf8_status(v)
+  if status == "invalid" then
+    local failure = __rt._armErr("HOST_STRING_INVALID_UTF8", {}, "E8001",
       "expected string, got invalid UTF-8 encoding", file, line, column,
-      "string", "invalid UTF-8 string"))
+      "string", "invalid UTF-8 string")
+    failure.unicodeByteOffset=tostring(position)
+    failure.unicodeConstraint="well-formed-byte-transport"
+    error(failure)
   end
   return v
 end
@@ -1263,6 +1267,10 @@ local function check_canonical_ast_inner(ast, v, file, line, column, seen, path)
         local failure = __rt._armErr("ARRAY_ELEMENT_KIND", { oneBasedIndex = i }, "E8003",
           "array element " .. i .. " type mismatch", file, line, column,
           ast.element.text, __rt.typed_kind(v[i]))
+        if type(rejected) == "table" then
+          failure.unicodeByteOffset=rawget(rejected,"unicodeByteOffset")
+          failure.unicodeConstraint=rawget(rejected,"unicodeConstraint")
+        end
         if type(rejected) == "table" and rejected.validationPath ~= nil then
           failure.validationPath=rejected.validationPath
           failure.validationPathDepth=rejected.validationPathDepth
@@ -1458,6 +1466,10 @@ local function host_arm_failure(id, values, file, line, column, expected, subjec
     failure.hostModule = context.module
     failure.hostExport = context.name
     failure.hostDeclaration = context.declaration
+  end
+  if type(rejected)=="table" then
+    failure.unicodeByteOffset=rawget(rejected,"unicodeByteOffset")
+    failure.unicodeConstraint=rawget(rejected,"unicodeConstraint")
   end
   if type(rejected)=="table" and rejected.validationPath~=nil then
     failure.validationPath=rejected.validationPath

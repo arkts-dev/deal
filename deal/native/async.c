@@ -55,6 +55,7 @@ typedef struct deal_async_op {
     uint32_t is_error;       /* the completion is the carried Error */
     uint32_t presentation;   /* deal_presentation: DATUM or INVALID_UNICODE */
     uint32_t unicode_defect; /* deal_unicode_defect for an INVALID_UNICODE slot */
+    size_t unicode_byte_offset;
     deal_data completion;
     deal_fn *host_callee; /* rooted provenance, never consulted on operation failure */
 } deal_async_op;
@@ -210,6 +211,7 @@ static deal_async_op *deal_async_record_new(deal_async_token token) {
     record->is_error = 0u;
     record->presentation = DEAL_PRESENT_DATUM;
     record->unicode_defect = DEAL_UNICODE_MALFORMED;
+    record->unicode_byte_offset = 0u;
     record->completion = deal_data_of_undefined();
     record->host_callee = NULL;
     return record;
@@ -397,6 +399,7 @@ deal_outcome_data deal_async_await(void *operation,
             || record->presentation == DEAL_PRESENT_OPAQUE) {
         checked.presentation = record->presentation;
         checked.unicode_defect = record->unicode_defect;
+        checked.unicode_byte_offset = record->unicode_byte_offset;
     } else {
         deal_host_present_datum(record->completion, &checked);
     }
@@ -602,12 +605,14 @@ static void deal_async_deliver(deal_completion_frame *frame) {
     }
     case DEAL_COMPLETION_STRING: {
         const char *bytes = deal_async_frame_span(base, copy.string);
-        if (!deal_text_is_code_units(bytes, copy.string.length)) {
+        size_t position = deal_text_code_units_failure(bytes, copy.string.length);
+        if (position != 0u) {
             /* A malformed encoding is not a string datum: the await-origin
              * boundary renders the invalid-unicode arm (R2, R4). */
             deal_data datum = deal_data_of_undefined();
             deal_async_record_complete(record, &datum, 0,
                 DEAL_PRESENT_INVALID_UNICODE, DEAL_UNICODE_MALFORMED);
+            record->unicode_byte_offset = position;
             return;
         }
         deal_string *text = deal_text_new(bytes, copy.string.length);
@@ -674,6 +679,7 @@ deal_status deal_async_complete_value(deal_async_token token, deal_value value) 
         deal_data datum = deal_data_of_undefined();
         deal_async_record_complete(entry->record, &datum, 0,
             checked.presentation, checked.unicode_defect);
+        entry->record->unicode_byte_offset = checked.unicode_byte_offset;
         return DEAL_OK;
     }
     if (checked.presentation != DEAL_PRESENT_DATUM) {

@@ -6887,6 +6887,13 @@ end
 -- One host parameter/return cell failure: the host arm's composite with the
 -- inner reason, the declared cell descriptor, and the carrier-kind
 -- projection.
+local function __hostEvidence(projected, rejected)
+  if type(rejected)=="table" then
+    for _,key in ipairs({"validationPath","validationPathDepth","validationPathTruncated","validationMissingField",
+        "unicodeByteOffset","unicodeConstraint"}) do projected[key]=rawget(rejected,key) end
+  end
+  return projected
+end
 local function __hostCellFailure(index, inner, desc, v, origin, isReturn)
   if isReturn then
     return error(__arm("HOST_SYNC_RETURN_CELL", {inner = inner}, origin, desc,
@@ -7263,8 +7270,8 @@ local function __hostParamCell(desc, index, v, origin)
       .. "producer defect)", 0)
   end
   local inner = __renderTemplate(selection.id, selection.values)
-  return error(__arm("HOST_PARAMETER_CELL", {index = index, inner = inner},
-    origin, desc, __carrierKind(v)), 0)
+  return error(__hostEvidence(__arm("HOST_PARAMETER_CELL", {index = index, inner = inner},
+    origin, desc, __carrierKind(v)), checked), 0)
 end
 -- The declared-kind event atom of one host-crossing value (the
 -- declared-cell boundaries of the host arms): the deployed runtime's
@@ -7300,8 +7307,8 @@ local function __hostReturnCell(desc, v, origin, nothing)
         .. "producer defect)", 0)
     end
     local inner = __renderTemplate(selection.id, selection.values)
-    return error(__arm("HOST_SYNC_RETURN_CELL", {inner = inner}, origin, desc,
-      __carrierKind(v)), 0)
+    return error(__hostEvidence(__arm("HOST_SYNC_RETURN_CELL", {inner = inner}, origin, desc,
+      __carrierKind(v)), checked), 0)
   end
   if checked == __rt.__NULL then return nil end
   -- The host-to-DEAL projection of the admitted return value: the
@@ -9525,8 +9532,8 @@ local function __jsonValidUtf8(s)
     elseif b >= 0xC2 and b <= 0xDF then len = 2
     elseif b >= 0xE0 and b <= 0xEF then len = 3
     elseif b >= 0xF0 and b <= 0xF4 then len = 4
-    else return false end
-    if i + len - 1 > n then return false end
+    else return false, i end
+    if i + len - 1 > n then return false, i end
     local cp
     if len == 1 then cp = b
     elseif len == 2 then cp = b - 0xC0
@@ -9534,13 +9541,13 @@ local function __jsonValidUtf8(s)
     else cp = b - 0xF0 end
     for k = 1, len - 1 do
       local c = string.byte(s, i + k)
-      if c < 0x80 or c > 0xBF then return false end
+      if c < 0x80 or c > 0xBF then return false, i end
       cp = cp * 0x40 + (c - 0x80)
     end
-    if len == 2 and cp < 0x80 then return false end
-    if len == 3 and cp < 0x800 then return false end
-    if len == 4 and cp < 0x10000 then return false end
-    if cp > 0x10FFFF then return false end
+    if len == 2 and cp < 0x80 then return false, i end
+    if len == 3 and cp < 0x800 then return false, i end
+    if len == 4 and cp < 0x10000 then return false, i end
+    if cp > 0x10FFFF then return false, i end
     i = i + len
   end
   return true
@@ -9815,8 +9822,11 @@ local function __bcheckLeaf(desc, staticKind, v, csig, completion, classSeen)
       local t = type(member)
       if member == __NULL or member == __UNDEFINED or member == __MISSING then
       elseif t == "string" then
-        if not __jsonValidUtf8(member) then
-          return error(__arm("TYPED_BOUNDARY_INVALID_UNICODE", nil, "-", "string", "invalid-unicode"), 0)
+        local valid, position = __jsonValidUtf8(member)
+        if not valid then
+          local failure = __arm("TYPED_BOUNDARY_INVALID_UNICODE", nil, "-", "string", "invalid-unicode")
+          failure.unicodeByteOffset=tostring(position); failure.unicodeConstraint="well-formed-byte-transport"
+          return error(failure, 0)
         end
       elseif t == "number" or t == "boolean" then
       elseif t ~= "table" then return fail("unknown")
@@ -9880,12 +9890,12 @@ local function __bcheckLeaf(desc, staticKind, v, csig, completion, classSeen)
       -- bytes select TYPED_BOUNDARY_INVALID_UNICODE; a completion retains
       -- its own pinned kind arm. Classification agrees with the value view,
       -- without imposing scalar validity on UTF-16 language strings.
-      if __jsonValidUtf8(v) then return v end
-      if completion then
-        return failKind("string", "string")
-      end
-      return error(__arm("TYPED_BOUNDARY_INVALID_UNICODE", nil, "-", "string",
-        "invalid-unicode"), 0)
+      local valid, position = __jsonValidUtf8(v)
+      if valid then return v end
+      local failure = completion and __arm("ASYNC_COMPLETION_KIND", {expected="string"}, "-", "string", "string")
+        or __arm("TYPED_BOUNDARY_INVALID_UNICODE", nil, "-", "string", "invalid-unicode")
+      failure.unicodeByteOffset=tostring(position); failure.unicodeConstraint="well-formed-byte-transport"
+      return error(failure, 0)
     end
     return fail("string")
   elseif desc == "record" then
@@ -10074,6 +10084,10 @@ __bcheck = function(desc, staticKind, v, csig, completion)
         local failure = __arm("ARRAY_ELEMENT_KIND", {oneBasedIndex=array.index}, "-", array.expected,
           __elemRefKind(array.kind, array.value))
         failure.cause = (type(checked) == "table" and checked.code == "E8003" and checked.cause) or checked
+        if type(checked)=="table" then
+          failure.unicodeByteOffset=rawget(checked,"unicodeByteOffset")
+          failure.unicodeConstraint=rawget(checked,"unicodeConstraint")
+        end
         checked, array = failure, array.parent
         __validationEvidence(checked, task.path, missing)
       end
@@ -10940,6 +10954,7 @@ function __dealRuntimeDiagnostic(error)
                             {"arrayIndex", "arrayIndex"}, {"arrayLength", "arrayLength"},
                             {"arrayConstraint", "arrayConstraint"}, {"numericOperand", "numericOperand"},
                             {"numericParameter", "numericParameter"}, {"numericConstraint", "numericConstraint"},
+                            {"unicodeByteOffset", "unicodeByteOffset"}, {"unicodeConstraint", "unicodeConstraint"},
                             {"validationPath", "validationPath"}, {"validationPathDepth", "validationPathDepth"},
                             {"validationPathTruncated", "validationPathTruncated"}, {"validationMissingField", "validationMissingField"}}) do
       local text = rawget(value, pair[2])
