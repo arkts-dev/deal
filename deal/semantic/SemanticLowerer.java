@@ -1026,6 +1026,22 @@ public final class SemanticLowerer {
             Map<ModuleId, CanonicalModuleIdentity> declarationModuleIdentities,
             BuiltinErrorDeclaration builtinError,
             Set<String> callbackExports) {
+        try (var conversions = deal.semantic.ir.RawUnit.retainConversions()) {
+            return lowerProjectRetainingConversions(invocation, checkedProject, interfaceIndex,
+                requirementManifests, declarationSurface, declarationModuleIdentities,
+                builtinError, callbackExports);
+        }
+    }
+
+    private static ProjectLoweringResult lowerProjectRetainingConversions(
+            CompilerInvocation invocation,
+            CheckedProjectInput checkedProject,
+            deal.semantic.ir.ProjectInterfaceIndex interfaceIndex,
+            List<SemanticRequirementManifest> requirementManifests,
+            HostDeclarationSurface declarationSurface,
+            Map<ModuleId, CanonicalModuleIdentity> declarationModuleIdentities,
+            BuiltinErrorDeclaration builtinError,
+            Set<String> callbackExports) {
         Objects.requireNonNull(invocation, "invocation must not be null");
         Objects.requireNonNull(checkedProject, "checkedProject must not be null");
         Objects.requireNonNull(interfaceIndex, "interfaceIndex must not be null");

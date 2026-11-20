@@ -126,8 +126,34 @@ public record RawUnit(
      * unchanged.
      *
      */
+    private static final ThreadLocal<java.util.IdentityHashMap<LoweredModuleUnit, RawUnit>>
+        CONVERSIONS = new ThreadLocal<>();
+
+    /** Retain immutable projections only for this thread's bounded lowering invocation. */
+    public static ConversionScope retainConversions() {
+        return new ConversionScope();
+    }
+
+    public static final class ConversionScope implements AutoCloseable {
+        private final java.util.IdentityHashMap<LoweredModuleUnit, RawUnit> previous;
+        private ConversionScope() {
+            previous = CONVERSIONS.get();
+            CONVERSIONS.set(new java.util.IdentityHashMap<>());
+        }
+        @Override public void close() {
+            if (previous == null) CONVERSIONS.remove();
+            else CONVERSIONS.set(previous);
+        }
+    }
+
     public static RawUnit fromTyped(LoweredModuleUnit unit) {
         Objects.requireNonNull(unit, "unit must not be null");
+        var conversions = CONVERSIONS.get();
+        if (conversions == null) return convertTyped(unit);
+        return conversions.computeIfAbsent(unit, RawUnit::convertTyped);
+    }
+
+    private static RawUnit convertTyped(LoweredModuleUnit unit) {
         List<String> capabilities = new ArrayList<>();
         for (SemanticCapability capability : unit.requiredCapabilities()) {
             capabilities.add(capability.name());

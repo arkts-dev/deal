@@ -1674,6 +1674,22 @@ public class SemanticIrValidatorTest {
     }
 
     private static void testCompleteTransport(LoweredModuleUnit unit) {
+        RawUnit outside = RawUnit.fromTyped(unit);
+        try (var scope = RawUnit.retainConversions()) {
+            RawUnit retained = RawUnit.fromTyped(unit);
+            check(retained == RawUnit.fromTyped(unit), "one projection per typed identity in scope");
+            try (var nested = RawUnit.retainConversions()) {
+                check(retained != RawUnit.fromTyped(unit), "nested scope has its own projections");
+            }
+            check(retained == RawUnit.fromTyped(unit), "nested close restores outer projections");
+            RawUnit[] otherThread = new RawUnit[1];
+            Thread worker = new Thread(() -> otherThread[0] = RawUnit.fromTyped(unit));
+            worker.start();
+            try { worker.join(); } catch (InterruptedException e) { throw new AssertionError(e); }
+            check(retained != otherThread[0], "projection retention is thread-local");
+            checkEq(outside, retained, "retention preserves all transport facts");
+        }
+        check(outside != RawUnit.fromTyped(unit), "closed scope does not retain projections");
         RawUnit raw = RawUnit.fromTyped(unit);
         String text = SemanticIrValidator.toUnitText(unit);
         RawUnit reparsed = ContractSnapshotCanonicalizer.parseUnit(parseObj(text));
