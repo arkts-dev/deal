@@ -6643,6 +6643,55 @@ public class HostModuleLoadEmissionTest {
         return out;
     }
 
+    private static void testOracleHostDiagnosticContext(List<Path> roots) throws Exception {
+        var fixture = compileProject(Map.of(
+            "src/diagnostic.d.deal", "export function read():string;",
+            "src/app.deal", """
+                import * as host from "host/diagnostic";
+                export function direct():string{return host.read();}
+                export function stored():string{let read=host.read;return read();}
+                export function adapted():string{let read:(ignored:number)=>string=host.read;return read(7);}
+                export function main():void{}
+                """), Map.of("host/diagnostic", "src/diagnostic.d.deal"));
+        roots.add(fixture.root());
+        var result = lower(fixture);
+        if (result.project() == null) throw new AssertionError(result.diagnostics());
+        for (String entry : List.of("direct", "stored", "adapted")) {
+            for (int control = 0; control < 3; control++) {
+                final int selected = control;
+                var responder = new SemanticOracle.HostResponder() {
+                    public SemanticOracle.Value loadedExport(ModuleId module, String export, RuntimeDescriptor descriptor) {
+                        return descriptor instanceof RuntimeDescriptor.Func signature
+                            ? new SemanticOracle.Value.HostEntryValue(signature) : null;
+                    }
+                    public SyncOutcome call(ModuleId module, String export, RuntimeDescriptor.Func signature,
+                                            List<SemanticOracle.Value> args) {
+                        return selected == 0 ? new SyncOutcome.Returned(new SemanticOracle.Value.BoolValue(false))
+                            : selected == 1 ? new SyncOutcome.Thrown("HOST_AUTHORED", "expected string")
+                            : new SyncOutcome.Returned(new SemanticOracle.Value.StrValue("fixed"));
+                    }
+                };
+                var run = SemanticOracle.invokeSyncEntry(result.project(), result.tables(), result.registries(), responder,
+                    result.project().entryModule(), entry, List.of());
+                if (control == 2) {
+                    check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                        "Oracle chosen host return repair: " + entry + " " + run.comparisonReport());
+                } else if (run.terminal() instanceof SemanticRuntimeModel.Terminal.DealFailure rejected) {
+                    var facts = rejected.error().metadata();
+                    check(control == 1 ? !facts.containsKey("hostSignature")
+                            : "host/diagnostic".equals(facts.get("hostModule"))
+                                && "read".equals(facts.get("hostExport"))
+                                && "()->string".equals(facts.get("hostSignature"))
+                                && "return".equals(facts.get("hostBoundary"))
+                                && "host-to-deal".equals(facts.get("hostDirection"))
+                                && "invocation".equals(facts.get("hostStage"))
+                                && facts.containsKey("hostDeclaration"),
+                        "Oracle selected host rejection versus authored failure: " + entry + " " + rejected.error().diagnosticJson());
+                } else fail("Oracle missed host rejection: " + run.comparisonReport());
+            }
+        }
+    }
+
     private static void testLuaHostDiagnosticContext() throws Exception {
         Path root = Files.createTempDirectory("host-diagnostic-lua");
         try {
@@ -6905,6 +6954,7 @@ public class HostModuleLoadEmissionTest {
             testJvmToolchain(carrierHost);
             testJvmMissingExport(missing, cfg);
             testJvmDeclaredArrayElementProjection(array);
+            testOracleHostDiagnosticContext(roots);
             testLuaHostDiagnosticContext();
         } finally {
             for (Path root : roots) {

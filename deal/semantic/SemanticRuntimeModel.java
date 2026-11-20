@@ -244,6 +244,7 @@ public final class SemanticRuntimeModel {
                     "oneBasedByteOffset", "jsonPath", "jsonPathDepth", "jsonPathTruncated", "jsonMissingField",
                     "arrayIndex", "arrayLength", "arrayConstraint", "numericOperand", "numericParameter", "numericConstraint",
                     "unicodeByteOffset", "unicodeConstraint",
+                    "hostModule", "hostDeclaration", "hostExport", "hostSignature", "hostBoundary", "hostParameter", "hostDirection", "hostStage",
                     "validationPath", "validationPathDepth", "validationPathTruncated", "validationMissingField")) {
                 String value = supplied.get(key);
                 if (value != null) result.put(key, value);

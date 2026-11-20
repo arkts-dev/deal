@@ -3510,7 +3510,38 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                     : FailurePolicyId.TYPE_DESCRIPTOR;
                 return runBoundaryChild(cell, value, BoundaryContext.none(), policy);
             }
-            return runBoundaryChild(cell, value, BoundaryContext.none());
+            try {
+                return runBoundaryChild(cell, value, BoundaryContext.none());
+            } catch (DealFailure failure) {
+                retainHostContext(failure, binding, "return");
+                throw failure;
+            }
+        }
+
+        /** Only the rejecting cell calls this; host-thrown failures never acquire boundary blame. */
+        private void retainHostContext(DealFailure failure, FunctionExecutionBinding binding, String crossing) {
+            if (!(binding instanceof FunctionExecutionBinding.HostFunction host)) return;
+            var facts = new LinkedHashMap<>(failure.metadata);
+            facts.put("hostDeclaration", host.hostModuleId().path());
+            facts.put("hostExport", host.exportName());
+            facts.put("hostSignature", host.descriptor().canonicalSpecText());
+            facts.put("hostBoundary", crossing);
+            facts.put("hostDirection", "host-to-deal");
+            facts.put("hostStage", "invocation");
+            String specifier = null;
+            boolean ambiguous = false;
+            for (UnitState unit : units.values()) {
+                for (SemanticOp candidate : unit.unit.ops()) {
+                    if (!(candidate.payload() instanceof KindPayload.ModuleImportPayload imported)
+                            || imported.kind() != deal.semantic.ir.ModuleImportKind.HOST
+                            || !imported.resolvedModule().equals(host.hostModuleId())
+                            || host.importCell() != null && !imported.aliasCells().contains(host.importCell())) continue;
+                    if (specifier != null && !specifier.equals(imported.rawSpecifier())) ambiguous = true;
+                    specifier = imported.rawSpecifier();
+                }
+            }
+            if (!ambiguous && specifier != null) facts.put("hostModule", specifier);
+            failure.metadata = SemanticRuntimeModel.ErrorSnapshot.approvedMetadata(facts);
         }
 
         /**
