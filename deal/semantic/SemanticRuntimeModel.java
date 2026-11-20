@@ -242,7 +242,8 @@ public final class SemanticRuntimeModel {
             var result = new java.util.LinkedHashMap<String, String>();
             for (String key : List.of("oneBasedIndex", "index", "module", "reason", "name", "field", "classId",
                     "oneBasedByteOffset", "jsonPath", "jsonPathDepth", "jsonPathTruncated", "jsonMissingField",
-                    "arrayIndex", "arrayLength", "arrayConstraint", "numericOperand", "numericParameter", "numericConstraint")) {
+                    "arrayIndex", "arrayLength", "arrayConstraint", "numericOperand", "numericParameter", "numericConstraint",
+                    "validationPath", "validationPathDepth", "validationPathTruncated", "validationMissingField")) {
                 String value = supplied.get(key);
                 if (value != null) result.put(key, value);
             }

@@ -1253,6 +1253,14 @@ static void check_live_graphs(void) {
                 && actual != NULL && strcmp(actual, "array") == 0
                 && cause != NULL && strcmp(cause, "E8001") == 0,
               "nested array pins outer position and unwrapped leaf cause");
+        (void)deal_root_scope_hold(rejected.error);
+        deal_gc_collect_full();
+        char *diagnostic = deal_error_diagnostic(rejected.error);
+        check(strstr(diagnostic, "\"validationPath\":\"/0/1\"") != NULL
+                && strstr(diagnostic, "\"validationPathDepth\":\"2\"") != NULL
+                && strstr(diagnostic, "\"validationMissingField\":\"false\"") != NULL,
+              "nested array retains complete reached path through collection without stacked E8003");
+        deal_error_snapshot_release(diagnostic);
     }
     memcpy((void *)deal_text_bytes(leaf), "\xe2\x82\x00", 3u);
     rejected = live_check(changed_value, "unknown");

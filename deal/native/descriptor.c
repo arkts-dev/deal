@@ -18,6 +18,7 @@
 
 #include <string.h>
 #include <math.h>
+#include <stdio.h>
 
 #include "deal/native/container.h"
 #include "deal/native/error.h"
@@ -1242,7 +1243,13 @@ typedef struct {
     deal_descriptor *element_descriptor;
     deal_check_input element_input;
     int required_missing;
+    size_t path;
 } deal_live_item;
+typedef struct {
+    size_t parent, depth, length;
+    const char *key;
+    char number[32];
+} deal_live_path;
 typedef struct {
     const void *object;
     deal_descriptor *descriptor;
@@ -1252,7 +1259,52 @@ typedef struct {
     size_t count, capacity;
     deal_live_identity *seen;
     size_t seen_count, seen_capacity;
+    deal_live_path *paths;
+    size_t path_count, path_capacity;
 } deal_live_walk;
+
+static void deal_live_path_child(deal_live_walk *walk, size_t parent,
+        const char *key, size_t length, size_t index) {
+    if (walk->path_count == walk->path_capacity) {
+        size_t capacity = walk->path_capacity == 0u ? 16u : deal_platform_checked_multiply(walk->path_capacity, 2u);
+        deal_live_path *paths = deal_platform_allocate(deal_platform_checked_multiply(capacity, sizeof(*paths)));
+        if (paths == NULL) deal_platform_fault("check: path allocation failed");
+        if (walk->path_count != 0u) memcpy(paths, walk->paths, deal_platform_checked_multiply(walk->path_count, sizeof(*paths)));
+        deal_platform_release(walk->paths); walk->paths = paths; walk->path_capacity = capacity;
+    }
+    deal_live_path *path = &walk->paths[walk->path_count];
+    memset(path, 0, sizeof(*path));
+    path->parent = parent;
+    path->depth = parent == 0u ? 1u : deal_platform_checked_add(walk->paths[parent - 1u].depth, 1u);
+    path->key = key; path->length = length;
+    if (key == NULL) {
+        (void)snprintf(path->number, sizeof(path->number), "%zu", index);
+        path->length = strlen(path->number);
+    }
+    walk->items[walk->count - 1u].path = ++walk->path_count;
+}
+
+static void deal_live_path_failure(const deal_live_walk *walk, const deal_live_item *item, deal_error *error) {
+    size_t prefix[32], depth = item->path == 0u ? 0u : walk->paths[item->path - 1u].depth;
+    for (size_t current = item->path; current != 0u; current = walk->paths[current - 1u].parent) {
+        size_t d = walk->paths[current - 1u].depth;
+        if (d <= 32u) prefix[d - 1u] = current;
+    }
+    char text[8193]; size_t length = 0u; int truncated = depth > 32u;
+    for (size_t i = 0u; i < depth && i < 32u; i++) {
+        const deal_live_path *part = &walk->paths[prefix[i] - 1u];
+        const char *key = part->key == NULL ? part->number : part->key;
+        size_t take = part->length < 128u ? part->length : 128u;
+        while (take < part->length && take > 0u && ((unsigned char)key[take] & 0xc0u) == 0x80u) take--;
+        if (take < part->length) truncated = 1;
+        text[length++] = '/';
+        for (size_t k = 0u; k < take; k++) {
+            if (key[k] == '~' || key[k] == '/') { text[length++] = '~'; text[length++] = key[k] == '~' ? '0' : '1'; }
+            else text[length++] = key[k];
+        }
+    }
+    deal_error_set_validation_path(error, text, length, depth, truncated, item->required_missing);
+}
 
 static void deal_live_push(deal_live_walk *walk, deal_check_input input,
                             deal_descriptor *descriptor,
@@ -1276,6 +1328,7 @@ static void deal_live_push(deal_live_walk *walk, deal_check_input input,
         item.element_index = parent->element_index;
         item.element_descriptor = parent->element_descriptor;
         item.element_input = parent->element_input;
+        item.path = parent->path;
     }
     walk->items[walk->count++] = item;
 }
@@ -1468,8 +1521,10 @@ static deal_outcome deal_check_live_value_core(deal_descriptor *expected, deal_c
                 deal_string *key = deal_container_table_key_at(table, index - 1u);
                 deal_live_push(&walk, deal_live_datum(deal_container_table_read(table, key)),
                     deal_descriptor_intern("unknown"), &item);
+                deal_live_path_child(&walk, item.path, (const char *)deal_text_bytes(key), deal_text_byte_length(key), 0u);
                 deal_live_push(&walk, deal_live_datum(deal_data_of_reference(DEAL_DATA_STRING, key)),
                     deal_descriptor_intern("string"), &item);
+                deal_live_path_child(&walk, item.path, (const char *)deal_text_bytes(key), deal_text_byte_length(key), 0u);
             }
         } else if (datum.tag == DEAL_DATA_ARRAY) {
             deal_array *array = datum.reference;
@@ -1480,6 +1535,7 @@ static deal_outcome deal_check_live_value_core(deal_descriptor *expected, deal_c
             for (size_t index = deal_container_array_count(array); index != 0u; index--) {
                 deal_check_input child = deal_live_element(array, index - 1u);
                 deal_live_push(&walk, child, element, &item);
+                deal_live_path_child(&walk, item.path, NULL, 0u, index - 1u);
                 deal_live_item *pushed = &walk.items[walk.count - 1u];
                 if (declared->kind == DEAL_DESCRIPTOR_ARRAY && pushed->element_index == 0u) {
                     pushed->element_index = index;
@@ -1503,6 +1559,13 @@ static deal_outcome deal_check_live_value_core(deal_descriptor *expected, deal_c
                 field.unicode_defect = DEAL_UNICODE_MALFORMED;
                 outcome = deal_check_value(deal_descriptor_intern("string"), field,
                     DEAL_BOUNDARY_TYPE_DESCRIPTOR, context);
+                if (outcome.error != NULL) {
+                    deal_live_push(&walk, field, deal_descriptor_intern("string"), &item);
+                    const char *name = index == 0u ? "name" : "message";
+                    deal_live_path_child(&walk, item.path, name, strlen(name), 0u);
+                    item = walk.items[--walk.count];
+                    item.required_missing = !present;
+                }
                 break;
             }
             if (outcome.error != NULL) break;
@@ -1525,22 +1588,27 @@ static deal_outcome deal_check_live_value_core(deal_descriptor *expected, deal_c
                      * positions instead of failing during the reverse push. */
                     deal_live_push(&walk, child, field->descriptor, &item);
                     walk.items[walk.count - 1u].required_missing = 1;
+                    deal_live_path_child(&walk, item.path, field->name, strlen(field->name), 0u);
                     continue;
                 }
                 if (child.presentation == DEAL_PRESENT_DATUM)
                     child = deal_live_datum(child.datum);
                 deal_live_push(&walk, child, typed_class ? field->descriptor
                     : deal_descriptor_intern("unknown"), &item);
+                deal_live_path_child(&walk, item.path, field->name, strlen(field->name), 0u);
             }
             if (outcome.error != NULL) break;
         }
     }
+    if (outcome.error != NULL) deal_live_path_failure(&walk, &item, outcome.error);
     if (wrap_elements && outcome.error != NULL && item.element_index != 0u) {
         /* The outer checked array owns its first failing element; nested
          * arrays propagate the leaf cause without adding another wrapper. */
         outcome.error = deal_array_element_error(item.element_index,
             item.element_descriptor, &item.element_input, context->origin, outcome.error);
+        deal_live_path_failure(&walk, &item, outcome.error);
     }
+    deal_platform_release(walk.paths);
     deal_platform_release(walk.items);
     deal_platform_release(walk.seen);
     return outcome;

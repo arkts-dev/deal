@@ -107,6 +107,12 @@ canonical order; strict syntax/duplicate/unknown-member faults and the default
 Oracle `ErrorSnapshot.diagnosticJson()` offers bounded approved metadata without
 changing canonical trace text or `projectionLine()`.
 
+General descriptor checks retain `validationPath` (JSON-pointer escaping), exact
+`validationPathDepth`, `validationPathTruncated` and `validationMissingField`
+from the current traversal. Prefixes retain at most 32 segments, with keys capped
+at 128 UTF-16 units on JS/JVM or 128 bytes on Lua/native. They are not JSON-decoder
+paths and do not reread rejected values.
+
 Rejected `toFixed` digit domains retain the original binary64 `numericOperand`,
 `numericParameter` and `numericConstraint`, including through message mutation/rethrow.
 

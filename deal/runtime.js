@@ -55,6 +55,30 @@ const $diagnosticArraySet = $diagnosticArray.set.bind($diagnosticArray);
 const $diagnosticNumeric = new WeakMap();
 const $diagnosticNumericGet = $diagnosticNumeric.get.bind($diagnosticNumeric);
 const $diagnosticNumericSet = $diagnosticNumeric.set.bind($diagnosticNumeric);
+const $diagnosticValidation = new WeakMap();
+const $diagnosticValidationGet = $diagnosticValidation.get.bind($diagnosticValidation);
+const $diagnosticValidationSet = $diagnosticValidation.set.bind($diagnosticValidation);
+function $validationChild(parent, segment) {
+  return {parent, segment, depth: parent ? parent.depth + 1 : 1};
+}
+function $validationEvidence(path, missing) {
+  const depth = path ? path.depth : 0;
+  let frames = null;
+  for (let frame = path; frame; frame = frame.parent)
+    if (frame.depth <= 32) frames = {frame, next: frames};
+  let pointer = "", truncated = depth > 32;
+  for (let node = frames; node; node = node.next) {
+    const key = node.frame.segment;
+    let take = key.length < 128 ? key.length : 128;
+    if (take < key.length && take > 0 && $diagnosticCharCode(key, take - 1) >= 0xd800
+        && $diagnosticCharCode(key, take - 1) <= 0xdbff && $diagnosticCharCode(key, take) >= 0xdc00
+        && $diagnosticCharCode(key, take) <= 0xdfff) take--;
+    if (take < key.length) truncated = true;
+    pointer += "/";
+    for (let i = 0; i < take; i++) pointer += key[i] === "~" ? "~0" : key[i] === "/" ? "~1" : key[i];
+  }
+  return {path: pointer, depth: "" + depth, truncated: "" + truncated, missing: "" + missing};
+}
 const $descriptorHasOwn = Object.prototype.hasOwnProperty.call.bind(Object.prototype.hasOwnProperty);
 const $diagnosticFinite = Number.isFinite;
 const $diagnosticSlice = String.prototype.slice.call.bind(String.prototype.slice);
@@ -2011,6 +2035,8 @@ const $rt = {
       if (array !== $undefined) $diagnosticArraySet(value, array);
       const numeric = $diagnosticNumericGet(v);
       if (numeric !== $undefined) $diagnosticNumericSet(value, numeric);
+      const validation = $diagnosticValidationGet(v);
+      if (validation !== $undefined) $diagnosticValidationSet(value, validation);
       return value;
     }
     if (typeof v === "object" && v !== null && v.$kind === "class" && v.$classname === "Error") {
@@ -2086,6 +2112,13 @@ const $rt = {
           append($jsonQuote(keys[i]) + ":" + $jsonQuote($diagnosticSlice(text, 0, take)));
           if (take < text.length) { append($jsonQuote(keys[i] + "Length") + ":" + text.length); append($jsonQuote(keys[i] + "Truncated") + ":true"); }
         }
+      }
+      const validation = $diagnosticValidationGet(value);
+      if (validation !== $undefined) {
+        append('"validationPath":' + $jsonQuote(own(validation, "path")));
+        append('"validationPathDepth":' + $jsonQuote(own(validation, "depth")));
+        append('"validationPathTruncated":' + $jsonQuote(own(validation, "truncated")));
+        append('"validationMissingField":' + $jsonQuote(own(validation, "missing")));
       }
       const numeric = $diagnosticNumericGet(value);
       if (numeric !== $undefined) {
@@ -2177,10 +2210,12 @@ const $rt = {
   // never the plain-Map "table" label). Anything else — Array, plain
   // object, class instance, wrapper, primitives — keeps its own $kindOf
   // actual label.
-  validateData: function $validateData(value, file, line, column) {
-    const seen = new WeakSet(), pending = [value], untaggedArrays = [];
+  validateData: function $validateData(value, file, line, column, path) {
+    const seen = new WeakSet(), pending = [{value, path}], untaggedArrays = [];
     while (pending.length) {
-      const v = pending.pop();
+      const task = pending.pop(), v = task.value;
+      let activePath = task.path;
+      try {
       if (v === null || v === $undefined || v === $MISSING) continue;
       if (typeof v === "string") { $rt.checkString(v, file, line, column); continue; }
       if (typeof v === "number" || typeof v === "boolean" || $isNumCarrier(v)) continue;
@@ -2188,12 +2223,16 @@ const $rt = {
       if (seen.has(v)) continue;
       seen.add(v);
       if (v instanceof $Map) {
-        for (const [key, member] of v) { $rt.checkString(key, file, line, column); pending.push(member); }
+        for (const [key, member] of v) {
+          activePath = typeof key === "string" ? $validationChild(task.path, key) : task.path;
+          $rt.checkString(key, file, line, column); pending.push({value: member, path: activePath});
+        }
       } else if ($Array.isArray(v)) {
         if (!$arrayDescriptors.has(v)) untaggedArrays.push(v);
         for (let i = 0; i < v.length; i++) {
+          activePath = $validationChild(task.path, "" + i);
           if (!Object.prototype.hasOwnProperty.call(v, i)) $rt.fail("E8001", "sparse array ingress", file, line, column, "array", "array");
-          pending.push(v[i]);
+          pending.push({value: v[i], path: activePath});
         }
       } else if (v.$kind === "class") {
         if (v.$classname === "Error") {
@@ -2201,7 +2240,8 @@ const $rt = {
           $rt.checkString(v.message, file, line, column);
         }
         const fields = $classFieldOrder.get(v) || Object.keys(v).filter(key => key !== "$kind" && key !== "$classname");
-        for (const key of fields) if (Object.prototype.hasOwnProperty.call(v, key)) pending.push(v[key]);
+        for (const key of fields) if (Object.prototype.hasOwnProperty.call(v, key))
+          pending.push({value: v[key], path: $validationChild(task.path, key)});
       } else if (v.$kind === "function") {
         const signature = typeof v.$sig === "string" ? $parse(v.$sig) : null;
         if (typeof v.$f !== "function" || !signature || signature.$t !== "function")
@@ -2209,13 +2249,18 @@ const $rt = {
       } else {
         $rt.fail("E8001", "unsupported unknown ingress", file, line, column, "unknown", $kindOf(v));
       }
+      } catch (error) {
+        if ($diagnosticErrorHas(error) && $diagnosticValidationGet(error) === $undefined)
+          $diagnosticValidationSet(error, $validationEvidence(activePath, false));
+        throw error;
+      }
     }
     // Publish persistent descriptors only after the whole ingress graph is valid.
     for (const array of untaggedArrays) $arrayDescriptors.set(array, "unknown");
     return value;
   },
 
-  checkTable: function $checkTable(v, file, line, column) {
+  checkTable: function $checkTable(v, file, line, column, path) {
     if (!(v instanceof $Map)) {
       $rt.fail("E8001", "expected table", file, line, column, "table", $kindOf(v));
     }
@@ -2225,7 +2270,7 @@ const $rt = {
     if ($rt.isJsonArrayTable(v)) {
       $rt.fail("E8001", "expected table", file, line, column, "table", "array");
     }
-    return $rt.validateData(v, file, line, column);
+    return $rt.validateData(v, file, line, column, path);
   },
 
   // ===== Descriptor dispatch (js-backend-runtime-artifact D3/D4) =====
@@ -2285,10 +2330,11 @@ const $rt = {
     while (pending.length) {
       const task = pending.pop();
       let value = task.field ? task.owner[task.field.name] : task.value;
-      let current = task.descriptor;
+      let current = task.descriptor, missing = false;
       try {
         if (task.field && (!Object.prototype.hasOwnProperty.call(task.owner, task.field.name)
             || value === $MISSING)) {
+          missing = !task.field.optional;
           if (!task.field.optional) $rt.fail("E8001", "missing required field: " + task.field.name, file, line, column);
           continue;
         }
@@ -2302,7 +2348,7 @@ const $rt = {
         }
         if (acceptedNullish) continue;
         if (!parsed || parsed.$t !== "class" && parsed.$t !== "array") {
-          $rt.checkTypeLeaf(current, value, file, line, column);
+          $rt.checkTypeLeaf(current, value, file, line, column, task.path);
           continue;
         }
         if (parsed.$t === "class") {
@@ -2327,7 +2373,8 @@ const $rt = {
           if (plan) {
             if (!$classFieldOrder.has(value)) $classFieldOrder.set(value, plan.map(field => field.name));
             for (let i = plan.length - 1; i >= 0; --i)
-              pending.push({descriptor: plan[i].descriptor, owner: value, field: plan[i], arrays: task.arrays});
+              pending.push({descriptor: plan[i].descriptor, owner: value, field: plan[i], arrays: task.arrays,
+                path: $validationChild(task.path, plan[i].name)});
           }
         } else {
           const mapped = !$Array.isArray(value);
@@ -2338,16 +2385,20 @@ const $rt = {
           }
           for (let i = count - 1; i >= 0; --i) {
             const member = mapped ? value.get(String(i + 1)) : value[i];
-            pending.push({descriptor: parsed.$element, value: member,
+            pending.push({descriptor: parsed.$element, value: member, path: $validationChild(task.path, "" + i),
               arrays: {index: i + 1, descriptor: parsed.$element, value: member, parent: task.arrays}});
           }
         }
       } catch (error) {
+        const evidence = $validationEvidence(task.path, missing);
+        const retained = $diagnosticErrorHas(error) && $diagnosticValidationGet(error);
+        if ($diagnosticErrorHas(error) && retained === $undefined) $diagnosticValidationSet(error, evidence);
         for (let array = task.arrays; array; array = array.parent) {
           const failure = new $DEALError("E8003", "array element " + array.index + " type mismatch",
             file, line, column, array.descriptor, $elemKindOf(array.value));
           failure.cause = error.code === "E8003" && error.cause ? error.cause : error;
           error = failure;
+          $diagnosticValidationSet(error, retained || evidence);
         }
         throw error;
       }
@@ -2357,7 +2408,7 @@ const $rt = {
 
   // Scalar/data/function leaves of the stack-safe descriptor walk. Composite
   // positions are always consumed by checkType's operation-local work stack.
-  checkTypeLeaf: function $checkTypeLeaf(descriptor, v, file, line, column) {
+  checkTypeLeaf: function $checkTypeLeaf(descriptor, v, file, line, column, path) {
     if (v === $MISSING) v = $undefined;
     if (descriptor === null) {
       $rt.fail("E8001", "internal: nil type descriptor", file, line, column);
@@ -2391,11 +2442,11 @@ const $rt = {
         if (typeof v === "string") return $rt.checkString(v, file, line, column);
         if (["null", "undefined", "boolean", "number", "table", "array"].includes(kind)
             || (v !== null && v !== $undefined && (v.$kind === "class"
-                || (kind === "function" && typeof v !== "function")))) return $rt.validateData(v, file, line, column);
+                || (kind === "function" && typeof v !== "function")))) return $rt.validateData(v, file, line, column, path);
         $rt.fail("E8001", "unsupported unknown ingress", file, line, column, "unknown", kind);
       }
       if ($parsed.$name === "record") {
-        return $rt.checkTable(v, file, line, column);
+        return $rt.checkTable(v, file, line, column, path);
       }
       $rt.fail("E8001", "unknown primitive type: " + $parsed.$name, file, line, column);
     }
@@ -3199,12 +3250,14 @@ const $rt = {
     const $paramDescs = $parsed.$params;
     const $retDesc = $parsed.$ret;
     const $isNullRet = $retDesc === "null";
-    const fail = (boundary, parameter, code, message, file, line, column, expected, actual) => {
+    const fail = (boundary, parameter, code, message, file, line, column, expected, actual, rejected) => {
       try { $rt.fail(code, message, file, line, column, expected, actual); }
       catch (error) {
         $diagnosticHostSet(error, {hostSignature: descriptor, hostBoundary: boundary, hostParameter: parameter,
           hostDirection: boundary === "parameter" || boundary === "arity" ? "deal-to-host" : "host-to-deal", hostStage: "invocation",
           hostModule: context && context.module, hostExport: context && context.name, hostDeclaration: context && context.declaration});
+        const evidence = rejected && $diagnosticValidationGet(rejected);
+        if (evidence) $diagnosticValidationSet(error, evidence);
         throw error;
       }
     };
@@ -3279,7 +3332,7 @@ const $rt = {
           if (!($e instanceof $DEALError)) {
             throw $e;
           }
-          fail("return", $undefined, "E8010", "return value 1 type mismatch: " + $e.message, $file, $line, $column, $retDesc, $luaKindOf($r));
+          fail("return", $undefined, "E8010", "return value 1 type mismatch: " + $e.message, $file, $line, $column, $retDesc, $luaKindOf($r), $e);
         }
       },
     };

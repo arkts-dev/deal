@@ -20,7 +20,7 @@ their operation's origin, never a raw exception.
   Validate before mutation/publication. Array failures retain source-index
   E8003 and the unwrapped leaf cause; assertions own E8001. Rejected positions
   retain the original binary64 index, observed length and read/write constraint
-  without replaying the check or reading storage.
+  without replaying the check or reading storage. Validation paths use current walk frames only, bounded independently of traversal depth; retain exact depth/missing status through re-projection and rethrow.
 - Pop validates before shrink; splice validates the entire removal range before
   shifting. Slice checks selected positions only and returns fresh shallow
   storage. Normalize/clamp numeric bounds before native casts.

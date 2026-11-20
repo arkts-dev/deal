@@ -9930,6 +9930,30 @@ local function __bcheckLeaf(desc, staticKind, v, csig, completion, classSeen)
   end
   return v
 end
+local function __validationChild(parent, segment)
+  return {parent=parent, segment=segment, depth=parent and parent.depth+1 or 1}
+end
+local function __validationEvidence(errorValue, path, missing)
+  if type(errorValue) ~= "table" then return end
+  local depth, prefix = path and path.depth or 0, {}
+  local frame = path
+  while frame do
+    if frame.depth <= 32 then prefix[frame.depth] = frame.segment end
+    frame = frame.parent
+  end
+  local pointer, truncated = "", depth > 32
+  for i=1,math.min(depth,32) do
+    local key = prefix[i]
+    local take = math.min(#key,128)
+    while take > 0 and take < #key and string.byte(key,take+1) >= 128 and string.byte(key,take+1) < 192 do take=take-1 end
+    if take < #key then truncated=true end
+    pointer=pointer.."/"..string.gsub(string.gsub(string.sub(key,1,take),"~","~0"),"/","~1")
+  end
+  errorValue.validationPath=pointer
+  errorValue.validationPathDepth=tostring(depth)
+  errorValue.validationPathTruncated=tostring(truncated)
+  errorValue.validationMissingField=tostring(missing)
+end
 -- Composite admission uses an operation-local stack, not the Lua call stack.
 __bcheck = function(desc, staticKind, v, csig, completion)
   local root = {desc=desc, kind=staticKind, value=v, sig=csig, completion=completion}
@@ -9937,6 +9961,7 @@ __bcheck = function(desc, staticKind, v, csig, completion)
   local pending, seen = {root}, {}
   while #pending > 0 do
     local task = table.remove(pending)
+    local missing = false
     local ok, checked = pcall(function()
       local d, value, sig = task.desc, task.value, task.sig
       if task.field then
@@ -9944,6 +9969,7 @@ __bcheck = function(desc, staticKind, v, csig, completion)
         value = rawget(fields, task.field.name)
         if value == nil or value == __MISSING or value == __rtMissing then
           if task.field.required then
+            missing = true
             local arm = task.completion and "ASYNC_COMPLETION_KIND" or "TYPED_BOUNDARY_KIND"
             error(__arm(arm, task.completion and {expected="class instance"} or {kind="class instance"}, "-", "class",
               task.completion and __completionBoundaryKind("ref", task.owner) or __typedBoundaryKind("ref", task.owner)), 0)
@@ -9984,7 +10010,8 @@ __bcheck = function(desc, staticKind, v, csig, completion)
         for i = #plan, 1, -1 do
           local field = plan[i]
           pending[#pending+1] = {desc=field.descriptor, kind="ref", sig=field.canonical,
-            completion=task.completion, owner=value, field=field, arrays=task.arrays}
+            completion=task.completion, owner=value, field=field, arrays=task.arrays,
+            path=__validationChild(task.path,field.name)}
         end
       else
         local inner = string.sub(d, 7, -2)
@@ -9997,17 +10024,19 @@ __bcheck = function(desc, staticKind, v, csig, completion)
           if member == __NULL then member = nil elseif member == nil then member = __MISSING end
           local kind = member == __MISSING and "missing" or inner
           pending[#pending+1] = {desc=inner, kind=kind, value=member, sig=innerSig, completion=false,
-            arrays={index=i, expected=expected, kind=kind, value=member, parent=task.arrays}}
+            path=__validationChild(task.path,tostring(i-1)), arrays={index=i, expected=expected, kind=kind, value=member, parent=task.arrays}}
         end
       end
     end)
     if not ok then
+      __validationEvidence(checked, task.path, missing)
       local array = task.arrays
       while array do
         local failure = __arm("ARRAY_ELEMENT_KIND", {oneBasedIndex=array.index}, "-", array.expected,
           __elemRefKind(array.kind, array.value))
         failure.cause = (type(checked) == "table" and checked.code == "E8003" and checked.cause) or checked
         checked, array = failure, array.parent
+        __validationEvidence(checked, task.path, missing)
       end
       error(checked, 0)
     end
@@ -10871,7 +10900,9 @@ function __dealRuntimeDiagnostic(error)
                             {"hostDirection", "hostDirection"}, {"hostStage", "hostStage"},
                             {"arrayIndex", "arrayIndex"}, {"arrayLength", "arrayLength"},
                             {"arrayConstraint", "arrayConstraint"}, {"numericOperand", "numericOperand"},
-                            {"numericParameter", "numericParameter"}, {"numericConstraint", "numericConstraint"}}) do
+                            {"numericParameter", "numericParameter"}, {"numericConstraint", "numericConstraint"},
+                            {"validationPath", "validationPath"}, {"validationPathDepth", "validationPathDepth"},
+                            {"validationPathTruncated", "validationPathTruncated"}, {"validationMissingField", "validationMissingField"}}) do
       local text = rawget(value, pair[2])
       if type(text) == "string" then
         local take = math.min(#text, 8192)

@@ -333,6 +333,9 @@ struct deal_error {
     const char *array_constraint;
     int has_fixed_digits;
     double fixed_digits;
+    char *validation_path;
+    size_t validation_path_length, validation_path_depth;
+    int validation_path_truncated, validation_missing;
 };
 
 /*
@@ -395,6 +398,8 @@ static void deal_error_release(void *object) {
     error->json_reason_length = 0u;
     deal_platform_release(error->json_path);
     error->json_path = NULL;
+    deal_platform_release(error->validation_path);
+    error->validation_path = NULL;
     deal_platform_release(error->host_signature);
     deal_platform_release(error->host_declaration);
     deal_platform_release(error->host_export);
@@ -445,6 +450,9 @@ static deal_error *deal_error_allocate(const char *code, const char *message,
     error->host_parameter = 0;
     error->host_direction = error->host_stage = NULL;
     error->has_array_constraint = 0;
+    error->validation_path = NULL;
+    error->validation_path_length = error->validation_path_depth = 0u;
+    error->validation_path_truncated = error->validation_missing = 0;
     error->has_fixed_digits = 0;
     error->fixed_digits = 0;
     error->array_index = 0;
@@ -1018,6 +1026,16 @@ static void deal_diagnostic_error(deal_snapshot_buffer *buffer, const deal_error
         deal_diagnostic_text(buffer, "arrayLength", length, strlen(length), &first);
         deal_diagnostic_text(buffer, "arrayConstraint", error->array_constraint, strlen(error->array_constraint), &first);
     }
+    if (error->validation_path != NULL) {
+        char depth_text[32];
+        (void)snprintf(depth_text, sizeof(depth_text), "%zu", error->validation_path_depth);
+        deal_diagnostic_text(buffer, "validationPath", error->validation_path, error->validation_path_length, &first);
+        deal_diagnostic_text(buffer, "validationPathDepth", depth_text, strlen(depth_text), &first);
+        const char *truncated = error->validation_path_truncated ? "true" : "false";
+        const char *missing = error->validation_missing ? "true" : "false";
+        deal_diagnostic_text(buffer, "validationPathTruncated", truncated, strlen(truncated), &first);
+        deal_diagnostic_text(buffer, "validationMissingField", missing, strlen(missing), &first);
+    }
     if (error->has_fixed_digits) {
         char operand[DEAL_ARM_NUMBER_TEXT_CAPACITY];
         (void)deal_arm_number_text(error->fixed_digits, operand, sizeof(operand));
@@ -1052,6 +1070,20 @@ static void deal_diagnostic_error(deal_snapshot_buffer *buffer, const deal_error
         }
     }
     deal_snapshot_append(buffer, "}", 1u);
+}
+
+void deal_error_set_validation_path(deal_error *error, const char *path, size_t length,
+                                    size_t depth, int truncated, int missing) {
+    if (error == NULL || path == NULL) deal_platform_fault("error diagnostic: null validation path");
+    char *copy = deal_platform_allocate(deal_platform_checked_add(length, 1u));
+    if (copy == NULL) deal_platform_fault("error diagnostic: validation path allocation failed");
+    memcpy(copy, path, length); copy[length] = '\0';
+    deal_platform_release(error->validation_path);
+    error->validation_path = copy;
+    error->validation_path_length = length;
+    error->validation_path_depth = depth;
+    error->validation_path_truncated = truncated;
+    error->validation_missing = missing;
 }
 
 void deal_error_set_fixed_digits(deal_error *error, double digits) {

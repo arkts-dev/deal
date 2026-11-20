@@ -181,10 +181,10 @@ public final class BoundaryExecutor {
         Map<String, String> parameters = new LinkedHashMap<>();
         parameters.put("index", Integer.toString(parameterIndex));
         parameters.put("inner", innerReason(fail, view));
-        return FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL, parameters,
+        return withPath(FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL, parameters,
             FailureProjections.expectedFor(arm, descriptor, null),
             FailureProjections.actualFor(arm, null, hostActual(view, fail), null, null, null,
-                null), null);
+                null), null), fail);
     }
 
     /** HOST_SYNC_RETURN: no value first, then the host return cell arm. */
@@ -210,12 +210,12 @@ public final class BoundaryExecutor {
                 FailureArm arm = FailureContractRegistry.arm(FailureArmId.HOST_SYNC_RETURN_CELL);
                 Map<String, String> parameters = new LinkedHashMap<>();
                 parameters.put("inner", innerReason(fail, view));
-                yield new BoundaryOutcome.Fail(FailureContractRegistry.render(
+                yield new BoundaryOutcome.Fail(withPath(FailureContractRegistry.render(
                     FailureArmId.HOST_SYNC_RETURN_CELL, parameters,
                     FailureProjections.expectedFor(arm, descriptor, null),
                     FailureProjections.actualFor(arm, null, hostActual(view, fail), null, null,
                         null, null),
-                    null));
+                    null), fail));
             }
         };
     }
@@ -416,8 +416,28 @@ public final class BoundaryExecutor {
      * element index of an E8003 leaf, and the leaf failure.
      */
     private record CoreFail(FailureCase caseKind, RuntimeDescriptor descriptor,
-                            String actualToken, int elementIndex, CoreFail cause)
+                            String actualToken, int elementIndex, CoreFail cause, List<String> path, int pathDepth, boolean missing)
         implements CoreResult {
+        CoreFail(FailureCase kind, RuntimeDescriptor descriptor, String actual, int index, CoreFail cause) {
+            this(kind, descriptor, actual, index, cause, List.of(), 0, false);
+        }
+    }
+    private static CoreFail atField(CoreFail failure, String segment, boolean missing) {
+        var path = new java.util.ArrayList<String>();
+        path.add(segment);
+        path.addAll(failure.path().subList(0, Math.min(31, failure.path().size())));
+        return new CoreFail(failure.caseKind(), failure.descriptor(), failure.actualToken(), failure.elementIndex(), failure.cause(),
+            List.copyOf(path), failure.pathDepth() + 1, missing || failure.missing());
+    }
+    private static BoundaryFailure withPath(BoundaryFailure failure, CoreFail rejected) {
+        if (rejected.pathDepth() == 0) return failure;
+        deal.semantic.RuntimeValidationPath path = null;
+        for (String part : rejected.path()) path = deal.semantic.RuntimeValidationPath.child(path, part);
+        var metadata = new LinkedHashMap<>(failure.metadata());
+        metadata.putAll(deal.semantic.RuntimeValidationPath.metadata(path, rejected.missing()));
+        metadata.put("validationPathDepth", Integer.toString(rejected.pathDepth()));
+        if (rejected.pathDepth() > rejected.path().size()) metadata.put("validationPathTruncated", "true");
+        return new BoundaryFailure(failure.policy(), failure.code(), failure.message(), failure.expected(), failure.actual(), metadata, failure.cause());
     }
 
     private static CoreResult pass(BoundaryValueView view) {
@@ -521,10 +541,10 @@ public final class BoundaryExecutor {
                 try {
                     for (BoundaryValueView.ClassField field : view.classFields()) {
                         if (!field.present()) {
-                            if (field.required()) return kindFail(descriptor, view);
+                            if (field.required()) return atField((CoreFail)kindFail(descriptor, view), field.name(), true);
                         } else {
                             CoreResult checked = core(field.descriptor(), field.value().get(), active);
-                            if (checked instanceof CoreFail) return checked;
+                            if (checked instanceof CoreFail failure) return atField(failure, field.name(), false);
                         }
                     }
                 } finally {
@@ -554,9 +574,9 @@ public final class BoundaryExecutor {
             if (elementResult instanceof CoreFail elementFail) {
                 CoreFail leaf = elementFail.caseKind() == FailureCase.ELEMENT
                     ? elementFail.cause() : elementFail;
+                CoreFail rejected = atField(elementFail, Integer.toString(i), false);
                 return new CoreFail(FailureCase.ELEMENT, descriptor.element(),
-                    elementReferenceToken(element),
-                    i + 1, leaf);
+                    elementReferenceToken(element), i + 1, leaf, rejected.path(), rejected.pathDepth(), rejected.missing());
             }
         }
         return pass(view);
@@ -663,7 +683,7 @@ public final class BoundaryExecutor {
      * the executor never selects or composes message text.
      */
     private static BoundaryFailure project(Projection projection, CoreFail fail) {
-        return switch (fail.caseKind()) {
+        BoundaryFailure failure = switch (fail.caseKind()) {
             case KIND_MISMATCH -> renderKind(projection.kindArm(), fail);
             case INVALID_UNICODE -> renderKind(projection.unicodeArm() != null
                 ? projection.unicodeArm() : projection.kindArm(), fail);
@@ -671,6 +691,7 @@ public final class BoundaryExecutor {
             case SIG_MISMATCH -> renderSignature(projection, fail);
             case ELEMENT -> renderElement(projection, fail);
         };
+        return withPath(failure, fail);
     }
 
     /** One typed-boundary kind/refinement/invalid-unicode arm render. */

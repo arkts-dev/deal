@@ -341,6 +341,12 @@ public class BoundaryExecutorTest {
     // 4. Class atom byte-equality
     // =========================================================================
 
+    private static Map<String, String> elementPath(String index, String pointer) {
+        return Map.of("oneBasedIndex", index, "validationPath", pointer,
+            "validationPathDepth", Integer.toString((int) pointer.chars().filter(c -> c == '/').count()),
+            "validationPathTruncated", "false", "validationMissingField", "false");
+    }
+
     static void testLiveClassAndCallablePlans() {
         BoundaryValueView[] child = {BoundaryValueView.ofNumber(1)};
         BoundaryValueView valid = BoundaryValueView.ofClass("@src/app/User").withClassFields(List.of(
@@ -349,12 +355,18 @@ public class BoundaryExecutorTest {
         child[0] = BoundaryValueView.of(ActualKind.STRING);
         check(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, USER, valid) instanceof BoundaryOutcome.Fail,
             "same class view rechecks live field after invalidation");
+        var rejectedField = ((BoundaryOutcome.Fail)checkCell(FailurePolicyId.TYPE_DESCRIPTOR, USER, valid)).failure();
+        check(rejectedField.metadata().get("validationPath").equals("/n")
+            && rejectedField.metadata().get("validationMissingField").equals("false"), "class rejection retains current field path");
         child[0] = BoundaryValueView.ofNumber(2);
         expectPass(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, USER, valid), "failed guard does not poison next check");
         BoundaryValueView missing = BoundaryValueView.ofClass("@src/app/User").withClassFields(List.of(
             new BoundaryValueView.ClassField("n", NUMBER, true, false, () -> { throw new AssertionError("missing read"); })));
         check(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, USER, missing) instanceof BoundaryOutcome.Fail,
             "required presence fails without reading missing value");
+        var absentField = ((BoundaryOutcome.Fail)checkCell(FailurePolicyId.TYPE_DESCRIPTOR, USER, missing)).failure();
+        check(absentField.metadata().get("validationPath").equals("/n")
+            && absentField.metadata().get("validationMissingField").equals("true"), "absence path never invokes missing supplier");
         BoundaryValueView[] cyclic = new BoundaryValueView[1];
         cyclic[0] = BoundaryValueView.ofClass("@src/app/User").withClassFields(List.of(
             new BoundaryValueView.ClassField("self", USER, true, true, () -> cyclic[0])));
@@ -424,7 +436,7 @@ public class BoundaryExecutorTest {
         expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, NUMBER_ARRAY, badSecond),
             FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, DiagnosticCode.E8003,
             "array element 2 type mismatch", "number", "string",
-            Map.of("oneBasedIndex", "2"), leafSecond,
+            elementPath("2", "/1"), leafSecond,
             "[number] vs [1.5, string, 2.5]");
 
         // The first failure wins in increasing index order (position 1 here).
@@ -434,7 +446,7 @@ public class BoundaryExecutorTest {
         expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, NUMBER_ARRAY, badFirst),
             FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, DiagnosticCode.E8003,
             "array element 1 type mismatch", "number", "string",
-            Map.of("oneBasedIndex", "1"), expectedKindMismatch("number", "string"),
+            elementPath("1", "/0"), expectedKindMismatch("number", "string"),
             "[number] vs [string, 1.5]");
 
         // Nested arrays: the outer index is the failing element's position;
@@ -446,7 +458,7 @@ public class BoundaryExecutorTest {
         expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, NESTED_INT_ARRAY, nested),
             FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, DiagnosticCode.E8003,
             "array element 2 type mismatch", "[number]", "array",
-            Map.of("oneBasedIndex", "2"), leafNonIntegral,
+            elementPath("2", "/1/0"), leafNonIntegral,
             "[[number]] vs [[3], [string]]");
 
         // The decoded-array mark (B3): an element carrying the std/json
@@ -461,7 +473,7 @@ public class BoundaryExecutorTest {
                 markedNested),
             FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, DiagnosticCode.E8003,
             "array element 2 type mismatch", "[number]", "table",
-            Map.of("oneBasedIndex", "2"), leafNonIntegral,
+            elementPath("2", "/1/0"), leafNonIntegral,
             "[[number]] vs [[3], decoded [string]]");
 
         // The mark is inert on every other value: a decoded array is still
@@ -528,14 +540,14 @@ public class BoundaryExecutorTest {
         expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, INT_ARRAY, presentNull),
             FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, DiagnosticCode.E8003,
             "array element 1 type mismatch", "number", "null",
-            Map.of("oneBasedIndex", "1"), expectedKindMismatch("number", "null"),
+            elementPath("1", "/0"), expectedKindMismatch("number", "null"),
             "[number] vs [null]");
 
         // The absent/deleted slot reads undefined, distinct from null.
         expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, INT_ARRAY, deletedSlot),
             FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, DiagnosticCode.E8003,
             "array element 1 type mismatch", "number", "undefined",
-            Map.of("oneBasedIndex", "1"), expectedKindMismatch("number", "undefined"),
+            elementPath("1", "/0"), expectedKindMismatch("number", "undefined"),
             "[number] vs a deleted slot");
 
         // The array(null) admission control: the present null passes
@@ -554,7 +566,7 @@ public class BoundaryExecutorTest {
         expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, NULL_ARRAY, deletedSlot),
             FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, DiagnosticCode.E8003,
             "array element 1 type mismatch", "null", "undefined",
-            Map.of("oneBasedIndex", "1"), expectedKindMismatch("null", "undefined"),
+            elementPath("1", "/0"), expectedKindMismatch("null", "undefined"),
             "[null] vs a deleted slot");
     }
 
@@ -663,7 +675,8 @@ public class BoundaryExecutorTest {
                 BoundaryContext.parameter(1)),
             FailurePolicyId.HOST_PARAMETER, DiagnosticCode.E8010,
             "parameter 1 type mismatch: array element 2 type mismatch",
-            "[number]", "table", Map.of("index", "1"), null,
+            "[number]", "table", Map.of("index", "1", "validationPath", "/1", "validationPathDepth", "1",
+                "validationPathTruncated", "false", "validationMissingField", "false"), null,
             "host array parameter with a failing element");
 
         // Success passes the same value.
@@ -759,7 +772,7 @@ public class BoundaryExecutorTest {
                     BoundaryValueView.of(ActualKind.STRING))),
             FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, DiagnosticCode.E8003,
             "array element 2 type mismatch", "number", "string",
-            Map.of("oneBasedIndex", "2"), leaf, "async array completion element 2");
+            elementPath("2", "/1"), leaf, "async array completion element 2");
 
         BoundaryValueView ok = BoundaryValueView.of(ActualKind.STRING);
         BoundaryOutcome okOutcome = checkCell(FailurePolicyId.ASYNC_COMPLETION, STRING, ok);
@@ -1054,7 +1067,7 @@ public class BoundaryExecutorTest {
                     BoundaryValueView.of(ActualKind.STRING))),
             FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, DiagnosticCode.E8003,
             "array element 2 type mismatch", "number", "string",
-            Map.of("oneBasedIndex", "2"), leaf,
+            elementPath("2", "/1"), leaf,
             "declared array position retains the original leaf cause");
         expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, NUMBER,
                 BoundaryValueView.of(ActualKind.STRING)),

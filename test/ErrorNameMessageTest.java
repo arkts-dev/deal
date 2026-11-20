@@ -25,6 +25,34 @@ public final class ErrorNameMessageTest {
               }
             }
             """.replace("LARGE_MESSAGE", "x".repeat(9000));
+        var jvmPath = BoundedProcess.runCaptured(List.of("java", "-cp", TestClasspath.absolute(TestClasspath.EmptyEntry.OMIT),
+            "deal.test.ErrorNameMessageTest", "--validation-path"), Path.of(".").toAbsolutePath(), Map.of("DEAL_DIAGNOSTICS_JSON","1"));
+        if (jvmPath.exitCode()!=0 || !jvmPath.stdout().equals("PATH-OK\n")
+                || !jvmPath.stderr().contains("\"validationPath\":\"/0/name~1~0\"") || !jvmPath.stderr().contains("\"message\":\"chosen\""))
+            throw new AssertionError("JVM same-traversal validation path: " + jvmPath);
+        var validationControl = BoundedProcess.runCaptured(List.of("node", "-e", """
+            const rt=require('./deal/runtime');
+            rt.registerClassPlan('@m/Item',[{name:'name/~',descriptor:'string',optional:false}]);
+            rt.registerClassPlan('@m/Root',[{name:'items',descriptor:'[@m/Item]',optional:false}]);
+            const item=rt.classPlan('@m/Item',[{name:'name/~',descriptor:'string',optional:false}],{'name/~':'ok'});
+            const root=rt.classPlan('@m/Root',[{name:'items',descriptor:'[@m/Item]',optional:false}],{items:[item]});
+            item['name/~']=false;
+            let failure;try{rt.checkType('@m/Root',root);}catch(e){failure=rt.reifyError(e);}
+            if(!failure)throw Error('missed invalid descendant');
+            failure.message='chosen';
+            const evidence=JSON.parse(rt.runtimeDiagnostic(failure)).runtime;
+            if(evidence.validationPath!='/items/0/name~1~0'||evidence.validationPathDepth!=='3'
+                ||evidence.validationMissingField!=='false'||evidence.message!=='chosen')throw Error(JSON.stringify(evidence));
+            item['name/~']='fixed';if(rt.checkType('@m/Root',root)!==root)throw Error('repair identity');
+            delete item['name/~'];
+            try{rt.checkType('@m/Root',root);throw Error('missing admitted');}catch(e){
+              const d=JSON.parse(rt.runtimeDiagnostic(e)).runtime;
+              if(!d||d.validationPath!='/items/0/name~1~0'||d.validationMissingField!=='true')throw e;
+            }
+            console.log('PATH-OK');
+            """), Path.of(".").toAbsolutePath());
+        if (validationControl.exitCode()!=0 || !validationControl.stdout().equals("PATH-OK\n"))
+            throw new AssertionError("JS same-traversal validation path: " + validationControl);
         var getterControl = BoundedProcess.runCaptured(List.of("node", "-e", """
             const runtime=require('./deal/runtime');
             const error=runtime.errorValue('Bound','message');
@@ -327,6 +355,32 @@ public final class ErrorNameMessageTest {
     }
 
     public static void main(String[] args) throws Exception {
+        if (args.length == 1 && args[0].equals("--validation-path")) {
+            var fields = new java.util.LinkedHashMap<String,Object>();
+            fields.put("name/~", "ok");
+            var carrier = new deal.codegen.jvm.JvmRuntime.ClassInstance() {
+                public String classIdText(){return "@m/Item";}
+                public List<String> fieldNames(){return List.of("name/~");}
+                public List<deal.codegen.jvm.JvmRuntime.ClassField> boundaryFields(){return List.of(new deal.codegen.jvm.JvmRuntime.ClassField("name/~","string",true));}
+                public boolean isPresent(String key){return fields.containsKey(key);}
+                public Object read(String key){return fields.get(key);}
+                public void write(String key,Object value){fields.put(key,value);}
+                public void delete(String key){fields.remove(key);}
+            };
+            var array = new deal.codegen.jvm.JvmRuntime.Array(1);
+            array.elements.add(carrier);
+            deal.codegen.jvm.JvmRuntime.bcheck("array(@m/Item)","ref",array);
+            fields.put("name/~", false);
+            try {deal.codegen.jvm.JvmRuntime.bcheck("array(@m/Item)","ref",array);throw new AssertionError("missed invalid field");}
+            catch(deal.codegen.jvm.JvmRuntime.DealError failure){
+                failure.reify().message="chosen";
+                deal.codegen.jvm.JvmRuntime.reportRuntimeDiagnostic(deal.codegen.jvm.JvmRuntime.rethrow(failure.reify()));
+            }
+            fields.put("name/~","fixed");
+            if(deal.codegen.jvm.JvmRuntime.bcheck("array(@m/Item)","ref",array)!=array)throw new AssertionError("repair identity");
+            System.out.println("PATH-OK");
+            return;
+        }
         if (args.length == 1 && args[0].equals("--diagnostic-projection")) {
             var cause = new deal.codegen.jvm.JvmRuntime.DealError("Leaf", "leaf", null, null, null, null, null);
             for (int i = 0; i < 10; i++) cause = new deal.codegen.jvm.JvmRuntime.DealError(

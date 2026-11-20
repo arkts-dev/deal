@@ -997,7 +997,7 @@ final class JvmHostAbiEmission {
         out.append("    try {\n");
         out.append("      return __hostCheckValue(desc, v, oFile, oLine, oCol);\n");
         out.append("    } catch (JvmRuntime.DealError __inner) {\n");
-        out.append("      throw JvmRuntime.hostContext(JvmRuntime.arm(deal.semantic.ir.FailureArmId.HOST_PARAMETER_CELL, java.util.Map.of(\"index\", java.lang.Integer.toString(i), \"inner\", __hostInnerMessage(desc, v, __inner)), oFile + \":\" + oLine + \":\" + oCol, desc, __hostKind(v)), null, null, null, \"parameter\", i);\n");
+        out.append("      throw JvmRuntime.validationContext(JvmRuntime.hostContext(JvmRuntime.arm(deal.semantic.ir.FailureArmId.HOST_PARAMETER_CELL, java.util.Map.of(\"index\", java.lang.Integer.toString(i), \"inner\", __hostInnerMessage(desc, v, __inner)), oFile + \":\" + oLine + \":\" + oCol, desc, __hostKind(v)), null, null, null, \"parameter\", i), __inner);\n");
         out.append("    }\n");
         out.append("  }\n\n");
         out.append("  static java.lang.Object __hostCheck(java.lang.String desc, "
@@ -1007,7 +1007,7 @@ final class JvmHostAbiEmission {
         out.append("      return __hostCheckValue(desc, v, oFile, oLine, oCol);\n");
         out.append("    } catch (JvmRuntime.DealError __inner) {\n");
         out.append("      if (completion) { throw JvmRuntime.arm(deal.semantic.ir.FailureArmId.ASYNC_COMPLETION_KIND, java.util.Map.of(\"expected\", __hostKindText(desc)), oFile + \":\" + oLine + \":\" + oCol, __hostKindToken(desc), __hostKind(v)); }\n");
-        out.append("      throw JvmRuntime.hostContext(JvmRuntime.arm(deal.semantic.ir.FailureArmId.HOST_SYNC_RETURN_CELL, java.util.Map.of(\"inner\", __hostInnerMessage(desc, v, __inner)), oFile + \":\" + oLine + \":\" + oCol, desc, __hostKind(v)), null, null, null, \"return\", null);\n");
+        out.append("      throw JvmRuntime.validationContext(JvmRuntime.hostContext(JvmRuntime.arm(deal.semantic.ir.FailureArmId.HOST_SYNC_RETURN_CELL, java.util.Map.of(\"inner\", __hostInnerMessage(desc, v, __inner)), oFile + \":\" + oLine + \":\" + oCol, desc, __hostKind(v)), null, null, null, \"return\", null), __inner);\n");
         out.append("    }\n");
         out.append("  }\n\n");
         out.append("  static JvmRuntime.DealError __hostFail(java.lang.String reason, "

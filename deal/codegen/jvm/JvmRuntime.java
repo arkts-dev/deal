@@ -517,6 +517,7 @@ public final class JvmRuntime {
         private Map<String, String> hostEvidence = Map.of();
         private Map<String, String> arrayEvidence = Map.of();
         private Map<String, String> numericEvidence = Map.of();
+        private Map<String, String> validationEvidence = Map.of();
         /**
          * Whether this failure was published by a rethrow of a
          * transported Error value (never by a fresh runtime check, a
@@ -594,6 +595,7 @@ public final class JvmRuntime {
         published.hostEvidence = transport.hostEvidence;
         published.arrayEvidence = transport.arrayEvidence;
         published.numericEvidence = transport.numericEvidence;
+        published.validationEvidence = transport.validationEvidence;
         published.transported = true;
         published.reified = value;
         value.transport = published;
@@ -637,6 +639,7 @@ public final class JvmRuntime {
         wrapped.hostEvidence = previous.hostEvidence;
         wrapped.arrayEvidence = previous.arrayEvidence;
         wrapped.numericEvidence = previous.numericEvidence;
+        wrapped.validationEvidence = previous.validationEvidence;
         wrapped.reified = previous.reified;
         if (wrapped.reified != null) {
             wrapped.reified.transport = wrapped;
@@ -657,6 +660,12 @@ public final class JvmRuntime {
         if (parameter != null) facts.put("hostParameter", Integer.toString(parameter));
         error.hostEvidence = Map.copyOf(facts);
         return error;
+    }
+
+    /** Transfer only evidence from the check that this producer is reprojecting. */
+    public static DealError validationContext(DealError projected, DealError rejected) {
+        projected.validationEvidence = rejected.validationEvidence;
+        return projected;
     }
 
     private static boolean sameText(String left, String right) {
@@ -850,6 +859,8 @@ public final class JvmRuntime {
             appendRuntimeText(out, key, error.hostEvidence.get(key), true);
         for (String key : List.of("arrayIndex", "arrayLength", "arrayConstraint"))
             appendRuntimeText(out, key, error.arrayEvidence.get(key), true);
+        for (String key : List.of("validationPath", "validationPathDepth", "validationPathTruncated", "validationMissingField"))
+            appendRuntimeText(out, key, error.validationEvidence.get(key), true);
         for (String key : List.of("numericOperand", "numericParameter", "numericConstraint"))
             appendRuntimeText(out, key, error.numericEvidence.get(key), true);
         if (error.cause != null) {
@@ -1500,28 +1511,44 @@ public final class JvmRuntime {
     }
 
     public static Object validateData(Object root, boolean completion) {
+        return validateData(root, completion, null);
+    }
+    private record DataCheck(Object value, deal.semantic.RuntimeValidationPath path) {}
+    private static Object validateData(Object root, boolean completion, deal.semantic.RuntimeValidationPath path) {
         java.util.Set<Object> seen = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
-        java.util.ArrayList<Object> pending = new java.util.ArrayList<>();
-        pending.add(root);
+        java.util.ArrayList<DataCheck> pending = new java.util.ArrayList<>();
+        pending.add(new DataCheck(root, path));
         while (!pending.isEmpty()) {
-            Object value = pending.removeLast();
+            DataCheck task = pending.removeLast();
+            Object value = task.value();
+            var activePath = task.path();
+            try {
             if (value == null || value == UNDEFINED || value == MISSING || value instanceof Boolean || value instanceof Number) continue;
             if (value instanceof String) continue;
             if (!seen.add(value)) continue;
             if (value instanceof Table table) {
                 for (var entry : ((java.util.Map<?, ?>) table.entries).entrySet()) {
                     if (!(entry.getKey() instanceof String)) throw kindFailure("table", "table", completion);
-                    pending.add(entry.getKey()); pending.add(entry.getValue());
+                    var child = deal.semantic.RuntimeValidationPath.child(task.path(), (String)entry.getKey());
+                    pending.add(new DataCheck(entry.getKey(), child)); pending.add(new DataCheck(entry.getValue(), child));
                 }
-            } else if (value instanceof Array array) pending.addAll(array.elements);
+            } else if (value instanceof Array array) {
+                for (int i = 0; i < array.elements.size(); i++)
+                    pending.add(new DataCheck(array.elements.get(i), deal.semantic.RuntimeValidationPath.child(task.path(), Integer.toString(i))));
+            }
             else if (value instanceof ErrorValue error) {
                 bcheck("Error", "ref", error, completion, null, false);
             } else if (value instanceof ClassInstance instance) {
-                for (String key : instance.fieldNames()) if (instance.isPresent(key)) pending.add(instance.read(key));
+                for (String key : instance.fieldNames()) if (instance.isPresent(key))
+                    pending.add(new DataCheck(instance.read(key), deal.semantic.RuntimeValidationPath.child(task.path(), key)));
             } else if (value instanceof FunctionValue function) {
                 if (!validFunction(function)) throw kindFailure("function", "function", completion);
             } else if (!(value instanceof ErrorValue)) {
                 throw kindFailure("unknown", "table", completion);
+            }
+            } catch (DealError failure) {
+                if (failure.validationEvidence.isEmpty()) failure.validationEvidence = deal.semantic.RuntimeValidationPath.metadata(activePath, false);
+                throw failure;
             }
         }
         return root;
@@ -1531,22 +1558,24 @@ public final class JvmRuntime {
                               Object value, ArrayCheck parent) {}
     private record ValueCheck(String descriptor, String staticKind, Object value,
                               boolean completion, String canonical, ArrayCheck arrays,
-                              ClassInstance owner, ClassField field) {}
+                              ClassInstance owner, ClassField field, deal.semantic.RuntimeValidationPath path) {}
 
     private static Object bcheck(String desc, String staticKind, Object v,
             boolean completion, String canon, boolean hostCompletionCrossing) {
         var pending = new java.util.ArrayDeque<ValueCheck>();
         var seen = new IdentityHashMap<Object, java.util.Set<String>>();
-        ValueCheck root = new ValueCheck(desc, staticKind, v, completion, canon, null, null, null);
+        ValueCheck root = new ValueCheck(desc, staticKind, v, completion, canon, null, null, null, null);
         Object admitted = v == MISSING ? UNDEFINED : v;
         pending.push(root);
         while (!pending.isEmpty()) {
             ValueCheck task = pending.pop();
             Object value = task.value();
             String current = task.descriptor(), canonical = task.canonical();
+            boolean missing = false;
             try {
                 if (task.field() != null) {
                     if (!task.owner().isPresent(task.field().name())) {
+                        missing = task.field().required();
                         if (task.field().required()) throw kindFailure(task.owner().classIdText(),
                             task.completion() ? completionActualOf("ref", task.owner()) : actualOf("ref", task.owner()), task.completion());
                         continue;
@@ -1573,7 +1602,8 @@ public final class JvmRuntime {
                     var fields = instance.boundaryFields();
                     for (int i = fields.size() - 1; i >= 0; --i) {
                         ClassField field = fields.get(i);
-                        pending.push(new ValueCheck(field.descriptor(), "ref", null, task.completion(), null, task.arrays(), instance, field));
+                        pending.push(new ValueCheck(field.descriptor(), "ref", null, task.completion(), null, task.arrays(), instance, field,
+                            deal.semantic.RuntimeValidationPath.child(task.path(), field.name())));
                     }
                 } else if (current.startsWith("array(")) {
                     if (!(value instanceof Array array)) throw kindFailure("array", actual, task.completion());
@@ -1587,19 +1617,24 @@ public final class JvmRuntime {
                         Object element = i < array.elements.size() ? array.elements.get(i) : MISSING;
                         String elementKind = element == MISSING ? "missing" : inner;
                         pending.push(new ValueCheck(inner, elementKind, element, false, innerCanonical,
-                            new ArrayCheck(i + 1, innerCanonical != null ? innerCanonical : inner, elementKind, element, task.arrays()), null, null));
+                            new ArrayCheck(i + 1, innerCanonical != null ? innerCanonical : inner, elementKind, element, task.arrays()), null, null,
+                            deal.semantic.RuntimeValidationPath.child(task.path(), Integer.toString(i))));
                     }
                 } else {
-                    Object checked = bcheckLeaf(current, task.staticKind(), value, task.completion(), canonical, hostCompletionCrossing);
+                    Object checked = bcheckLeaf(current, task.staticKind(), value, task.completion(), canonical, hostCompletionCrossing, task.path());
                     if (task == root) admitted = checked;
                 }
             } catch (DealError error) {
+                var pathEvidence = error.validationEvidence.isEmpty()
+                    ? deal.semantic.RuntimeValidationPath.metadata(task.path(), missing) : error.validationEvidence;
+                error.validationEvidence = pathEvidence;
                 for (ArrayCheck array = task.arrays(); array != null; array = array.parent()) {
                     DealError outer = arm(deal.semantic.ir.FailureArmId.ARRAY_ELEMENT_KIND,
                         java.util.Map.of("oneBasedIndex", Integer.toString(array.index())), "-",
                         array.descriptor(), elementActualOf(array.staticKind(), array.value()));
                     DealError cause = error.code.equals("E8003") && error.cause != null ? error.cause : error;
                     error = new DealError(outer.code, outer.msg, outer.origin, outer.expected, outer.actual, outer.frames, cause);
+                    error.validationEvidence = pathEvidence;
                 }
                 throw error;
             }
@@ -1609,6 +1644,11 @@ public final class JvmRuntime {
 
     private static Object bcheckLeaf(String desc, String staticKind, Object v,
             boolean completion, String canon, boolean hostCompletionCrossing) {
+        return bcheckLeaf(desc, staticKind, v, completion, canon, hostCompletionCrossing, null);
+    }
+
+    private static Object bcheckLeaf(String desc, String staticKind, Object v,
+            boolean completion, String canon, boolean hostCompletionCrossing, deal.semantic.RuntimeValidationPath path) {
         if (v == MISSING) v = UNDEFINED;
         String actual = v == UNDEFINED ? "undefined" : completion ? completionActualOf(staticKind, v)
             : actualOf(staticKind, v);
@@ -1621,7 +1661,7 @@ public final class JvmRuntime {
             if (v instanceof String) return bcheck("string", "string", v, completion, null, hostCompletionCrossing);
             if (v == null || v == UNDEFINED || v instanceof Boolean || v instanceof Number
                     || v instanceof String || v instanceof Table || v instanceof Array
-                    || v instanceof FunctionValue || v instanceof ClassInstance || v instanceof ErrorValue) return validateData(v, completion);
+                    || v instanceof FunctionValue || v instanceof ClassInstance || v instanceof ErrorValue) return validateData(v, completion, path);
             // A foreign JVM object has no DEAL static-kind authority.
             throw kindFailure("unknown", "table", completion);
         }
@@ -1650,7 +1690,7 @@ public final class JvmRuntime {
         }
         if ("record".equals(desc)) {
             if (v instanceof Table) {
-                return validateData(v, completion);
+                return validateData(v, completion, path);
             }
             throw kindFailure("table", actual, completion);
         }

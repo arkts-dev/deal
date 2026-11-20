@@ -417,6 +417,17 @@ int main(void) {
             && strstr(diagnostic, "\"hostStage\":\"invocation\"") != NULL,
           "host rejection context survives rooted collection");
     deal_error_snapshot_release(diagnostic);
+    deal_error_set_validation_path(parser_error, path, sizeof(path)-1u, 3u, 0, 1);
+    check(platform_live() == parser_baseline + 12u, "validation path owns one additional allocation");
+    deal_error_set_validation_path(parser_error, path, sizeof(path)-1u, 3u, 1, 1);
+    check(platform_live() == parser_baseline + 12u, "validation path replacement releases old storage");
+    deal_gc_collect_full();
+    diagnostic = deal_error_diagnostic(parser_error);
+    check(strstr(diagnostic, "\"validationPath\":\"/items/0/na\\u0000me\"") != NULL
+            && strstr(diagnostic, "\"validationPathDepth\":\"3\"") != NULL
+            && strstr(diagnostic, "\"validationMissingField\":\"true\"") != NULL,
+          "validation path survives rooted collection with exact explicit length");
+    deal_error_snapshot_release(diagnostic);
     deal_root_frame_write(0u, NULL);
     deal_gc_collect_full();
     check(platform_live() == parser_baseline,

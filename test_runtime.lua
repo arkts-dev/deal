@@ -4,6 +4,22 @@
 package.path = "./?.lua;" .. package.path
 local __rt = require("deal.runtime")
 
+do
+  local K=rawget(_G,'__dealCarrierKeys')
+  __rt.__hostClassPlans=__rt.__hostClassPlans or {}
+  __rt.__hostClassPlans['@test/Path']={{name='name/~',descriptor='string',optional=false}}
+  local value=__rt.class_plan_('@test/Path',{{name='name/~',descriptor='string',optional=false}},{['name/~']='ok'})
+  local fields=rawget(value,K.f) or value
+  fields['name/~']=false
+  local ok,failure=pcall(__rt.check_type,'@test/Path',value)
+  assert(not ok and failure.validationPath=='/name~1~0' and failure.validationPathDepth=='1')
+  fields['name/~']='fixed'
+  assert(__rt.check_type('@test/Path',value)==value)
+  fields['name/~']=nil
+  ok,failure=pcall(__rt.check_type,'@test/Path',value)
+  assert(not ok and failure.validationMissingField=='true')
+end
+
 -- The private carrier keys (ISSUE-0830): the runtime, the emitted chunks and
 -- the stdlib share one process-wide key set.
 local __K = __rt.__keys

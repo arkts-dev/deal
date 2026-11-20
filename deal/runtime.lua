@@ -1099,7 +1099,31 @@ end
 -- span; never a raw Lua error; never mutates its inputs. Array elements
 -- are checked in 1-based contiguous order and the first failing index is
 -- wrapped in E8003.
-local function check_canonical_ast(ast, v, file, line, column, seen)
+local check_canonical_ast
+local function validation_child(parent, segment)
+  return {parent=parent, segment=segment, depth=parent and parent.depth+1 or 1}
+end
+local function validation_failure(failure, path, missing)
+  if type(failure) ~= "table" then return end
+  local prefix, depth = {}, path and path.depth or 0
+  local frame = path
+  while frame do
+    if frame.depth <= 32 then prefix[frame.depth] = frame.segment end
+    frame = frame.parent
+  end
+  local pointer, truncated = "", depth > 32
+  for i=1,math.min(depth,32) do
+    local key, take = prefix[i], math.min(#prefix[i],128)
+    while take > 0 and take < #key and string.byte(key,take+1) >= 128 and string.byte(key,take+1) < 192 do take=take-1 end
+    if take < #key then truncated=true end
+    pointer=pointer.."/"..string.gsub(string.gsub(string.sub(key,1,take),"~","~0"),"/","~1")
+  end
+  failure.validationPath=pointer
+  failure.validationPathDepth=tostring(depth)
+  failure.validationPathTruncated=tostring(truncated)
+  failure.validationMissingField=tostring(missing)
+end
+local function check_canonical_ast_inner(ast, v, file, line, column, seen, path)
   seen = seen or {}
   if type(v) == "table" and v ~= __rt.__NULL and v ~= __rt.__UNDEFINED and v ~= __rt.__MISSING
       and getmetatable(v) ~= nil and rawget(v, __K.kind) == nil and rawget(v, __K.c) == nil
@@ -1179,11 +1203,13 @@ local function check_canonical_ast(ast, v, file, line, column, seen)
         local member = rawget(v[__K.f] or v, field.name)
         if member == __rt.__MISSING then member = nil end
         if member == nil and not field.optional then
-          error(__rt._armErr("TYPED_BOUNDARY_KIND", {kind = field.descriptor}, "E8001",
-            "missing required field", file, line, column, field.descriptor, "undefined"))
+          local failure = __rt._armErr("TYPED_BOUNDARY_KIND", {kind = field.descriptor}, "E8001",
+            "missing required field", file, line, column, field.descriptor, "undefined")
+          validation_failure(failure, validation_child(path,field.name), true)
+          error(failure)
         end
         if member ~= nil then
-          check_canonical_ast(parse_descriptor(field.descriptor), member, file, line, column, seen)
+          check_canonical_ast(parse_descriptor(field.descriptor), member, file, line, column, seen, validation_child(path,field.name))
         end
       end
     end
@@ -1230,18 +1256,27 @@ local function check_canonical_ast(ast, v, file, line, column, seen)
       length = max
     end
     for i = 1, length do
-      local ok = v[i] ~= nil and pcall(check_canonical_ast, ast.element, v[i], file, line, column, seen)
+      local childPath = validation_child(path,tostring(i-1))
+      local ok, rejected
+      if v[i] ~= nil then ok, rejected = pcall(check_canonical_ast, ast.element, v[i], file, line, column, seen, childPath) end
       if not ok then
-        error(__rt._armErr("ARRAY_ELEMENT_KIND", { oneBasedIndex = i }, "E8003",
+        local failure = __rt._armErr("ARRAY_ELEMENT_KIND", { oneBasedIndex = i }, "E8003",
           "array element " .. i .. " type mismatch", file, line, column,
-          ast.element.text, __rt.typed_kind(v[i])))
+          ast.element.text, __rt.typed_kind(v[i]))
+        if type(rejected) == "table" and rejected.validationPath ~= nil then
+          failure.validationPath=rejected.validationPath
+          failure.validationPathDepth=rejected.validationPathDepth
+          failure.validationPathTruncated=rejected.validationPathTruncated
+          failure.validationMissingField=rejected.validationMissingField
+        else validation_failure(failure,childPath,false) end
+        error(failure)
       end
     end
     return v
   elseif kind == "nullable" then
     if ast.admitsNull and (v == nil or v == __rt.__NULL) then return __rt.__NULL end
     if ast.admitsUndefined and (v == __rt.__UNDEFINED or v == __rt.__MISSING) then return __rt.__UNDEFINED end
-    return check_canonical_ast(ast.inner, v, file, line, column, seen)
+    return check_canonical_ast(ast.inner, v, file, line, column, seen, path)
   elseif kind == "function" then
     -- Function row: a wrapper whose carried descriptor equals the atom's
     -- byte-exact text (the exact sync/async marker included). A wrapper
@@ -1267,6 +1302,15 @@ local function check_canonical_ast(ast, v, file, line, column, seen)
     return v
   end
   error(__rt._err("E8001", "internal: unhandled descriptor kind: " .. tostring(kind), file, line, column, nil, nil))
+end
+
+check_canonical_ast = function(ast, v, file, line, column, seen, path)
+  local ok, result = pcall(check_canonical_ast_inner, ast, v, file, line, column, seen, path)
+  if not ok then
+    if type(result) == "table" and result.validationPath == nil then validation_failure(result,path,false) end
+    error(result,0)
+  end
+  return result
 end
 
 --- Strict canonical descriptor parser (total; never throws).
@@ -1396,7 +1440,7 @@ end
 -- supplied call origin — and compose no failure text of their own. An
 -- unregistered renderer (the runtime driven outside a production
 -- artifact) is a fail-closed producer defect, never a textual fallback.
-local function host_arm_failure(id, values, file, line, column, expected, subject, signature, context)
+local function host_arm_failure(id, values, file, line, column, expected, subject, signature, context, rejected)
   local render = __rt.__hostArm
   if render == nil then
     error("the host failure-arm renderer is not registered on the deployed "
@@ -1414,6 +1458,12 @@ local function host_arm_failure(id, values, file, line, column, expected, subjec
     failure.hostModule = context.module
     failure.hostExport = context.name
     failure.hostDeclaration = context.declaration
+  end
+  if type(rejected)=="table" and rejected.validationPath~=nil then
+    failure.validationPath=rejected.validationPath
+    failure.validationPathDepth=rejected.validationPathDepth
+    failure.validationPathTruncated=rejected.validationPathTruncated
+    failure.validationMissingField=rejected.validationMissingField
   end
   error(failure, 0)
 end
@@ -1472,8 +1522,8 @@ function __rt.from_lua_function(sig, raw_f, context)
   local is_null_ret = ret_atom.kind == "primitive" and ret_atom.name == "null"
   local is_async = parsed.isAsync == true
   local render_failure = host_arm_failure
-  local function host_arm_failure(id, values, file, line, column, expected, subject)
-    return render_failure(id, values, file, line, column, expected, subject, sig, context)
+  local function host_arm_failure(id, values, file, line, column, expected, subject, rejected)
+    return render_failure(id, values, file, line, column, expected, subject, sig, context, rejected)
   end
 
   return __rt.function_(sig, function(...)
@@ -1520,7 +1570,7 @@ function __rt.from_lua_function(sig, raw_f, context)
       if not ok then
         host_arm_failure("HOST_PARAMETER_CELL",
           {index = i, inner = host_inner_reason(err)},
-          file, line, column, param_desc, arg)
+          file, line, column, param_desc, arg, err)
       end
     end
 
@@ -1582,7 +1632,7 @@ function __rt.from_lua_function(sig, raw_f, context)
         if not ok then
           host_arm_failure("HOST_SYNC_RETURN_CELL",
             {inner = host_inner_reason(err)},
-            file, line, column, ret_descriptor, results[i])
+            file, line, column, ret_descriptor, results[i], err)
         end
       end
     else
