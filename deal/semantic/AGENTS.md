@@ -57,7 +57,7 @@ remain distinct dialects.
 - Throw/catch preserves Error identity/current fields and original facts/causes.
   First throw binds diagnostic code from name; catch executions own fresh captured
   cells. Oracle snapshots retain only approved producer metadata through rethrow;
-  bounded structured projection never changes canonical trace/human text. Host return-cell rejections retain their resolved binding/import facts; host-authored failures gain none. Bare assignment targets are not invented identifier reads.
+  bounded structured projection never changes canonical trace/human text. Host return/completion-cell rejections retain their resolved binding/import facts; completion attribution follows the selected host operation, and host-authored failures gain none. Bare assignment targets are not invented identifier reads.
 
 ## Algorithms
 

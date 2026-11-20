@@ -1386,6 +1386,7 @@ record NumValue(double value) implements Value {
             Value value;
             DealFailure failure;
             boolean completed;
+            FunctionExecutionBinding hostRejectionBinding;
 
             Task(AsyncTokenId token, java.util.function.Supplier<Value> body) {
                 this.token = token;
@@ -3527,7 +3528,7 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
             facts.put("hostSignature", host.descriptor().canonicalSpecText());
             facts.put("hostBoundary", crossing);
             facts.put("hostDirection", "host-to-deal");
-            facts.put("hostStage", "invocation");
+            facts.put("hostStage", crossing.equals("completion") ? "completion" : "invocation");
             String specifier = null;
             boolean ambiguous = false;
             for (UnitState unit : units.values()) {
@@ -5069,7 +5070,10 @@ private static IllegalStateException dynamicFunctionValueDefect(
                             carrierViewOfValue(invalid.value())));
                 case HostResponder.AsyncStartOutcome.Operation operation -> {
                     hostOperations.put(token.tokenId(), operation.label());
-                    tasks.put(token.tokenId(), new Task(token, null));
+                    Task task = new Task(token, null);
+                    if (!exportName.startsWith("@value#"))
+                        task.hostRejectionBinding = new FunctionExecutionBinding.HostFunction(hostModuleId, exportName, descriptor);
+                    tasks.put(token.tokenId(), task);
                 }
             }
         }
@@ -5502,8 +5506,13 @@ private static IllegalStateException dynamicFunctionValueDefect(
                 Value completed = task.value == null ? Value.NullValue.INSTANCE
                     : task.value;
                 SemanticOp boundary = opOf(payload.completionBoundaryOpId());
-                Value checked = runBoundaryChild(boundary, completed,
-                    BoundaryContext.none());
+                Value checked;
+                try {
+                    checked = runBoundaryChild(boundary, completed, BoundaryContext.none());
+                } catch (DealFailure failure) {
+                    retainHostContext(failure, task.hostRejectionBinding, "completion");
+                    throw failure;
+                }
                 return publish(op, checked);
             } finally {
                 // One AWAIT consumes one activation: a fresh per-activation

@@ -6645,18 +6645,19 @@ public class HostModuleLoadEmissionTest {
 
     private static void testOracleHostDiagnosticContext(List<Path> roots) throws Exception {
         var fixture = compileProject(Map.of(
-            "src/diagnostic.d.deal", "export function read():string;",
+            "src/diagnostic.d.deal", "export function read():string;export function complete():Promise<string>;",
             "src/app.deal", """
                 import * as host from "host/diagnostic";
                 export function direct():string{return host.read();}
                 export function stored():string{let read=host.read;return read();}
                 export function adapted():string{let read:(ignored:number)=>string=host.read;return read(7);}
+                export async function completion():Promise<string>{return await host.complete();}
                 export function main():void{}
                 """), Map.of("host/diagnostic", "src/diagnostic.d.deal"));
         roots.add(fixture.root());
         var result = lower(fixture);
         if (result.project() == null) throw new AssertionError(result.diagnostics());
-        for (String entry : List.of("direct", "stored", "adapted")) {
+        for (String entry : List.of("direct", "stored", "adapted", "completion")) {
             for (int control = 0; control < 3; control++) {
                 final int selected = control;
                 var responder = new SemanticOracle.HostResponder() {
@@ -6665,14 +6666,19 @@ public class HostModuleLoadEmissionTest {
                             ? new SemanticOracle.Value.HostEntryValue(signature) : null;
                     }
                     public SyncOutcome call(ModuleId module, String export, RuntimeDescriptor.Func signature,
-                                            List<SemanticOracle.Value> args) {
+                                            List<SemanticOracle.Value> args) { return completion(); }
+                    public SyncOutcome completeAsync(String label) { return completion(); }
+                    private SyncOutcome completion() {
                         return selected == 0 ? new SyncOutcome.Returned(new SemanticOracle.Value.BoolValue(false))
                             : selected == 1 ? new SyncOutcome.Thrown("HOST_AUTHORED", "expected string")
                             : new SyncOutcome.Returned(new SemanticOracle.Value.StrValue("fixed"));
                     }
                 };
-                var run = SemanticOracle.invokeSyncEntry(result.project(), result.tables(), result.registries(), responder,
-                    result.project().entryModule(), entry, List.of());
+                boolean completion = entry.equals("completion");
+                var run = completion
+                    ? SemanticOracle.invokeAsyncEntry(result.project(), result.tables(), responder, result.project().entryModule(), entry, List.of())
+                    : SemanticOracle.invokeSyncEntry(result.project(), result.tables(), result.registries(), responder,
+                        result.project().entryModule(), entry, List.of());
                 if (control == 2) {
                     check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
                         "Oracle chosen host return repair: " + entry + " " + run.comparisonReport());
@@ -6680,11 +6686,11 @@ public class HostModuleLoadEmissionTest {
                     var facts = rejected.error().metadata();
                     check(control == 1 ? !facts.containsKey("hostSignature")
                             : "host/diagnostic".equals(facts.get("hostModule"))
-                                && "read".equals(facts.get("hostExport"))
-                                && "()->string".equals(facts.get("hostSignature"))
-                                && "return".equals(facts.get("hostBoundary"))
+                                && (completion ? "complete" : "read").equals(facts.get("hostExport"))
+                                && (completion ? "async()->string" : "()->string").equals(facts.get("hostSignature"))
+                                && (completion ? "completion" : "return").equals(facts.get("hostBoundary"))
                                 && "host-to-deal".equals(facts.get("hostDirection"))
-                                && "invocation".equals(facts.get("hostStage"))
+                                && (completion ? "completion" : "invocation").equals(facts.get("hostStage"))
                                 && facts.containsKey("hostDeclaration"),
                         "Oracle selected host rejection versus authored failure: " + entry + " " + rejected.error().diagnosticJson());
                 } else fail("Oracle missed host rejection: " + run.comparisonReport());
