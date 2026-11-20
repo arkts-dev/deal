@@ -232,13 +232,44 @@ public final class CanonicalJson {
         return sink.text.toString();
     }
 
+    private static final ThreadLocal<DigestScope> DIGEST_SCOPE = new ThreadLocal<>();
+
+    /** Reuse bounded digest scratch space only during this compiler invocation. */
+    public static DigestScope retainDigestWorkspace() { return new DigestScope(); }
+
+    public static final class DigestScope implements AutoCloseable {
+        private final DigestScope previous;
+        private final DigestSink sink = new DigestSink();
+
+        private DigestScope() {
+            previous = DIGEST_SCOPE.get();
+            DIGEST_SCOPE.set(this);
+        }
+
+        @Override public void close() {
+            sink.clear();
+            if (previous == null) DIGEST_SCOPE.remove();
+            else DIGEST_SCOPE.set(previous);
+        }
+    }
+
     /** Hash the same canonical UTF-8 stream without materializing document text or bytes. */
     public static String digest(Value value) {
         Objects.requireNonNull(value, "value must not be null");
-        DigestSink sink = new DigestSink();
-        append(sink, value);
-        sink.flush();
-        return HexFormat.of().formatHex(sink.digest.digest());
+        DigestScope scope = DIGEST_SCOPE.get();
+        // A reentrant call must never reset the active caller's digest state.
+        DigestSink sink = scope == null || scope.sink.busy ? new DigestSink() : scope.sink;
+        sink.busy = true;
+        try {
+            sink.digest.reset();
+            sink.size = 0;
+            append(sink, value);
+            sink.flush();
+            return HexFormat.of().formatHex(sink.digest.digest());
+        } finally {
+            sink.clear();
+            sink.busy = false;
+        }
     }
 
     private interface Sink {
@@ -258,6 +289,13 @@ public final class CanonicalJson {
         private final MessageDigest digest = newDigest();
         private final byte[] buffer = new byte[1024];
         private int size;
+        private boolean busy;
+
+        private void clear() {
+            digest.reset();
+            java.util.Arrays.fill(buffer, (byte) 0);
+            size = 0;
+        }
 
         private void put(int value) {
             if (size == buffer.length) flush();

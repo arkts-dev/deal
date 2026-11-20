@@ -508,9 +508,97 @@ public class CanonicalJsonTest {
         check(CanonicalJson.digest(document).equals(
                 CanonicalJson.sha256Hex(CanonicalJson.serializeBytes(document))),
             "streamed digest matches canonical bytes across all UTF-16 units and buffer boundaries");
+        try (var scope = CanonicalJson.retainDigestWorkspace()) {
+            check(CanonicalJson.digest(document).equals(
+                    CanonicalJson.sha256Hex(CanonicalJson.serializeBytes(document))),
+                "scoped digest preserves all UTF-16 units across buffer boundaries");
+        }
         check(CanonicalJson.serializeText(document).equals(new String(
                 CanonicalJson.serializeBytes(document), StandardCharsets.UTF_8)),
             "direct text and UTF-8 transport remain identical");
+    }
+
+    static void testDigestWorkspace() {
+        var document = compositeDocument();
+        String expected = CanonicalJson.sha256Hex(CanonicalJson.serializeBytes(document));
+        try {
+            var current = CanonicalJson.class.getDeclaredField("DIGEST_SCOPE");
+            current.setAccessible(true);
+            ThreadLocal<?> scopes = (ThreadLocal<?>) current.get(null);
+            check(scopes.get() == null, "no digest workspace retained outside scope");
+            try (var scope = CanonicalJson.retainDigestWorkspace()) {
+                var field = scope.getClass().getDeclaredField("sink");
+                field.setAccessible(true);
+                Object sink = field.get(scope);
+                var busy = sink.getClass().getDeclaredField("busy");
+                var buffer = sink.getClass().getDeclaredField("buffer");
+                var digest = sink.getClass().getDeclaredField("digest");
+                busy.setAccessible(true); buffer.setAccessible(true); digest.setAccessible(true);
+                for (int i = 0; i < 20; i++) {
+                    check(expected.equals(CanonicalJson.digest(document)), "reused digest remains exact");
+                    CanonicalJson.digest(CanonicalJson.str("different \\u0000\\ud800\\udc00"));
+                }
+                check(!busy.getBoolean(sink), "normal digest releases workspace");
+                check(java.util.Arrays.equals(new byte[1024], (byte[]) buffer.get(sink)),
+                    "digest clears scratch bytes after use");
+                var active = (java.security.MessageDigest) digest.get(sink);
+                byte[] prefix = {1, 2, 3};
+                active.update(prefix);
+                busy.setBoolean(sink, true);
+                check(expected.equals(CanonicalJson.digest(document)), "reentrant digest uses isolated fallback");
+                check(busy.getBoolean(sink), "reentrant digest leaves caller busy");
+                check(CanonicalJson.sha256Hex(prefix).equals(java.util.HexFormat.of().formatHex(active.digest())),
+                    "reentrant digest preserves active caller state");
+                busy.setBoolean(sink, false);
+                var original = (java.security.MessageDigest) digest.get(sink);
+                digest.set(sink, new java.security.MessageDigest("failing-test-provider") {
+                    @Override protected void engineUpdate(byte value) { throw new IllegalStateException("update failed"); }
+                    @Override protected void engineUpdate(byte[] bytes, int start, int length) {
+                        throw new IllegalStateException("update failed");
+                    }
+                    @Override protected byte[] engineDigest() { throw new AssertionError("unreached"); }
+                    @Override protected void engineReset() {}
+                });
+                try {
+                    CanonicalJson.digest(CanonicalJson.str("x".repeat(2048)));
+                    check(false, "digest propagates provider failure");
+                } catch (IllegalStateException expectedFailure) {
+                    check(!busy.getBoolean(sink), "failed digest releases workspace");
+                    check(java.util.Arrays.equals(new byte[1024], (byte[]) buffer.get(sink)),
+                        "failed digest clears buffered input");
+                } finally {
+                    digest.set(sink, original);
+                }
+                check(expected.equals(CanonicalJson.digest(document)), "workspace recovers after digest failure");
+                try {
+                    try (var nested = CanonicalJson.retainDigestWorkspace()) {
+                        check(scopes.get() == nested, "nested workspace installed");
+                        check(expected.equals(CanonicalJson.digest(document)), "nested digest remains exact");
+                        throw new IllegalStateException("scope unwind");
+                    }
+                } catch (IllegalStateException expectedFailure) {
+                    check(scopes.get() == scope, "exceptional nested exit restores outer workspace");
+                }
+                Throwable[] failures = new Throwable[1];
+                Thread worker = new Thread(() -> {
+                    try (var independent = CanonicalJson.retainDigestWorkspace()) {
+                        if (scopes.get() == scope) throw new AssertionError("shared workspace");
+                        for (int i = 0; i < 100; i++) {
+                            if (!expected.equals(CanonicalJson.digest(document))) throw new AssertionError("digest mismatch");
+                        }
+                    } catch (Throwable failure) { failures[0] = failure; }
+                });
+                worker.start();
+                for (int i = 0; i < 100; i++) CanonicalJson.digest(CanonicalJson.str("caller"));
+                worker.join();
+                check(failures[0] == null, "concurrent caller has independent workspace and correct digests");
+                check(expected.equals(CanonicalJson.digest(document)), "outer workspace remains usable");
+            }
+            check(scopes.get() == null, "closing outer scope releases workspace");
+            check(expected.equals(CanonicalJson.digest(document)), "unscoped fresh digest remains exact");
+        } catch (ReflectiveOperationException | InterruptedException failure) {
+            throw new AssertionError(failure);
+        }
     }
 
     static void testFieldAccessContracts() {
@@ -1016,6 +1104,7 @@ public class CanonicalJsonTest {
         testDecodeFailures();
         testDigest();
         testStreamingDigest();
+        testDigestWorkspace();
         testLoweringContextHash();
         testResultTypeDistinctions();
 
