@@ -1563,7 +1563,7 @@ public final class JvmRuntime {
                     pending.add(new DataCheck(array.elements.get(i), deal.semantic.RuntimeValidationPath.child(task.path(), Integer.toString(i))));
             }
             else if (value instanceof ErrorValue error) {
-                bcheck("Error", "ref", error, completion, null, false);
+                bcheck("Error", "ref", error, completion, null, false, activePath);
             } else if (value instanceof ClassInstance instance) {
                 for (String key : instance.fieldNames()) if (instance.isPresent(key))
                     pending.add(new DataCheck(instance.read(key), deal.semantic.RuntimeValidationPath.child(task.path(), key)));
@@ -1588,9 +1588,15 @@ public final class JvmRuntime {
 
     private static Object bcheck(String desc, String staticKind, Object v,
             boolean completion, String canon, boolean hostCompletionCrossing) {
+        return bcheck(desc, staticKind, v, completion, canon, hostCompletionCrossing, null);
+    }
+
+    private static Object bcheck(String desc, String staticKind, Object v,
+            boolean completion, String canon, boolean hostCompletionCrossing,
+            deal.semantic.RuntimeValidationPath path) {
         var pending = new java.util.ArrayDeque<ValueCheck>();
         var seen = new IdentityHashMap<Object, java.util.Set<String>>();
-        ValueCheck root = new ValueCheck(desc, staticKind, v, completion, canon, null, null, null, null);
+        ValueCheck root = new ValueCheck(desc, staticKind, v, completion, canon, null, null, null, path);
         Object admitted = v == MISSING ? UNDEFINED : v;
         pending.push(root);
         while (!pending.isEmpty()) {
@@ -1684,7 +1690,7 @@ public final class JvmRuntime {
             throw kindFailure("undefined", actual, completion);
         }
         if ("unknown".equals(desc)) {
-            if (v instanceof String) return bcheck("string", "string", v, completion, null, hostCompletionCrossing);
+            if (v instanceof String) return bcheck("string", "string", v, completion, null, hostCompletionCrossing, path);
             if (v == null || v == UNDEFINED || v instanceof Boolean || v instanceof Number
                     || v instanceof String || v instanceof Table || v instanceof Array
                     || v instanceof FunctionValue || v instanceof ClassInstance || v instanceof ErrorValue) return validateData(v, completion, path);
@@ -1726,8 +1732,10 @@ public final class JvmRuntime {
             // "Error" (the one class text without the leading '@'); the
             // superseded v1.2 spellings never reach this arm.
             if (v instanceof ErrorValue error) {
-                bcheck("string", "ref", error.name, completion, null, hostCompletionCrossing);
-                bcheck("string", "ref", error.message, completion, null, hostCompletionCrossing);
+                bcheck("string", "ref", error.name, completion, null, hostCompletionCrossing,
+                        deal.semantic.RuntimeValidationPath.child(path, "name"));
+                bcheck("string", "ref", error.message, completion, null, hostCompletionCrossing,
+                        deal.semantic.RuntimeValidationPath.child(path, "message"));
                 return v;
             }
             throw classFailure(desc, v, actual, completion);

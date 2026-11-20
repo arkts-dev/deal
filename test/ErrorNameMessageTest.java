@@ -34,7 +34,9 @@ public final class ErrorNameMessageTest {
         var jvmPath = BoundedProcess.runCaptured(List.of("java", "-cp", TestClasspath.absolute(TestClasspath.EmptyEntry.OMIT),
             "deal.test.ErrorNameMessageTest", "--validation-path"), Path.of(".").toAbsolutePath(), Map.of("DEAL_DIAGNOSTICS_JSON","1"));
         if (jvmPath.exitCode()!=0 || !jvmPath.stdout().equals("PATH-OK\n")
-                || !jvmPath.stderr().contains("\"validationPath\":\"/0/name~1~0\"") || !jvmPath.stderr().contains("\"message\":\"chosen\""))
+                || !jvmPath.stderr().contains("\"validationPath\":\"/0/name~1~0\"") || !jvmPath.stderr().contains("\"message\":\"chosen\"")
+                || !jvmPath.stderr().contains("\"validationPath\":\"/items/0/name\"")
+                || !jvmPath.stderr().contains("\"validationPath\":\"/0/message\""))
             throw new AssertionError("JVM same-traversal validation path: " + jvmPath);
         var validationControl = BoundedProcess.runCaptured(List.of("node", "-e", """
             const rt=require('./deal/runtime');
@@ -397,6 +399,23 @@ public final class ErrorNameMessageTest {
             }
             fields.put("name/~","fixed");
             if(deal.codegen.jvm.JvmRuntime.bcheck("array(@m/Item)","ref",array)!=array)throw new AssertionError("repair identity");
+            var error = new deal.codegen.jvm.JvmRuntime.ErrorValue("E", "valid");
+            var errors = new deal.codegen.jvm.JvmRuntime.Array(1); errors.elements.add(error);
+            var record = new deal.codegen.jvm.JvmRuntime.Table(); record.entries.put("items", errors);
+            deal.codegen.jvm.JvmRuntime.bcheck("record", "ref", record);
+            error.name = null;
+            try { deal.codegen.jvm.JvmRuntime.bcheck("record", "ref", record); throw new AssertionError("invalid Error name admitted"); }
+            catch (deal.codegen.jvm.JvmRuntime.DealError failure) {
+                deal.codegen.jvm.JvmRuntime.reportRuntimeDiagnostic(failure);
+            }
+            error.name = "fixed";
+            error.message = null;
+            try { deal.codegen.jvm.JvmRuntime.bcheck("array(Error)", "ref", errors); throw new AssertionError("invalid Error message admitted"); }
+            catch (deal.codegen.jvm.JvmRuntime.DealError failure) {
+                deal.codegen.jvm.JvmRuntime.reportRuntimeDiagnostic(failure);
+            }
+            error.message = "fixed";
+            if (deal.codegen.jvm.JvmRuntime.bcheck("record", "ref", record) != record) throw new AssertionError("Error repair identity");
             System.out.println("PATH-OK");
             return;
         }
