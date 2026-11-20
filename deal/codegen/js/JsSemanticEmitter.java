@@ -2064,8 +2064,7 @@ private void emitBindingLoad(SemanticOp op) {
                     String index = chainIndexSlot(chain);
                     String length = chainLengthSlot(chain);
                     emit("if (!Number.isInteger(" + index + ") || " + index + " < 0 || " + index + " > " + length
-                        + ") { $rt.fail(\"E8002\", \"array index out of"
-                        + " bounds\", " + spanArgs(boundary) + "); }");
+                        + ") { $rt.arrayPositionFailure(" + index + ", " + length + ", \"write-range\", " + spanArgs(boundary) + "); }");
                     emit(input + " = $rt.checkType("
                         + jsString(payload.descriptor().canonicalSpecText()) + ", "
                         + input + ", " + spanArgs(boundary) + ");");
@@ -2074,8 +2073,7 @@ private void emitBindingLoad(SemanticOp op) {
                     String index = chainIndexSlot(chain);
                     String length = chainLengthSlot(chain);
                     emit("if (!Number.isInteger(" + index + ") || " + index + " < 0 || " + index + " > " + length
-                        + ") { $rt.fail(\"E8002\", \"array index out of"
-                        + " bounds\", " + spanArgs(boundary) + "); }");
+                        + ") { $rt.arrayPositionFailure(" + index + ", " + length + ", \"delete-range\", " + spanArgs(boundary) + "); }");
                 }
                 default -> {
                     String checked = "$rt.checkType("

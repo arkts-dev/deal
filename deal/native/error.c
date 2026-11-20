@@ -1044,11 +1044,16 @@ static void deal_diagnostic_error(deal_snapshot_buffer *buffer, const deal_error
 }
 
 void deal_error_set_array_read(deal_error *error, double index, size_t length) {
-    if (error == NULL) deal_platform_fault("error diagnostic: null array error");
+    deal_error_set_array_position(error, index, length, 0);
+}
+
+void deal_error_set_array_position(deal_error *error, double index, size_t length, int32_t operation) {
+    if (error == NULL || operation < 0 || operation > 2) deal_platform_fault("error diagnostic: invalid array context");
     error->has_array_constraint = 1;
     error->array_index = index;
     error->array_length = length;
-    error->array_constraint = isfinite(index) && index == trunc(index) ? "read-range" : "finite-integer";
+    error->array_constraint = !isfinite(index) || index != trunc(index) ? "finite-integer"
+        : operation == 1 ? "write-range" : operation == 2 ? "delete-range" : "read-range";
 }
 
 void deal_error_set_host_context(deal_error *error, const char *signature,

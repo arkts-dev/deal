@@ -10134,6 +10134,9 @@ local function __arrayBounds(bKey, bDigest, bParent, input, slotName, lengthSlot
     nil, nil)
   if index ~= index or index == math.huge or index == -math.huge or index ~= math.floor(index) or index < 0 or index > lengthSlot then
     local e = __arm("ARRAY_WRITE_BOUNDS", nil, origin, nil, nil)
+    e.arrayIndex = __numHex(index)
+    e.arrayLength = tostring(lengthSlot)
+    e.arrayConstraint = (index ~= index or index == math.huge or index == -math.huge or index ~= math.floor(index)) and "finite-integer" or (isAssign and "write-range" or "delete-range")
     __ev(bKey, "FAILURE", "BOUNDARY", bDigest, bParent, {}, nil, __errtext(e))
     error(e, 0)
   end
@@ -10160,6 +10163,9 @@ local function __arrayBoundsSlot(bKey, bDigest, bParent, slotName, lengthSlot,
   __ev(bKey, "START", "BOUNDARY", bDigest, bParent, {__slotAtom(slotName)}, nil, nil)
   if index ~= index or index == math.huge or index == -math.huge or index ~= math.floor(index) or index < 0 or index > lengthSlot then
     local e = __arm("ARRAY_DELETE_BOUNDS", nil, origin, nil, nil)
+    e.arrayIndex = __numHex(index)
+    e.arrayLength = tostring(lengthSlot)
+    e.arrayConstraint = (index ~= index or index == math.huge or index == -math.huge or index ~= math.floor(index)) and "finite-integer" or "delete-range"
     __ev(bKey, "FAILURE", "BOUNDARY", bDigest, bParent, {}, nil, __errtext(e))
     error(e, 0)
   end

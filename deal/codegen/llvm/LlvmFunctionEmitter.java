@@ -5328,11 +5328,11 @@ final class LlvmFunctionEmitter {
         String error = emitTemporary(op, "call " + LlvmTypeMapper.ERROR_POINTER
             + " @deal_error_array_position(i32 " + arm.ordinal() + ","
             + " %struct.deal_origin* " + origin + ")");
-        if (arm == deal.semantic.ir.FailureArmId.ARRAY_READ_BOUNDS) {
-            session.referenceRuntimeEntry("deal_error_set_array_read");
-            emit("call void @deal_error_set_array_read(%struct.deal_error* " + error
-                + ", double " + position + ", i64 " + count + ")");
-        }
+        session.referenceRuntimeEntry("deal_error_set_array_position");
+        int operation = arm == deal.semantic.ir.FailureArmId.ARRAY_WRITE_BOUNDS ? 1
+            : arm == deal.semantic.ir.FailureArmId.ARRAY_DELETE_BOUNDS ? 2 : 0;
+        emit("call void @deal_error_set_array_position(%struct.deal_error* " + error
+            + ", double " + position + ", i64 " + count + ", i32 " + operation + ")");
         routeFailure(emitTemporary(op, "bitcast "
             + LlvmTypeMapper.ERROR_POINTER + " " + error + " to i8*"));
         startSegment(proceed);

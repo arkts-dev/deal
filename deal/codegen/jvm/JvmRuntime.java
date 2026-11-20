@@ -3468,6 +3468,8 @@ case "NUMBER_ADD" -> {
         if (!Double.isFinite(index) || index != Math.rint(index) || index < 0 || index > length) {
             DealError e = arm(deal.semantic.ir.FailureArmId.ARRAY_WRITE_BOUNDS,
                 java.util.Map.of(), origin, null, null);
+            e.arrayEvidence = Map.of("arrayIndex", Double.toHexString(index), "arrayLength", Integer.toString((int)length),
+                "arrayConstraint", !Double.isFinite(index) || index != Math.rint(index) ? "finite-integer" : isAssign ? "write-range" : "delete-range");
             ev(currentModule(), bKey, "FAILURE", "BOUNDARY", bDigest, bParent, List.of(),
                 null, errtext(e));
             throw e;
@@ -3499,6 +3501,8 @@ case "NUMBER_ADD" -> {
         if (!Double.isFinite(index) || index != Math.rint(index) || index < 0 || index > length) {
             DealError e = arm(deal.semantic.ir.FailureArmId.ARRAY_WRITE_BOUNDS,
                 java.util.Map.of(), origin, null, null);
+            e.arrayEvidence = Map.of("arrayIndex", Double.toHexString(index), "arrayLength", Integer.toString((int)length),
+                "arrayConstraint", !Double.isFinite(index) || index != Math.rint(index) ? "finite-integer" : "delete-range");
             ev(currentModule(), bKey, "FAILURE", "BOUNDARY", bDigest, bParent, List.of(),
                 null, errtext(e));
             throw e;

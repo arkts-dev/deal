@@ -111,8 +111,9 @@ depth, truncation and missing-field status. Prefixes retain at most 32 segments;
 keys are bounded to 128 UTF-16 units on JS/JVM or 128 bytes on Lua/native.
 Selected host checks retain available signature/crossing/declaration facts and
 known `deal-to-host`/`host-to-deal` direction with invocation/completion stage,
-without assigning blame to propagated host Errors. Strict array reads retain the rejected
-binary64 index, observed length and failed integrality/range/presence constraint.
+without assigning blame to propagated host Errors. Strict array reads and rejected writes retain the original binary64 index,
+observed length and failed integrality/range constraint; strict reads also
+identify rejected presence checks.
 Default terminal output and exit behavior remain unchanged when disabled.
 
 ## Embedded timing

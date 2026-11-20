@@ -2632,9 +2632,13 @@ const $rt = {
   },
 
   arrayReadFailure: function(index, length, file, line, column) {
+    return $rt.arrayPositionFailure(index, length, "read-range", file, line, column);
+  },
+
+  arrayPositionFailure: function(index, length, constraint, file, line, column) {
     const error = new $DEALError("E8002", "array index out of bounds", file, line, column);
     $diagnosticArraySet(error, {index: $numberHex(index), length: "" + length,
-      constraint: !Number.isInteger(index) ? "finite-integer" : "read-range"});
+      constraint: !Number.isInteger(index) ? "finite-integer" : constraint});
     throw error;
   },
 

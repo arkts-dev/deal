@@ -197,14 +197,19 @@ public final class ErrorNameMessageTest {
                 {"duplicate", "{\\\"😀\\\":1,\\\"😀\\\":2}", "11", "duplicate key"},
                 {"eof", "\\\"😀", "6", "unterminated string"},
                 {"bounds", "", "1", "read-range"},
-                {"fractional", "", "1", "finite-integer"}}) {
+                {"fractional", "", "1", "finite-integer"},
+                {"write", "", "1", "write-range"},
+                {"write-fractional", "", "1", "finite-integer"}}) {
             String parse = "let parsed:unknown=JSON.parse(\"" + sample[1] + "\");";
             if (sample[0].equals("duplicate")) parse = "try{" + parse
                     + "}catch(caught){if(caught instanceof Error){let repaired:unknown=JSON.parse(\"{\\\"😀\\\":2}\");"
                     + "console.log(JSON.stringify(repaired)??\"none\");caught.message=\"chosen message\";throw caught;}}";
-            boolean array = sample[0].equals("bounds") || sample[0].equals("fractional");
+            boolean array = sample[0].equals("bounds") || sample[0].equals("fractional") || sample[0].startsWith("write");
             if (array) parse = "let values:number[]=[7];try{let rejected=values.map((value:number):number=>{"
                 + "let read=values[" + (sample[0].equals("bounds") ? "2" : "0.5") + "];return read;});}"
+                + "catch(caught){if(caught instanceof Error){console.log(String(values[0]));caught.message=\"chosen message\";throw caught;}}";
+            if (sample[0].startsWith("write")) parse = "let values:number[]=[7];try{values["
+                + (sample[0].equals("write") ? "2" : "0.5") + "]=9;}"
                 + "catch(caught){if(caught instanceof Error){console.log(String(values[0]));caught.message=\"chosen message\";throw caught;}}";
             String source = "export function main():void{" + parse + "}";
             for (Backend backend : List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM)) {
@@ -246,7 +251,7 @@ public final class ErrorNameMessageTest {
                             || !deal.amend.CompilerProtocolJson.field(runtime, array ? "arrayConstraint" : "jsonReason").equals(new CanonicalJson.Str(sample[3])))
                         throw new AssertionError("scanner-owned JSON offset/reason missing " + backend + " " + sample[0] + ": " + line);
                     if (array && (!deal.amend.CompilerProtocolJson.field(runtime, "arrayIndex").equals(
-                            new CanonicalJson.Str(sample[0].equals("bounds") ? "0x1.0p1" : "0x1.0p-1"))
+                            new CanonicalJson.Str(sample[0].equals("bounds") || sample[0].equals("write") ? "0x1.0p1" : "0x1.0p-1"))
                             || !deal.amend.CompilerProtocolJson.field(runtime, "message").equals(new CanonicalJson.Str("chosen message"))
                             || !baseline.stdout().startsWith("7\n")))
                         throw new AssertionError("array operand/rethrow/repair evidence missing " + backend + ": " + line);
