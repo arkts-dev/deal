@@ -838,16 +838,24 @@ public final class LlvmConformanceTest {
             List<String> failures = new ArrayList<>();
             for (int level : new int[]{0, 2}) {
               for (boolean sanitized : instrumented ? new boolean[]{false, true} : new boolean[]{false}) {
+                // Stress is an execution environment, not a compiler input. Share only
+                // the binary; each execution still gets independent receipts and cwd.
+                Path product = project.scratch.resolve("build-" + level + "-" + sanitized).resolve("driver");
+                try {
+                    Files.createDirectories(product.getParent());
+                    NativeCompiler.build(new NativeBuildRequest(project.output, product, level, hosts,
+                        driver(project.module(), probes, sidecar.completions())),
+                        sanitized ? NativeCompiler.SANITIZER_FLAGS : List.of());
+                    if (!Files.isExecutable(product)) throw new IllegalStateException("ARTIFACT_MISSING: executable");
+                } catch (Exception | AssertionError failure) {
+                    failures.add("O" + level + " sanitized=" + sanitized + " build: " + failure);
+                    continue;
+                }
                for (boolean stress : instrumented ? new boolean[]{false, true} : new boolean[]{false}) {
                 String variant = "O" + level + " sanitized=" + sanitized + " stress=" + stress;
                 try {
                     Path work = project.scratch.resolve("run-" + level + "-" + sanitized + "-" + stress);
                     Files.createDirectories(work);
-                    Path product = work.resolve("driver");
-                    NativeCompiler.build(new NativeBuildRequest(project.output, product, level, hosts,
-                        driver(project.module(), probes, sidecar.completions())),
-                        sanitized ? NativeCompiler.SANITIZER_FLAGS : List.of());
-                    if (!Files.isExecutable(product)) throw new IllegalStateException("ARTIFACT_MISSING: executable");
                     var environment = new HashMap<String, String>();
                     environment.put("DEAL_GC_STRESS", stress ? "1" : "0");
                     if (sanitized) environment.putAll(NativeCompiler.sanitizerEnvironment());
