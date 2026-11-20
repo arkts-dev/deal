@@ -17,8 +17,19 @@ public record BoundaryValueView(
     List<BoundaryValueView> dataChildren,
     List<ClassField> classFields,
     boolean callableValid,
-    Integer unicodeByteOffset
+    Integer unicodeByteOffset,
+    List<String> dataChildSegments
 ) {
+    public BoundaryValueView(ActualKind kind, String classId, Double numberValue,
+                             RuntimeDescriptor.Func functionSignature,
+                             List<BoundaryValueView> elements, boolean decodedArrayMark,
+                             UnicodeScalars.Defect unicodeDefect, RuntimeDescriptor arrayElementDescriptor,
+                             List<BoundaryValueView> dataChildren, List<ClassField> classFields,
+                             boolean callableValid, Integer unicodeByteOffset) {
+        this(kind, classId, numberValue, functionSignature, elements, decodedArrayMark, unicodeDefect,
+                arrayElementDescriptor, dataChildren, classFields, callableValid, unicodeByteOffset, List.of());
+    }
+
     public BoundaryValueView(ActualKind kind, String classId, Double numberValue,
                              RuntimeDescriptor.Func functionSignature,
                              List<BoundaryValueView> elements, boolean decodedArrayMark,
@@ -57,14 +68,14 @@ public record BoundaryValueView(
     public BoundaryValueView withClassFields(List<ClassField> fields) {
         if (kind != ActualKind.CLASS) throw new IllegalArgumentException("Only classes carry field plans");
         return new BoundaryValueView(kind, classId, numberValue, functionSignature, elements,
-            decodedArrayMark, unicodeDefect, arrayElementDescriptor, dataChildren, fields, callableValid);
+            decodedArrayMark, unicodeDefect, arrayElementDescriptor, dataChildren, fields, callableValid, unicodeByteOffset, dataChildSegments);
     }
 
     /** Signature-only views assume an admitted callable; native views must supply payload validity. */
     public BoundaryValueView withCallableValidity(boolean valid) {
         if (kind != ActualKind.FUNCTION) throw new IllegalArgumentException("Only functions carry callable validity");
         return new BoundaryValueView(kind, classId, numberValue, functionSignature, elements,
-            decodedArrayMark, unicodeDefect, arrayElementDescriptor, dataChildren, classFields, valid);
+            decodedArrayMark, unicodeDefect, arrayElementDescriptor, dataChildren, classFields, valid, unicodeByteOffset, dataChildSegments);
     }
     public BoundaryValueView(ActualKind kind, String classId, Double numberValue,
                              RuntimeDescriptor.Func functionSignature,
@@ -80,6 +91,13 @@ public record BoundaryValueView(
             decodedArrayMark, unicodeDefect, arrayElementDescriptor, new LazyElementViews(count, producer), classFields, callableValid, unicodeByteOffset);
     }
 
+    /** Names come from the producer's existing traversal, not a second rejected-value walk. */
+    public BoundaryValueView withNamedDataChildren(List<String> segments, IntFunction<BoundaryValueView> producer) {
+        return new BoundaryValueView(kind, classId, numberValue, functionSignature, elements,
+                decodedArrayMark, unicodeDefect, arrayElementDescriptor,
+                new LazyElementViews(segments.size(), producer), classFields, callableValid, unicodeByteOffset, segments);
+    }
+
     public BoundaryValueView(ActualKind kind, String classId, Double numberValue,
                              RuntimeDescriptor.Func functionSignature,
                              List<BoundaryValueView> elements, boolean decodedArrayMark,
@@ -90,7 +108,7 @@ public record BoundaryValueView(
     public BoundaryValueView withArrayElementDescriptor(RuntimeDescriptor descriptor) {
         if (kind != ActualKind.ARRAY) throw new IllegalArgumentException("Only arrays carry element descriptors");
         return new BoundaryValueView(kind, classId, numberValue, functionSignature, elements,
-            decodedArrayMark, unicodeDefect, descriptor, dataChildren, classFields, callableValid);
+            decodedArrayMark, unicodeDefect, descriptor, dataChildren, classFields, callableValid, unicodeByteOffset, dataChildSegments);
     }
 
     /**
@@ -114,6 +132,9 @@ public record BoundaryValueView(
             throw new IllegalArgumentException("Unicode position requires an invalid byte presentation");
         classFields = List.copyOf(classFields);
         Objects.requireNonNull(dataChildren, "dataChildren must not be null");
+        dataChildSegments = List.copyOf(dataChildSegments);
+        if (!dataChildSegments.isEmpty() && dataChildSegments.size() != dataChildren.size())
+            throw new IllegalArgumentException("Named data children require one observed segment per child");
         if (!(dataChildren instanceof LazyElementViews)) dataChildren = List.copyOf(dataChildren);
         switch (kind) {
             case CLASS -> {

@@ -94,7 +94,7 @@ Nominal/callable checks validate complete current plans, payloads and signatures
 including unread descendants, with operation-local cycle guards. Required fields
 read declared descriptors; optionalRead adds undefined and missing never becomes
 null. Unknown equality compares kinds/scalars/original identities without conversion.
-Record/unknown ingress validates whole graphs while preserving supported cycles.
+Record/unknown ingress validates whole graphs while preserving supported cycles. Dynamic boundary views retain producer-observed child names separately from lazy values; path enrichment never guesses unnamed segments or changes child order.
 
 JSON_PARSE owns one preceding string, an explicit target equal to the result and
 JSON_RECONSTRUCTION policy. Validate the entire schema, including optional fields:

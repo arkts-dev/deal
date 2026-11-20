@@ -3546,14 +3546,16 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
             BoundaryValueView view = shallowViewOfValue(value);
             if (value instanceof Value.TableValue table) {
                 List<Value> children = new ArrayList<>();
+                List<String> segments = new ArrayList<>();
                 for (var entry : table.entries().entrySet()) {
                     children.add(new Value.StrValue(entry.getKey()));
                     children.add(entry.getValue());
+                    segments.add(entry.getKey()); segments.add(entry.getKey());
                 }
-                view = view.withDataChildren(children.size(), i -> viewOfValue(children.get(i), memo));
+                view = view.withNamedDataChildren(segments, i -> viewOfValue(children.get(i), memo));
             } else if (value instanceof Value.ErrorValue error) {
                 List<Value> children = List.of(new Value.StrValue(error.name()), new Value.StrValue(error.message()));
-                view = view.withDataChildren(children.size(), i -> viewOfValue(children.get(i), memo))
+                view = view.withNamedDataChildren(List.of("name", "message"), i -> viewOfValue(children.get(i), memo))
                     .withClassFields(List.of(
                         new BoundaryValueView.ClassField("name", RuntimeDescriptor.String.INSTANCE, true, true,
                             () -> viewOfValue(children.get(0), memo)),
@@ -3561,12 +3563,16 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                             () -> viewOfValue(children.get(1), memo))));
             } else if (value instanceof Value.ClassValue instance) {
                 List<Value> children = new ArrayList<>();
-                for (var field : instance.fields())
-                    if (field instanceof Value.ClassFieldState.Present present) children.add(present.value());
-                view = view.withDataChildren(children.size(), i -> viewOfValue(children.get(i), memo));
+                List<String> segments = new ArrayList<>();
                 ClassLayout layout = instanceLayouts.get(instance);
                 if (layout == null) layout = classLayouts.get(instance.classId());
                 if (layout == null) throw new IllegalStateException("Class value lacks its checked layout");
+                for (int i = 0; i < instance.fields().size(); i++) {
+                    if (instance.fields().get(i) instanceof Value.ClassFieldState.Present present) {
+                        children.add(present.value()); segments.add(layout.fields().get(i).name());
+                    }
+                }
+                view = view.withNamedDataChildren(segments, i -> viewOfValue(children.get(i), memo));
                 List<BoundaryValueView.ClassField> fields = new ArrayList<>();
                 for (int i = 0; i < layout.fields().size(); i++) {
                     ClassLayout.FieldLayout field = layout.fields().get(i);

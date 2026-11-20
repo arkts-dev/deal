@@ -379,6 +379,20 @@ public class BoundaryExecutorTest {
         check(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, unknown,
             BoundaryValueView.of(ActualKind.TABLE).withDataChildren(1, i -> malformed)) instanceof BoundaryOutcome.Fail,
             "unread malformed callable descendant rejects");
+        var named = BoundaryValueView.of(ActualKind.TABLE).withNamedDataChildren(List.of("items/~"),
+                i -> BoundaryValueView.ofArray(List.of(BoundaryValueView.ofNumber(1), malformed)));
+        var dataFailure = ((BoundaryOutcome.Fail)checkCell(FailurePolicyId.TYPE_DESCRIPTOR, unknown, named)).failure();
+        check(dataFailure.metadata().get("validationPath").equals("/items~1~0/1")
+                && dataFailure.metadata().get("validationPathDepth").equals("2"),
+                "dynamic data paths preserve observed field names and zero-based indices");
+        var repaired = BoundaryValueView.of(ActualKind.TABLE).withNamedDataChildren(List.of("items/~"),
+                i -> BoundaryValueView.ofArray(List.of(BoundaryValueView.ofNumber(1), malformed.withCallableValidity(true))));
+        expectPass(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, unknown, repaired), "chosen callable repair rechecks same signature");
+        var bytes = BoundaryValueView.fromEncodingFailure(new UnicodeScalars.EncodingFailure(UnicodeScalars.Defect.MALFORMED, 6));
+        var byteRecord = BoundaryValueView.of(ActualKind.TABLE).withNamedDataChildren(List.of("text"), i -> bytes);
+        var byteFailure = ((BoundaryOutcome.Fail)checkCell(FailurePolicyId.TYPE_DESCRIPTOR, unknown, byteRecord)).failure();
+        check(byteFailure.metadata().get("validationPath").equals("/text")
+                && byteFailure.metadata().get("unicodeByteOffset").equals("6"), "data path and original transport offset remain distinct");
     }
 
     static void testClassAtom() {
@@ -1108,7 +1122,8 @@ public class BoundaryExecutorTest {
         expectFail(BoundaryExecutor.checkAssertion(NUMBER_ARRAY,
             BoundaryValueView.ofArray(BoundaryValueView.of(ActualKind.STRING))),
             FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
-            "expected array", "array", "array", Map.of(), null,
+            "expected array", "array", "array", Map.of("validationPath", "/0", "validationPathDepth", "1",
+                "validationPathTruncated", "false", "validationMissingField", "false"), null,
             "assertion nested mismatch is E8001, not element E8003");
         expectFail(BoundaryExecutor.checkAssertion(USER,
             BoundaryValueView.ofClass("@src/other/User")),

@@ -462,6 +462,7 @@ public final class ErrorNameMessageTest {
             Files.writeString(input,source.replace("function diagnostic():number", "export function diagnostic():number") + """
                 class MetadataRoot { items:number[]; }
                 export function diagnosticArray():number{let xs:number[]=[1];return xs[2];}
+                export function diagnosticRecord(value:unknown):void{let checked:Record<string,unknown>=value as Record<string,unknown>;}
                 export function diagnosticDigits():string{
                   try{return (7).toFixed(0.5);}catch(caught){if(caught instanceof Error){caught.message="chosen";throw caught;}}
                   return "unreachable";
@@ -504,6 +505,19 @@ public final class ErrorNameMessageTest {
                         || !arrayDetail.error().metadata().get("arrayLength").equals("1")
                         || !arrayDetail.error().metadata().get("arrayConstraint").equals("read-range"))
                     throw new AssertionError("Oracle dropped original read operands: " + arrayFailure.comparisonReport());
+                var rejectedText = new SemanticOracle.Value.StrValue("bad", deal.semantic.ir.UnicodeScalars.Defect.MALFORMED);
+                var entries = new java.util.LinkedHashMap<String,SemanticOracle.Value>(); entries.put("text/~", rejectedText);
+                var dataFailure = SemanticOracle.invokeSyncEntry(executable,tables,registries,new SemanticOracle.HostResponder(){},
+                    executable.entryModule(),"diagnosticRecord",List.of(new SemanticOracle.Value.TableValue(entries)));
+                if (!(dataFailure.terminal() instanceof SemanticRuntimeModel.Terminal.DealFailure dataDetail)
+                        || !"/text~1~0".equals(dataDetail.error().metadata().get("validationPath")))
+                    throw new AssertionError("Oracle discarded named dynamic child path: " + dataFailure.comparisonReport()
+                            + (dataFailure.terminal() instanceof SemanticRuntimeModel.Terminal.DealFailure failureDetail ? failureDetail.error().diagnosticJson() : ""));
+                entries.put("text/~", new SemanticOracle.Value.StrValue("fixed"));
+                var dataRepair = SemanticOracle.invokeSyncEntry(executable,tables,registries,new SemanticOracle.HostResponder(){},
+                    executable.entryModule(),"diagnosticRecord",List.of(new SemanticOracle.Value.TableValue(entries)));
+                if (!(dataRepair.terminal() instanceof SemanticRuntimeModel.Terminal.Success))
+                    throw new AssertionError("explicit dynamic data repair rejected: " + dataRepair.comparisonReport());
                 var numericFailure = SemanticOracle.invokeSyncEntry(executable,tables,registries,new SemanticOracle.HostResponder(){},
                     executable.entryModule(),"diagnosticDigits",List.of());
                 if (!(numericFailure.terminal() instanceof SemanticRuntimeModel.Terminal.DealFailure numericDetail)

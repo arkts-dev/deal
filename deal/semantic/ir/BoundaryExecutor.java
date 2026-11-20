@@ -124,8 +124,8 @@ public final class BoundaryExecutor {
         if (result instanceof CorePass passed) {
             return new BoundaryOutcome.Pass(passed.value());
         }
-        return new BoundaryOutcome.Fail(renderKind(FailureArmId.TYPED_BOUNDARY_KIND,
-            (CoreFail) kindFail(descriptor, view)));
+        return new BoundaryOutcome.Fail(withPath(renderKind(FailureArmId.TYPED_BOUNDARY_KIND,
+            (CoreFail) kindFail(descriptor, view)), (CoreFail) result));
     }
 
     /** TYPE_DESCRIPTOR: the descriptor-kind rule for non-function descriptors. */
@@ -506,27 +506,44 @@ public final class BoundaryExecutor {
         };
     }
 
+    private record DataTask(BoundaryValueView view, deal.semantic.RuntimeValidationPath path) {}
+    private static CoreFail atDataPath(CoreFail failure, deal.semantic.RuntimeValidationPath path) {
+        if (path == null) return failure;
+        var prefix = new java.util.ArrayList<String>();
+        for (var frame = path; frame != null; frame = frame.parent())
+            if (frame.depth() <= 32) prefix.addFirst(frame.segment());
+        return new CoreFail(failure.caseKind(), failure.descriptor(), failure.actualToken(), failure.elementIndex(),
+                failure.cause(), List.copyOf(prefix), path.depth(), failure.missing(), failure.unicodeByteOffset());
+    }
+
     /** Whole-value ingress validation; shared identities and cycles are admissible. */
     private static CoreResult coreData(RuntimeDescriptor descriptor, BoundaryValueView root) {
         var seen = java.util.Collections.newSetFromMap(
             new java.util.IdentityHashMap<BoundaryValueView, Boolean>());
-        var pending = new java.util.ArrayDeque<BoundaryValueView>();
-        pending.push(root);
+        var pending = new java.util.ArrayDeque<DataTask>();
+        pending.push(new DataTask(root, null));
         while (!pending.isEmpty()) {
-            BoundaryValueView view = pending.pop();
+            var task = pending.pop();
+            BoundaryValueView view = task.view();
             if (!seen.add(view)) continue;
             switch (view.kind()) {
                 case NULL, UNDEFINED, MISSING, BOOLEAN, NUMBER, STRING, TABLE, ARRAY, CLASS, FUNCTION -> {}
                 case INVALID_UNICODE -> {
-                    return new CoreFail(FailureCase.INVALID_UNICODE, RuntimeDescriptor.String.INSTANCE,
-                        "invalid-unicode", 0, null, List.of(), 0, false, view.unicodeByteOffset());
+                    return atDataPath(new CoreFail(FailureCase.INVALID_UNICODE, RuntimeDescriptor.String.INSTANCE,
+                        "invalid-unicode", 0, null, List.of(), 0, false, view.unicodeByteOffset()), task.path());
                 }
-                default -> { return kindFail(descriptor, view); }
+                default -> { return atDataPath((CoreFail)kindFail(descriptor, view), task.path()); }
             }
-            if (view.kind() == ActualKind.FUNCTION && !view.callableValid()) return kindFail(descriptor, view);
+            if (view.kind() == ActualKind.FUNCTION && !view.callableValid())
+                return atDataPath((CoreFail)kindFail(descriptor, view), task.path());
             List<BoundaryValueView> children = view.kind() == ActualKind.ARRAY
                 ? view.elements() : view.dataChildren();
-            for (int i = children.size() - 1; i >= 0; i--) pending.push(children.get(i));
+            for (int i = children.size() - 1; i >= 0; i--) {
+                String segment = view.kind() == ActualKind.ARRAY ? Integer.toString(i)
+                        : view.dataChildSegments().isEmpty() ? null : view.dataChildSegments().get(i);
+                var path = segment == null ? task.path() : deal.semantic.RuntimeValidationPath.child(task.path(), segment);
+                pending.push(new DataTask(children.get(i), path));
+            }
         }
         return pass(root);
     }
