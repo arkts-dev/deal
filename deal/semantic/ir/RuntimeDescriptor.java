@@ -43,8 +43,33 @@ public sealed interface RuntimeDescriptor extends OpResultType
         return parseComplete(text, true);
     }
 
+    /** Successful decodes are reusable only inside one bounded compiler invocation. */
+    static ParseScope retainParses() { return new ParseScope(); }
+
+    final class ParseScope implements AutoCloseable {
+        private static final ThreadLocal<ParseScope> CURRENT = new ThreadLocal<>();
+        private final ParseScope previous;
+        private final java.util.Map<java.lang.String, RuntimeDescriptor> data = new java.util.HashMap<>();
+        private final java.util.Map<java.lang.String, RuntimeDescriptor> results = new java.util.HashMap<>();
+        private ParseScope() {
+            previous = CURRENT.get();
+            CURRENT.set(this);
+        }
+        @Override public void close() {
+            if (previous == null) CURRENT.remove();
+            else CURRENT.set(previous);
+        }
+    }
+
     private static RuntimeDescriptor parseComplete(java.lang.String text, boolean resultPosition) {
         Objects.requireNonNull(text, "text must not be null");
+        ParseScope scope = ParseScope.CURRENT.get();
+        if (scope == null) return decodeComplete(text, resultPosition);
+        var cache = resultPosition ? scope.results : scope.data;
+        return cache.computeIfAbsent(text, value -> decodeComplete(value, resultPosition));
+    }
+
+    private static RuntimeDescriptor decodeComplete(java.lang.String text, boolean resultPosition) {
         int[] pos = {0};
         RuntimeDescriptor descriptor = parseAt(text, pos, resultPosition);
         if (pos[0] != text.length()) {

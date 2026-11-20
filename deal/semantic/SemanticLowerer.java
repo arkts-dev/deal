@@ -1026,7 +1026,8 @@ public final class SemanticLowerer {
             Map<ModuleId, CanonicalModuleIdentity> declarationModuleIdentities,
             BuiltinErrorDeclaration builtinError,
             Set<String> callbackExports) {
-        try (var conversions = deal.semantic.ir.RawUnit.retainConversions()) {
+        try (var conversions = deal.semantic.ir.RawUnit.retainConversions();
+             var descriptors = RuntimeDescriptor.retainParses()) {
             return lowerProjectRetainingConversions(invocation, checkedProject, interfaceIndex,
                 requirementManifests, declarationSurface, declarationModuleIdentities,
                 builtinError, callbackExports);

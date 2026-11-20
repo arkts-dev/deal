@@ -3128,6 +3128,24 @@ public class SemanticIrValidatorTest {
 
     public static void main(String[] args) {
         testDescriptorPositions();
+        try (var scope = RuntimeDescriptor.retainParses()) {
+            var descriptor = RuntimeDescriptor.parseCanonicalText("[(number)->never]");
+            check(descriptor == RuntimeDescriptor.parseCanonicalText("[(number)->never]"),
+                "successful compound descriptor decodes are reused within scope");
+            RuntimeDescriptor.parseResultText("never");
+            try {
+                RuntimeDescriptor.parseCanonicalText("never");
+                check(false, "result cache must not admit never as data");
+            } catch (deal.semantic.ir.SemanticIrTextDecodeException expected) {
+                check(true, "data and result descriptor caches remain separate");
+            }
+            try (var nested = RuntimeDescriptor.retainParses()) {
+                check(descriptor != RuntimeDescriptor.parseCanonicalText("[(number)->never]"),
+                    "nested descriptor scope is independent");
+            }
+            check(descriptor == RuntimeDescriptor.parseCanonicalText("[(number)->never]"),
+                "nested descriptor close restores outer scope");
+        }
         System.out.println("=== Semantic IR Validator Test (ISSUE-0286) ===\n");
 
         testCanonicalTokenQuery();
