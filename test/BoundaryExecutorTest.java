@@ -870,31 +870,31 @@ public class BoundaryExecutorTest {
 
         // The pinned E8002 for both bounds: index < 0 and index >= length,
         // including the empty array (length 0), with no expected/actual and
-        // no metadata. The read view is irrelevant: an out-of-range read
+        // producer-owned operands. The read view is irrelevant: an out-of-range read
         // fails before any element/result validation even when the view
         // holds an otherwise-admissible value.
         expectFail(checkCell(FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR, INT,
                 BoundaryValueView.ofNumber(3), BoundaryContext.arrayRead(-1, 3)),
             FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR, DiagnosticCode.E8002,
-            "array index out of bounds", null, null, new LinkedHashMap<>(), null,
+            "array index out of bounds", null, null, Map.of("arrayIndex", "-0x1.0p0", "arrayLength", "3", "arrayConstraint", "read-range"), null,
             "read index -1, length 3");
         expectFail(checkCell(FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR, INT,
                 BoundaryValueView.of(ActualKind.MISSING),
                 BoundaryContext.arrayRead(3, 3)),
             FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR, DiagnosticCode.E8002,
-            "array index out of bounds", null, null, new LinkedHashMap<>(), null,
+            "array index out of bounds", null, null, Map.of("arrayIndex", "0x1.8p1", "arrayLength", "3", "arrayConstraint", "read-range"), null,
             "read index 3, length 3");
         expectFail(checkCell(FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR, INT,
                 BoundaryValueView.of(ActualKind.MISSING),
                 BoundaryContext.arrayRead(7, 3)),
             FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR, DiagnosticCode.E8002,
-            "array index out of bounds", null, null, new LinkedHashMap<>(), null,
+            "array index out of bounds", null, null, Map.of("arrayIndex", "0x1.cp2", "arrayLength", "3", "arrayConstraint", "read-range"), null,
             "read index 7, length 3");
         expectFail(checkCell(FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR, INT,
                 BoundaryValueView.of(ActualKind.MISSING),
                 BoundaryContext.arrayRead(0, 0)),
             FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR, DiagnosticCode.E8002,
-            "array index out of bounds", null, null, new LinkedHashMap<>(), null,
+            "array index out of bounds", null, null, Map.of("arrayIndex", "0x0.0p0", "arrayLength", "0", "arrayConstraint", "read-range"), null,
             "read index 0 of an empty array");
 
         // A nullable descriptor is bounds-checked identically: the
@@ -903,7 +903,7 @@ public class BoundaryExecutorTest {
                 NULLABLE_INT,
                 BoundaryValueView.ofNumber(3), BoundaryContext.arrayRead(2, 1)),
             FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR, DiagnosticCode.E8002,
-            "array index out of bounds", null, null, new LinkedHashMap<>(), null,
+            "array index out of bounds", null, null, Map.of("arrayIndex", "0x1.0p1", "arrayLength", "1", "arrayConstraint", "read-range"), null,
             "nullable read index 2, length 1");
 
         // In-range reads pass through: the read's value/missing decision
@@ -944,13 +944,13 @@ public class BoundaryExecutorTest {
         expectFail(checkCell(FailurePolicyId.ARRAY_WRITE_BOUNDS_THEN_ELEMENT, INT,
                 BoundaryValueView.ofNumber(3), BoundaryContext.writeBounds(-1, 5)),
             FailurePolicyId.ARRAY_WRITE_BOUNDS_THEN_ELEMENT, DiagnosticCode.E8002,
-            "array index out of bounds", null, null, new LinkedHashMap<>(), null,
+            "array index out of bounds", null, null, Map.of("arrayIndex", "-0x1.0p0", "arrayLength", "5", "arrayConstraint", "write-range"), null,
             "write index -1, length 5");
 
         expectFail(checkCell(FailurePolicyId.ARRAY_WRITE_BOUNDS_THEN_ELEMENT, INT,
                 BoundaryValueView.ofNumber(3), BoundaryContext.writeBounds(6, 5)),
             FailurePolicyId.ARRAY_WRITE_BOUNDS_THEN_ELEMENT, DiagnosticCode.E8002,
-            "array index out of bounds", null, null, new LinkedHashMap<>(), null,
+            "array index out of bounds", null, null, Map.of("arrayIndex", "0x1.8p2", "arrayLength", "5", "arrayConstraint", "write-range"), null,
             "gap write index 6, length 5");
 
         // index == length is the append slot: the element check runs.
@@ -985,13 +985,13 @@ public class BoundaryExecutorTest {
         expectFail(checkCell(FailurePolicyId.ARRAY_DELETE_BOUNDS, INT,
                 BoundaryValueView.ofNumber(3), BoundaryContext.writeBounds(-1, 5)),
             FailurePolicyId.ARRAY_DELETE_BOUNDS, DiagnosticCode.E8002,
-            "array index out of bounds", null, null, new LinkedHashMap<>(), null,
+            "array index out of bounds", null, null, Map.of("arrayIndex", "-0x1.0p0", "arrayLength", "5", "arrayConstraint", "delete-range"), null,
             "delete index -1, length 5");
 
         expectFail(checkCell(FailurePolicyId.ARRAY_DELETE_BOUNDS, INT,
                 BoundaryValueView.ofNumber(3), BoundaryContext.writeBounds(6, 5)),
             FailurePolicyId.ARRAY_DELETE_BOUNDS, DiagnosticCode.E8002,
-            "array index out of bounds", null, null, new LinkedHashMap<>(), null,
+            "array index out of bounds", null, null, Map.of("arrayIndex", "0x1.8p2", "arrayLength", "5", "arrayConstraint", "delete-range"), null,
             "delete index 6, length 5");
 
         // index == length passes: the commit's nil write runs after the boundary.
