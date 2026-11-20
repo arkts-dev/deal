@@ -805,6 +805,7 @@ static deal_data deal_std_evaluate(uint32_t operation_id,
         if (!(places >= 0.0 && places <= 100.0 && places == floor(places))) {
             *error = deal_error_materialize(DEAL_ARM_ID_NUMBER_FIXED_DIGITS, NULL, 0u,
                 NULL, NULL, origin, NULL);
+            deal_error_set_fixed_digits(*error, places);
             return deal_data_of_undefined();
         }
         return deal_data_of_reference(DEAL_DATA_STRING, deal_std_number_fixed(deal_std_number_argument(&arguments[0]), (int)places));

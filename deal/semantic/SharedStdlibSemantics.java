@@ -487,8 +487,13 @@ public final class SharedStdlibSemantics {
 
             case NUMBER_TO_FIXED -> {
                 double digits = numberOf(argv, 1, function);
-                if (!deal.semantic.ir.NumberSemantics.fixedDigits(digits))
-                    yield failOf(FailurePolicyId.NUMBER_FIXED_DIGITS, 0, null, null, Map.of(), origin);
+                if (!deal.semantic.ir.NumberSemantics.fixedDigits(digits)) {
+                    var rejected = failOf(FailurePolicyId.NUMBER_FIXED_DIGITS, 0, null, null, Map.of(), origin).failure();
+                    var failure = rejected.failure();
+                    yield new Outcome.Failure<>(new StdlibFailure(new BoundaryFailure(failure.policy(), failure.code(),
+                        failure.message(), failure.expected(), failure.actual(), Map.of("numericOperand", Double.toHexString(digits),
+                            "numericParameter", "digits", "numericConstraint", "integer-in-0-100"), failure.cause()), origin));
+                }
                 yield new Outcome.Success<>(Value.string(deal.semantic.ir.NumberSemantics.toFixed(
                     numberOf(argv, 0, function), (int) digits)));
             }

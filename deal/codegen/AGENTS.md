@@ -44,7 +44,7 @@ specified exponent thresholds; finite JSON leaves reuse it. `STRING_TO_NUMBER`
 validates the whole string, never ambient coercion/grammar. JVM shares
 `NumberSemantics`; Lua preserves negative zero; native uses its private locale.
 Numeric predicates do not coerce; rounding is binary64 with ties toward +infinity.
-Direct-only selectors create no callable exports.
+Direct-only selectors create no callable exports. Rejected numeric domains retain original binary64 operands and failed constraints at the producing check, independently of mutable messages.
 
 String operations count UTF-16 units; clamp positions before casts and preserve
 lone units. LastIndexOf treats NaN position as infinity. Casing uses pinned

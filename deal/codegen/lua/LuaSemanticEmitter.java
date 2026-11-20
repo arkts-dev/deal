@@ -10870,7 +10870,8 @@ function __dealRuntimeDiagnostic(error)
                             {"hostBoundary", "hostBoundary"}, {"hostParameter", "hostParameter"},
                             {"hostDirection", "hostDirection"}, {"hostStage", "hostStage"},
                             {"arrayIndex", "arrayIndex"}, {"arrayLength", "arrayLength"},
-                            {"arrayConstraint", "arrayConstraint"}}) do
+                            {"arrayConstraint", "arrayConstraint"}, {"numericOperand", "numericOperand"},
+                            {"numericParameter", "numericParameter"}, {"numericConstraint", "numericConstraint"}}) do
       local text = rawget(value, pair[2])
       if type(text) == "string" then
         local take = math.min(#text, 8192)
@@ -10990,7 +10991,11 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
   if fn == "NUMBER_TO_FIXED" then
     local places = __args[2]
     if not (places >= 0 and places <= 100 and places == math.floor(places)) then
-      error(__arm("NUMBER_FIXED_DIGITS", {}, origin, nil, nil), 0)
+      local failure = __arm("NUMBER_FIXED_DIGITS", {}, origin, nil, nil)
+      failure.numericOperand = __numHex(places)
+      failure.numericParameter = "digits"
+      failure.numericConstraint = "integer-in-0-100"
+      error(failure, 0)
     end
     return require("deal.runtime").number_fixed(__args[1], places)
   end

@@ -516,6 +516,7 @@ public final class JvmRuntime {
         private final Map<String, String> jsonDecodeEvidence;
         private Map<String, String> hostEvidence = Map.of();
         private Map<String, String> arrayEvidence = Map.of();
+        private Map<String, String> numericEvidence = Map.of();
         /**
          * Whether this failure was published by a rethrow of a
          * transported Error value (never by a fresh runtime check, a
@@ -592,6 +593,7 @@ public final class JvmRuntime {
             transport.expected, transport.actual, transport.frames, transport.cause, transport.jsonByteOffset, transport.jsonReason, transport.jsonDecodeEvidence);
         published.hostEvidence = transport.hostEvidence;
         published.arrayEvidence = transport.arrayEvidence;
+        published.numericEvidence = transport.numericEvidence;
         published.transported = true;
         published.reified = value;
         value.transport = published;
@@ -634,6 +636,7 @@ public final class JvmRuntime {
             previous.frames, cause, previous.jsonByteOffset, previous.jsonReason, previous.jsonDecodeEvidence);
         wrapped.hostEvidence = previous.hostEvidence;
         wrapped.arrayEvidence = previous.arrayEvidence;
+        wrapped.numericEvidence = previous.numericEvidence;
         wrapped.reified = previous.reified;
         if (wrapped.reified != null) {
             wrapped.reified.transport = wrapped;
@@ -847,6 +850,8 @@ public final class JvmRuntime {
             appendRuntimeText(out, key, error.hostEvidence.get(key), true);
         for (String key : List.of("arrayIndex", "arrayLength", "arrayConstraint"))
             appendRuntimeText(out, key, error.arrayEvidence.get(key), true);
+        for (String key : List.of("numericOperand", "numericParameter", "numericConstraint"))
+            appendRuntimeText(out, key, error.numericEvidence.get(key), true);
         if (error.cause != null) {
             if (depth >= 7 || seen.contains(error.cause)) out.append(",\"causeTruncated\":true");
             else {
@@ -2713,6 +2718,9 @@ case "NUMBER_ADD" -> {
                     failure.actual)
                 : fail(failure.code, failure.msg, origin, failure.expected,
                     failure.actual);
+            if (failure.armId == deal.semantic.ir.FailureArmId.NUMBER_FIXED_DIGITS)
+                e.numericEvidence = Map.of("numericOperand", Double.toHexString(numberOf(args[1])),
+                    "numericParameter", "digits", "numericConstraint", "integer-in-0-100");
             ev(currentModule(), opKey, "FAILURE", kind, digest, parent, List.of(), null,
                 errtext(e));
             throw e;

@@ -331,6 +331,8 @@ struct deal_error {
     double array_index;
     size_t array_length;
     const char *array_constraint;
+    int has_fixed_digits;
+    double fixed_digits;
 };
 
 /*
@@ -443,6 +445,8 @@ static deal_error *deal_error_allocate(const char *code, const char *message,
     error->host_parameter = 0;
     error->host_direction = error->host_stage = NULL;
     error->has_array_constraint = 0;
+    error->has_fixed_digits = 0;
+    error->fixed_digits = 0;
     error->array_index = 0;
     error->array_length = 0u;
     error->array_constraint = NULL;
@@ -1014,6 +1018,13 @@ static void deal_diagnostic_error(deal_snapshot_buffer *buffer, const deal_error
         deal_diagnostic_text(buffer, "arrayLength", length, strlen(length), &first);
         deal_diagnostic_text(buffer, "arrayConstraint", error->array_constraint, strlen(error->array_constraint), &first);
     }
+    if (error->has_fixed_digits) {
+        char operand[DEAL_ARM_NUMBER_TEXT_CAPACITY];
+        (void)deal_arm_number_text(error->fixed_digits, operand, sizeof(operand));
+        deal_diagnostic_text(buffer, "numericOperand", operand, strlen(operand), &first);
+        deal_diagnostic_text(buffer, "numericParameter", "digits", 6u, &first);
+        deal_diagnostic_text(buffer, "numericConstraint", "integer-in-0-100", 16u, &first);
+    }
     deal_snapshot_append_key(buffer, "frameCount", &first);
     deal_snapshot_append_integer(buffer, error->frame_count);
     deal_snapshot_append_key(buffer, "frames", &first);
@@ -1041,6 +1052,12 @@ static void deal_diagnostic_error(deal_snapshot_buffer *buffer, const deal_error
         }
     }
     deal_snapshot_append(buffer, "}", 1u);
+}
+
+void deal_error_set_fixed_digits(deal_error *error, double digits) {
+    if (error == NULL) deal_platform_fault("error diagnostic: null numeric error");
+    error->has_fixed_digits = 1;
+    error->fixed_digits = digits;
 }
 
 void deal_error_set_array_read(deal_error *error, double index, size_t length) {

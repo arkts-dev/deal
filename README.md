@@ -107,6 +107,9 @@ canonical order; strict syntax/duplicate/unknown-member faults and the default
 Oracle `ErrorSnapshot.diagnosticJson()` offers bounded approved metadata without
 changing canonical trace text or `projectionLine()`.
 
+Rejected `toFixed` digit domains retain the original binary64 `numericOperand`,
+`numericParameter` and `numericConstraint`, including through message mutation/rethrow.
+
 Set `DEAL_DIAGNOSTICS_JSON=1` before execution to append a bounded
 `DEAL_RUNTIME_DIAGNOSTIC:` JSON v2 record on uncaught runtime errors across all
 four backends. It retains available Error metadata, causes/frames and original

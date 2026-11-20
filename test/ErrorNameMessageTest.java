@@ -199,7 +199,10 @@ public final class ErrorNameMessageTest {
                 {"bounds", "", "1", "read-range"},
                 {"fractional", "", "1", "finite-integer"},
                 {"write", "", "1", "write-range"},
-                {"write-fractional", "", "1", "finite-integer"}}) {
+                {"write-fractional", "", "1", "finite-integer"},
+                {"digits-fractional", "0.5", "0x1.0p-1", "integer-in-0-100"},
+                {"digits-range", "101", "0x1.94p6", "integer-in-0-100"},
+                {"digits-nan", "Number(\"bad\")", "NaN", "integer-in-0-100"}}) {
             String parse = "let parsed:unknown=JSON.parse(\"" + sample[1] + "\");";
             if (sample[0].equals("duplicate")) parse = "try{" + parse
                     + "}catch(caught){if(caught instanceof Error){let repaired:unknown=JSON.parse(\"{\\\"😀\\\":2}\");"
@@ -211,6 +214,9 @@ public final class ErrorNameMessageTest {
             if (sample[0].startsWith("write")) parse = "let values:number[]=[7];try{values["
                 + (sample[0].equals("write") ? "2" : "0.5") + "]=9;}"
                 + "catch(caught){if(caught instanceof Error){console.log(String(values[0]));caught.message=\"chosen message\";throw caught;}}";
+            boolean numeric = sample[0].startsWith("digits-");
+            if (numeric) parse = "try{console.log((7).toFixed(" + sample[1] + "));}catch(caught){if(caught instanceof Error){"
+                + "console.log((7).toFixed(1));caught.message=\"chosen message\";throw caught;}}";
             String source = "export function main():void{" + parse + "}";
             for (Backend backend : List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM)) {
                 Path project = Files.createDirectories(root.resolve(sample[0]).resolve(backend.name()));
@@ -247,9 +253,13 @@ public final class ErrorNameMessageTest {
                         throw new AssertionError("JSON metadata changed default outcome " + backend + " " + sample[0]);
                     var document = deal.amend.CompilerProtocolJson.requireObject(deal.amend.CompilerProtocolJson.decode(line.substring(prefix.length())), "document");
                     var runtime = deal.amend.CompilerProtocolJson.requireObject(deal.amend.CompilerProtocolJson.field(document, "runtime"), "runtime");
-                    if (!deal.amend.CompilerProtocolJson.field(runtime, array ? "arrayLength" : "jsonByteOffset").equals(new CanonicalJson.Str(sample[2]))
-                            || !deal.amend.CompilerProtocolJson.field(runtime, array ? "arrayConstraint" : "jsonReason").equals(new CanonicalJson.Str(sample[3])))
+                    if (!deal.amend.CompilerProtocolJson.field(runtime, numeric ? "numericOperand" : array ? "arrayLength" : "jsonByteOffset").equals(new CanonicalJson.Str(sample[2]))
+                            || !deal.amend.CompilerProtocolJson.field(runtime, numeric ? "numericConstraint" : array ? "arrayConstraint" : "jsonReason").equals(new CanonicalJson.Str(sample[3])))
                         throw new AssertionError("scanner-owned JSON offset/reason missing " + backend + " " + sample[0] + ": " + line);
+                    if (numeric && (!deal.amend.CompilerProtocolJson.field(runtime, "numericParameter").equals(new CanonicalJson.Str("digits"))
+                            || !deal.amend.CompilerProtocolJson.field(runtime, "message").equals(new CanonicalJson.Str("chosen message"))
+                            || !baseline.stdout().startsWith("7.0\n")))
+                        throw new AssertionError("numeric operand/rethrow/chosen repair evidence missing " + backend + ": " + line);
                     if (array && (!deal.amend.CompilerProtocolJson.field(runtime, "arrayIndex").equals(
                             new CanonicalJson.Str(sample[0].equals("bounds") || sample[0].equals("write") ? "0x1.0p1" : "0x1.0p-1"))
                             || !deal.amend.CompilerProtocolJson.field(runtime, "message").equals(new CanonicalJson.Str("chosen message"))
@@ -351,6 +361,10 @@ public final class ErrorNameMessageTest {
             Files.writeString(input,source.replace("function diagnostic():number", "export function diagnostic():number") + """
                 class MetadataRoot { items:number[]; }
                 export function diagnosticArray():number{let xs:number[]=[1];return xs[2];}
+                export function diagnosticDigits():string{
+                  try{return (7).toFixed(0.5);}catch(caught){if(caught instanceof Error){caught.message="chosen";throw caught;}}
+                  return "unreachable";
+                }
                 export function diagnosticMetadata():MetadataRoot {
                   try { return JSON.parse("{\\"items\\":[false]}"); }
                   catch(caught) { if(caught instanceof Error){caught.message="chosen";throw caught;} let unexpected:Error={name:"Unexpected",message:"not Error"};throw unexpected; }
@@ -389,6 +403,13 @@ public final class ErrorNameMessageTest {
                         || !arrayDetail.error().metadata().get("arrayLength").equals("1")
                         || !arrayDetail.error().metadata().get("arrayConstraint").equals("read-range"))
                     throw new AssertionError("Oracle dropped original read operands: " + arrayFailure.comparisonReport());
+                var numericFailure = SemanticOracle.invokeSyncEntry(executable,tables,registries,new SemanticOracle.HostResponder(){},
+                    executable.entryModule(),"diagnosticDigits",List.of());
+                if (!(numericFailure.terminal() instanceof SemanticRuntimeModel.Terminal.DealFailure numericDetail)
+                        || !numericDetail.error().metadata().get("numericOperand").equals("0x1.0p-1")
+                        || !numericDetail.error().metadata().get("numericConstraint").equals("integer-in-0-100")
+                        || !numericDetail.error().message().equals("chosen"))
+                    throw new AssertionError("Oracle lost rejected digits operand through rethrow: " + numericFailure.comparisonReport());
                 var metadataFailure = SemanticOracle.invokeSyncEntry(executable,tables,registries,new SemanticOracle.HostResponder(){},
                     executable.entryModule(),"diagnosticMetadata",List.of());
                 if (!(metadataFailure.terminal() instanceof SemanticRuntimeModel.Terminal.DealFailure detail)

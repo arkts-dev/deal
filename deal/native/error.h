@@ -338,6 +338,8 @@ char *deal_error_diagnostic(const deal_error *error);
 /* Captures the rejected strict-read operand without revisiting the array. */
 void deal_error_set_array_read(deal_error *error, double index, size_t length);
 void deal_error_set_array_position(deal_error *error, double index, size_t length, int32_t operation);
+/* The rejected NUMBER_TO_FIXED digits operand; scalar-only, no text allocation. */
+void deal_error_set_fixed_digits(deal_error *error, double digits);
 /* Producer-only host rejection evidence; copies static declaration text, never host values. */
 void deal_error_set_host_context(deal_error *error, const char *signature,
                                  const char *declaration, const char *export_name,

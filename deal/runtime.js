@@ -52,6 +52,9 @@ const $diagnosticHostSet = $diagnosticHost.set.bind($diagnosticHost);
 const $diagnosticArray = new WeakMap();
 const $diagnosticArrayGet = $diagnosticArray.get.bind($diagnosticArray);
 const $diagnosticArraySet = $diagnosticArray.set.bind($diagnosticArray);
+const $diagnosticNumeric = new WeakMap();
+const $diagnosticNumericGet = $diagnosticNumeric.get.bind($diagnosticNumeric);
+const $diagnosticNumericSet = $diagnosticNumeric.set.bind($diagnosticNumeric);
 const $descriptorHasOwn = Object.prototype.hasOwnProperty.call.bind(Object.prototype.hasOwnProperty);
 const $diagnosticFinite = Number.isFinite;
 const $diagnosticSlice = String.prototype.slice.call.bind(String.prototype.slice);
@@ -1945,7 +1948,9 @@ const $rt = {
   // actual fields (the _err absent-field convention, deal/runtime.lua:19-32).
   numberToFixed: function $numberToFixed(value, digits, file, line, column) {
     if (!(digits >= 0 && digits <= 100 && Math.floor(digits) === digits)) {
-      $rt.fail("E8001", "expected integral digits in 0–100", file, line, column);
+      const error = new $DEALError("E8001", "expected integral digits in 0–100", file, line, column);
+      $diagnosticNumericSet(error, {operand: $numberHex(digits), parameter: "digits", constraint: "integer-in-0-100"});
+      throw error;
     }
     return value.toFixed(digits);
   },
@@ -2004,6 +2009,8 @@ const $rt = {
       if (host !== $undefined) $diagnosticHostSet(value, host);
       const array = $diagnosticArrayGet(v);
       if (array !== $undefined) $diagnosticArraySet(value, array);
+      const numeric = $diagnosticNumericGet(v);
+      if (numeric !== $undefined) $diagnosticNumericSet(value, numeric);
       return value;
     }
     if (typeof v === "object" && v !== null && v.$kind === "class" && v.$classname === "Error") {
@@ -2079,6 +2086,12 @@ const $rt = {
           append($jsonQuote(keys[i]) + ":" + $jsonQuote($diagnosticSlice(text, 0, take)));
           if (take < text.length) { append($jsonQuote(keys[i] + "Length") + ":" + text.length); append($jsonQuote(keys[i] + "Truncated") + ":true"); }
         }
+      }
+      const numeric = $diagnosticNumericGet(value);
+      if (numeric !== $undefined) {
+        append('"numericOperand":' + $jsonQuote(own(numeric, "operand")));
+        append('"numericParameter":' + $jsonQuote(own(numeric, "parameter")));
+        append('"numericConstraint":' + $jsonQuote(own(numeric, "constraint")));
       }
       const array = $diagnosticArrayGet(value);
       if (array !== $undefined) {
