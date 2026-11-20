@@ -9776,8 +9776,8 @@ function __factories.__validFunction(v)
     and (string.sub(signature, 1, 1) == "(" or string.sub(signature, 1, 6) == "async("
       or string.sub(signature, 1, 9) == "function(")
 end
-local __bcheck
-local function __bcheckLeaf(desc, staticKind, v, csig, completion, classSeen)
+local __bcheck, __validationChild, __validationEvidence
+local function __bcheckLeaf(desc, staticKind, v, csig, completion, path)
   if v == __MISSING or (__rtMissing ~= nil and v == __rtMissing) then v = __UNDEFINED end
   local actual = completion and __completionBoundaryKind(staticKind, v)
     or __typedBoundaryKind(staticKind, v)
@@ -9813,12 +9813,14 @@ local function __bcheckLeaf(desc, staticKind, v, csig, completion, classSeen)
     return fail("undefined")
   elseif desc == "unknown" then
     if type(v) == "function" or type(v) == "thread" or type(v) == "userdata" or type(v) == "cdata" then return fail("unknown") end
-    if type(v) == "string" then return __bcheck("string", "string", v, csig, completion) end
+    if type(v) == "string" then return __bcheck("string", "string", v, csig, completion, path) end
     if __typedBoundaryKind(staticKind, v) == "async-operation" then return fail("unknown") end
     if v == nil then return v end
-    local pending, seen = {v}, {}
+    local pending, seen = {{value=v, path=path}}, {}
     while #pending > 0 do
-      local member = table.remove(pending)
+      local frame = table.remove(pending)
+      local member = frame.value
+      local ok, failure = pcall(function()
       local t = type(member)
       if member == __NULL or member == __UNDEFINED or member == __MISSING then
       elseif t == "string" then
@@ -9837,7 +9839,7 @@ local function __bcheckLeaf(desc, staticKind, v, csig, completion, classSeen)
             and rawget(member, __dealCarrierKeys.kind) == nil then return fail("unknown") end
         if rawget(member, __dealCarrierKeys.kind) == "async" then return fail("unknown") end
         if rawget(member, __dealCarrierKeys.d) then
-          __bcheck("Error", "ref", member, nil, completion, classSeen)
+          __bcheck("Error", "ref", member, nil, completion, frame.path)
         end
         if rawget(member, __dealCarrierKeys.fn) ~= nil or rawget(member, __dealCarrierKeys.kind) == "function" then
           if not __factories.__validFunction(member) then return fail("unknown") end
@@ -9848,12 +9850,12 @@ local function __bcheckLeaf(desc, staticKind, v, csig, completion, classSeen)
           for k, val in next, member do
             if type(k) == "string" then
               if not __jsonValidUtf8(k) then return fail("unknown") end
-              pending[#pending + 1] = val
+              pending[#pending + 1] = {value=val, path=__validationChild(frame.path,k)}
             elseif type(k) == "number" then
               if not rawget(member, __dealCarrierKeys.a) and not rawget(member, __dealCarrierKeys.ja) then return fail("table") end
-              pending[#pending + 1] = val
+              pending[#pending + 1] = {value=val, path=__validationChild(frame.path,tostring(k-1))}
             elseif k == __dealCarrierKeys.f then
-              pending[#pending + 1] = val
+              pending[#pending + 1] = {value=val, path=frame.path}
             elseif type(k) ~= "table" then return fail("table")
             else
               local private = false
@@ -9864,6 +9866,11 @@ local function __bcheckLeaf(desc, staticKind, v, csig, completion, classSeen)
             end
           end
         end
+      end
+      end)
+      if not ok then
+        __validationEvidence(failure, frame.path, false)
+        error(failure, 0)
       end
     end
     return v
@@ -9909,7 +9916,7 @@ local function __bcheckLeaf(desc, staticKind, v, csig, completion, classSeen)
     -- pass a table boundary; the two internal sentinels never do).
     if type(v) == "table" and v ~= __MISSING and v ~= __NULL
         and __typedBoundaryKind(staticKind, v) == "table" then
-      return __bcheck("unknown", staticKind, v, nil, completion, classSeen)
+      return __bcheck("unknown", staticKind, v, nil, completion, path)
     end
     return fail("table")
   elseif desc == "Error" then
@@ -9917,8 +9924,8 @@ local function __bcheckLeaf(desc, staticKind, v, csig, completion, classSeen)
     -- passes unchanged. The canonical builtin atom is exactly Error
     -- (the one class text without the leading '@').
     if type(v) == "table" and v[__dealCarrierKeys.d] then
-      __bcheck("string", "ref", v.name, nil, completion, classSeen)
-      __bcheck("string", "ref", v.m, nil, completion, classSeen)
+      __bcheck("string", "ref", v.name, nil, completion, __validationChild(path,"name"))
+      __bcheck("string", "ref", v.m, nil, completion, __validationChild(path,"message"))
       return v
     end
     return failClass(desc, (type(v) == "table" and v[__dealCarrierKeys.c]) and v[__dealCarrierKeys.id] or nil)
@@ -9979,11 +9986,11 @@ local function __bcheckLeaf(desc, staticKind, v, csig, completion, classSeen)
   end
   return v
 end
-local function __validationChild(parent, segment)
+__validationChild = function(parent, segment)
   return {parent=parent, segment=segment, depth=parent and parent.depth+1 or 1}
 end
-local function __validationEvidence(errorValue, path, missing)
-  if type(errorValue) ~= "table" then return end
+__validationEvidence = function(errorValue, path, missing)
+  if type(errorValue) ~= "table" or rawget(errorValue,"validationPath") ~= nil then return end
   local depth, prefix = path and path.depth or 0, {}
   local frame = path
   while frame do
@@ -10004,8 +10011,8 @@ local function __validationEvidence(errorValue, path, missing)
   errorValue.validationMissingField=tostring(missing)
 end
 -- Composite admission uses an operation-local stack, not the Lua call stack.
-__bcheck = function(desc, staticKind, v, csig, completion)
-  local root = {desc=desc, kind=staticKind, value=v, sig=csig, completion=completion}
+__bcheck = function(desc, staticKind, v, csig, completion, path)
+  local root = {desc=desc, kind=staticKind, value=v, sig=csig, completion=completion, path=path}
   local admitted = v
   local pending, seen = {root}, {}
   while #pending > 0 do
@@ -10041,7 +10048,7 @@ __bcheck = function(desc, staticKind, v, csig, completion)
       end
       local isClass, isArray = string.sub(d, 1, 1) == "@", string.sub(d, 1, 6) == "array("
       if not isClass and not isArray then
-        local checked = __bcheckLeaf(d, task.kind, value, sig, task.completion)
+        local checked = __bcheckLeaf(d, task.kind, value, sig, task.completion, task.path)
         if task == root then admitted = checked end
         return
       end
@@ -10087,6 +10094,9 @@ __bcheck = function(desc, staticKind, v, csig, completion)
         if type(checked)=="table" then
           failure.unicodeByteOffset=rawget(checked,"unicodeByteOffset")
           failure.unicodeConstraint=rawget(checked,"unicodeConstraint")
+          for _,key in ipairs({"validationPath","validationPathDepth","validationPathTruncated","validationMissingField"}) do
+            failure[key]=rawget(checked,key)
+          end
         end
         checked, array = failure, array.parent
         __validationEvidence(checked, task.path, missing)

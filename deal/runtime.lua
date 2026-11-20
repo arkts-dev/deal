@@ -648,14 +648,17 @@ function __rt.typed_kind(v)
   return "table"
 end
 
-function __rt.validate_data(root, file, line, column)
-  local pending, seen = {root}, {}
+local validation_child, validation_failure
+function __rt.validate_data(root, file, line, column, path)
+  local pending, seen = {{value=root,path=path}}, {}
   local function reject(v)
     error(__rt._armErr("TYPED_BOUNDARY_KIND", {kind = "unknown"}, "E8001", "unsupported unknown ingress",
       file, line, column, "unknown", type(v)))
   end
   while #pending > 0 do
-    local v = table.remove(pending)
+    local frame = table.remove(pending)
+    local v = frame.value
+    local ok, failure = pcall(function()
     if v == __rt.__NULL or v == __rt.__UNDEFINED or v == __rt.__MISSING then
     elseif type(v) == "string" then __rt.check_string(v, file, line, column)
     elseif type(v) == "number" or type(v) == "boolean" then
@@ -669,19 +672,21 @@ function __rt.validate_data(root, file, line, column)
       if kind == "async-operation" then reject(v) end
       if kind == "function" and not __rt.valid_function(v) then reject(v) end
       if rawget(v, __K.d) or v[__K.classname] == "Error" then
-        __rt.check_string(v.name, file, line, column)
+        local nameOk, nameFailure = pcall(__rt.check_string,v.name,file,line,column)
+        if not nameOk then validation_failure(nameFailure,validation_child(frame.path,"name"),false);error(nameFailure,0) end
         local message = v.message
         if rawget(v, __K.d) then message = v.m end
-        __rt.check_string(message, file, line, column)
+        local messageOk, messageFailure = pcall(__rt.check_string,message,file,line,column)
+        if not messageOk then validation_failure(messageFailure,validation_child(frame.path,"message"),false);error(messageFailure,0) end
       end
       if kind ~= "function" and not rawget(v, __K.jn) then
         for key, member in next, v do
           if type(key) == "string" then
             __rt.check_string(key, file, line, column)
-            pending[#pending + 1] = member
+            pending[#pending + 1] = {value=member,path=validation_child(frame.path,key)}
           elseif type(key) == "number" then
             if not rawget(v, __K.a) and not rawget(v, __K.ja) then reject(v) end
-            pending[#pending + 1] = member
+            pending[#pending + 1] = {value=member,path=validation_child(frame.path,tostring(key-1))}
           else
             local private = false
             for _, carrierKey in pairs(__K) do if key == carrierKey then private = true; break end end
@@ -690,11 +695,13 @@ function __rt.validate_data(root, file, line, column)
         end
       end
     end
+    end)
+    if not ok then validation_failure(failure,frame.path,false);error(failure,0) end
   end
   return root
 end
 
-function __rt.check_table(v, file, line, column)
+function __rt.check_table(v, file, line, column, path)
   -- The strict table split: the language-null sentinel is not a table, the
   -- internal absent marker is not a table, and a produced carrier of
   -- another kind (a class instance, a function wrapper,
@@ -719,7 +726,7 @@ function __rt.check_table(v, file, line, column)
     error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "table" }, "E8001",
       "expected table", file, line, column, "table", projected))
   end
-  return __rt.validate_data(v, file, line, column)
+  return __rt.validate_data(v, file, line, column, path)
 end
 
 -- ===== Composite type checks (canonical boundary) =====
@@ -1104,11 +1111,11 @@ end
 -- are checked in 1-based contiguous order and the first failing index is
 -- wrapped in E8003.
 local check_canonical_ast
-local function validation_child(parent, segment)
+validation_child = function(parent, segment)
   return {parent=parent, segment=segment, depth=parent and parent.depth+1 or 1}
 end
-local function validation_failure(failure, path, missing)
-  if type(failure) ~= "table" then return end
+validation_failure = function(failure, path, missing)
+  if type(failure) ~= "table" or rawget(failure,"validationPath") ~= nil then return end
   local prefix, depth = {}, path and path.depth or 0
   local frame = path
   while frame do
@@ -1148,7 +1155,7 @@ local function check_canonical_ast_inner(ast, v, file, line, column, seen, path)
     elseif name == "string" then
       return __rt.check_string(v, file, line, column)
     elseif name == "record" then
-      return __rt.check_table(v, file, line, column)
+      return __rt.check_table(v, file, line, column, path)
     elseif name == "never" then
       error(__rt._armErr("TYPED_BOUNDARY_KIND", {kind="never"}, "E8001", "expected never",
         file, line, column, "never", __rt.typed_kind(v)), 0)
@@ -1157,12 +1164,12 @@ local function check_canonical_ast_inner(ast, v, file, line, column, seen, path)
       error(__rt._armErr("TYPED_BOUNDARY_KIND", {kind = "undefined"}, "E8001", "expected undefined",
         file, line, column, "undefined", __rt.typed_kind(v)))
     elseif name == "unknown" then
-      __rt.validate_data(v, file, line, column)
+      __rt.validate_data(v, file, line, column, path)
       if type(v) == "string" then return __rt.check_string(v, file, line, column) end
       local actual = __rt.typed_kind(v)
       if actual ~= "async-operation" and type(v) ~= "function" and type(v) ~= "thread" and type(v) ~= "userdata" and type(v) ~= "cdata" then
         if v == __rt.__MISSING then return __rt.__UNDEFINED end
-        return __rt.validate_data(v, file, line, column)
+        return __rt.validate_data(v, file, line, column, path)
       end
       error(__rt._armErr("TYPED_BOUNDARY_KIND", {kind = "unknown"}, "E8001", "unsupported unknown ingress",
         file, line, column, "unknown", actual))
@@ -1192,10 +1199,12 @@ local function check_canonical_ast_inner(ast, v, file, line, column, seen, path)
           .. tostring(actual_class), file, line, column, ast.name, actual_class))
     end
     if ast.name == "Error" then
-      __rt.check_string(v.name, file, line, column)
+      local nameOk, nameFailure = pcall(__rt.check_string,v.name,file,line,column)
+      if not nameOk then validation_failure(nameFailure,validation_child(path,"name"),false);error(nameFailure,0) end
       local message = v.message
       if v[__K.d] then message = v.m end
-      __rt.check_string(message, file, line, column)
+      local messageOk, messageFailure = pcall(__rt.check_string,message,file,line,column)
+      if not messageOk then validation_failure(messageFailure,validation_child(path,"message"),false);error(messageFailure,0) end
       return v
     end
     local plan = __rt.__hostClassPlans and __rt.__hostClassPlans[ast.name]

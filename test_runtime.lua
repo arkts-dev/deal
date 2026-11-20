@@ -18,6 +18,22 @@ do
   fields['name/~']=nil
   ok,failure=pcall(__rt.check_type,'@test/Path',value)
   assert(not ok and failure.validationMissingField=='true')
+  local nested={items={[K.a]=true,[K.n]=1,[1]=string.char(226,130)}}
+  ok,failure=pcall(__rt.check_type,'record',nested)
+  assert(not ok and failure.validationPath=='/items/0' and failure.unicodeByteOffset=='1')
+  nested.items[1]='fixed'
+  assert(__rt.check_type('record',nested)==nested)
+  local err={[K.d]=true,name=false,m='valid'}
+  nested.items[1]=err
+  ok,failure=pcall(__rt.check_type,'unknown',nested)
+  assert(not ok and failure.validationPath=='/items/0/name')
+  err.name='fixed'
+  assert(__rt.check_type('unknown',nested)==nested)
+  err.m=false
+  ok,failure=pcall(__rt.check_type,'[Error]',nested.items)
+  assert(not ok and failure.validationPath=='/0/message')
+  err.m='fixed'
+  assert(__rt.check_type('[Error]',nested.items)==nested.items)
 end
 
 -- The private carrier keys (ISSUE-0830): the runtime, the emitted chunks and

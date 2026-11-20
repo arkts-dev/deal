@@ -1979,6 +1979,18 @@ public class FailureArmAuthorityTest {
             row("completion-bad", completionOk, completionError)
             row("completion-ok", pcall(__bcheck, "string", "string", valid, nil,
               true))
+            local record = {items=arr("ok", bad)}
+            local ok, failure = pcall(__bcheck,"record","ref",record,nil)
+            assert(not ok and failure.validationPath == "/items/1" and failure.validationPathDepth == "2")
+            assert(failure.unicodeByteOffset == "1")
+            record.items[2] = "fixed"
+            assert(__bcheck("record","ref",record,nil) == record)
+            local err = {[__dealCarrierKeys.d]=true,name=false,m="ok"}
+            local container = {items=arr(err)}
+            ok, failure = pcall(__bcheck,"record","ref",container,nil)
+            assert(not ok and failure.validationPath == "/items/0/name")
+            err.name="fixed"
+            assert(__bcheck("record","ref",container,nil) == container)
             """, "invalid-unicode-probe", 8);
         checkEq("string-bad|E8001|string|invalid-unicode|" + message, rows.get(0),
             "the emitted prelude rejects the invalid string with the declared arm");
