@@ -18,6 +18,14 @@ final class NativeRuntimeObjects {
     private NativeRuntimeObjects() {}
     private static Path directory;
     private static byte[] compilerIdentity;
+    private static final java.util.regex.Pattern SENSITIVE_MACRO = java.util.regex.Pattern.compile(
+        "\\b__(FILE|BASE_FILE|INCLUDE_LEVEL|DATE|TIME|TIMESTAMP)__\\b");
+    private static final java.util.regex.Pattern LOCAL_INCLUDE = java.util.regex.Pattern.compile(
+        "(?m)^\\s*#\\s*include\\s+\"([^\"]+)\"");
+    // One content-keyed analysis, not a path/mtime cache. Every request still reads
+    // and hashes the complete current tree; failed eligibility is cached too.
+    private record Analysis(String fingerprint, String text, boolean eligible) {}
+    private static Analysis analysis;
 
     static synchronized List<Path> prepare(Path root, int level, List<Path> sources,
                                            List<String> flags) {
@@ -37,12 +45,9 @@ final class NativeRuntimeObjects {
                 if (!Files.isRegularFile(file)) return sources;
                 tree.put(name, Files.readAllBytes(file));
             }
-            String text = tree.values().stream().map(b -> new String(b,
-                java.nio.charset.StandardCharsets.UTF_8)).collect(java.util.stream.Collectors.joining("\n"));
-            if (text.matches("(?s).*\\b__(FILE|BASE_FILE|INCLUDE_LEVEL|DATE|TIME|TIMESTAMP)__\\b.*")) return sources;
-            var includes = java.util.regex.Pattern.compile("(?m)^\\s*#\\s*include\\s+\"([^\"]+)\"")
-                .matcher(text);
-            while (includes.find()) if (!tree.containsKey(includes.group(1))) return sources;
+            Analysis current = analyze(tree);
+            if (!current.eligible()) return sources;
+            String text = current.text();
             List<String> runtimeFlags = flags.stream().filter(f -> {
                 if (!f.matches("-DDEAL_(STUB|FRAME|QUEUE|MEMORY|TEXT|CROSSING|JSON|GC|BOUNDARY)_CASE=.*")) return true;
                 String macro = f.substring(2, f.indexOf('='));
@@ -120,6 +125,23 @@ final class NativeRuntimeObjects {
         } catch (IOException error) {
             throw new UncheckedIOException("cannot prepare native runtime", error);
         }
+    }
+
+    private static Analysis analyze(Map<String, byte[]> tree) {
+        MessageDigest hash = sha256();
+        for (var file : tree.entrySet()) {
+            add(hash, file.getKey().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            add(hash, file.getValue());
+        }
+        String fingerprint = HexFormat.of().formatHex(hash.digest());
+        if (analysis != null && analysis.fingerprint().equals(fingerprint)) return analysis;
+        String text = tree.values().stream().map(b -> new String(b,
+            java.nio.charset.StandardCharsets.UTF_8)).collect(java.util.stream.Collectors.joining("\n"));
+        boolean eligible = !SENSITIVE_MACRO.matcher(text).find();
+        var includes = LOCAL_INCLUDE.matcher(text);
+        while (eligible && includes.find()) eligible = tree.containsKey(includes.group(1));
+        analysis = new Analysis(fingerprint, text, eligible);
+        return analysis;
     }
 
     private static Path directory() throws IOException {

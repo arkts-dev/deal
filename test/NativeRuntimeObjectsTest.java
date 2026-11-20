@@ -28,8 +28,10 @@ public final class NativeRuntimeObjectsTest {
                 check(objects.size() == units.size() && objects.stream().allMatch(p ->
                     p.isAbsolute() && p.toString().endsWith(".o") && Files.isRegularFile(p)),
                     "complete published runtime prepares at O" + level);
+                Object analysis = analysis();
                 check(objects.equals(NativeRuntimeObjects.prepare(root, level, units, List.of())),
                     "complete published runtime reuses every object at O" + level);
+                check(analysis == analysis(), "identical runtime bytes retain the same analysis");
             }
             Path source = root.resolve("deal/native/main.c");
             Path header = root.resolve("deal/native/entry.h");
@@ -62,8 +64,12 @@ public final class NativeRuntimeObjectsTest {
             check(initial.equals(prepare(copy, copy.resolve("deal/native/main.c"), 0, List.of())),
                 "identical publications share objects without depending on deleted fixture paths");
 
+            Object priorAnalysis = analysis();
+            var headerTime = Files.getLastModifiedTime(header);
             Files.writeString(header, "#define TEST_RESULT 7\n");
+            Files.setLastModifiedTime(header, headerTime);
             var changedHeader = prepare(root, source, 0, List.of());
+            check(priorAnalysis != analysis(), "same-size same-mtime byte changes replace analysis");
             check(!initial.equals(changedHeader), "header changes invalidate preparation");
             execute(root, source, scratch, 7);
             Files.writeString(header, "#define TEST_RESULT 3\n");
@@ -107,12 +113,29 @@ public final class NativeRuntimeObjectsTest {
             Files.writeString(secondSource, "invalid second translation unit\n");
             check(NativeRuntimeObjects.prepare(root, 2, List.of(source, secondSource), List.of())
                 .equals(List.of(source, secondSource)), "one defective unit rejects the whole batch");
+            Files.writeString(secondSource, "int other(void) { return 0; }\n");
             Files.writeString(source, "int main(void) { return __INCLUDE_LEVEL__; }\n");
             check(prepare(root, source, 0, List.of()).equals(List.of(source)),
                 "relocation-sensitive sources stay cold");
+            for (String macro : List.of("__FILE__", "__BASE_FILE__", "__INCLUDE_LEVEL__",
+                    "__DATE__", "__TIME__", "__TIMESTAMP__")) {
+                Files.writeString(source, "/* " + macro + " */\nint main(void) { return 0; }\n");
+                check(prepare(root, source, 0, List.of()).equals(List.of(source)),
+                    "relocation-sensitive source stays cold: " + macro);
+                Object rejected = analysis();
+                check(prepare(root, source, 0, List.of()).equals(List.of(source)) && rejected == analysis(),
+                    "cached rejection remains cold: " + macro);
+            }
             Files.writeString(source, "#include \"untracked.h\"\nint main(void) { return 0; }\n");
             check(prepare(root, source, 0, List.of()).equals(List.of(source)),
                 "untracked headers stay cold");
+            Files.writeString(source, "int main(void) { return 0; }\n");
+            Files.writeString(header, "/* __FILE__ */\n");
+            check(prepare(root, source, 0, List.of()).equals(List.of(source)),
+                "header bytes also invalidate eligibility");
+            Files.writeString(header, "#define TEST_RESULT 3\n");
+            check(!prepare(root, source, 0, List.of()).equals(List.of(source)),
+                "repair invalidates a cached rejection");
             Files.writeString(source, "int main(void) { return 0; }\n");
             Files.delete(header);
             check(prepare(root, source, 0, List.of()).equals(List.of(source)),
@@ -136,6 +159,12 @@ public final class NativeRuntimeObjectsTest {
             }
         }
         System.out.println("Native runtime object controls: passed");
+    }
+
+    private static Object analysis() throws Exception {
+        var field = NativeRuntimeObjects.class.getDeclaredField("analysis");
+        field.setAccessible(true);
+        return field.get(null);
     }
 
     private static List<Path> prepare(Path root, Path source, int level, List<String> flags) {
