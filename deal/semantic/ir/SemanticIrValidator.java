@@ -2698,13 +2698,14 @@ public final class SemanticIrValidator {
                                                                     Map<String, RawUnit> closure) {
         Map<OpId, RawOp> localOps = new LinkedHashMap<>();
         for (RawOp op : unit.ops()) localOps.putIfAbsent(op.opId(), op);
+        BodyReturnIndex returns = new BodyReturnIndex(unit, closure);
         // Direction (a): every BOUNDARY op's (kind, descriptor, policy)
         // triple against the closed boundary-assignment table.
         for (RawOp op : unit.ops()) {
             if (enumByName(SemanticOpKind.class, op.kind()) != SemanticOpKind.BOUNDARY) {
                 continue;
             }
-            Optional<String> failure = cellOfBoundary(unit, op, closure, localOps);
+            Optional<String> failure = cellOfBoundary(unit, op, closure, localOps, returns);
             if (failure.isPresent()) {
                 return fail(op, unit, facts, R_BOUNDARY_TRIPLE, SemanticCapability.FOUNDATION_VALUES,
                     origin(R_BOUNDARY_TRIPLE, failure.get()));
@@ -2753,7 +2754,7 @@ public final class SemanticIrValidator {
      */
     private static Optional<String> cellOfBoundary(RawUnit unit, RawOp boundary,
                                                    Map<String, RawUnit> closure,
-                                                   Map<OpId, RawOp> localOps) {
+                                                   Map<OpId, RawOp> localOps, BodyReturnIndex returns) {
         BoundaryKind kind = enumByName(BoundaryKind.class,
             optionalString(boundary.payload(), "kind"));
         if (kind == null) {
@@ -2916,7 +2917,7 @@ public final class SemanticIrValidator {
                 if (invocation == null) {
                     return Optional.of(kind.name() + " boundary outside any invocation shape");
                 }
-                return invocationCell(unit, invocation, boundary, closure, localOps);
+                return invocationCell(unit, invocation, boundary, closure, localOps, returns);
             }
         }
         return Optional.empty();
@@ -2943,7 +2944,7 @@ public final class SemanticIrValidator {
 
     private static Optional<String> invocationCell(RawUnit unit, RawOp invocation, RawOp boundary,
                                                    Map<String, RawUnit> closure,
-                                                   Map<OpId, RawOp> localOps) {
+                                                   Map<OpId, RawOp> localOps, BodyReturnIndex returns) {
         SemanticOpKind invocationKind =
             enumByName(SemanticOpKind.class, invocation.kind());
         if (invocationKind == null) {
@@ -2957,7 +2958,7 @@ public final class SemanticIrValidator {
             case EXTERNAL_ENTRY -> entryCell(unit, invocation, boundary);
             case CLASS_NEW -> classNewCell(unit, invocation, boundary);
             case CLOSURE_NEW, RECURSIVE_GROUP_INIT ->
-                bodyLocalReturnCell(unit, invocation, boundary, closure, localOps);
+                bodyLocalReturnCell(unit, invocation, boundary, closure, localOps, returns);
             case CLASS_FACTORY ->
                 Optional.of("a boundary parented to " + invocationKind.name()
                     + " is outside the closed table (zero boundary children)");
@@ -2969,7 +2970,7 @@ public final class SemanticIrValidator {
     private static Optional<String> bodyLocalReturnCell(RawUnit unit, RawOp creation,
                                                         RawOp boundary,
                                                         Map<String, RawUnit> closure,
-                                                        Map<OpId, RawOp> localOps) {
+                                                        Map<OpId, RawOp> localOps, BodyReturnIndex returns) {
         RawOp parent = resolveLocalParent(boundary, unit, closure, localOps);
         if (parent == null
                 || enumByName(SemanticOpKind.class, parent.kind()) != SemanticOpKind.RETURN) {
@@ -3000,16 +3001,14 @@ public final class SemanticIrValidator {
                 + "publishing the returning function (the group names another member "
                 + "set)");
         }
-        for (RawUnit owner : unitsOf(unit, closure)) {
-            for (RawOp candidate : owner.ops()) {
-                if (staticallyMaterializes(candidate, boundary.opId())) {
-                    return Optional.of("a body-local identity on a body with an assigned "
-                        + "invocation shape (the statically materialized invocation op "
-                        + "must carry the reserved identity)");
-                }
+        for (RawOp candidate : returns.materializers()) {
+            if (staticallyMaterializes(candidate, boundary.opId())) {
+                return Optional.of("a body-local identity on a body with an assigned "
+                    + "invocation shape (the statically materialized invocation op "
+                    + "must carry the reserved identity)");
             }
         }
-        for (RawOp candidate : unit.ops()) {
+        for (RawOp candidate : returns.returns()) {
             if (enumByName(SemanticOpKind.class, candidate.kind()) != SemanticOpKind.RETURN) {
                 continue;
             }
@@ -3045,6 +3044,43 @@ public final class SemanticIrValidator {
                 + "allocated function's declared return descriptor");
         }
         return Optional.empty();
+    }
+
+    /** Narrow repeated body-return searches without decoding any payload ahead of its rule. */
+    private static final class BodyReturnIndex {
+        private final RawUnit unit;
+        private final Map<String, RawUnit> closure;
+        private List<RawOp> invocations;
+        private List<RawOp> localReturns;
+
+        BodyReturnIndex(RawUnit unit, Map<String, RawUnit> closure) {
+            this.unit = unit;
+            this.closure = closure;
+        }
+
+        List<RawOp> materializers() {
+            if (invocations == null) {
+                invocations = new ArrayList<>();
+                for (RawUnit owner : unitsOf(unit, closure)) {
+                    for (RawOp op : owner.ops()) {
+                        if ("CALL".equals(op.kind()) || "ASYNC_START".equals(op.kind())
+                                || "CALLBACK_INVOKE".equals(op.kind())
+                                || "EXTERNAL_ENTRY".equals(op.kind())) invocations.add(op);
+                    }
+                }
+            }
+            return invocations;
+        }
+
+        List<RawOp> returns() {
+            if (localReturns == null) {
+                localReturns = new ArrayList<>();
+                for (RawOp op : unit.ops()) {
+                    if ("RETURN".equals(op.kind())) localReturns.add(op);
+                }
+            }
+            return localReturns;
+        }
     }
 
     /**
