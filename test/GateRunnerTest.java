@@ -26,6 +26,7 @@ public final class GateRunnerTest {
                 name="${!#}"
                 mkdir -p markers running
                 touch "markers/$name" "running/$$"
+                echo "$name" >> starts
                 trap 'rm -f "running/$$"' EXIT
                 count=$(find running -type f | wc -l)
                 if [ "$count" -gt 2 ]; then echo budget-exceeded; exit 9; fi
@@ -35,10 +36,10 @@ public final class GateRunnerTest {
                 """);
             Files.writeString(tools.resolve("gate-manifest.sh"), """
                 TEST_MAINS=(
-                  'bg|long|java -ea -cp build first'
                   'fg|short|java -ea -cp build second'
-                  'fg|short|java -ea -cp build third'
+                  'bg|long|java -ea -cp build first'
                   'fg|short|java -ea -cp build fourth'
+                  'bg|long|java -ea -cp build third'
                 )
                 """);
             Map<String, String> env = Map.of("PATH", bin + ":" + System.getenv("PATH"));
@@ -51,10 +52,16 @@ public final class GateRunnerTest {
             check(passed.stdout().contains("Selected Tests Passed"), "selected success is explicit");
             check(passed.stdout().lines().anyMatch(line -> line.equals("=== Selected Tests Passed ===")),
                 "success reports the executed selection without obsolete omission warnings");
+            check(new java.util.HashSet<>(Files.readAllLines(scratch.resolve("starts")).subList(0, 2))
+                .equals(java.util.Set.of("first", "third")), "long lanes get the first bounded slots");
+            Files.delete(scratch.resolve("starts"));
             var serial = BoundedProcess.runCaptured(
                 List.of("/bin/bash", "run_tests.sh", "--jobs", "1"), scratch, env);
             check(serial.exitCode() == 0 && !serial.stdout().contains("active=2"),
                 "one job is strictly sequential: " + serial);
+            check(Files.readAllLines(scratch.resolve("starts")).equals(
+                List.of("first", "third", "second", "fourth")),
+                "priority is stable and every remaining suite executes exactly once");
             Files.writeString(tools.resolve("gate-manifest.sh"), """
                 TEST_MAINS=(
                   'bg|negative|java -ea -cp build fail'
