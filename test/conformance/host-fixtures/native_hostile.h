@@ -26,6 +26,7 @@ typedef struct {
     deal_host_function function;
     deal_async_token token;
     uint32_t unicode_defect;
+    size_t unicode_byte_offset;
     int materialized;
     deal_data managed;
 } fixture_box;
