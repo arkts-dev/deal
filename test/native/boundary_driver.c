@@ -1101,6 +1101,35 @@ static void check_live_array(uint32_t layout, const char *descriptor,
 
 static void check_live_graphs(void) {
     deal_root_scope_push();
+    /* Thirty-two maximally escaped segments exceed the unescaped-byte cap. */
+    deal_table *bounded_root = deal_container_table_new();
+    (void)deal_root_scope_hold(bounded_root);
+    char escaped_key[128]; memset(escaped_key, '/', sizeof(escaped_key));
+    deal_string *bounded_key = deal_text_new(escaped_key, sizeof(escaped_key));
+    (void)deal_root_scope_hold(bounded_key);
+    deal_table *bounded_tail = bounded_root;
+    for (size_t depth = 0u; depth < 32u; depth++) {
+        deal_table *child = deal_container_table_new();
+        (void)deal_root_scope_hold(child);
+        deal_data value = deal_data_of_reference(DEAL_DATA_TABLE, child);
+        deal_container_table_write(bounded_tail, bounded_key, &value);
+        bounded_tail = child;
+    }
+    deal_string *bounded_leaf = deal_text_new("abc", 3u);
+    (void)deal_root_scope_hold(bounded_leaf);
+    deal_data bounded_text = deal_data_of_reference(DEAL_DATA_STRING, bounded_leaf);
+    deal_container_table_write(bounded_tail, bounded_key, &bounded_text);
+    memcpy((void *)deal_text_bytes(bounded_leaf), "\xe2\x82\x00", 3u);
+    deal_outcome bounded = live_check(deal_data_of_reference(DEAL_DATA_TABLE, bounded_root), "record");
+    check(bounded.error != NULL, "bounded diagnostic path rejects the original malformed leaf");
+    if (bounded.error != NULL) {
+        (void)deal_root_scope_hold(bounded.error);
+        char *detail = deal_error_diagnostic(bounded.error);
+        check(strstr(detail, "\"validationPathDepth\":\"33\"") != NULL
+                && strstr(detail, "\"validationPathTruncated\":\"true\"") != NULL,
+              "escaped prefix stays within byte cap and retains exact full depth");
+        deal_error_snapshot_release(detail);
+    }
     deal_table *root = deal_container_table_new();
     (void)deal_root_scope_hold(root);
     deal_string *next = deal_text_new("next", 4u);

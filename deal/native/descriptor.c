@@ -1295,6 +1295,8 @@ static void deal_live_path_failure(const deal_live_walk *walk, const deal_live_i
         const deal_live_path *part = &walk->paths[prefix[i] - 1u];
         const char *key = part->key == NULL ? part->number : part->key;
         size_t take = part->length < 128u ? part->length : 128u;
+        size_t available = (8192u - length - 1u) / 2u;
+        if (take > available) take = available;
         while (take < part->length && take > 0u && ((unsigned char)key[take] & 0xc0u) == 0x80u) take--;
         if (take < part->length) truncated = 1;
         text[length++] = '/';
