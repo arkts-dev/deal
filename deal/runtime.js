@@ -2236,7 +2236,9 @@ const $rt = {
         }
       } else if (v.$kind === "class") {
         if (v.$classname === "Error") {
+          activePath = $validationChild(task.path, "name");
           $rt.checkString(v.name, file, line, column);
+          activePath = $validationChild(task.path, "message");
           $rt.checkString(v.message, file, line, column);
         }
         const fields = $classFieldOrder.get(v) || Object.keys(v).filter(key => key !== "$kind" && key !== "$classname");

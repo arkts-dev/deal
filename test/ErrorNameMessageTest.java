@@ -57,6 +57,15 @@ public final class ErrorNameMessageTest {
               const d=JSON.parse(rt.runtimeDiagnostic(e)).runtime;
               if(!d||d.validationPath!='/items/0/name~1~0'||d.validationMissingField!=='true')throw e;
             }
+            const err=rt.classPlan('Error',[{name:'name',descriptor:'string',optional:false},
+              {name:'message',descriptor:'string',optional:false}],{name:'E',message:'valid'});
+            const record=new Map([['items',[err]]]);rt.checkType('record',record);
+            err.name=false;
+            try{rt.checkType('record',record);throw Error('invalid Error name admitted');}catch(e){
+              const d=JSON.parse(rt.runtimeDiagnostic(e)).runtime;
+              if(!d||d.validationPath!='/items/0/name')throw e;
+            }
+            err.name='fixed';if(rt.checkType('record',record)!==record)throw Error('Error repair identity');
             console.log('PATH-OK');
             """), Path.of(".").toAbsolutePath());
         if (validationControl.exitCode()!=0 || !validationControl.stdout().equals("PATH-OK\n"))
