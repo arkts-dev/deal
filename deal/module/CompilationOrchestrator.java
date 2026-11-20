@@ -1345,7 +1345,7 @@ public final class CompilationOrchestrator {
         }
         var witness = new ArrayList<deal.diagnostics.DiagnosticFacts.CycleEdge>();
         int edgeCount = Math.max(0, cycle.size() - 1);
-        for (int i = 0; i < Math.min(edgeCount, 32); i++) {
+        for (int i = 0; i < edgeCount; i++) {
             String from = cycle.get(i), to = cycle.get(i + 1);
             Span span = edgeSpans.getOrDefault(from, Map.of()).get(to);
             witness.add(new deal.diagnostics.DiagnosticFacts.CycleEdge(from, to,
@@ -1354,7 +1354,8 @@ public final class CompilationOrchestrator {
         return diagnostic.withFacts(new deal.diagnostics.DiagnosticFacts("module.import-cycle", "module.graph",
                 "acyclic import graph", "closed import cycle", List.of(
                         "Inspect the witnessed imports and choose an intended dependency restructuring; no edge removal is authorized."))
-                .withCycle(new deal.diagnostics.DiagnosticFacts.CycleContext(witness, edgeCount, edgeCount > 32)));
+                .withCycle(new deal.diagnostics.DiagnosticFacts.CycleContext(witness.subList(0, Math.min(edgeCount, 32)), edgeCount, edgeCount > 32,
+                    deal.diagnostics.DiagnosticDetails.edges(witness))));
     }
 
     /**

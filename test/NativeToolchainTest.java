@@ -537,6 +537,10 @@ public final class NativeToolchainTest {
         check(resolution.attempted().equals(actualOrder.subList(0, 32)) && resolution.attemptedCount() == 40 && resolution.truncated()
                         && boundedMissing.tool() == null && resolution.mode().equals("native.compiler-path"),
                 "bounded compiler search retains exact observed total and no invented child status/output");
+        var retained = resolution.details();
+        var tail = retained.page(new deal.diagnostics.DiagnosticDetails.Request(retained.descriptor().inventoryId(), 32, 32));
+        check(tail.items().equals(actualOrder.subList(32, 40)) && tail.total() == 40 && tail.nextOffset() == null,
+            "compiler probe tail is retrieved from the actual failed search, not a repeated PATH probe");
         String report = deal.diagnostics.DiagnosticStructuredOutput.toJson(List.of(), List.of(boundedMissing.structuredDiagnostic()));
         check(report.contains("native.compiler-path") && report.contains("\"attemptedCount\": 40")
                         && report.contains("\"truncated\": true"), "sole JSON report preserves missing compiler search evidence");

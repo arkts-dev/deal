@@ -37,6 +37,7 @@ public final class CompilerProtocolJson {
         if (value instanceof Double number) return CanonicalJson.number(number);
         if (value instanceof Float number) return CanonicalJson.number(number.doubleValue());
         if (value instanceof Enum<?> item) return CanonicalJson.str(item.name());
+        if (value instanceof deal.diagnostics.DiagnosticDetails<?> details) return toValue(details.descriptor());
         if (value instanceof List<?> items) {
             return CanonicalJson.arr(items.stream().map(CompilerProtocolJson::toValue).toList());
         }

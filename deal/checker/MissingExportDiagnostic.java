@@ -12,7 +12,8 @@ final class MissingExportDiagnostic {
     private MissingExportDiagnostic() {}
 
     static CompilerDiagnostic create(Symbol.ModuleSymbol module, String requested, String operation, Span use) {
-        var available = module.exports().keySet().stream().sorted().limit(32).toList();
+        var all = module.exports().keySet().stream().sorted().toList();
+        var available = all.subList(0, Math.min(32, all.size()));
         var importRange = module.importSpan() == null ? null : module.importSpan().range();
         var diagnostic = CompilerDiagnostic.error(DiagnosticCode.E2004,
                 "Export '" + requested + "' not found in module '" + module.name()
@@ -21,7 +22,8 @@ final class MissingExportDiagnostic {
                         "exported member of " + module.name(), requested, List.of(
                                 "Inspect the imported module and choose the intended existing export or revise its declaration; listed names do not establish type, call or construction compatibility."))
                         .withExports(new DiagnosticFacts.ExportContext(module.name(), requested, available,
-                                module.exports().size(), module.exports().size() > available.size(), importRange)));
+                                module.exports().size(), module.exports().size() > available.size(), importRange,
+                                deal.diagnostics.DiagnosticDetails.strings(all))));
         return importRange == null ? diagnostic : diagnostic.withNote("Module imported here", importRange);
     }
 }

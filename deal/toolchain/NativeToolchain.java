@@ -419,7 +419,7 @@ public final class NativeToolchain {
                     }
                     Path executable = Path.of(directory, candidate);
                     attemptedCount++;
-                    if (attempted.size() < 32) attempted.add(executable.toString());
+                    attempted.add(executable.toString());
                     if (Files.isRegularFile(executable)
                             && Files.isExecutable(executable)) {
                         return executable.toAbsolutePath().normalize();
@@ -431,8 +431,8 @@ public final class NativeToolchain {
             NativeBuildException.Kind.TOOLCHAIN_MISSING,
             "none of " + String.join(", ", COMPILER_CANDIDATES)
                 + " resolves on PATH", null, "executable clang on effective PATH", "no accepted executable found",
-            new DiagnosticFacts.ResolutionContext("clang", "native.compiler-path", attempted, attemptedCount,
-                    attemptedCount > attempted.size()));
+            new DiagnosticFacts.ResolutionContext("clang", "native.compiler-path", attempted.subList(0, Math.min(32, attemptedCount)), attemptedCount,
+                    attemptedCount > 32, deal.diagnostics.DiagnosticDetails.strings(attempted)));
     }
 
     /** Requires a compiler whose major is inside the accepted window. */

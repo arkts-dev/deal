@@ -71,6 +71,48 @@ public class DiagnosticRangeTest {
         }
     }
 
+    private static void testRetainedDetailPages() {
+        var source = new ArrayList<String>();
+        for (int i = 0; i < 70; i++) source.add("observed-" + i);
+        var details = deal.diagnostics.DiagnosticDetails.strings(source);
+        source.clear();
+        var descriptor = details.descriptor();
+        var request = new deal.diagnostics.DiagnosticDetails.Request(descriptor.inventoryId(), 32, 32);
+        var page = details.page(request);
+        check(page.items().size() == 32 && page.items().getFirst().equals("observed-32")
+            && page.items().getLast().equals("observed-63") && page.nextOffset() == 64 && page.total() == 70,
+            "retained details own immutable observations and bounded exact continuation");
+        var last = details.page(new deal.diagnostics.DiagnosticDetails.Request(descriptor.inventoryId(), page.nextOffset(), 32));
+        check(last.items().size() == 6 && last.nextOffset() == null, "detail final page has explicit end");
+        check(details.page(new deal.diagnostics.DiagnosticDetails.Request(descriptor.inventoryId(), 70, 1)).items().isEmpty(),
+            "detail end boundary is empty without invented observations");
+        int rejected = 0;
+        for (int[] bad : new int[][] {{-1, 1}, {0, 0}, {0, 33}, {71, 1}, {Integer.MAX_VALUE, 32}}) {
+            try { details.page(new deal.diagnostics.DiagnosticDetails.Request(descriptor.inventoryId(), bad[0], bad[1])); }
+            catch (IllegalArgumentException expected) { rejected++; }
+        }
+        check(rejected == 5, "detail paging rejects invalid geometry without overflow");
+        try {
+            details.page(new deal.diagnostics.DiagnosticDetails.Request("stale", 0, 1));
+            fail("stale detail inventory accepted");
+        } catch (IllegalArgumentException expected) { check(true, "stale detail inventory rejected"); }
+        try { page.items().clear(); fail("mutable detail page"); }
+        catch (UnsupportedOperationException expected) { check(true, "detail pages are immutable"); }
+        check(!deal.diagnostics.DiagnosticDetails.strings(List.of("a", "bc")).descriptor().inventoryId()
+                .equals(deal.diagnostics.DiagnosticDetails.strings(List.of("ab", "c")).descriptor().inventoryId()),
+            "detail identity frames adjacent values");
+        check(!deal.diagnostics.DiagnosticDetails.strings(List.of("\ud800")).descriptor().inventoryId()
+                .equals(deal.diagnostics.DiagnosticDetails.strings(List.of("\ud801")).descriptor().inventoryId()),
+            "detail identity preserves lone UTF-16 units");
+        try {
+            new deal.diagnostics.DiagnosticFacts.ResolutionContext("x", "test", List.of("fabricated"), 70, true, details);
+            fail("mismatched detail prefix accepted");
+        } catch (IllegalArgumentException expected) { check(true, "detail prefix must match observed summary"); }
+        var json = deal.amend.CompilerProtocolJson.encode(details);
+        check(json.contains(descriptor.inventoryId()) && !json.contains("observed-32"),
+            "protocol advertises retained inventory without unbounded inline expansion");
+    }
+
     private static void checkEq(Object expected, Object actual,
             String message) {
         check(java.util.Objects.equals(expected, actual), message + " (expected "
@@ -89,6 +131,7 @@ public class DiagnosticRangeTest {
     public static void main(String[] args) throws Exception {
         System.out.println("=== Running Diagnostic Range Tests ===");
 
+        testRetainedDetailPages();
         testCursorInitialAndEmpty();
         testCursorFullWalk();
         testCursorCrlfPairing();
@@ -1585,6 +1628,11 @@ public class DiagnosticRangeTest {
         var bounded = CompilationOrchestrator.e2005Diagnostic(path, Map.of(), Map.of(), "large cycle");
         check(bounded.facts().cycle().edges().size() == 32 && bounded.facts().cycle().edgeCount() == 40
                 && bounded.facts().cycle().truncated(), "bounded witness retains exact total and truncation");
+        var cycleDetails = bounded.facts().cycle().details();
+        var cycleTail = cycleDetails.page(new deal.diagnostics.DiagnosticDetails.Request(cycleDetails.descriptor().inventoryId(), 32, 32));
+        check(cycleTail.items().size() == 8 && cycleTail.items().getLast().to().equals(path.getFirst())
+            && cycleTail.items().getFirst().importRange() == null && cycleTail.nextOffset() == null,
+            "omitted cycle edges remain retrievable without inventing unavailable import ranges");
         check(bounded.range().origin() == RangeOrigin.SYNTHETIC && !bounded.notes().isEmpty(),
                 "cycle synthetic fallback keeps original anchor note");
         for (var invalid : List.of(

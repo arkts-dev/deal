@@ -316,6 +316,8 @@ public final class DiagnosticStructuredOutput {
             }
             if (!names.candidates().isEmpty()) { sb.append('\n'); indent(sb, level + 2); }
             sb.append("],\n");
+            appendDetails(sb, names.details(), level + 2, "details");
+            appendDetails(sb, names.observationDetails(), level + 2, "observationDetails");
             indent(sb, level + 2).append("\"matchingCount\": ").append(names.matchingCount()).append(",\n");
             indent(sb, level + 2).append("\"truncated\": ").append(names.truncated()).append(",\n");
             indent(sb, level + 2).append("\"observationCount\": ").append(names.observationCount()).append(",\n");
@@ -362,6 +364,7 @@ public final class DiagnosticStructuredOutput {
             indent(sb, level + 2).append("\"available\": ");
             appendStrings(sb, exports.available());
             sb.append(",\n");
+            appendDetails(sb, exports.details(), level + 2, "details");
             indent(sb, level + 2).append("\"availableCount\": ").append(exports.availableCount()).append(",\n");
             indent(sb, level + 2).append("\"truncated\": ").append(exports.truncated()).append(",\n");
             appendNullableRange(sb, exports.importRange(), level + 2, "importRange");
@@ -379,6 +382,7 @@ public final class DiagnosticStructuredOutput {
             indent(sb, level + 2).append("\"attempted\": ");
             appendStrings(sb, resolution.attempted());
             sb.append(",\n");
+            appendDetails(sb, resolution.details(), level + 2, "details");
             indent(sb, level + 2).append("\"attemptedCount\": ").append(resolution.attemptedCount()).append(",\n");
             indent(sb, level + 2).append("\"truncated\": ").append(resolution.truncated()).append('\n');
             indent(sb, level + 1).append('}');
@@ -403,6 +407,7 @@ public final class DiagnosticStructuredOutput {
             }
             if (!cycle.edges().isEmpty()) { sb.append('\n'); indent(sb, level + 2); }
             sb.append("],\n");
+            appendDetails(sb, cycle.details(), level + 2, "details");
             indent(sb, level + 2).append("\"edgeCount\": ").append(cycle.edgeCount()).append(",\n");
             indent(sb, level + 2).append("\"truncated\": ").append(cycle.truncated()).append('\n');
             indent(sb, level + 1).append('}');
@@ -539,6 +544,18 @@ public final class DiagnosticStructuredOutput {
     }
 
     /** Appends {@code level} two-space indent units and returns {@code sb}. */
+    private static void appendDetails(StringBuilder sb, DiagnosticDetails<?> details, int level, String name) {
+        indent(sb, level).append(jsonString(name)).append(": ");
+        if (details == null) sb.append("null");
+        else {
+            var descriptor = details.descriptor();
+            sb.append("{\"inventoryId\": ").append(jsonString(descriptor.inventoryId()))
+                .append(", \"total\": ").append(descriptor.total())
+                .append(", \"pageLimit\": ").append(descriptor.pageLimit()).append('}');
+        }
+        sb.append(",\n");
+    }
+
     private static StringBuilder indent(StringBuilder sb, int level) {
         for (int i = 0; i < level; i++) {
             sb.append("  ");

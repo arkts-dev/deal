@@ -22,6 +22,17 @@ public record DiagnosticFacts(
         CycleContext cycle,
         ToolContext tool,
         LoweringContext lowering) {
+    private static <T> void validateDetails(DiagnosticDetails<T> details, List<T> prefix, int count) {
+        if (details == null) return;
+        var descriptor = details.descriptor();
+        if (descriptor.total() != count) throw new IllegalArgumentException("Detail count differs from observed count");
+        for (int offset = 0; offset < prefix.size(); offset += DiagnosticDetails.PAGE_LIMIT) {
+            int size = Math.min(DiagnosticDetails.PAGE_LIMIT, prefix.size() - offset);
+            if (!details.page(new DiagnosticDetails.Request(descriptor.inventoryId(), offset, size)).items()
+                    .equals(prefix.subList(offset, offset + size)))
+                throw new IllegalArgumentException("Detail prefix differs from observations");
+        }
+    }
     /** Already classified common-lowering failure, not reconstructed from its message. */
     public record LoweringContext(String module, String capability, String validatorRule,
                                    String semanticProfile, String irVersion, String origin) {
@@ -65,8 +76,10 @@ public record DiagnosticFacts(
             Objects.requireNonNull(to, "to");
         }
     }
-    public record CycleContext(List<CycleEdge> edges, int edgeCount, boolean truncated) {
+    public record CycleContext(List<CycleEdge> edges, int edgeCount, boolean truncated, DiagnosticDetails<CycleEdge> details) {
+        public CycleContext(List<CycleEdge> edges, int edgeCount, boolean truncated) { this(edges, edgeCount, truncated, null); }
         public CycleContext {
+            validateDetails(details, edges, edgeCount);
             edges = List.copyOf(edges);
             if (edgeCount < edges.size() || truncated != (edgeCount > edges.size()))
                 throw new IllegalArgumentException("Invalid cycle edge count");
@@ -80,8 +93,12 @@ public record DiagnosticFacts(
 
     /** Candidate paths actually visited, in search order; no filesystem re-probing. */
     public record ResolutionContext(String specifier, String mode, List<String> attempted,
-                                    int attemptedCount, boolean truncated) {
+                                    int attemptedCount, boolean truncated, DiagnosticDetails<String> details) {
+        public ResolutionContext(String specifier, String mode, List<String> attempted, int attemptedCount, boolean truncated) {
+            this(specifier, mode, attempted, attemptedCount, truncated, null);
+        }
         public ResolutionContext {
+            validateDetails(details, attempted, attemptedCount);
             Objects.requireNonNull(specifier, "specifier");
             Objects.requireNonNull(mode, "mode");
             attempted = List.copyOf(attempted);
@@ -92,8 +109,12 @@ public record DiagnosticFacts(
 
     /** Observed export names need not be suitable replacements for the rejected use. */
     public record ExportContext(String alias, String requested, List<String> available,
-                                int availableCount, boolean truncated, DiagnosticRange importRange) {
+                                int availableCount, boolean truncated, DiagnosticRange importRange, DiagnosticDetails<String> details) {
+        public ExportContext(String alias, String requested, List<String> available, int availableCount, boolean truncated, DiagnosticRange importRange) {
+            this(alias, requested, available, availableCount, truncated, importRange, null);
+        }
         public ExportContext {
+            validateDetails(details, available, availableCount);
             Objects.requireNonNull(alias, "alias");
             Objects.requireNonNull(requested, "requested");
             available = List.copyOf(available);
@@ -133,11 +154,17 @@ public record DiagnosticFacts(
         }
     }
     public record NameContext(List<NameCandidate> candidates, int matchingCount, boolean truncated,
-                              List<NameObservation> observations, int observationCount) {
+                              List<NameObservation> observations, int observationCount,
+                              DiagnosticDetails<NameCandidate> details, DiagnosticDetails<NameObservation> observationDetails) {
+        public NameContext(List<NameCandidate> candidates, int matchingCount, boolean truncated, List<NameObservation> observations, int observationCount) {
+            this(candidates, matchingCount, truncated, observations, observationCount, null, null);
+        }
         public NameContext(List<NameCandidate> candidates, int matchingCount, boolean truncated) {
-            this(candidates, matchingCount, truncated, List.of(), 0);
+            this(candidates, matchingCount, truncated, List.of(), 0, null, null);
         }
         public NameContext {
+            validateDetails(details, candidates, matchingCount);
+            validateDetails(observationDetails, observations, observationCount);
             candidates = List.copyOf(candidates);
             observations = List.copyOf(observations);
             if (observationCount < observations.size()) throw new IllegalArgumentException("Invalid lookup observation count");

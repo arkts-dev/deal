@@ -4008,13 +4008,13 @@ public final class TypeChecker {
                         type instanceof Type.Func ? "FUNCTION" : "VALUE", typeName(type),
                         bindingDeclarationRange(symbol), distance, visibleDepth));
                 count++;
-                candidates.sort(rank);
-                if (candidates.size() > 5) candidates.removeLast();
             }
         }
+        candidates.sort(rank);
         List<deal.diagnostics.DiagnosticFacts.NameObservation> observations = lookupObservations(missing);
-        return new deal.diagnostics.DiagnosticFacts.NameContext(candidates, count, count > candidates.size(),
-            observations.subList(0, Math.min(32, observations.size())), observations.size());
+        return new deal.diagnostics.DiagnosticFacts.NameContext(candidates.subList(0, Math.min(5, count)), count, count > 5,
+            observations.subList(0, Math.min(32, observations.size())), observations.size(),
+            deal.diagnostics.DiagnosticDetails.names(candidates), deal.diagnostics.DiagnosticDetails.lookups(observations));
     }
 
     /** Existing resolver surfaces only; no dependency discovery or inferred import choice. */

@@ -569,7 +569,7 @@ public final class SourceModuleResolver {
             bare ? "Inspect configured module roots, authoritative externals and the stdlib surface; bare imports do not fall back to the importer directory or working directory."
                  : "Inspect the specifier relative to the importer directory; relative imports do not search configured module roots."))
             .withResolution(new DiagnosticFacts.ResolutionContext(specifier, bare ? "bare" : "relative",
-                attempted.subList(0, Math.min(count, 32)), count, count > 32));
+                attempted.subList(0, Math.min(count, 32)), count, count > 32, deal.diagnostics.DiagnosticDetails.strings(attempted)));
         return new ResolveResult.Failure(failure.diagnostic().withFacts(facts));
     }
 

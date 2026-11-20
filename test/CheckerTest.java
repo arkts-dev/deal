@@ -196,6 +196,10 @@ public class CheckerTest {
         check(alternatives("let " + "a".repeat(65) + ":number=1;let result=" + "a".repeat(64) + "b;").isEmpty(),
                 "long names do not trigger unbounded fuzzy comparison");
         check(alternatives(many).equals(alternatives(many)), "repeated checking produces identical ranked candidates");
+        var retainedNames = diagnostic.facts().names().details();
+        var sixth = retainedNames.page(new deal.diagnostics.DiagnosticDetails.Request(retainedNames.descriptor().inventoryId(), 5, 1));
+        check(sixth.items().size() == 1 && sixth.nextOffset() == null && sixth.total() == 6,
+            "omitted ranked candidate remains available without another type check");
         check(alternatives("let cat:number=1;let cot:number=2;let result=cotx;").stream()
                         .map(c -> c.name()).toList().equals(List.of("cot", "cat")),
                 "edit distance precedes spelling independently of declaration order");
@@ -1381,6 +1385,10 @@ public class CheckerTest {
         resolver.register("./empty", Map.of());
         var empty = checkProgramWithModule("import * as E from \"./empty\";E.absent;", resolver).result().diagnostics()
                 .stream().filter(d -> d.code().equals("E2004")).findFirst().orElseThrow().facts().exports();
+        var retainedExports = bounded.details();
+        var exportTail = retainedExports.page(new deal.diagnostics.DiagnosticDetails.Request(retainedExports.descriptor().inventoryId(), 32, 32));
+        check(exportTail.items().size() == 8 && exportTail.nextOffset() == null && exportTail.total() == 40,
+            "omitted exports retain the observed module surface for paged retrieval");
         check(empty.available().isEmpty() && empty.availableCount() == 0 && !empty.truncated(),
                 "empty export surface is distinct from absent export evidence");
     }
