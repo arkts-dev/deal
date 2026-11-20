@@ -9892,7 +9892,7 @@ local function __bcheckLeaf(desc, staticKind, v, csig, completion, classSeen)
       -- without imposing scalar validity on UTF-16 language strings.
       local valid, position = __jsonValidUtf8(v)
       if valid then return v end
-      local failure = completion and __arm("ASYNC_COMPLETION_KIND", {expected="string"}, "-", "string", "string")
+      local failure = completion and __arm("ASYNC_COMPLETION_KIND", {expected="string"}, "-", "string", "invalid-unicode")
         or __arm("TYPED_BOUNDARY_INVALID_UNICODE", nil, "-", "string", "invalid-unicode")
       failure.unicodeByteOffset=tostring(position); failure.unicodeConstraint="well-formed-byte-transport"
       return error(failure, 0)

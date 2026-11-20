@@ -1973,8 +1973,10 @@ public class FailureArmAuthorityTest {
               arr(arr(valid), arr(bad)), nil))
             row("nested-ok", pcall(__bcheck, "array(array(string))", "array",
               arr(arr(valid), arr("b")), nil))
-            row("completion-bad", pcall(__bcheck, "string", "string", bad, nil,
-              true))
+            local completionOk, completionError = pcall(__bcheck, "string", "string", bad, nil, true)
+            assert(not completionOk and rawget(completionError, "unicodeByteOffset") == "1")
+            assert(rawget(completionError, "unicodeConstraint") == "well-formed-byte-transport")
+            row("completion-bad", completionOk, completionError)
             row("completion-ok", pcall(__bcheck, "string", "string", valid, nil,
               true))
             """, "invalid-unicode-probe", 8);
