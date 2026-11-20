@@ -56,6 +56,58 @@ test("descriptor void legality follows recursive positions and callable ingress"
   equal(rt.checkType("[()->void]", values, ...LOC), values, "void-result function array");
 });
 
+test("descriptor syntax reuse is bounded, immutable, mode-exact and runtime-local", () => {
+  const fs = require("fs"), vm = require("vm");
+  const source = fs.readFileSync("deal/runtime.js", "utf8");
+  function instance() {
+    const context = {process, console, module:{exports:{}}};
+    vm.runInNewContext(source + "\nmodule.exports = {parse:$parse, caches:$descriptorCaches};", context);
+    return context.module.exports;
+  }
+  const a = instance(), b = instance(), text = "(@src/😀/Node,[number])->never";
+  const parsed = a.parse(text);
+  equal(a.parse(text), parsed, "reused completed parse");
+  assert(parsed !== b.parse(text), "runtime instances do not share syntax objects");
+  assert(Object.isFrozen(parsed) && Object.isFrozen(parsed.$params), "immutable syntax");
+  for (const keyword of ["void", "never"]) {
+    assert(a.parse(keyword, true) !== null, "result parses " + keyword);
+    equal(a.parse(keyword, false), null, "result cache cannot admit data " + keyword);
+    equal(a.parse("[" + keyword + "]", true), null, "nested data still rejects");
+  }
+  for (const bad of [null, {}, "number[]", "??number", "(void)->number", "number "]) {
+    const before = a.caches[0].size;
+    equal(a.parse(bad), null, "malformed rejected");
+    equal(a.caches[0].size, before, "failed parse not retained");
+  }
+  for (let i = 0; i < 700; i++) for (const mode of [false, true])
+    assert(a.parse("@churn/Type" + i, mode) !== null, "churn parse");
+  equal(a.caches[0].size, 256, "bounded data cache");
+  equal(a.caches[1].size, 256, "bounded result cache");
+  assert(a.parse(text) !== parsed, "evicted descriptor reparses correctly");
+  const long = "@" + "x".repeat(4096) + "/Node";
+  assert(a.parse(long) !== null, "oversized valid descriptor still accepted");
+  assert(a.parse(long) !== a.parse(long), "oversized descriptor not retained");
+  assert(a.parse("@a/Node") !== a.parse("@b/Node"), "exact nominal text key");
+});
+
+test("warm syntax never certifies mutable values or old error origins", () => {
+  const id = schema("@reuse/Node", [field("n", "number")]);
+  const node = decode('{"n":1}', id), values = [node];
+  for (let i = 0; i < 3; i++) equal(rt.checkType("[" + id + "]", values, ...LOC), values, "warm graph");
+  node.n = "bad";
+  error(() => rt.checkType("[" + id + "]", values, ...LOC), "E8003");
+  try { rt.checkType(id, node, "other.deal", 9, 17); throw new Error("expected failure"); }
+  catch (e) { equal(e.file, "other.deal", "current origin"); equal(e.line, 9, "current line"); }
+  node.n = 2;
+  equal(rt.checkType("[" + id + "]", values, ...LOC), values, "same graph repaired");
+  const fn = {$kind:"function", $sig:"()->void", $f:()=>undefined};
+  equal(rt.checkType("unknown", fn, ...LOC), fn, "warm callable");
+  fn.$sig = "void"; // result-mode syntax may already be warm; callable is data.
+  error(() => rt.checkType("unknown", fn, ...LOC), "E8001");
+  fn.$sig = "()->void";
+  equal(rt.checkType("unknown", fn, ...LOC), fn, "same callable repaired");
+});
+
 const user = () => schema("@m/User", [field("name", "string"), field("age", "number")]);
 
 test("contextual parsing tags a fresh exact nominal instance", () => {

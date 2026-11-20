@@ -33,6 +33,7 @@ public class CanonicalRuntimeTypeDescriptorTest {
     public static void main(String[] args) {
         System.out.println("=== Running Canonical Runtime Type Descriptor Tests (ISSUE-0310/0311/0314) ===");
 
+        testRuntimeParseReuse();
         testPositionalVoid();
         testRetiredBuiltinDescriptor();
         testPrimitiveRoundTrips();
@@ -68,6 +69,66 @@ public class CanonicalRuntimeTypeDescriptorTest {
         if (failed > 0) {
             System.exit(1);
         }
+    }
+
+    private static void testRuntimeParseReuse() {
+        String text = "(@src/Node,[number])->never";
+        var first = deal.codegen.jvm.JvmRuntime.parseDescriptor(text, false);
+        if (first != deal.codegen.jvm.JvmRuntime.parseDescriptor(new String(text), false))
+            throw new AssertionError("equal text must reuse completed syntax");
+        for (String keyword : List.of("void", "never")) {
+            deal.codegen.jvm.JvmRuntime.parseDescriptor(keyword, true);
+            try {
+                deal.codegen.jvm.JvmRuntime.parseDescriptor(keyword, false);
+                throw new AssertionError("result cache admitted data " + keyword);
+            } catch (SemanticIrTextDecodeException expected) { }
+        }
+        for (int i = 0; i < 700; i++) for (boolean mode : List.of(false, true))
+            deal.codegen.jvm.JvmRuntime.parseDescriptor("@churn/Type" + i, mode);
+        if (first == deal.codegen.jvm.JvmRuntime.parseDescriptor(text, false))
+            throw new AssertionError("old syntax must have been evicted");
+        for (String name : List.of("DATA_DESCRIPTORS", "RESULT_DESCRIPTORS")) {
+            try {
+                var field = deal.codegen.jvm.JvmRuntime.class.getDeclaredField(name);
+                field.setAccessible(true);
+                if (((Map<?, ?>) field.get(null)).size() != 256) throw new AssertionError("unbounded cache");
+            } catch (ReflectiveOperationException failure) { throw new AssertionError(failure); }
+        }
+        String longText = "@" + "x".repeat(4096) + "/Node";
+        if (deal.codegen.jvm.JvmRuntime.parseDescriptor(longText, false)
+                == deal.codegen.jvm.JvmRuntime.parseDescriptor(longText, false))
+            throw new AssertionError("oversized text retained");
+        var function = new deal.codegen.jvm.JvmRuntime.FunctionValue(args -> null, "()->void");
+        if (!deal.codegen.jvm.JvmRuntime.validFunction(function)) throw new AssertionError("valid callable");
+        if (deal.codegen.jvm.JvmRuntime.validFunction(new deal.codegen.jvm.JvmRuntime.FunctionValue(null, "()->void")))
+            throw new AssertionError("syntax cache certified missing body");
+        for (String bad : List.of("number[]", "??number", "(void)->number", "number ")) {
+            for (int i = 0; i < 2; i++) {
+                try {
+                    deal.codegen.jvm.JvmRuntime.parseDescriptor(bad, false);
+                    throw new AssertionError("bad syntax admitted " + bad);
+                } catch (SemanticIrTextDecodeException expected) { }
+            }
+        }
+        var threads = new ArrayList<Thread>();
+        var failure = new java.util.concurrent.atomic.AtomicReference<Throwable>();
+        for (int i = 0; i < 4; i++) {
+            Thread thread = new Thread(() -> {
+                try {
+                    for (int j = 0; j < 800; j++) {
+                        String key = "@thread/Type" + j;
+                        if (!deal.codegen.jvm.JvmRuntime.parseDescriptor(key, false).canonicalSpecText().equals(key))
+                            throw new AssertionError("cross-thread syntax corruption");
+                    }
+                } catch (Throwable error) { failure.compareAndSet(null, error); }
+            });
+            threads.add(thread); thread.start();
+        }
+        for (Thread thread : threads) {
+            try { thread.join(); } catch (InterruptedException error) { throw new AssertionError(error); }
+        }
+        if (failure.get() != null) throw new AssertionError(failure.get());
+        passed++;
     }
 
     private static void testPositionalVoid() {

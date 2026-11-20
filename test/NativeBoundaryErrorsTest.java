@@ -614,7 +614,10 @@ public final class NativeBoundaryErrorsTest {
             new Fault("-DDEAL_BOUNDARY_CASE=21", "error record: invalid text access"),
             new Fault("-DDEAL_BOUNDARY_CASE=22", "arm render: malformed parameter data"),
             new Fault("-DDEAL_BOUNDARY_CASE=23", "error record: invalid text access"),
-            new Fault("-DDEAL_BOUNDARY_CASE=24", "error record: invalid text access"));
+            new Fault("-DDEAL_BOUNDARY_CASE=24", "error record: invalid text access"),
+            new Fault("-DDEAL_BOUNDARY_CASE=25", "descriptor: void outside a function result"),
+            new Fault("-DDEAL_BOUNDARY_CASE=26", "descriptor: void outside a function result"),
+            new Fault("-DDEAL_BOUNDARY_CASE=27", "descriptor: not a canonical descriptor text"));
         for (Fault fault : faults) {
             for (int level : LEVELS) {
                 Path product = scratch.resolve("boundary-fault"

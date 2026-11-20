@@ -84,19 +84,19 @@ public final class JvmJson {
         var layouts = new LinkedHashMap<deal.semantic.ir.ClassId, deal.semantic.ir.ClassLayout>();
         for (Plan plan : plans.values()) {
             var descriptor = (deal.semantic.ir.RuntimeDescriptor.Class)
-                deal.semantic.ir.RuntimeDescriptor.parseCanonicalText(plan.classIdText);
+                JvmRuntime.parseDescriptor(plan.classIdText, false);
             var fields = new ArrayList<deal.semantic.ir.ClassLayout.FieldLayout>();
             for (Field field : plan.fields) {
                 if (field.canonicalDescriptor == null) throw new IllegalStateException("JSON parse plan lacks canonical field descriptor");
                 fields.add(new deal.semantic.ir.ClassLayout.FieldLayout(field.name,
-                    deal.semantic.ir.RuntimeDescriptor.parseCanonicalText(field.canonicalDescriptor),
+                    JvmRuntime.parseDescriptor(field.canonicalDescriptor, false),
                     !field.optional, deal.semantic.ir.ConstructionProvider.LOCAL));
             }
             layouts.put(descriptor.classId(), new deal.semantic.ir.ClassLayout(descriptor.classId(), fields));
         }
         var outcome = deal.semantic.JsonDecodingSemantics.parse(
             (deal.semantic.ir.UnicodeScalars.Valid) deal.semantic.ir.UnicodeScalars.validate(text),
-            deal.semantic.ir.RuntimeDescriptor.parseCanonicalText(target), layouts, origin);
+            JvmRuntime.parseDescriptor(target, false), layouts, origin);
         if (outcome instanceof deal.semantic.ir.ClassOpsExecutor.Outcome.Failure<deal.semantic.ir.ClassOpsExecutor.Value> failed) {
             var failure = failed.failure().failure();
             throw new JvmRuntime.DealError(failure.code().name(), failure.message(), originText,

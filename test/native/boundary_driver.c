@@ -114,13 +114,24 @@ static void check_atoms(void) {
     deal_descriptor *wide_atom = deal_descriptor_intern(wide);
     check(deal_descriptor_intern(wide) == wide_atom,
           "wide function parameter storage survives repeated growth");
-    for (size_t index = 0u; index < 100u; index += 1u) {
+    for (size_t index = 0u; index < 700u; index += 1u) {
         char nominal[80];
         (void)snprintf(nominal, sizeof(nominal), "@growth/Type%zu", index);
         deal_descriptor *atom = deal_descriptor_intern(nominal);
         check(deal_descriptor_intern(nominal) == atom,
               "atom table survives repeated growth");
     }
+    check(deal_descriptor_intern("(number,string)->boolean")
+              == deal_descriptor_intern_result("(number,string)->boolean"),
+          "data/result cache modes retain the same canonical atom");
+    char mutable_text[] = "number";
+    deal_descriptor *original = deal_descriptor_intern(mutable_text);
+    memcpy(mutable_text, "string", sizeof(mutable_text));
+    check(deal_descriptor_intern(mutable_text) != original,
+          "cache keys compare current bytes, not caller pointer identity");
+    memcpy(mutable_text, "number", sizeof(mutable_text));
+    check(deal_descriptor_intern(mutable_text) == original,
+          "changed then repaired caller buffer resolves its original atom");
     deal_descriptor *number = deal_descriptor_intern("number");
     deal_descriptor *string = deal_descriptor_intern("string");
     deal_descriptor *record = deal_descriptor_intern("record");
@@ -1451,7 +1462,9 @@ int main(void) {
 #if DEAL_BOUNDARY_CASE != 1 && DEAL_BOUNDARY_CASE != 2 \
         && DEAL_BOUNDARY_CASE != 3 && DEAL_BOUNDARY_CASE != 4 \
         && DEAL_BOUNDARY_CASE != 5 && DEAL_BOUNDARY_CASE != 6 \
-        && DEAL_BOUNDARY_CASE != 20 && DEAL_BOUNDARY_CASE != 23
+        && DEAL_BOUNDARY_CASE != 20 && DEAL_BOUNDARY_CASE != 23 \
+        && DEAL_BOUNDARY_CASE != 25 && DEAL_BOUNDARY_CASE != 26 \
+        && DEAL_BOUNDARY_CASE != 27
 static const deal_origin test_origin = { "native/boundary.deal", 41, 7 };
 #endif
 
@@ -1479,8 +1492,11 @@ int main(void) {
     (void)deal_project_start();
 #endif
 #if DEAL_BOUNDARY_CASE == 1
+    (void)deal_descriptor_intern_result("void");
+    (void)deal_descriptor_intern("()->void");
     (void)deal_descriptor_intern("(void)->number");
 #elif DEAL_BOUNDARY_CASE == 2
+    (void)deal_descriptor_intern_result("void");
     (void)deal_descriptor_intern("[void]");
 #elif DEAL_BOUNDARY_CASE == 3
     (void)deal_descriptor_intern("?unknown");
@@ -1586,6 +1602,15 @@ int main(void) {
         size_t length;
         (void)deal_error_cause_code_bytes(NULL, &length);
     }
+#elif DEAL_BOUNDARY_CASE == 25
+    (void)deal_descriptor_intern_result("void");
+    (void)deal_descriptor_intern("void");
+#elif DEAL_BOUNDARY_CASE == 26
+    (void)deal_descriptor_intern_result("never");
+    (void)deal_descriptor_intern("never");
+#elif DEAL_BOUNDARY_CASE == 27
+    (void)deal_descriptor_intern("number");
+    (void)deal_descriptor_intern("number[]");
 #elif DEAL_BOUNDARY_CASE == 24
     {
         deal_error *error = deal_error_create("CODE", "message", &test_origin);

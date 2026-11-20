@@ -392,16 +392,34 @@ static size_t deal_descriptor_parse_at(const char *text, size_t length,
     return position;
 }
 
+/* Completed parses only: an atom interned while parsing a larger, possibly
+ * invalid descriptor is not evidence that its text is legal in the other mode.
+ * Fixed direct-mapped slots borrow immutable, process-lifetime interned atoms;
+ * collisions replace entries and never skip exact byte comparison. */
+static deal_descriptor *deal_descriptor_parse_cache[2][256];
+
+static size_t deal_descriptor_cache_slot(const char *text, size_t length) {
+    uint32_t hash = UINT32_C(2166136261);
+    for (size_t index = 0u; index < length; ++index) {
+        hash = (hash ^ (unsigned char)text[index]) * UINT32_C(16777619);
+    }
+    return (size_t)(hash % 256u);
+}
+
 deal_descriptor *deal_descriptor_intern(const char *descriptor_text) {
     if (descriptor_text == NULL) {
         deal_platform_fault("descriptor: null descriptor text");
     }
     size_t length = strlen(descriptor_text);
+    size_t slot = deal_descriptor_cache_slot(descriptor_text, length);
+    deal_descriptor *cached = deal_descriptor_parse_cache[0][slot];
+    if (cached != NULL && strcmp(cached->text, descriptor_text) == 0) return cached;
     deal_descriptor *atom = NULL;
     size_t end = deal_descriptor_parse_at(descriptor_text, length, 0u, 0, &atom);
     if (end != length) {
         deal_platform_fault("descriptor: trailing content after the descriptor");
     }
+    if (length <= 4096u) deal_descriptor_parse_cache[0][slot] = atom;
     return atom;
 }
 
@@ -410,11 +428,15 @@ deal_descriptor *deal_descriptor_intern_result(const char *descriptor_text) {
         deal_platform_fault("descriptor: null descriptor text");
     }
     size_t length = strlen(descriptor_text);
+    size_t slot = deal_descriptor_cache_slot(descriptor_text, length);
+    deal_descriptor *cached = deal_descriptor_parse_cache[1][slot];
+    if (cached != NULL && strcmp(cached->text, descriptor_text) == 0) return cached;
     deal_descriptor *atom = NULL;
     size_t end = deal_descriptor_parse_at(descriptor_text, length, 0u, 1, &atom);
     if (end != length) {
         deal_platform_fault("descriptor: trailing content after the descriptor");
     }
+    if (length <= 4096u) deal_descriptor_parse_cache[1][slot] = atom;
     return atom;
 }
 

@@ -1456,12 +1456,37 @@ public final class JvmRuntime {
      * conversions only after the whole completion passed. A non-crossing
      * check never admits the boxed carrier.
      */
+    // Syntax only: immutable descriptor records, bounded per runtime classloader.
+    // Never cache value validity: even unchanged signatures accompany live graphs.
+    private static final java.util.Map<String, deal.semantic.ir.RuntimeDescriptor> DATA_DESCRIPTORS = new java.util.LinkedHashMap<>();
+    private static final java.util.Map<String, deal.semantic.ir.RuntimeDescriptor> RESULT_DESCRIPTORS = new java.util.LinkedHashMap<>();
+
+    public static deal.semantic.ir.RuntimeDescriptor parseDescriptor(String text, boolean resultPosition) {
+        java.util.Objects.requireNonNull(text, "text must not be null");
+        var cache = resultPosition ? RESULT_DESCRIPTORS : DATA_DESCRIPTORS;
+        synchronized (cache) {
+            var cached = cache.get(text);
+            if (cached != null) return cached;
+        }
+        var parsed = resultPosition ? deal.semantic.ir.RuntimeDescriptor.parseResultText(text)
+            : deal.semantic.ir.RuntimeDescriptor.parseCanonicalText(text);
+        if (text.length() <= 4096) {
+            synchronized (cache) {
+                var cached = cache.get(text);
+                if (cached != null) return cached;
+                if (cache.size() == 256) cache.remove(cache.keySet().iterator().next());
+                cache.put(text, parsed);
+            }
+        }
+        return parsed;
+    }
+
     public static boolean validFunction(FunctionValue function) {
         if (function.fn == null || function.signature == null) return false;
         try {
             String canonical = function.spec != null ? function.spec
                 : function.signature.startsWith("function(") ? canonicalDesc(function.signature) : function.signature;
-            return deal.semantic.ir.RuntimeDescriptor.parseCanonicalText(canonical) instanceof deal.semantic.ir.RuntimeDescriptor.Func;
+            return parseDescriptor(canonical, false) instanceof deal.semantic.ir.RuntimeDescriptor.Func;
         } catch (IllegalArgumentException | deal.semantic.ir.SemanticIrTextDecodeException exception) {
             return false;
         }

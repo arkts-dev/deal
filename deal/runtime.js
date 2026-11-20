@@ -262,10 +262,29 @@ function $rawShapeKind($v) {
 // component scalar in the Java parser and the identity index.
 const $CANONICAL_WS = /[\t\n\v\f\r \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]/u;
 
+// Cache syntax only, never admission of a live value. Separate modes prevent a
+// result-only atom from becoming legal data. FIFO eviction and a text-length cap
+// bound retained keys/trees even when a host supplies arbitrary descriptors.
+const $descriptorCaches = [new $Map(), new $Map()];
+const $descriptorCacheLimit = 256;
+const $descriptorCacheTextLimit = 4096;
 function $parse($descriptor, $resultPosition = false) {
-  if ($descriptor === $undefined || $descriptor === null || typeof $descriptor !== "string") {
-    return null;
+  if (typeof $descriptor !== "string") return null;
+  const $cache = $descriptorCaches[$resultPosition ? 1 : 0];
+  const $cached = $cache.get($descriptor);
+  if ($cached !== $undefined) return $cached;
+  const $node = $decodeDescriptor($descriptor, $resultPosition);
+  if ($node !== null && $descriptor.length <= $descriptorCacheTextLimit) {
+    // Child descriptors are strings; only function parameters are a nested array.
+    if ($node.$t === "function") Object.freeze($node.$params);
+    Object.freeze($node);
+    if ($cache.size === $descriptorCacheLimit) $cache.delete($cache.keys().next().value);
+    $cache.set($descriptor, $node);
   }
+  return $node;
+}
+
+function $decodeDescriptor($descriptor, $resultPosition) {
   // Decode the string into Unicode scalars with their UTF-16 indices
   // (a codePointAt walk), so the grammar runs over scalar positions and
   // record texts slice back to byte-identical substrings.

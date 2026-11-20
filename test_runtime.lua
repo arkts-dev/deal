@@ -77,6 +77,61 @@ test("descriptor void legality follows recursive positions and callable ingress"
   assert(__rt.check_type("[()->void]", values) == values)
 end)
 
+test("descriptor reuse is bounded and private; mutable values are always rechecked", function()
+  local function upvalue(fn, wanted)
+    for i = 1, 100 do
+      local name, value = debug.getupvalue(fn, i)
+      if name == wanted then return value end
+      if name == nil then break end
+    end
+    error("missing upvalue " .. wanted)
+  end
+  local parse = upvalue(__rt.check_type, "parse_descriptor")
+  local caches = upvalue(parse, "descriptor_caches")
+  local text = "(@src/Node,[number])->never"
+  local ast = parse(text)
+  assert(ast == parse(text))
+  for _, keyword in ipairs({"void", "never"}) do
+    assert(parse(keyword, true) ~= nil)
+    assert(parse(keyword, false) == nil)
+    assert(parse("[" .. keyword .. "]", true) == nil)
+  end
+  local public = __rt.parse_canonical_descriptor(text)
+  public.params[1].name = "corrupt"
+  public.ret.kind = "corrupt"
+  assert(parse(text) == ast and ast.params[1].name == "@src/Node" and ast.ret.kind == "primitive")
+  for i = 1, 700 do
+    assert(parse("@churn/Type" .. i) ~= nil)
+    assert(parse("@churn/Type" .. i, true) ~= nil)
+  end
+  for _, cache in ipairs(caches) do
+    local count = 0
+    for _ in pairs(cache.entries) do count = count + 1 end
+    assert(count == 256 and #cache.keys == 256)
+  end
+  assert(parse(text) ~= ast) -- eviction does not affect grammar
+  local long = "@" .. string.rep("x", 4096) .. "/Node"
+  assert(parse(long) ~= nil and parse(long) ~= parse(long))
+  for _, bad in ipairs({"number[]", "??number", "(void)->number", "number "}) do
+    assert(parse(bad) == nil and parse(bad) == nil)
+    assert(caches[1].entries[bad] == nil)
+  end
+  local values = {1, 2}
+  assert(__rt.check_type("[number]", values) == values)
+  assert(__rt.check_type("[number]", values) == values)
+  values[2] = "bad"
+  local err = assert_error(function() __rt.check_type("[number]", values, "warm.deal", 9, 17) end, "E8003")
+  assert(err.file == "warm.deal" and err.line == 9)
+  values[2] = 3
+  assert(__rt.check_type("[number]", values) == values)
+  local fn = __rt.function_("()->void", function() end)
+  assert(__rt.check_type("unknown", fn) == fn)
+  fn.sig = "void"
+  assert_error(function() __rt.check_type("unknown", fn) end, "E8001")
+  fn.sig = "()->void"
+  assert(__rt.check_type("unknown", fn) == fn)
+end)
+
 -- ==================== Sentinel tests ====================
 
 test("__NULL is a table", function()

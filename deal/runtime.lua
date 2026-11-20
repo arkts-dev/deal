@@ -809,7 +809,7 @@ local CANONICAL_PRIMITIVES = {
 -- This is THE descriptor parser: the boundary path (check_type) and the
 -- wrapper/loader paths (from_lua_function, load_host) all parse through
 -- it, so the canonical grammar is the only accepted dialect.
-local function parse_descriptor(text, result_position)
+local function decode_descriptor(text, result_position)
   if type(text) ~= "string" then
     return nil
   end
@@ -1073,6 +1073,26 @@ local function parse_descriptor(text, result_position)
   return ast
 end
 
+-- Private syntax trees are read-only inside the runtime. Never retain a value
+-- check's seen set or verdict here. Separate bounded FIFOs own data/result modes;
+-- oversized descriptors still parse normally but are not retained.
+local descriptor_caches = {{entries={}, keys={}, next=1}, {entries={}, keys={}, next=1}}
+local function parse_descriptor(text, result_position)
+  if type(text) ~= "string" then return nil end
+  local cache = descriptor_caches[result_position and 2 or 1]
+  local ast = cache.entries[text]
+  if ast ~= nil then return ast end
+  ast = decode_descriptor(text, result_position)
+  if ast ~= nil and #text <= 4096 then
+    local old = cache.keys[cache.next]
+    if old ~= nil then cache.entries[old] = nil end
+    cache.keys[cache.next] = text
+    cache.entries[text] = ast
+    cache.next = cache.next % 256 + 1
+  end
+  return ast
+end
+
 --- Recursive canonical checker over one parsed atom (the parent matcher
 -- table, canonical-type-system-and-runtime-descriptors D4). Every failure
 -- raises a DEAL error through _err with the forwarded (file, line, column)
@@ -1254,7 +1274,9 @@ end
 -- text the canonical grammar rejects — including every legacy dialect
 -- spelling ("T[]", "T|null", bare class names, "...T[]").
 function __rt.parse_canonical_descriptor(text)
-  return parse_descriptor(text, true)
+  -- This inspection API historically returns caller-owned mutable tables. Do not
+  -- expose a cached internal tree to a host that can mutate it.
+  return decode_descriptor(text, true)
 end
 
 --- The canonical type checker — the one runtime boundary matcher
