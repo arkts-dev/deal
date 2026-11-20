@@ -56,16 +56,18 @@ typedef struct deal_async_op {
     uint32_t presentation;   /* deal_presentation: DATUM or INVALID_UNICODE */
     uint32_t unicode_defect; /* deal_unicode_defect for an INVALID_UNICODE slot */
     deal_data completion;
+    deal_fn *host_callee; /* rooted provenance, never consulted on operation failure */
 } deal_async_op;
 
 static const uint32_t deal_async_operation_reference_offsets[] = {
     (uint32_t)offsetof(deal_async_op, completion)
-        + (uint32_t)offsetof(deal_data, reference)
+        + (uint32_t)offsetof(deal_data, reference),
+    (uint32_t)offsetof(deal_async_op, host_callee)
 };
 
 static const deal_layout deal_async_operation_layout = {
     DEAL_LAYOUT_ASYNC_OPERATION, 0u, sizeof(deal_async_op),
-    deal_async_operation_reference_offsets, 1u
+    deal_async_operation_reference_offsets, 2u
 };
 
 /* One open-operation table entry: exactly one record per live token. A retired
@@ -99,6 +101,7 @@ static void deal_async_operation_scan(deal_reference_visit visit,
         if (referent != NULL) {
             visit(referent, visit_context);
         }
+        if (record->host_callee != NULL) visit(record->host_callee, visit_context);
     }
 }
 
@@ -208,6 +211,7 @@ static deal_async_op *deal_async_record_new(deal_async_token token) {
     record->presentation = DEAL_PRESENT_DATUM;
     record->unicode_defect = DEAL_UNICODE_MALFORMED;
     record->completion = deal_data_of_undefined();
+    record->host_callee = NULL;
     return record;
 }
 
@@ -264,6 +268,8 @@ deal_outcome_reference deal_async_start(deal_fn *callee,
     deal_async_op *record = deal_async_record_new(token);
     deal_async_table_register(record, token);
     if (deal_host_is_async_function_value(callee) != 0) {
+        deal_store_barrier(record, callee);
+        record->host_callee = callee;
         /* The declared host async export: the crossing calls the host entry
          * with the token and the checked argument carriers, and the operation
          * stays pending until a completion is delivered (H5). */
@@ -400,6 +406,8 @@ deal_outcome_data deal_async_await(void *operation,
     deal_outcome admitted = deal_check_value(declared, checked,
         DEAL_BOUNDARY_ASYNC_COMPLETION, &context);
     if (admitted.error != NULL) {
+        if (record->host_callee != NULL)
+            deal_host_function_rejection_context(admitted.error, record->host_callee, "completion");
         deal_async_table_retire(record);
         outcome.error = admitted.error;
         return outcome;

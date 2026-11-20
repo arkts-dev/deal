@@ -154,6 +154,11 @@ final class JvmHostAbiEmission {
         return List.copyOf(modules.values());
     }
 
+    String diagnosticModule(String declaration) {
+        for (HostModule module : modules) if (module.modulePath().equals(declaration)) return module.rawSpecifier();
+        return null;
+    }
+
     /** The module key of one host import identity (injective, `$`-free). */
     static String key(String modulePath) {
         return JvmNames.escapedIdentifier(modulePath);
@@ -792,11 +797,11 @@ final class JvmHostAbiEmission {
                     .append(javaString(descriptorText(func.paramTypes().get(i))))
                     .append(", __a").append(i)
                     .append(", oFile, oLine, oCol); } catch (JvmRuntime.DealError __parameterError) {\n")
-                    .append("      throw JvmRuntime.hostContext(__parameterError, ")
+                    .append("      throw JvmRuntime.hostModuleContext(JvmRuntime.hostContext(__parameterError, ")
                     .append(javaString(module.modulePath())).append(", ")
                     .append(javaString(export.getKey())).append(", ")
                     .append(javaString(descriptorText(func))).append(", \"parameter\", ")
-                    .append(i + 1).append(");\n    }\n");
+                    .append(i + 1).append("), ").append(javaString(module.rawSpecifier())).append(");\n    }\n");
                 // The host-facing projection of the checked parameter (H7):
                 // the declared carrier class at the crossing, never the
                 // production value carrier.
@@ -812,12 +817,12 @@ final class JvmHostAbiEmission {
             out.append("    try {\n");
             emitReturnCell(out, func);
             out.append("    } catch (JvmRuntime.DealError __returnError) {\n")
-                .append("      throw JvmRuntime.hostContext(__returnError, ")
+                .append("      throw JvmRuntime.hostModuleContext(JvmRuntime.hostContext(__returnError, ")
                 .append(javaString(module.modulePath())).append(", ")
                 .append(javaString(export.getKey())).append(", ")
                 .append(javaString(descriptorText(func))).append(", ")
                 .append(javaString(func.isAsync() ? "async-shape" : "return"))
-                .append(", null);\n    }\n");
+                .append(", null), ").append(javaString(module.rawSpecifier())).append(");\n    }\n");
             out.append("  }\n\n");
         }
     }

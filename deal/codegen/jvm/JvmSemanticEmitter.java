@@ -4199,11 +4199,12 @@ public final class JvmSemanticEmitter {
             String module = binding instanceof FunctionExecutionBinding.HostFunction host ? host.hostModuleId().path()
                 : binding instanceof FunctionExecutionBinding.HostFunctionValue host ? host.hostModuleId().path() : null;
             String export = binding instanceof FunctionExecutionBinding.HostFunction host ? host.exportName() : null;
-            out.append(indent(indent)).append("JvmRuntime.hostContext(").append(error).append(", ")
+            out.append(indent(indent)).append("JvmRuntime.hostModuleContext(JvmRuntime.hostContext(").append(error).append(", ")
                 .append(module == null ? "null" : javaString(module)).append(", ")
                 .append(export == null ? "null" : javaString(export)).append(", ")
                 .append(javaString(payload.signature().canonicalSpecText())).append(", ")
-                .append(javaString(crossing)).append(", ").append(parameter).append(");\n");
+                .append(javaString(crossing)).append(", ").append(parameter).append("), ")
+                .append(module == null || hostAbi.diagnosticModule(module) == null ? "null" : javaString(hostAbi.diagnosticModule(module))).append(");\n");
         }
 
         private record HostCallArguments(List<String> projected) {
@@ -6283,6 +6284,24 @@ public final class JvmSemanticEmitter {
                 .append(", __be.expected, __be.actual, __be.frames, null);\n");
             emitFailureEvent(boundary.opId(), "BOUNDARY", boundary,
                 "JvmRuntime.errtext(__bre)", indent + 1);
+            out.append(indent(indent + 1)).append("JvmRuntime.validationContext(__bre, __be);\n");
+            for (SemanticOp candidate : opsById.values()) {
+                if (!(candidate.result() instanceof AsyncTokenId token) || token.tokenId() != canonicalId
+                        || !(candidate.payload() instanceof KindPayload.AsyncStartPayload start)) continue;
+                FunctionExecutionBinding binding = start.callee() instanceof KindPayload.CallCallee.Static fixed ? fixed.binding()
+                    : start.callee() instanceof KindPayload.CallCallee.Indirect indirect ? executionBindingOfIdentity(indirect.callee()) : null;
+                String module = binding instanceof FunctionExecutionBinding.HostFunction host ? host.hostModuleId().path()
+                    : binding instanceof FunctionExecutionBinding.HostFunctionValue host ? host.hostModuleId().path() : null;
+                String export = binding instanceof FunctionExecutionBinding.HostFunction host ? host.exportName() : null;
+                String signature = binding instanceof FunctionExecutionBinding.HostFunction host ? host.descriptor().canonicalSpecText()
+                    : binding instanceof FunctionExecutionBinding.HostFunctionValue host ? host.descriptor().canonicalSpecText() : null;
+                if (signature != null) {
+                    out.append(indent(indent + 1)).append("if (").append(hostOwned).append(") JvmRuntime.hostModuleContext(JvmRuntime.hostContext(__bre, ")
+                        .append(javaString(module)).append(", ").append(export == null ? "null" : javaString(export)).append(", ")
+                        .append(javaString(signature)).append(", \"completion\", null), ")
+                        .append(hostAbi == null || hostAbi.diagnosticModule(module) == null ? "null" : javaString(hostAbi.diagnosticModule(module))).append(");\n");
+                }
+            }
             emitFailureEvent(op.opId(), op.kind().name(), op,
                 "JvmRuntime.errtext(__bre)", indent + 1);
             out.append(indent(indent + 1)).append("throw __bre;\n");

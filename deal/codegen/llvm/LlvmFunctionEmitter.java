@@ -1694,6 +1694,12 @@ final class LlvmFunctionEmitter {
                 + (module == null ? "i8* null" : session.data.operand(session.data.intern(module))) + ", "
                 + (name == null ? "i8* null" : session.data.operand(session.data.intern(name))) + ", "
                 + session.data.operand(session.data.intern("parameter")) + ", i32 " + parameterIndex + ")");
+            var provider = module == null ? null : session.hostModules().byModule(new ModuleId(module));
+            if (provider != null) {
+                session.referenceRuntimeEntry("deal_error_set_host_module");
+                emit("call void @deal_error_set_host_module(%struct.deal_error* " + typedError + ", "
+                    + session.data.operand(session.data.intern(provider.specifier())) + ")");
+            }
         }
         if (op.payload() instanceof KindPayload.BoundaryPayload boundary
                 && boundary.kind() == deal.semantic.ir.BoundaryKind.ASSERTION) {

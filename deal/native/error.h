@@ -343,6 +343,8 @@ void deal_error_set_fixed_digits(deal_error *error, double digits);
 void deal_error_set_validation_path(deal_error *error, const char *path, size_t length,
                                     size_t depth, int truncated, int missing);
 /* Producer-only host rejection evidence; copies static declaration text, never host values. */
+/* Selected raw module specifier, independent of its declaration identity. */
+void deal_error_set_host_module(deal_error *error, const char *module);
 void deal_error_set_host_context(deal_error *error, const char *signature,
                                  const char *declaration, const char *export_name,
                                  const char *boundary, int32_t parameter);

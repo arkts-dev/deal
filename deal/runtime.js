@@ -3285,7 +3285,7 @@ const $rt = {
             if (!($e instanceof $DEALError)) {
               throw $e;
             }
-            fail("parameter", "" + ($i + 1), "E8010", "parameter " + ($i + 1) + " type mismatch: " + $e.message, $file, $line, $column, $paramDescs[$i], $luaKindOf(args[$i]));
+            fail("parameter", "" + ($i + 1), "E8010", "parameter " + ($i + 1) + " type mismatch: " + $e.message, $file, $line, $column, $paramDescs[$i], $luaKindOf(args[$i]), $e);
           }
         }
         // The raw host observes the declared host-facing value: each
@@ -3371,13 +3371,15 @@ const $rt = {
     }
     const $paramDescs = $parsed.$params;
     const $retDesc = $asyncReturnDescriptor(descriptor);
-    const fail = (boundary, parameter, code, message, file, line, column, expected, actual) => {
+    const fail = (boundary, parameter, code, message, file, line, column, expected, actual, rejected) => {
       try { $rt.fail(code, message, file, line, column, expected, actual); }
       catch (error) {
         $diagnosticHostSet(error, {hostSignature: descriptor, hostBoundary: boundary, hostParameter: parameter,
           hostDirection: boundary === "parameter" || boundary === "arity" ? "deal-to-host" : "host-to-deal",
           hostStage: boundary === "completion" ? "completion" : "invocation",
           hostModule: context && context.module, hostExport: context && context.name, hostDeclaration: context && context.declaration});
+        const evidence = rejected && $diagnosticValidationGet(rejected);
+        if (evidence) $diagnosticValidationSet(error, evidence);
         throw error;
       }
     };
@@ -3414,7 +3416,7 @@ const $rt = {
             if (!($e instanceof $DEALError)) {
               throw $e;
             }
-            fail("parameter", "" + ($i + 1), "E8010", "parameter " + ($i + 1) + " type mismatch: " + $e.message, $file, $line, $column, $paramDescs[$i], $luaKindOf(args[$i]));
+            fail("parameter", "" + ($i + 1), "E8010", "parameter " + ($i + 1) + " type mismatch: " + $e.message, $file, $line, $column, $paramDescs[$i], $luaKindOf(args[$i]), $e);
           }
         }
         // The raw async host observes the declared host-facing value at
@@ -3446,6 +3448,8 @@ const $rt = {
               $completionError.line, $completionError.column,
               $completionError.expected, $completionKind($v));
           }
+          const evidence = $diagnosticValidationGet($completionError);
+          if (failure !== $completionError && evidence) $diagnosticValidationSet(failure, evidence);
           if (failure instanceof $DEALError) $diagnosticHostSet(failure, {
             hostSignature: descriptor, hostBoundary: "completion", hostDirection: "host-to-deal", hostStage: "completion", hostModule: context && context.module,
             hostExport: context && context.name, hostDeclaration: context && context.declaration});

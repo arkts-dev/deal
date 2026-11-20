@@ -982,7 +982,43 @@ typedef struct {
     int is_async;
     deal_host_function function;
     deal_host_async_function async_function;
+    const deal_host_export *exported;
 } deal_host_entry;
+
+typedef struct deal_host_loaded_binding {
+    deal_host_binding binding;
+    const char *declaration;
+    struct deal_host_loaded_binding *next;
+} deal_host_loaded_binding;
+static deal_host_loaded_binding *deal_host_loaded_bindings;
+
+/* Correlate exact registered records only; an alias with ambiguous providers stays unavailable. */
+static void deal_host_rejection_context(deal_error *error, const deal_host_export *exported,
+                                         const char *signature, const char *boundary, int32_t parameter) {
+    deal_error_set_host_context(error, signature, NULL, exported == NULL ? NULL : exported->name, boundary, parameter);
+    if (exported == NULL) return;
+    const char *module = NULL;
+    for (size_t i = 0u; i < deal_host_registry_count; i += 1u) {
+        const deal_host_module *owner = deal_host_registry[i].module;
+        if (owner == NULL) continue;
+        for (size_t j = 0u; j < owner->export_count; j += 1u) {
+            if (&owner->exports[j] != exported) continue;
+            const char *observed = deal_host_registry[i].specifier;
+            if (module != NULL && strcmp(module, observed) != 0) return;
+            module = observed;
+        }
+    }
+    deal_error_set_host_module(error, module);
+    const char *declaration = NULL;
+    for (const deal_host_loaded_binding *loaded = deal_host_loaded_bindings; loaded != NULL; loaded = loaded->next) {
+        for (size_t i = 0u; i < loaded->binding.export_count; i += 1u) {
+            if (loaded->binding.exports[i] != exported) continue;
+            if (declaration != NULL && strcmp(declaration, loaded->declaration) != 0) return;
+            declaration = loaded->declaration;
+        }
+    }
+    deal_error_set_host_context(error, NULL, declaration, NULL, NULL, 0);
+}
 
 /* The host group's own function-wrapper layout (H4). */
 static void deal_host_layouts_ensure(void) {
@@ -1018,6 +1054,11 @@ static const deal_host_entry *deal_host_entry_of(deal_fn *function) {
         return NULL;
     }
     return wrapper;
+}
+
+void deal_host_function_rejection_context(deal_error *error, deal_fn *function, const char *boundary) {
+    const deal_host_entry *entry = deal_host_entry_of(function);
+    if (entry != NULL) deal_host_rejection_context(error, entry->exported, deal_fn_signature(function), boundary, 0);
 }
 
 int deal_host_is_async_function_value(deal_fn *function) {
@@ -1777,7 +1818,7 @@ static deal_error *deal_host_materialize_function(deal_host_crossing *crossing,
     deal_host_layouts_ensure();
     void *wrapper = deal_alloc(DEAL_LAYOUT_HOST_FUNCTION,
         sizeof(deal_host_entry));
-    deal_host_entry entry = {0, box->function, NULL};
+    deal_host_entry entry = {0, box->function, NULL, NULL};
     memcpy(wrapper, &entry, sizeof(entry));
     deal_host_keep(crossing, wrapper);
     const void *cells[1];
@@ -2148,7 +2189,7 @@ deal_outcome_reference deal_host_export_value(const deal_host_export *exported,
         sizeof(deal_host_entry));
     uint32_t held = deal_root_scope_hold(wrapper);
     deal_host_entry entry = {exported->is_async,
-        exported->function, exported->async_function};
+        exported->function, exported->async_function, exported};
     memcpy(wrapper, &entry, sizeof(entry));
     const void *cells[1];
     cells[0] = wrapper;
@@ -2321,8 +2362,8 @@ static deal_outcome_data deal_host_function_thunk(void *function,
         deal_outcome admitted = deal_check_value(parameters[index],
             arguments[index], DEAL_BOUNDARY_HOST_PARAMETER, &context);
         if (admitted.error != NULL) {
-            deal_error_set_host_context(admitted.error, deal_fn_signature(function), NULL,
-                NULL, "parameter", (int32_t)index + 1);
+            deal_host_rejection_context(admitted.error, wrapped->exported, deal_fn_signature(function),
+                "parameter", (int32_t)index + 1);
             deal_host_crossing_pop(crossing);
             outcome.error = admitted.error;
             return outcome;
@@ -2394,8 +2435,7 @@ static deal_outcome_data deal_host_function_thunk(void *function,
     deal_outcome admitted = deal_check_value(declared_result, checked,
         DEAL_BOUNDARY_HOST_SYNC_RETURN, &context);
     if (admitted.error != NULL) {
-        deal_error_set_host_context(admitted.error, deal_fn_signature(function), NULL,
-            NULL, "return", 0);
+        deal_host_rejection_context(admitted.error, wrapped->exported, deal_fn_signature(function), "return", 0);
         deal_host_memo_release(&memo);
         deal_host_crossing_pop(crossing);
         outcome.error = admitted.error;
@@ -2616,6 +2656,7 @@ deal_outcome_data deal_host_invoke_sync(const deal_host_export *exported,
     if (declares_data && deal_host_is_untyped_array(crossing, result.value)) {
         deal_error *rejected = deal_host_carrier_reject(declared, "array",
             origin);
+        deal_host_rejection_context(rejected, exported, signature_descriptor, "return", 0);
         deal_host_crossing_pop(crossing);
         outcome.error = rejected;
         return outcome;
@@ -2638,6 +2679,7 @@ deal_outcome_data deal_host_invoke_sync(const deal_host_export *exported,
          * data position admits it (R2/R11). The result-only `void` position
          * keeps the result protocol's no-value projection to undefined. */
         deal_error *rejected = deal_host_carrier_reject(declared, "nil", origin);
+        deal_host_rejection_context(rejected, exported, signature_descriptor, "return", 0);
         deal_host_memo_release(&memo);
         deal_host_crossing_pop(crossing);
         outcome.error = rejected;
@@ -2649,8 +2691,7 @@ deal_outcome_data deal_host_invoke_sync(const deal_host_export *exported,
     deal_outcome admitted = deal_check_value(declared, checked,
         DEAL_BOUNDARY_HOST_SYNC_RETURN, &context);
     if (admitted.error != NULL) {
-        deal_error_set_host_context(admitted.error, signature_descriptor, NULL,
-            exported->name, "return", 0);
+        deal_host_rejection_context(admitted.error, exported, signature_descriptor, "return", 0);
         deal_host_memo_release(&memo);
         deal_host_crossing_pop(crossing);
         outcome.error = admitted.error;
@@ -2828,6 +2869,7 @@ deal_error *deal_host_invoke_async_value(deal_fn *callee,
          * operation, so the caller abandons the operation. */
         deal_error *error = deal_host_async_shape_arm(
             deal_host_shape_token(box, referent), origin);
+        deal_host_rejection_context(error, wrapped->exported, deal_fn_signature(callee), "async-shape", 0);
         deal_host_crossing_pop(crossing);
         return error;
     }
@@ -4635,11 +4677,15 @@ deal_outcome deal_host_load(const deal_host_declared_module *declared,
             }
         }
     }
-    deal_host_binding *binding = deal_platform_allocate(sizeof(*binding));
-    if (binding == NULL) {
+    deal_host_loaded_binding *loaded = deal_platform_allocate(sizeof(*loaded));
+    if (loaded == NULL) {
         deal_platform_release(resolved);
         deal_platform_fault("host: binding allocation failed");
     }
+    deal_host_binding *binding = &loaded->binding;
+    loaded->declaration = declared->module_path;
+    loaded->next = deal_host_loaded_bindings;
+    deal_host_loaded_bindings = loaded;
     binding->specifier = registered->specifier;
     binding->module = registered;
     binding->exports = resolved;

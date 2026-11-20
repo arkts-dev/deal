@@ -3674,7 +3674,18 @@ public final class LuaSemanticEmitter {
                 .append(error).append(".hostBoundary = ").append(luaString(crossing)).append("\n")
                 .append(error).append(".hostDirection = ").append(luaString(crossing.equals("parameter") || crossing.equals("arity") ? "deal-to-host" : "host-to-deal")).append("\n")
                 .append(error).append(".hostStage = ").append(luaString(crossing.equals("completion") ? "completion" : "invocation")).append("\n");
-            if (module != null) out.append(error).append(".hostDeclaration = ").append(luaString(module)).append("\n");
+            if (module != null) {
+                out.append(error).append(".hostDeclaration = ").append(luaString(module)).append("\n");
+                String specifier = null;
+                for (SemanticOp candidate : opsById.values()) {
+                    if (candidate.payload() instanceof KindPayload.ModuleImportPayload imported
+                            && imported.kind() == ModuleImportKind.HOST && imported.resolvedModule().path().equals(module)) {
+                        if (specifier != null && !specifier.equals(imported.rawSpecifier())) { specifier = null; break; }
+                        specifier = imported.rawSpecifier();
+                    }
+                }
+                if (specifier != null) out.append(error).append(".hostModule = ").append(luaString(specifier)).append("\n");
+            }
             if (export != null) out.append(error).append(".hostExport = ").append(luaString(export)).append("\n");
             if (parameter != null) out.append(error).append(".hostParameter = ").append(luaString(parameter.toString())).append("\n");
         }
@@ -6312,6 +6323,34 @@ private void emitStdlib(SemanticOp op) {
                 .append(", true)\n");
             out.append("if not __okB then\n");
             out.append("  __chkB.o = ").append(luaString(originOf(boundary))).append("\n");
+            for (SemanticOp candidate : opsById.values()) {
+                if (!(candidate.result() instanceof AsyncTokenId token) || token.tokenId() != canonicalId
+                        || !(candidate.payload() instanceof KindPayload.AsyncStartPayload start)) continue;
+                FunctionExecutionBinding binding = start.callee() instanceof KindPayload.CallCallee.Static fixed ? fixed.binding()
+                    : start.callee() instanceof KindPayload.CallCallee.Indirect indirect ? executionBindingOfIdentity(indirect.callee()) : null;
+                String module = binding instanceof FunctionExecutionBinding.HostFunction host ? host.hostModuleId().path()
+                    : binding instanceof FunctionExecutionBinding.HostFunctionValue host ? host.hostModuleId().path() : null;
+                String export = binding instanceof FunctionExecutionBinding.HostFunction host ? host.exportName() : null;
+                String signature = binding instanceof FunctionExecutionBinding.HostFunction host ? host.descriptor().canonicalSpecText()
+                    : binding instanceof FunctionExecutionBinding.HostFunctionValue host ? host.descriptor().canonicalSpecText() : null;
+                if (signature != null) {
+                    out.append("  if __tA.owner == \"HOST_OPERATION\" then\n")
+                        .append("    __chkB.hostSignature = ").append(luaString(signature)).append("\n")
+                        .append("    __chkB.hostDeclaration = ").append(luaString(module)).append("\n")
+                        .append("    __chkB.hostBoundary = \"completion\"\n    __chkB.hostDirection = \"host-to-deal\"\n    __chkB.hostStage = \"completion\"\n");
+                    if (export != null) out.append("    __chkB.hostExport = ").append(luaString(export)).append("\n");
+                    String specifier = null;
+                    for (SemanticOp importedOp : opsById.values()) {
+                        if (importedOp.payload() instanceof KindPayload.ModuleImportPayload imported
+                                && imported.kind() == ModuleImportKind.HOST && imported.resolvedModule().path().equals(module)) {
+                            if (specifier != null && !specifier.equals(imported.rawSpecifier())) { specifier = null; break; }
+                            specifier = imported.rawSpecifier();
+                        }
+                    }
+                    if (specifier != null) out.append("    __chkB.hostModule = ").append(luaString(specifier)).append("\n");
+                    out.append("  end\n");
+                }
+            }
             emitFailureEvent(boundary.opId(), "BOUNDARY", boundary,
                 "__errtext(__chkB)");
             emitFailureEvent(op.opId(), op.kind().name(), op, "__errtext(__chkB)");

@@ -4390,6 +4390,10 @@ public class HostModuleLoadEmissionTest {
             }
             String lua = Files.readString(out.resolve("app.lua"),
                 StandardCharsets.UTF_8);
+            check(lua.contains("__chkB.hostBoundary = \"completion\"")
+                && lua.contains("__chkB.hostModule = \"host/complete_probe\"")
+                && lua.contains("__chkB.hostStage = \"completion\""),
+                "only the completion rejection receives known selected host provenance");
             String numVar = "  __cA = __hostNumVar(__cA)\n";
             String carrierIn = "  __cA = __factories.__hostCarrierIn(";
             int site = 0;
@@ -6658,6 +6662,7 @@ public class HostModuleLoadEmissionTest {
                     && enabled.stderr().contains("\"hostDirection\":\"host-to-deal\"")
                     && enabled.stderr().contains("\"hostStage\":\"invocation\"")
                     && enabled.stderr().contains("\"hostDeclaration\":")
+                    && enabled.stderr().contains("\"hostModule\":\"host/diagnostic\"")
                     && enabled.stderr().contains("\"message\":\"chosen\"")
                     && !disabled.stderr().contains("DEAL_RUNTIME_DIAGNOSTIC:"),
                 "Lua host rejection preserves context/rethrow/default behavior: " + enabled);
@@ -6753,6 +6758,7 @@ public class HostModuleLoadEmissionTest {
                         && enabled.stderr().contains("\"hostDirection\":\"host-to-deal\"")
                         && enabled.stderr().contains("\"hostStage\":\"invocation\"")
                         && enabled.stderr().contains("\"hostDeclaration\":")
+                        && enabled.stderr().contains("\"hostModule\":\"host/abi_probe\"")
                         && enabled.stderr().contains("\"message\":\"chosen\""),
                     "generated host return retains producer context through rethrow: " + enabled);
                 var disabled = BoundedProcess.runCaptured(diagnosticCommand, workspace,

@@ -662,6 +662,15 @@ public final class JvmRuntime {
         return error;
     }
 
+    /** The selected import specifier, separately from the declaring module identity. */
+    public static DealError hostModuleContext(DealError error, String module) {
+        if (module == null) return error;
+        var facts = new LinkedHashMap<String, String>(error.hostEvidence);
+        facts.put("hostModule", module);
+        error.hostEvidence = Map.copyOf(facts);
+        return error;
+    }
+
     /** Transfer only evidence from the check that this producer is reprojecting. */
     public static DealError validationContext(DealError projected, DealError rejected) {
         projected.validationEvidence = rejected.validationEvidence;
@@ -855,7 +864,7 @@ public final class JvmRuntime {
         appendRuntimeText(out, "jsonReason", error.jsonReason, true);
         for (String key : List.of("jsonPath", "jsonPathDepth", "jsonPathTruncated", "jsonMissingField"))
             appendRuntimeText(out, key, error.jsonDecodeEvidence.get(key), true);
-        for (String key : List.of("hostDeclaration", "hostExport", "hostSignature", "hostBoundary", "hostParameter", "hostDirection", "hostStage"))
+        for (String key : List.of("hostModule", "hostDeclaration", "hostExport", "hostSignature", "hostBoundary", "hostParameter", "hostDirection", "hostStage"))
             appendRuntimeText(out, key, error.hostEvidence.get(key), true);
         for (String key : List.of("arrayIndex", "arrayLength", "arrayConstraint"))
             appendRuntimeText(out, key, error.arrayEvidence.get(key), true);

@@ -320,6 +320,7 @@ struct deal_error {
     size_t json_path_depth;
     int json_path_truncated;
     int json_missing_field;
+    char *host_module;
     char *host_signature;
     char *host_declaration;
     char *host_export;
@@ -400,6 +401,8 @@ static void deal_error_release(void *object) {
     error->json_path = NULL;
     deal_platform_release(error->validation_path);
     error->validation_path = NULL;
+    deal_platform_release(error->host_module);
+    error->host_module = NULL;
     deal_platform_release(error->host_signature);
     deal_platform_release(error->host_declaration);
     deal_platform_release(error->host_export);
@@ -446,6 +449,7 @@ static deal_error *deal_error_allocate(const char *code, const char *message,
     error->json_path_depth = 0u;
     error->json_path_truncated = 0;
     error->json_missing_field = 0;
+    error->host_module = NULL;
     error->host_signature = error->host_declaration = error->host_export = error->host_boundary = NULL;
     error->host_parameter = 0;
     error->host_direction = error->host_stage = NULL;
@@ -1007,6 +1011,7 @@ static void deal_diagnostic_error(deal_snapshot_buffer *buffer, const deal_error
         deal_diagnostic_text(buffer, "jsonByteOffset", error->json_byte_offset, error->json_byte_offset_length, &first);
         deal_diagnostic_text(buffer, "jsonReason", error->json_reason, error->json_reason_length, &first);
     }
+    if (error->host_module != NULL) deal_diagnostic_text(buffer, "hostModule", error->host_module, strlen(error->host_module), &first);
     const char *host_text[] = {error->host_signature, error->host_declaration, error->host_export, error->host_boundary};
     const char *host_keys[] = {"hostSignature", "hostDeclaration", "hostExport", "hostBoundary"};
     for (size_t i = 0u; i < 4u; i += 1u)
@@ -1103,6 +1108,14 @@ void deal_error_set_array_position(deal_error *error, double index, size_t lengt
     error->array_length = length;
     error->array_constraint = !isfinite(index) || index != trunc(index) ? "finite-integer"
         : operation == 1 ? "write-range" : operation == 2 ? "delete-range" : "read-range";
+}
+
+void deal_error_set_host_module(deal_error *error, const char *module) {
+    if (error == NULL) deal_platform_fault("error diagnostic: null host error");
+    if (module == NULL) return;
+    char *copy = deal_platform_duplicate(module);
+    deal_platform_release(error->host_module);
+    error->host_module = copy;
 }
 
 void deal_error_set_host_context(deal_error *error, const char *signature,

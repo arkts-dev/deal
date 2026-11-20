@@ -117,6 +117,9 @@ deal_outcome_data deal_host_invoke_sync(const deal_host_export *exported,
  * `<host module>.<export>`, so a DEAL call reaches the host through the one
  * function-value protocol instead of a second call path.
  */
+/* Only the rejecting consumer may attach known host-value provenance. */
+void deal_host_function_rejection_context(deal_error *error, deal_fn *function, const char *boundary);
+
 deal_outcome_reference deal_host_export_value(const deal_host_export *exported,
                                               const char *signature_descriptor,
                                               const deal_origin *origin);

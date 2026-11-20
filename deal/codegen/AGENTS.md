@@ -55,7 +55,7 @@ Throw/catch/rethrow preserves Error identity, origin, frames and causes. First
 throw binds diagnostic code from the current name; later name writes do not
 rewrite it. Each catch execution publishes a fresh captured cell. Operation
 failures keep their own coordinates across direct/dynamic/adapted/imported calls;
-no ambient caller-origin substitution.
+no ambient caller-origin substitution. Host rejection producers distinguish raw module specifiers from declaration identities and retain known export/signature/direction/stage; operation failures propagated through a host gain no new blame.
 
 ## Artifacts
 

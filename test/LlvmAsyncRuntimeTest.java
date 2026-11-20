@@ -734,6 +734,17 @@ public final class LlvmAsyncRuntimeTest {
                 checkEq("", run.stderr(), "-O" + level + " the " + arm[0]
                     + " completion is a DEAL failure, not a protocol fault: "
                     + run.describe());
+                Path product = scratch.resolve("product-" + arm[0] + "-0-" + level);
+                for (String stress : List.of("0", "1")) {
+                    var detailed = NativeCompiler.execute(product, scratch, Map.of("DEAL_DIAGNOSTICS_JSON", "1", "DEAL_GC_STRESS", stress));
+                    checkEq(run.stdout(), detailed.stdout(), "completion diagnostics preserve ordinary snapshot");
+                    check(detailed.stderr().contains("\"hostModule\":\"host/async\"")
+                        && detailed.stderr().contains("\"hostBoundary\":\"completion\"")
+                        && detailed.stderr().contains("\"hostStage\":\"completion\"")
+                        && detailed.stderr().contains("\"hostDirection\":\"host-to-deal\"")
+                        && detailed.stderr().contains("\"hostSignature\":\"async()->" + arm[3] + "\""),
+                        "completion rejection owns its selected host provenance across collection: " + detailed.describe());
+                }
             }
         }
     }
@@ -1165,6 +1176,7 @@ public final class LlvmAsyncRuntimeTest {
         #include "deal/native/platform.h"
 
         #include <string.h>
+        #include <stdlib.h>
 
         static void say(const char *text) {
           deal_platform_write_stdout(text, strlen(text));
@@ -1185,6 +1197,14 @@ public final class LlvmAsyncRuntimeTest {
           deal_platform_write_stdout("\\n", 1);
           deal_platform_flush_stdout();
           deal_error_snapshot_release(snapshot);
+          const char *diagnostics = getenv("DEAL_DIAGNOSTICS_JSON");
+          if (diagnostics != NULL && strcmp(diagnostics, "1") == 0) {
+            char *detail = deal_error_diagnostic(error);
+            deal_platform_write_stderr(detail, strlen(detail));
+            deal_platform_write_stderr("\\n", 1);
+            deal_platform_flush_stderr();
+            deal_error_snapshot_release(detail);
+          }
           return 1;
         }
 
