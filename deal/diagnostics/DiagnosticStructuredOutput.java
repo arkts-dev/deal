@@ -271,6 +271,15 @@ public final class DiagnosticStructuredOutput {
             indent(sb, level + 1).append('}');
         }
         sb.append(",\n");
+        if (facts.cause() == null) indent(sb, level + 1).append("\"cause\": null,\n");
+        else {
+            var cause = facts.cause();
+            indent(sb, level + 1).append("\"cause\": {\"reason\": ").append(jsonString(cause.reason()))
+                .append(", \"operation\": ").append(jsonString(cause.operation()))
+                .append(", \"previous\": ").append(jsonString(cause.previous())).append(", ");
+            appendRange(sb, cause.range(), 0);
+            sb.append("},\n");
+        }
         indent(sb, level + 1).append("\"syntax\": ");
         var syntax = facts.syntax();
         if (syntax == null) sb.append("null");

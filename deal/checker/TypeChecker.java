@@ -2577,7 +2577,9 @@ public final class TypeChecker {
                 "Earlier refinement to " + typeName(lost.previous())
                         + " was invalidated by this " + lost.operation().name().toLowerCase(java.util.Locale.ROOT)
                         + "; inspect or guard the current value again before use",
-                lost.range());
+                lost.range()).withFacts(diagnostic.facts().withCause(
+                    new deal.diagnostics.DiagnosticFacts.CauseContext("flow.refinement-invalidated",
+                        lost.operation().name().toLowerCase(java.util.Locale.ROOT), lost.range(), typeName(lost.previous()))));
         ExpressionNode receiver = expression instanceof MemberAccessExpr member ? member.object()
                 : expression instanceof IndexExpr index ? index.array() : null;
         if (receiver != null && typeMap.get(receiver) instanceof Type.Table

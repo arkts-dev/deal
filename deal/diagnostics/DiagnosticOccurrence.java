@@ -33,7 +33,14 @@ public record DiagnosticOccurrence(String sourceRevision, String occurrenceId, S
         if (!file.equals(diagnostic.file())) return null;
         String revision = sourceRevision(file, source);
         String carrier = DiagnosticStructuredOutput.toJson(List.of(diagnostic.withOccurrence(null)));
-        return new DiagnosticOccurrence(revision, "diagnostic:" + digest(revision, carrier), null);
+        var cause = diagnostic.facts().cause();
+        String root = null;
+        if (cause != null && file.equals(cause.range().file()) && cause.range().origin() == RangeOrigin.SOURCE) {
+            var range = cause.range();
+            root = "cause:" + digest(revision, cause.reason(), cause.operation(),
+                Integer.toString(range.startScalarOffset()), Integer.toString(range.endScalarOffset()));
+        }
+        return new DiagnosticOccurrence(revision, "diagnostic:" + digest(revision, carrier), root);
     }
 
     public static String sourceRevision(String file, String source) {

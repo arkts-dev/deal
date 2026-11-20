@@ -1219,6 +1219,24 @@ public class DiagnosticRangeTest {
                     && note.range().startScalarOffset() == source.lastIndexOf(sample[2])
                     && note.range().endScalarOffset() == source.lastIndexOf(sample[2]) + sample[2].length()),
                 "direct field lost-refinement producer and exact UTF-16 range: " + sample[1]);
+            if (diagnostic != null) {
+                var cause = diagnostic.facts().cause();
+                check(cause != null && cause.operation().equals(sample[1]) && cause.previous().equals("string"),
+                    "typed invalidation cause comes from the flow producer");
+                var occurrence = deal.diagnostics.DiagnosticOccurrence.fromSource("invalidation.deal", source, diagnostic);
+                check(occurrence.rootCauseId() != null && occurrence.rootCauseId().startsWith("cause:"), "known cause receives revision-pinned identity");
+                var sibling = diagnostic.withNote("independent use", null);
+                var siblingOccurrence = deal.diagnostics.DiagnosticOccurrence.fromSource("invalidation.deal", source, sibling);
+                check(siblingOccurrence.rootCauseId().equals(occurrence.rootCauseId())
+                    && !siblingOccurrence.occurrenceId().equals(occurrence.occurrenceId()), "one known event links distinct occurrences");
+                check(!deal.diagnostics.DiagnosticOccurrence.fromSource("invalidation.deal", source+" ", diagnostic)
+                    .rootCauseId().equals(occurrence.rootCauseId()), "cause identity changes with source revision");
+                check(diagnostic.facts().withGuidance(List.of("chosen")).withCall(null).withSyntax(null).cause().equals(cause),
+                    "context copies retain typed cause evidence");
+                check(DiagnosticStructuredOutput.toJson(List.of(diagnostic.withOccurrence(occurrence))).contains("\"cause\":")
+                    && deal.amend.CompilerProtocolJson.encode(diagnostic.facts()).contains("flow.refinement-invalidated"),
+                    "CLI and amendment preserve the typed event");
+            }
             String repaired = source.replace("let n=c.value.length;", "if(c.value!==null){let n=c.value.length;}");
             check(checkerDiagnostics(repaired, "invalidation.deal").isEmpty(), "chosen post-effect guard rechecks: " + sample[1]);
         }
@@ -3710,7 +3728,7 @@ public class DiagnosticRangeTest {
             + range.replace("\n", "\n      ") + ",\n      \"excerpt\": null,\n      \"occurrence\": null,\n      \"editOffer\": null,\n      \"notes\": "
             + notes.replace("\n", "\n      ") + ",\n"
             + "      \"facts\": {\n        \"reason\": \"\",\n        \"operation\": \"\",\n"
-            + "        \"expected\": \"\",\n        \"actual\": \"\",\n        \"guidance\": [],\n        \"path\": [],\n        \"call\": null,\n        \"operator\": null,\n        \"mismatch\": null,\n        \"syntax\": null,\n        \"names\": null,\n        \"construction\": null,\n        \"exports\": null,\n        \"resolution\": null,\n        \"cycle\": null,\n        \"tool\": null,\n        \"lowering\": null\n      },\n"
+            + "        \"expected\": \"\",\n        \"actual\": \"\",\n        \"guidance\": [],\n        \"path\": [],\n        \"call\": null,\n        \"operator\": null,\n        \"mismatch\": null,\n        \"cause\": null,\n        \"syntax\": null,\n        \"names\": null,\n        \"construction\": null,\n        \"exports\": null,\n        \"resolution\": null,\n        \"cycle\": null,\n        \"tool\": null,\n        \"lowering\": null\n      },\n"
             + "      \"missingSymbols\": []\n    }\n  ],\n  \"operations\": [],\n  \"compilation\": null\n}";
     }
 
