@@ -1622,7 +1622,12 @@ public final class TypeChecker {
             return Type.Error.INSTANCE;
         }
         if (sym instanceof Symbol.ModuleSymbol || sym instanceof Symbol.ClassSymbol) {
-            error(DiagnosticCode.E3001, "Namespace/class metadata is not a data value", id.span());
+            diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E3001, "Namespace/class metadata is not a data value", id.span())
+                .withFacts(new deal.diagnostics.DiagnosticFacts("name.wrong-namespace", "read", "data value binding", id.name(),
+                    List.of("Use namespace members or class metadata only in their specified contexts; no value construction is inferred."))
+                    .withNames(new deal.diagnostics.DiagnosticFacts.NameContext(List.of(), 0, false,
+                        List.of(new deal.diagnostics.DiagnosticFacts.NameObservation(id.name(), sym instanceof Symbol.ModuleSymbol ? "MODULE" : "CLASS",
+                            deal.diagnostics.DiagnosticFacts.LookupStatus.WRONG_NAMESPACE, bindingDeclarationRange(sym))), 1))));
             return Type.Error.INSTANCE;
         }
         Type declaredType = getDeclaredType(sym);
@@ -4007,7 +4012,52 @@ public final class TypeChecker {
                 if (candidates.size() > 5) candidates.removeLast();
             }
         }
-        return new deal.diagnostics.DiagnosticFacts.NameContext(candidates, count, count > candidates.size());
+        List<deal.diagnostics.DiagnosticFacts.NameObservation> observations = lookupObservations(missing);
+        return new deal.diagnostics.DiagnosticFacts.NameContext(candidates, count, count > candidates.size(),
+            observations.subList(0, Math.min(32, observations.size())), observations.size());
+    }
+
+    /** Existing resolver surfaces only; no dependency discovery or inferred import choice. */
+    private List<deal.diagnostics.DiagnosticFacts.NameObservation> lookupObservations(String missing) {
+        var found = new ArrayList<deal.diagnostics.DiagnosticFacts.NameObservation>();
+        Set<Symbol> seen = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+        var visibleAliases = new HashSet<String>();
+        for (SymbolTable scope = currentScope; scope != null; scope = scope.parent()) {
+            Symbol declaration = scope.resolveLocal(missing);
+            if (declaration != null && seen.add(declaration) && resolveVisibleBinding(missing) != declaration)
+                found.add(new deal.diagnostics.DiagnosticFacts.NameObservation(missing, symbolKind(declaration),
+                    deal.diagnostics.DiagnosticFacts.LookupStatus.DECLARED_LATER, bindingDeclarationRange(declaration)));
+            for (String alias : scope.symbols().keySet().stream().sorted().toList()) {
+                if (!visibleAliases.add(alias) || !(resolveVisibleBinding(alias) instanceof Symbol.ModuleSymbol module)
+                        || !module.exports().containsKey(missing)) continue;
+                var exported = module.functionSymbols().get(missing);
+                var classSymbol = module.classSymbols().get(missing);
+                found.add(new deal.diagnostics.DiagnosticFacts.NameObservation(alias + "." + missing,
+                    classSymbol != null ? "CLASS" : module.exports().get(missing) instanceof Type.Func ? "FUNCTION" : "VALUE",
+                    deal.diagnostics.DiagnosticFacts.LookupStatus.IMPORTED_MEMBER,
+                    exported != null ? bindingDeclarationRange(exported) : classSymbol != null ? classSymbol.declarationRange()
+                        : module.importSpan() == null ? null : module.importSpan().range()));
+            }
+        }
+        for (SymbolTable scope : scopeMap.values()) {
+            Symbol declaration = scope.resolveLocal(missing);
+            if (declaration == null || !seen.add(declaration) || resolveVisibleBinding(missing) == declaration) continue;
+            found.add(new deal.diagnostics.DiagnosticFacts.NameObservation(missing, symbolKind(declaration),
+                deal.diagnostics.DiagnosticFacts.LookupStatus.OUT_OF_SCOPE, bindingDeclarationRange(declaration)));
+        }
+        if (found.isEmpty()) found.add(new deal.diagnostics.DiagnosticFacts.NameObservation(missing, "UNRESOLVED",
+            deal.diagnostics.DiagnosticFacts.LookupStatus.NOT_FOUND_IN_LEXICAL_OR_IMPORTED_SURFACES, null));
+        found.sort(java.util.Comparator.comparing((deal.diagnostics.DiagnosticFacts.NameObservation o) -> o.status().name())
+            .thenComparing(o -> o.declarationRange() == null ? "" : o.declarationRange().file())
+            .thenComparingInt(o -> o.declarationRange() == null ? -1 : o.declarationRange().startScalarOffset())
+            .thenComparing(deal.diagnostics.DiagnosticFacts.NameObservation::name)
+            .thenComparing(deal.diagnostics.DiagnosticFacts.NameObservation::kind));
+        return List.copyOf(found);
+    }
+
+    private static String symbolKind(Symbol symbol) {
+        return symbol instanceof Symbol.ClassSymbol ? "CLASS" : symbol instanceof Symbol.ModuleSymbol ? "MODULE"
+            : symbol instanceof Symbol.FunctionSymbol ? "FUNCTION" : "VALUE";
     }
 
     /** Levenshtein over at most 64 UTF-16 units; longer spellings have no fuzzy alternatives. */

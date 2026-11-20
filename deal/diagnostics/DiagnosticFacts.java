@@ -124,9 +124,23 @@ public record DiagnosticFacts(
         }
     }
 
-    public record NameContext(List<NameCandidate> candidates, int matchingCount, boolean truncated) {
+    public enum LookupStatus { NOT_FOUND_IN_LEXICAL_OR_IMPORTED_SURFACES, DECLARED_LATER, OUT_OF_SCOPE, IMPORTED_MEMBER, WRONG_NAMESPACE }
+    public record NameObservation(String name, String kind, LookupStatus status, DiagnosticRange declarationRange) {
+        public NameObservation {
+            Objects.requireNonNull(name, "name");
+            Objects.requireNonNull(kind, "kind");
+            Objects.requireNonNull(status, "status");
+        }
+    }
+    public record NameContext(List<NameCandidate> candidates, int matchingCount, boolean truncated,
+                              List<NameObservation> observations, int observationCount) {
+        public NameContext(List<NameCandidate> candidates, int matchingCount, boolean truncated) {
+            this(candidates, matchingCount, truncated, List.of(), 0);
+        }
         public NameContext {
             candidates = List.copyOf(candidates);
+            observations = List.copyOf(observations);
+            if (observationCount < observations.size()) throw new IllegalArgumentException("Invalid lookup observation count");
             if (matchingCount < candidates.size() || truncated != (matchingCount > candidates.size()))
                 throw new IllegalArgumentException("Invalid name candidate count");
         }

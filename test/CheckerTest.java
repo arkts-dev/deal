@@ -164,6 +164,14 @@ public class CheckerTest {
         check(namespace.result().diagnostics().stream().filter(d -> d.code().equals("E2001"))
                         .findFirst().orElseThrow().facts().names().candidates().isEmpty(),
                 "module namespaces never masquerade as value alternatives");
+        var unqualifiedImport = checkProgramWithModule("import * as counter from \"counter\";let result=count;", resolver);
+        var importedObservation = unqualifiedImport.result().diagnostics().stream().filter(d -> d.code().equals("E2001"))
+            .findFirst().orElseThrow().facts().names().observations();
+        check(importedObservation.size() == 1 && importedObservation.getFirst().name().equals("counter.count")
+            && importedObservation.getFirst().status() == deal.diagnostics.DiagnosticFacts.LookupStatus.IMPORTED_MEMBER,
+            "unqualified name retains exact already imported surface, not an invented dependency");
+        assertNoErrors(checkProgramWithModule("import * as counter from \"counter\";let result=counter.count;", resolver),
+            "explicitly chosen qualified-import repair rechecks");
         String calls = "function count(x:number):number{return x;}"
                 + "function counts():number{return 1;}function counter(x:number):string{return \"bad\";}"
                 + "async function county(x:number):Promise<number>{return x;}let result:number=coun(7);";
@@ -194,6 +202,19 @@ public class CheckerTest {
         check(alternatives("let cot:number=1;let cat:number=2;let result=cut;").stream()
                         .map(c -> c.name()).toList().equals(List.of("cat", "cot")),
                 "spelling breaks equal-distance ties independently of declaration order");
+        for (String[] lookup : new String[][] {
+                {"let result=missing;let missing:number=1;", "DECLARED_LATER"},
+                {"{let missing:number=1;}let result=missing;", "OUT_OF_SCOPE"},
+                {"let result=missing;", "NOT_FOUND_IN_LEXICAL_OR_IMPORTED_SURFACES"}}) {
+            var failure = checkProgram(lookup[0]).result().diagnostics().stream().filter(d -> d.code().equals("E2001")).findFirst().orElseThrow();
+            check(failure.facts().names().observations().stream().anyMatch(o -> o.status().name().equals(lookup[1])),
+                "exact producer lookup distinction: " + lookup[1]);
+        }
+        var wrongNamespace = checkProgram("class C{}let result=C;").result().diagnostics().stream()
+            .filter(d -> d.code().equals("E3001")).findFirst().orElseThrow();
+        check(wrongNamespace.facts().reason().equals("name.wrong-namespace")
+            && wrongNamespace.facts().names().observations().getFirst().kind().equals("CLASS"),
+            "wrong namespace retains actual class binding rather than suggesting a missing declaration");
         var uncheckedArguments = alternatives("function count(x:string):number{return 7;}let result=coun(42);");
         check(uncheckedArguments.isEmpty(),
                 "call alternatives exclude incompatible already checked arguments without supplying context");

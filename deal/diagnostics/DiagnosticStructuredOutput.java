@@ -317,7 +317,20 @@ public final class DiagnosticStructuredOutput {
             if (!names.candidates().isEmpty()) { sb.append('\n'); indent(sb, level + 2); }
             sb.append("],\n");
             indent(sb, level + 2).append("\"matchingCount\": ").append(names.matchingCount()).append(",\n");
-            indent(sb, level + 2).append("\"truncated\": ").append(names.truncated()).append('\n');
+            indent(sb, level + 2).append("\"truncated\": ").append(names.truncated()).append(",\n");
+            indent(sb, level + 2).append("\"observationCount\": ").append(names.observationCount()).append(",\n");
+            indent(sb, level + 2).append("\"observations\": [");
+            for (int i = 0; i < names.observations().size(); i++) {
+                if (i > 0) sb.append(',');
+                var observation = names.observations().get(i);
+                sb.append("{\"name\": ").append(jsonString(observation.name()))
+                    .append(", \"kind\": ").append(jsonString(observation.kind()))
+                    .append(", \"status\": ").append(jsonString(observation.status().name())).append(",\n");
+                if (observation.declarationRange() == null) indent(sb, level + 3).append("\"declarationRange\": null");
+                else appendRange(sb, observation.declarationRange(), level + 3, "declarationRange");
+                sb.append('}');
+            }
+            sb.append("]\n");
             indent(sb, level + 1).append('}');
         }
         sb.append(",\n");
