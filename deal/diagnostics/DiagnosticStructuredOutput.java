@@ -117,6 +117,21 @@ public final class DiagnosticStructuredOutput {
         indent(sb, 2).append("\"semanticProfile\": ").append(jsonString(outcome.semanticProfile())).append(",\n");
         indent(sb, 2).append("\"releaseStateHash\": ").append(jsonString(outcome.releaseStateHash())).append(",\n");
         indent(sb, 2).append("\"published\": ").append(outcome.published()).append(",\n");
+        indent(sb, 2).append("\"sourceBatch\": ");
+        var batch = outcome.sourceBatch();
+        if (batch == null) sb.append("null");
+        else {
+            sb.append("{\"batchRevision\": ").append(jsonString(batch.batchRevision())).append(", \"sources\": [");
+            for (int i = 0; i < batch.sources().size(); i++) {
+                if (i > 0) sb.append(',');
+                var source = batch.sources().get(i);
+                sb.append("{\"file\": ").append(jsonString(source.file()))
+                        .append(", \"sourceRevision\": ").append(jsonString(source.sourceRevision()))
+                        .append(", \"snapshotKind\": ").append(jsonString(source.snapshotKind().name())).append('}');
+            }
+            sb.append("]}");
+        }
+        sb.append(",\n");
         indent(sb, 2).append("\"phases\": [");
         for (int i = 0; i < outcome.phases().size(); i++) {
             if (i > 0) sb.append(',');

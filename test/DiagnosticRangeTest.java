@@ -71,6 +71,36 @@ public class DiagnosticRangeTest {
         }
     }
 
+    private static void testSourceBatchIdentity() {
+        var texts = new LinkedHashMap<String, String>();
+        texts.put("b.deal", "// \ud800\r\n");
+        texts.put("a.deal", "export function main():void{}\n");
+        var batch = deal.diagnostics.DiagnosticSourceBatch.observed(texts);
+        var reversed = new LinkedHashMap<String, String>();
+        reversed.put("a.deal", texts.get("a.deal")); reversed.put("b.deal", texts.get("b.deal"));
+        check(batch.equals(deal.diagnostics.DiagnosticSourceBatch.observed(reversed)),
+                "source batch identity is independent of discovery order");
+        texts.put("b.deal", "// \ud801\r\n");
+        check(!batch.batchRevision().equals(deal.diagnostics.DiagnosticSourceBatch.observed(texts).batchRevision()),
+                "source batch changes on exact UTF-16 changes including lone units");
+        check(batch.sources().getFirst().file().equals("a.deal")
+                && batch.sources().getLast().sourceRevision().equals(
+                    deal.diagnostics.DiagnosticOccurrence.sourceRevision("b.deal", "// \ud800\r\n")),
+                "batch retains exact observed per-file revisions in canonical order");
+        var phases = java.util.Arrays.stream(deal.diagnostics.CompilationOutcome.Phase.values())
+                .map(phase -> new deal.diagnostics.CompilationOutcome.PhaseResult(phase,
+                        deal.diagnostics.CompilationOutcome.Status.SKIPPED)).toList();
+        var outcome = new deal.diagnostics.CompilationOutcome("js", "profile", "release", false, phases, batch);
+        String json = DiagnosticStructuredOutput.toJson(List.of(), List.of(), outcome);
+        check(json.contains("\"diagnostics\": []") && json.contains(batch.batchRevision())
+                && json.contains("\"snapshotKind\": \"CURRENT_SOURCE\""),
+                "empty diagnostic report still identifies consumed source snapshots");
+        try { batch.sources().clear(); fail("mutable source batch"); }
+        catch (UnsupportedOperationException expected) { check(true, "batch is immutable"); }
+        try { new deal.diagnostics.DiagnosticSourceBatch("stale", batch.sources()); fail("stale batch accepted"); }
+        catch (IllegalArgumentException expected) { check(true, "batch validates its exact identity"); }
+    }
+
     private static void testRetainedDetailPages() {
         var source = new ArrayList<String>();
         for (int i = 0; i < 70; i++) source.add("observed-" + i);
@@ -131,6 +161,7 @@ public class DiagnosticRangeTest {
     public static void main(String[] args) throws Exception {
         System.out.println("=== Running Diagnostic Range Tests ===");
 
+        testSourceBatchIdentity();
         testRetainedDetailPages();
         testCursorInitialAndEmpty();
         testCursorFullWalk();

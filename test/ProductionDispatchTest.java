@@ -1003,7 +1003,17 @@ public class ProductionDispatchTest {
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             located.context(), entryFile, false, dumpIr, false, false, null,
             invocation);
-        return new ArmCompile(orchestrator, orchestrator.compile());
+        boolean success = orchestrator.compile();
+        var batch = orchestrator.outcome().sourceBatch();
+        check(batch != null && batch.sources().stream().anyMatch(source -> source.file().equals(entryFile.toString())),
+                "compiler outcome identifies its consumed entry even without diagnostics");
+        for (var diagnostic : orchestrator.diagnostics()) {
+            if (diagnostic.occurrence() != null) check(batch.sources().stream().anyMatch(source ->
+                    source.file().equals(diagnostic.file())
+                            && source.sourceRevision().equals(diagnostic.occurrence().sourceRevision())),
+                    "diagnostic revision agrees with the consumed source batch");
+        }
+        return new ArmCompile(orchestrator, success);
     }
 
     private static ProjectOutcome productionCompile(Path project, String entry,

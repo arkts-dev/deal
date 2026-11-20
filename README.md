@@ -95,6 +95,9 @@ classification and available snapshot excerpts/occurrence IDs. Terminal output
 uses messages and concise producer notes; structured `facts.guidance` retains
 additional rule explanations and intent-dependent examples. Operational
 failures and actual compilation/publication outcomes are separate fields.
+`compilation.sourceBatch` identifies the exact consumed source revisions even
+when diagnostics are empty; it covers observed files, not undiscovered inputs
+or a claim that every analysis phase ran.
 Bounded name/export/search/cycle summaries advertise retained detail inventories.
 Embedded callers page `facts.<context>.details().page(new DiagnosticDetails.Request(inventoryId, offset, limit))`
 (up to 32 observations per page); lookup observations use `observationDetails`.

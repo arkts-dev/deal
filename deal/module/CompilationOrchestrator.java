@@ -821,7 +821,8 @@ public final class CompilationOrchestrator {
         return new CompilationOutcome(backend.cliName(), invocation.semanticProfile().toString(),
                 invocation.releaseStateHash(), artifactsPublished,
                 Arrays.stream(Phase.values()).map(phase -> new CompilationOutcome.PhaseResult(
-                        phase, phaseStatuses.getOrDefault(phase, Status.SKIPPED))).toList());
+                        phase, phaseStatuses.getOrDefault(phase, Status.SKIPPED))).toList(),
+                deal.diagnostics.DiagnosticSourceBatch.observed(diagnosticSources));
     }
 
     public List<deal.diagnostics.OperationalDiagnostic> operations() {

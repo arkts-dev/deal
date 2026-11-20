@@ -5,7 +5,12 @@ import java.util.Objects;
 
 /** Observed compiler execution, not certification or inferred artifact readiness. */
 public record CompilationOutcome(String backend, String semanticProfile, String releaseStateHash,
-                                 boolean published, List<PhaseResult> phases) {
+                                 boolean published, List<PhaseResult> phases,
+                                 DiagnosticSourceBatch sourceBatch) {
+    public CompilationOutcome(String backend, String semanticProfile, String releaseStateHash,
+                              boolean published, List<PhaseResult> phases) {
+        this(backend, semanticProfile, releaseStateHash, published, phases, null);
+    }
     public enum Phase {
         DISCOVERY_PARSE, SIGNATURES, ENTRY_VALIDATION, MODULE_ORDER, TYPECHECK,
         CHECKED_PROJECT, REQUIREMENTS, CONSTRUCTION_PLANS, DEPENDENCY_PLAN,
