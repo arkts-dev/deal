@@ -4804,18 +4804,15 @@ public class JsBackendTest {
         check(builtinOtherThrows,
             "a non-Error builtin identity has no pinned projection (fail-closed)");
 
-        boolean unrepresentableThrows = false;
-        try {
-            ModuleIdentityResolver.IdentityIndex bad = ModuleIdentityResolver.buildIndex(
-                Map.of("", CanonicalModuleIdentity.BuiltinModule.INSTANCE,
-                    "m", new CanonicalModuleIdentity.ProjectModule(
-                        new ProjectModuleIdentity("bad root", "/x", List.of()))));
-            bad.descriptorTextFor(new CanonicalClassIdentity(byPath2Identity(bad, "m"), "C"));
-        } catch (IllegalStateException e) {
-            unrepresentableThrows = true;
-        }
-        check(unrepresentableThrows,
-            "an unrepresentable root text fails closed at projection");
+        ModuleIdentityResolver.IdentityIndex spaced = ModuleIdentityResolver.buildIndex(
+            Map.of("", CanonicalModuleIdentity.BuiltinModule.INSTANCE,
+                "m", new CanonicalModuleIdentity.ProjectModule(
+                    new ProjectModuleIdentity("bad root", "/x", List.of()))));
+        var spacedIdentity = new CanonicalClassIdentity(byPath2Identity(spaced, "m"), "C");
+        String spacedText = spaced.descriptorTextFor(spacedIdentity);
+        check(spacedText.equals("@%00620061006400200072006f006f0074/C")
+                && spaced.identityForDescriptorText(spacedText).equals(spacedIdentity),
+            "a root containing spaces projects injectively and round-trips");
 
         // The one Type->text producer over the index (v1.2 identity
         // carriage: class types carry their identities; encode resolves
@@ -4842,20 +4839,11 @@ public class JsBackendTest {
                 new Type.Func(List.of(Type.Table.INSTANCE), Type.Table.INSTANCE, true))),
             "encode(Type) emits async(record)->record");
 
-        boolean absentIdentityThrows = false;
-        try {
-            service.encode(Types.classType("Ghost",
-                new CanonicalClassIdentity(
-                    new CanonicalModuleIdentity.ProjectModule(
-                        new ProjectModuleIdentity("bad root",
-                            "bad root", List.of())),
-                    "Ghost")));
-        } catch (IllegalStateException e) {
-            absentIdentityThrows = true;
-        }
-        check(absentIdentityThrows,
-            "a class whose identity projects unrepresentable text fails "
-            + "closed at the index (invariant)");
+        var spacedType = Types.classType("Ghost", new CanonicalClassIdentity(
+            new CanonicalModuleIdentity.ProjectModule(
+                new ProjectModuleIdentity("bad root", "bad root", List.of())), "Ghost"));
+        check(service.encode(spacedType).equals("@%00620061006400200072006f006f0074/Ghost"),
+            "the canonical type producer shares filesystem-component encoding");
         boolean errorSentinelThrows = false;
         try {
             service.encode(Type.Error.INSTANCE);
