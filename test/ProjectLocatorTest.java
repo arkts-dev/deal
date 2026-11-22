@@ -463,21 +463,30 @@ public final class ProjectLocatorTest {
             return;
         }
 
-        // Zero manifests anywhere in the chain: one E2010 with the
-        // v1.6-manifest note, anchored at the pinned synthetic shape.
+        // No manifest: defaults are read-only and retain the real entry base.
         Path orphanDir = fixture("discovery-zero");
         Path orphanEntry = writeEntry(orphanDir, "main.deal");
-        CompilerDiagnostic zero = locateE2010(orphanEntry);
-        if (zero != null) {
-            check(zero.range().origin() == RangeOrigin.SYNTHETIC
-                    && zero.range().isCanonicalSynthetic(),
-                "zero-manifest E2010 uses the canonical synthetic shape");
-            check(zero.range().file().equals(orphanEntry.toString()),
-                "zero-manifest E2010 anchors at the entry-file value");
-            boolean manifestNote = zero.notes().stream().anyMatch(note ->
-                note.message().contains("languageVersion \"1.6\""));
-            check(manifestNote, "zero-manifest E2010 carries the v1.6-manifest note");
+        ProjectContext defaults = locateOk(orphanEntry);
+        check(defaults.manifestPath() == null, "no fabricated manifest path");
+        check(defaults.projectRoot().equals(orphanEntry.toRealPath().getParent().toString()),
+            "manifest-free base is the resolved entry directory");
+        check(defaults.configuredModuleRoots().size() == 1
+                && defaults.configuredModuleRoots().get(0).configuredText().equals(".")
+                && defaults.configuredModuleRoots().get(0).sourceRange() == null,
+            "manifest-free entry root has no invented source range");
+        check(defaults.languageVersion().equals("1.6") && defaults.backend().equals("luajit")
+                && defaults.stdlibVersion().equals("1.6") && defaults.externals().isEmpty(),
+            "manifest-free defaults retain language and backend rules");
+        check(defaults.equals(locateOk(orphanEntry)), "manifest-free context is deterministic");
+        check(!Files.exists(orphanDir.resolve("deal.json")) && !Files.exists(orphanDir.resolve("build")),
+            "manifest-free discovery creates nothing");
+        for (String backend : List.of("js", "luajit", "jvm", "llvm")) {
+            var selected = ProjectLocator.locate(orphanEntry.toString(), new CliOverrides(backend, null));
+            check(selected.context() != null && selected.context().backend().equals(backend),
+                "manifest-free backend override: " + backend);
         }
+        check(ProjectLocator.locate(orphanEntry.toString(), new CliOverrides("bad", null))
+            .cliDiagnostic() != null, "manifest-free invalid override remains a CLI error");
 
         // Two manifests (entry dir + its parent): the walk continues to
         // the root after a hit, and every candidate is reported.
@@ -1627,12 +1636,10 @@ public final class ProjectLocatorTest {
 
         // A failing configuration read never reports the deployment
         // digest or a file: URI in messages or notes.
-        Path zeroDir = fixture("privacy-zero");
-        Path zeroEntry = writeEntry(zeroDir, "main.deal");
-        if (environmentClean) {
-            CompilerDiagnostic zero = locateE2010(zeroEntry);
-            checkNoPrivateIdentityText(zero, "zero-manifest E2010");
-        }
+        Path versionDir = fixture("privacy-version");
+        Path versionEntry = writeEntry(versionDir, "main.deal");
+        writeText(versionDir.resolve("deal.json"), "{\"languageVersion\":\"1.3\"}");
+        checkNoPrivateIdentityText(locateE2010(versionEntry), "manifest-version E2010");
 
         Path decodeDir = fixture("privacy-decode");
         Path decodeEntry = writeEntry(decodeDir, "main.deal");

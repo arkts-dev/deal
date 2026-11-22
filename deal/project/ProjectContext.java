@@ -10,8 +10,9 @@ import java.util.Objects;
  * The immutable v1.6 project context published by {@link ProjectLocator}.
  * The normative configuration rules are in docs/spec-v1.6.md.
  *
- * <p>Exactly one ancestor {@code deal.json} with
- * {@code languageVersion: "1.6"} governs the graph; every field below is
+ * <p>An optional ancestor {@code deal.json} with
+ * {@code languageVersion: "1.6"} governs the graph. Without one, the resolved
+ * entry directory is the project base and module root. Every field below is
  * validated and converted before publication, and a failed locate
  * publishes no context at all. The record is immutable: the list and map
  * components are defensively copied, and every element is itself
@@ -20,7 +21,7 @@ import java.util.Objects;
  * <ul>
  *   <li>{@code manifestPath} — the discovered manifest's fully
  *       symlink-resolved absolute path text (D4 manifest row: regular +
- *       readable + full symlink resolution).</li>
+ *       readable + full symlink resolution), or null when absent.</li>
  *   <li>{@code projectRoot} — pinned equal to {@code manifestDirectory}
  *       (there is no separate root field).</li>
  *   <li>{@code manifestDirectory} — the manifest's directory (its
@@ -33,7 +34,7 @@ import java.util.Objects;
  *       order, each completed by step-4 root conversion
  *       ({@code absoluteNormalizedPath} prefix-resolved; existence never
  *       required; duplicates already E2010). No implicit root is
- *       added.</li>
+ *       added to a present manifest; a manifest-free project uses its entry directory.</li>
  *   <li>{@code outputPath} — the effective {@code OutputRef} after the
  *       D3 precedence (validated CLI &gt; manifest &gt;
  *       {@code build/lua}/{@code build/jvm} per effective backend),
@@ -71,7 +72,8 @@ import java.util.Objects;
  *       target.</li>
  *   <li>{@code projectDeploymentIdentity} — the private deployment
  *       identity (canonical symlink-resolved manifest URI + SHA-256 of
- *       the exact manifest bytes).</li>
+ *       the exact manifest bytes; without a manifest, the resolved entry URI
+ *       and SHA-256 of empty bytes).</li>
  * </ul>
  *
  * <p>Deterministic: identical deployment inputs (manifest bytes, resolved
@@ -95,7 +97,7 @@ public record ProjectContext(
 ) {
 
     public ProjectContext {
-        Objects.requireNonNull(manifestPath, "manifestPath");
+        // manifestPath may be null: no file is fabricated for default configuration.
         Objects.requireNonNull(projectRoot, "projectRoot");
         Objects.requireNonNull(manifestDirectory, "manifestDirectory");
         Objects.requireNonNull(languageVersion, "languageVersion");

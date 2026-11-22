@@ -115,51 +115,57 @@ public final class ProjectLocator {
 
         // ---- Step 2: ancestor discovery (E2010 domain). ----------------
         List<String> candidates = discoverManifests(entryRealText);
-        if (candidates.size() != 1) {
+        if (candidates.size() > 1) {
             return discoveryFailure(entryFile, candidates);
         }
-        String manifestCandidate = candidates.get(0);
+        boolean hasManifest = !candidates.isEmpty();
+        // With no manifest, the resolved entry directory supplies the project
+        // base. No synthetic file or source range is published as a manifest.
+        String manifestPathText = entryRealText;
+        byte[] manifestBytes = new byte[0];
+        ProjectManifest manifest;
+        if (!hasManifest) {
+            manifest = new ProjectManifest(LANGUAGE_VERSION,
+                List.of(new ManifestString(".", null)), null, "luajit", LANGUAGE_VERSION,
+                null, Map.of(), Map.of());
+        } else {
+            String manifestCandidate = candidates.get(0);
 
-        // The D4 manifest row: regular + readable + full symlink
-        // resolution (re-verified after discovery; an unreadable manifest
-        // is an E2010 in the discovery domain).
-        ProtectedPathOps.PathResult manifestPath =
-            ProtectedPathOps.canonicalizeExisting(manifestCandidate);
-        if (manifestPath instanceof ProtectedPathOps.PathResult.Failure manifestFailure) {
-            return e2010("deal.json '" + manifestCandidate
-                    + "' is not a regular readable file: " + manifestFailure.reason(),
-                DiagnosticRange.synthetic(entryFile),
-                List.of(anchorNote(entryFile),
-                    new DiagnosticNote("candidate manifest: " + manifestCandidate, null)));
-        }
-        String manifestPathText =
-            ((ProtectedPathOps.PathResult.Success) manifestPath).resolvedPath().toString();
+            // Reverify the discovered manifest before reading it.
+            ProtectedPathOps.PathResult manifestPath =
+                ProtectedPathOps.canonicalizeExisting(manifestCandidate);
+            if (manifestPath instanceof ProtectedPathOps.PathResult.Failure manifestFailure) {
+                return e2010("deal.json '" + manifestCandidate
+                        + "' is not a regular readable file: " + manifestFailure.reason(),
+                    DiagnosticRange.synthetic(entryFile),
+                    List.of(anchorNote(entryFile),
+                        new DiagnosticNote("candidate manifest: " + manifestCandidate, null)));
+            }
+            manifestPathText =
+                ((ProtectedPathOps.PathResult.Success) manifestPath).resolvedPath().toString();
 
-        // ---- Step 3: read once + strict REPORT-mode UTF-8 decode. ------
-        byte[] manifestBytes;
-        try {
-            manifestBytes = Files.readAllBytes(Path.of(manifestPathText));
-        } catch (IOException e) {
-            return e2010("deal: cannot read deal.json '" + manifestPathText + "': "
-                    + e.getClass().getSimpleName()
-                    + (e.getMessage() != null ? ": " + e.getMessage() : ""),
-                DiagnosticRange.synthetic(entryFile),
-                List.of(anchorNote(entryFile),
-                    new DiagnosticNote("candidate manifest: " + manifestCandidate, null)));
+            // Read once, strictly decode UTF-8, then validate before overrides.
+            try {
+                manifestBytes = Files.readAllBytes(Path.of(manifestPathText));
+            } catch (IOException e) {
+                return e2010("deal: cannot read deal.json '" + manifestPathText + "': "
+                        + e.getClass().getSimpleName()
+                        + (e.getMessage() != null ? ": " + e.getMessage() : ""),
+                    DiagnosticRange.synthetic(entryFile),
+                    List.of(anchorNote(entryFile),
+                        new DiagnosticNote("candidate manifest: " + manifestCandidate, null)));
+            }
+            StrictDecode decode = strictUtf8Decode(manifestBytes);
+            if (decode.malformedOffset() >= 0) {
+                return decodeFailure(manifestPathText, decode);
+            }
+            StrictManifestParser.StrictManifestParseResult parsed =
+                StrictManifestParser.parse(manifestPathText, decode.text());
+            if (parsed.failure() != null) {
+                return new LocateResult(null, parsed.failure(), null);
+            }
+            manifest = parsed.manifest();
         }
-        StrictDecode decode = strictUtf8Decode(manifestBytes);
-        if (decode.malformedOffset() >= 0) {
-            return decodeFailure(manifestPathText, decode);
-        }
-        String decodedText = decode.text();
-
-        // ---- Step 3 (cont.): strict parse, then overrides. -------------
-        StrictManifestParser.StrictManifestParseResult parsed =
-            StrictManifestParser.parse(manifestPathText, decodedText);
-        if (parsed.failure() != null) {
-            return new LocateResult(null, parsed.failure(), null);
-        }
-        ProjectManifest manifest = parsed.manifest();
 
         // Overrides are validated only on a valid manifest (a malformed
         // manifest fails E2010 before any override is consulted).
@@ -314,7 +320,7 @@ public final class ProjectLocator {
             externals.put(completedEntry.rawImportSpecifier(), completedEntry);
         }
         ProjectContext context = new ProjectContext(
-            manifestPathText,
+            hasManifest ? manifestPathText : null,
             manifestDirectoryText,
             manifestDirectoryText,
             LANGUAGE_VERSION,
@@ -366,28 +372,18 @@ public final class ProjectLocator {
     }
 
     /**
-     * The pinned discovery E2010: the canonical synthetic range anchored
-     * at the entry-file value plus the v1.6-manifest note (zero
-     * candidates) or one candidate-path note per discovered manifest
-     * (multiple candidates), nearest ancestor first.
+     * Ambiguous discovery E2010: synthetic entry anchor plus one note per
+     * discovered manifest, nearest ancestor first. No manifest is a valid default.
      */
     private static LocateResult discoveryFailure(String entryFile,
                                                  List<String> candidates) {
         List<DiagnosticNote> notes = new ArrayList<>();
         notes.add(anchorNote(entryFile));
-        String message;
-        if (candidates.isEmpty()) {
-            message = "deal: no deal.json project manifest found among the ancestor"
-                + " directories of entry file '" + describe(entryFile) + "'";
-            notes.add(new DiagnosticNote("a v1.6 project requires exactly one ancestor"
-                + " deal.json with languageVersion \"1.6\"", null));
-        } else {
-            message = "deal: multiple deal.json project manifests found among the"
-                + " ancestor directories of entry file '" + describe(entryFile)
-                + "'; exactly one ancestor manifest may govern a project";
-            for (String candidate : candidates) {
-                notes.add(new DiagnosticNote("candidate manifest: " + candidate, null));
-            }
+        String message = "deal: multiple deal.json project manifests found among the"
+            + " ancestor directories of entry file '" + describe(entryFile)
+            + "'; exactly one ancestor manifest may govern a project";
+        for (String candidate : candidates) {
+            notes.add(new DiagnosticNote("candidate manifest: " + candidate, null));
         }
         return e2010(message, DiagnosticRange.synthetic(entryFile), notes);
     }

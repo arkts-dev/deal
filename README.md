@@ -3,7 +3,10 @@
 DEAL is a statically typed, embeddable language with a strict TypeScript syntax
 subset and runtime-enforced types. Targets: JavaScript, LuaJIT, JVM and native
 Linux x86-64. Authority: [v1.6 specification](docs/spec-v1.6.md).
-Projects use `"languageVersion": "1.6"` and stdlib `"1.6"`.
+Project manifests use `"languageVersion": "1.6"` and stdlib `"1.6"`.
+`deal.json` is optional; without one, the resolved entry directory is the project
+base/module root, with LuaJIT and its `build/lua` output as defaults. CLI backend
+and output overrides remain available.
 
 Classes are nominal, arrays invariant and `as` assertions checked at runtime.
 Numbers are binary64; null, undefined and field absence are distinct.

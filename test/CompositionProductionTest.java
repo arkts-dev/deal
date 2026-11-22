@@ -50,7 +50,7 @@ public final class CompositionProductionTest {
                         boolean nativeSanitizers, String configuredRoot) throws Exception {
         for (Backend backend : backends) {
             Path project = root.resolve(backend.name());
-            Path src = ".".equals(configuredRoot) ? project
+            Path src = (".".equals(configuredRoot) || "".equals(configuredRoot)) ? project
                 : project.resolve("space dir".equals(configuredRoot) ? "space dir" : "src");
             Path out = project.resolve("out");
             Files.createDirectories(src);
@@ -73,7 +73,7 @@ public final class CompositionProductionTest {
                 List.of(src.toAbsolutePath()),
                 Path.of("").toAbsolutePath(), null, invocation);
             if (configuredRoot != null) {
-                Files.writeString(project.resolve("deal.json"),
+                if (!configuredRoot.isEmpty()) Files.writeString(project.resolve("deal.json"),
                     "{\"languageVersion\":\"1.6\",\"moduleRoots\":[\"" + configuredRoot + "\"]}");
                 var located = deal.project.ProjectLocator.locate(entry.toString(),
                     new deal.project.CliOverrides(backend.name().toLowerCase(java.util.Locale.ROOT),
@@ -241,6 +241,19 @@ public final class CompositionProductionTest {
             new deal.semantic.SemanticOracle.HostResponder() {}, project.entryModule(), "run", List.of());
         if (!(result.terminal() instanceof deal.semantic.SemanticRuntimeModel.Terminal.Success)
                 || !result.effects().isEmpty()) throw new AssertionError(result.comparisonReport());
+    }
+
+    static void manifestFreeProject(Path root) throws Exception {
+        execute("""
+            import * as model from "./model";
+            export function main():void {
+              let c:model.C=JSON.parse(`{"x":7}`);
+              if(c.x!==7){throw {name:"TEST",message:"manifest-free class"};}
+              console.log(JSON.stringify(c)??"");
+            }
+            """, "{\"x\":7}\n", "", root, null,
+            List.of(Backend.JS,Backend.LUAJIT,Backend.JVM,Backend.LLVM),
+            Map.of("model.deal", "export class C { x:number; }"), true, "");
     }
 
     static void configuredRootClasses(Path root) throws Exception {
@@ -605,6 +618,7 @@ public final class CompositionProductionTest {
             jsonDeclarationComposition(root);
             jsonUnknownOmission(root.resolve("json-unknown-omission"));
             configuredRootClasses(root.resolve("configured-root-classes"));
+            manifestFreeProject(root.resolve("manifest-free"));
             execute(Files.readString(Path.of("skills/write-deal/examples/serialization/main.deal")),
                 "", "", root.resolve("json-serialization-example"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM), Map.of(
