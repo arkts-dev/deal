@@ -240,6 +240,8 @@ public final class Parser {
     }
 
     private ClassField parseClassField() {
+        boolean readonly = peek().lexeme().equals("readonly") && isPropertyName(peek(1));
+        if (readonly) advance();
         if (!isPropertyName(peek())) {
             error(DiagnosticCode.E1007, "Expected field name (identifier)", peek());
             advance();
@@ -275,7 +277,7 @@ public final class Parser {
         checkTerminator(diagCountBefore);
 
         Span sp = spanBetween(nameToken, previousOrCurrent());
-        return new ClassField(sp, nameToken.lexeme(), optional, nullable, type);
+        return new ClassField(sp, nameToken.lexeme(), optional, nullable, type, readonly);
     }
 
     // -- FunctionDeclaration --
@@ -786,9 +788,20 @@ public final class Parser {
     }
 
     private TypeNode parseArrayType() {
+        Token start = peek();
+        boolean readonly = start.lexeme().equals("readonly")
+            && (isIdentifier(peek(1).type()) || peek(1).type() == TokenType.LPAREN
+                || peek(1).type() == TokenType.NULL);
+        if (readonly) advance();
         TypeNode type = parsePrimaryType();
         if (type == null) return null;
-        return parseArraySuffixes(type);
+        type = parseArraySuffixes(type);
+        if (readonly) {
+            if (type instanceof ArrayType array)
+                return new ArrayType(spanBetween(start, previous()), array.elementType(), true);
+            error(DiagnosticCode.E1031, "readonly requires an array type", start);
+        }
+        return type;
     }
 
     /** Consumes the {@code ('[' ']')*} suffixes of an ArrayType onto its primary. */
@@ -1874,6 +1887,10 @@ public final class Parser {
             return new Token(TokenType.EOF, "", 1, 1, 0);
         }
         return tokens.get(pos);
+    }
+
+    private Token peek(int offset) {
+        return pos + offset < tokens.size() ? tokens.get(pos + offset) : peek();
     }
 
     private Token advance() {

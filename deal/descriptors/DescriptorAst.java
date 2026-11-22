@@ -65,7 +65,8 @@ public sealed interface DescriptorAst extends DescriptorParseResult
     }
 
     /** An array descriptor atom {@code [D]}. */
-    record ArrayAtom(DescriptorAst element) implements DescriptorAst {
+    record ArrayAtom(DescriptorAst element, boolean readonly) implements DescriptorAst {
+        public ArrayAtom(DescriptorAst element) { this(element, false); }
         public ArrayAtom {
             Objects.requireNonNull(element, "element must not be null");
         }

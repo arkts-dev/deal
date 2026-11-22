@@ -2165,7 +2165,14 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
             }
             Value value = array.elements().get((int) index);
             BoundaryOutcome outcome = BoundaryExecutor.execute(FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR,
-                (RuntimeDescriptor) op.resultType(), viewOfValue(value), BoundaryContext.element((int) index + 1),
+                array.elementDescriptor() == null ? (RuntimeDescriptor) op.resultType() : array.elementDescriptor(),
+                viewOfValue(value), BoundaryContext.element((int) index + 1),
+                new deal.semantic.ir.BoundaryRealization.RuntimeValidation("array-element-get"));
+            if (outcome instanceof BoundaryOutcome.Fail fail)
+                throw DealFailure.of(fail.failure(), op.origin(), List.copyOf(frames));
+            outcome = BoundaryExecutor.execute(FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR,
+                (RuntimeDescriptor) op.resultType(), ((BoundaryOutcome.Pass) outcome).value(),
+                BoundaryContext.element((int) index + 1),
                 new deal.semantic.ir.BoundaryRealization.RuntimeValidation("array-element-get"));
             if (outcome instanceof BoundaryOutcome.Fail fail)
                 throw DealFailure.of(fail.failure(), op.origin(), List.copyOf(frames));
@@ -2206,7 +2213,8 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                     value = Value.UndefinedValue.INSTANCE;
                 } else {
                     BoundaryOutcome outcome = BoundaryExecutor.execute(FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR,
-                        element, viewOfValue(value), BoundaryContext.element(i + 1),
+                        array.elementDescriptor() != null ? array.elementDescriptor() : element,
+                        viewOfValue(value), BoundaryContext.element(i + 1),
                         new deal.semantic.ir.BoundaryRealization.RuntimeValidation("array-search"));
                     if (outcome instanceof BoundaryOutcome.Fail fail)
                         throw DealFailure.of(fail.failure(), op.origin(), List.copyOf(frames));
@@ -2231,7 +2239,8 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                     Value value = array.elements().get(i);
                     if (value instanceof Value.MissingValue) { copied.add(value); continue; }
                     BoundaryOutcome outcome = BoundaryExecutor.execute(FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR,
-                        element, viewOfValue(value), BoundaryContext.element(i + 1),
+                        array.elementDescriptor() != null ? array.elementDescriptor() : element,
+                        viewOfValue(value), BoundaryContext.element(i + 1),
                         new deal.semantic.ir.BoundaryRealization.RuntimeValidation("array-concat"));
                     if (outcome instanceof BoundaryOutcome.Fail fail)
                         throw DealFailure.of(fail.failure(), op.origin(), List.copyOf(frames));
@@ -2253,7 +2262,8 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                 Value value = array.elements().get(i);
                 if (value instanceof Value.MissingValue) { copied.add(value); continue; }
                 BoundaryOutcome outcome = BoundaryExecutor.execute(FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR,
-                    element, viewOfValue(value), BoundaryContext.element(i + 1),
+                    array.elementDescriptor() != null ? array.elementDescriptor() : element,
+                    viewOfValue(value), BoundaryContext.element(i + 1),
                     new deal.semantic.ir.BoundaryRealization.RuntimeValidation("array-slice"));
                 if (outcome instanceof BoundaryOutcome.Fail fail)
                     throw DealFailure.of(fail.failure(), op.origin(), List.copyOf(frames));

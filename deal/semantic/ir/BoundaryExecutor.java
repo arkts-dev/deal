@@ -588,12 +588,14 @@ public final class BoundaryExecutor {
         if (view.kind() != ActualKind.ARRAY) {
             return kindFail(descriptor, view);
         }
-        if (view.arrayElementDescriptor() != null && !view.arrayElementDescriptor().equals(descriptor.element()))
-            return kindFail(descriptor, view);
+        RuntimeDescriptor storage = view.arrayElementDescriptor();
+        if (storage != null && !(descriptor.readonly() ? RuntimeDescriptor.assignable(storage, descriptor.element())
+                : storage.equals(descriptor.element()))) return kindFail(descriptor, view);
+        RuntimeDescriptor checkedElement = storage == null ? descriptor.element() : storage;
         List<BoundaryValueView> elements = view.elements();
         for (int i = 0; i < elements.size(); i++) {
             BoundaryValueView element = elements.get(i);
-            CoreResult elementResult = core(descriptor.element(), element, active);
+            CoreResult elementResult = core(checkedElement, element, active);
             if (elementResult instanceof CoreFail elementFail) {
                 CoreFail leaf = elementFail.caseKind() == FailureCase.ELEMENT
                     ? elementFail.cause() : elementFail;

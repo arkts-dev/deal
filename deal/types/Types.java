@@ -42,7 +42,7 @@ public final class Types {
             return new Type.Nullable(canonicalize(n.inner()), n.admitsNull(), n.admitsUndefined());
         }
         if (type instanceof Type.Array a) {
-            return new Type.Array(canonicalize(a.element()));
+            return new Type.Array(canonicalize(a.element()), a.readonly());
         }
         if (type instanceof Type.Func f) {
             List<Type> canonParams = f.paramTypes().stream()
@@ -92,7 +92,7 @@ public final class Types {
 
             case Type.Array aa -> {
                 Type.Array ab = (Type.Array) b;
-                yield equals(aa.element(), ab.element());
+                yield aa.readonly() == ab.readonly() && equals(aa.element(), ab.element());
             }
             case Type.Nullable na -> {
                 Type.Nullable nb = (Type.Nullable) b;
@@ -189,6 +189,15 @@ public final class Types {
         if (actual instanceof Type.Never || target instanceof Type.Never) return target == actual;
         if (target instanceof Type.Unknown) return !(actual instanceof Type.Void);
         if (equals(actual, target)) return true;
+        Type actualBase = actual instanceof Type.Nullable a ? a.inner() : actual;
+        Type targetBase = target instanceof Type.Nullable n ? n.inner() : target;
+        if (actualBase instanceof Type.Array a && targetBase instanceof Type.Array t && t.readonly()) {
+            boolean nullAllowed = !(actual instanceof Type.Nullable n && n.admitsNull())
+                || target instanceof Type.Nullable targetNullish && targetNullish.admitsNull();
+            boolean undefinedAllowed = !(actual instanceof Type.Nullable n && n.admitsUndefined())
+                || target instanceof Type.Nullable targetNullish && targetNullish.admitsUndefined();
+            return nullAllowed && undefinedAllowed && viewElementAssignable(a.element(), t.element());
+        }
         if (target instanceof Type.Nullable n) {
             if (actual instanceof Type.Null) return n.admitsNull() || n.inner() instanceof Type.Null;
             if (actual instanceof Type.Undefined) return n.admitsUndefined() || n.inner() instanceof Type.Undefined;
@@ -203,6 +212,12 @@ public final class Types {
             return isAssignable(af, tf);
         }
         return equals(actual, target);
+    }
+
+    /** Covariant element checks never introduce function adapters. */
+    public static boolean viewElementAssignable(Type actual, Type target) {
+        if (actual instanceof Type.Func && target instanceof Type.Func) return equals(actual, target);
+        return isAssignable(actual, target);
     }
 
     // =========================================================================

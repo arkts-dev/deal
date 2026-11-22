@@ -28,8 +28,12 @@ public record ClassLayout(ClassId classId, List<FieldLayout> fields) {
         String name,
         RuntimeDescriptor descriptor,
         boolean required,
-        ConstructionProvider constructionProvider
+        ConstructionProvider constructionProvider,
+        boolean readonly
     ) {
+        public FieldLayout(String name, RuntimeDescriptor descriptor, boolean required, ConstructionProvider provider) {
+            this(name, descriptor, required, provider, false);
+        }
 
         public FieldLayout {
             Objects.requireNonNull(name, "name must not be null");

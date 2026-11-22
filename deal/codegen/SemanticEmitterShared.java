@@ -106,7 +106,7 @@ public final class SemanticEmitterShared {
             return cls.classId().text();
         }
         if (descriptor instanceof RuntimeDescriptor.Array array) {
-            return "array(" + descriptorText(array.element()) + ")";
+            return (array.readonly() ? "readonly" : "") + "array(" + descriptorText(array.element()) + ")";
         }
         if (descriptor instanceof RuntimeDescriptor.Nullable nullable) {
             return (nullable.admitsNull() ? "nullable" : "")

@@ -177,7 +177,7 @@ public final class RawUnitMaterializer {
                 descriptor(field.descriptor(), where + " field '" + field.name() + "'"),
                 field.required(),
                 enumOf(ConstructionProvider.class, field.constructionProvider(),
-                    where + " field '" + field.name() + "' constructionProvider")));
+                    where + " field '" + field.name() + "' constructionProvider"), field.readonly()));
         }
         return new ClassLayout(layout.classId(), fields);
     }
@@ -777,7 +777,7 @@ public final class RawUnitMaterializer {
             CanonicalJson.Obj field = objectValue(item, "fields", where);
             fields.add(new ClassLayout.FieldLayout(stringAt(field, "name", where),
                 descriptorAt(field, "descriptor", where), boolAt(field, "required", where),
-                enumAt(field, "constructionProvider", ConstructionProvider.class, where)));
+                enumAt(field, "constructionProvider", ConstructionProvider.class, where), boolAt(field, "readonly", where)));
         }
         return new ClassLayout(classId, fields);
     }

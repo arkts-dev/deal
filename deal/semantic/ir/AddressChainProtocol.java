@@ -644,6 +644,10 @@ public final class AddressChainProtocol {
         if (failure.isPresent()) {
             return failure;
         }
+        if (c[0].resultType() instanceof RuntimeDescriptor.Array array && array.readonly()) {
+            return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, chain, c[0],
+                "an ARRAY_SLOT write requires writable array access");
+        }
         // boundaryOp — ARRAY_ELEMENT_ASSIGNMENT + ARRAY_WRITE_BOUNDS_THEN_ELEMENT,
         // input = the committed (adapted) RHS value.
         failure = requireParentage(unit, chain, c[boundaryPos], boundaryPos);

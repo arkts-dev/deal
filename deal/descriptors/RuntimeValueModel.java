@@ -77,6 +77,9 @@ public interface RuntimeValueModel {
      */
     int arrayLength(Object value);
 
+    /** Persistent canonical element descriptor, or null for descriptorless storage. */
+    default String arrayElementDescriptor(Object value) { return null; }
+
     /**
      * The array element at a 0-based index — called only when
      * {@link #isArray(Object)} is true and

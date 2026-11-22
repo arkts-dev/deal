@@ -1,0 +1,32 @@
+// @spec: Arrays
+// @description: Readonly live views, invariant writable recovery and shallow mutable copies
+// @expected: runtime-ok
+class Box { readonly values: number[]; view: readonly number[]; }
+function check(ok:boolean,detail:string):void { if(!ok){throw {name:"CHECK",message:detail};} }
+export function main():void {
+  let source:string[]=["one","two"];
+  let view:readonly unknown[]=source;
+  let copied=Array.from(view,(item:unknown):string=>item as string);
+  source.push("three");
+  check(view.length===3 && copied.join(",")==="one,two","live view and fresh copy");
+  let dynamic:unknown=view;
+  let recovered=dynamic as string[];
+  recovered.push("four");
+  let rejected=false;
+  try { let invalid=dynamic as unknown[]; } catch(error){rejected=true;}
+  check(rejected && source.length===4,"writable recovery checks persistent storage");
+  let nested:readonly number[][]=[[1]];
+  nested[0].push(2);
+  let box:Box={values:[1],view:[2]};
+  box.values.push(3);box.view=[4];
+  check(nested[0].length===2 && box.values.length===2,"shallow authority");
+  let widened=view.slice(1,2);widened.push(false);
+  check((widened[0] as string)==="two" && (widened[1] as boolean)===false,"widened mutable slice");
+  let concat=view.concat([12]);concat.push(false);
+  check((concat[4] as number)===12 && concat.length===6,"widened mutable concat");
+  let optional:readonly (number|null)[]=[1,2];
+  check((optional[0] as number)===1 && (optional.slice()[1] as number)===2,"nullish storage");
+  let decoded:Box=JSON.parse("{\"values\":[1],\"view\":[2]}");
+  decoded.values.push(3);
+  check((JSON.stringify(decoded) as string)==="{\"values\":[1,3],\"view\":[2]}","readonly JSON fields");
+}

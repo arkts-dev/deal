@@ -175,7 +175,7 @@ public final class CanonicalRuntimeTypeDescriptor {
                 "Type.Error reached a descriptor production site: the internal "
                     + "checker sentinel has no canonical descriptor and must never "
                     + "be emitted (internal invariant violation)");
-            case Type.Array arr -> "[" + encode(arr.element()) + "]";
+            case Type.Array arr -> (arr.readonly() ? "readonly" : "") + "[" + encode(arr.element()) + "]";
             case Type.Nullable n -> n.inner() instanceof Type.Undefined && n.admitsNull()
                 ? "null|undefined"
                 : (n.admitsNull() ? "?" : "") + (n.admitsUndefined() ? "!" : "") + encode(n.inner());
@@ -296,7 +296,7 @@ public final class CanonicalRuntimeTypeDescriptor {
             return c.fullDescriptorText();
         }
         if (ast instanceof DescriptorAst.ArrayAtom a) {
-            return "[" + render(a.element()) + "]";
+            return (a.readonly() ? "readonly" : "") + "[" + render(a.element()) + "]";
         }
         if (ast instanceof DescriptorAst.NullableAtom n) {
             if (n.admitsNull() && n.inner() instanceof DescriptorAst.PrimitiveAtom p && p.name().equals("undefined")) return "null|undefined";
@@ -348,6 +348,12 @@ public final class CanonicalRuntimeTypeDescriptor {
         private DescriptorParseResult parseDescriptor(boolean resultPosition) {
             if (pos >= cps.length) {
                 return unexpectedEnd();
+            }
+            if (matchKeyword("readonly[")) {
+                pos += 8;
+                DescriptorParseResult result = parseArray();
+                return result instanceof DescriptorAst.ArrayAtom a
+                    ? new DescriptorAst.ArrayAtom(a.element(), true) : result;
             }
             int cp = cps[pos];
             if (cp == '[') {

@@ -638,6 +638,10 @@ public final class ClassConstructionValidator {
                     + declared.classEntry().classId() + " declares '"
                     + declaredField.name() + "' there (declaration order)");
             }
+            if (field.readonly() != declaredField.readonly()) {
+                return Optional.of("the " + key + " registration disagrees with readonly authority for field '"
+                    + field.name() + "'");
+            }
             if (field.required() == declaredField.optional()) {
                 return Optional.of("the " + key + " registration marks field '"
                     + field.name() + "' required=" + field.required()
@@ -696,10 +700,12 @@ public final class ClassConstructionValidator {
                 if (element == null) {
                     yield null;
                 }
-                yield array.element() instanceof RuntimeDescriptor.Func
+                String rendered = array.element() instanceof RuntimeDescriptor.Func
                         || array.element() instanceof RuntimeDescriptor.Nullable
+                        || array.element() instanceof RuntimeDescriptor.Array nested && nested.readonly()
                     ? "(" + element + ")[]"
                     : element + "[]";
+                yield (array.readonly() ? "readonly " : "") + rendered;
             }
             case RuntimeDescriptor.Nullable nullable -> {
                 String inner = declaredTypeText(nullable.inner(), index, seeds);
@@ -1734,6 +1740,8 @@ public final class ClassConstructionValidator {
                     + "field (the CLASS_FIELD_ASSIGNMENT descriptor is the field's "
                     + "declared descriptor from that layout)", op);
             }
+            if (fieldLayout.readonly()) return fail(FIELD_OPERATION_SHAPE,
+                "FIELD_WRITE targets a readonly field", op);
             List<SemanticOp> children = boundaryChildren(op);
             if (children.size() != 2) {
                 return fail(FIELD_OPERATION_SHAPE, "FIELD_WRITE " + op.opId() + " parents "
@@ -1786,6 +1794,8 @@ public final class ClassConstructionValidator {
             ClassLayout layout = resolution.layout();
             ClassLayout.FieldLayout fieldLayout = layout == null
                 ? null : fieldOf(layout, payload.field());
+            if (fieldLayout != null && fieldLayout.readonly()) return fail(FIELD_OPERATION_SHAPE,
+                "FIELD_DELETE targets a readonly field", op);
             if (fieldLayout != null && fieldLayout.required()) {
                 return fail(FIELD_OPERATION_SHAPE, "FIELD_DELETE " + op.opId()
                     + " deletes required field '" + payload.field() + "' of "

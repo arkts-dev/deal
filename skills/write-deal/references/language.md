@@ -59,7 +59,9 @@ Record keys. See [dynamic data](../examples/src/data.deal).
 Module-level classes are nominal schemas: same-shaped declarations stay distinct.
 Annotate fields; ? marks optional presence. Contextual literals allocate fresh
 instances and supply every required field, including nullable fields. Supplied
-references retain aliases. Use Records for dynamic keys and functions for behavior.
+references retain aliases. `readonly` fields prohibit replacement/deletion, not
+mutation of referenced data. Like const, these restrictions are compile-time only.
+Use Records for dynamic keys and functions for behavior.
 
 ## Functions
 
@@ -91,7 +93,10 @@ data; null/undefined preserve presence. See [dynamic data](../examples/src/data.
 
 Arrays are zero-based with persistent invariant descriptors; emptiness never
 justifies retagging. Contextualize empty literals. Out-of-bounds reads fail.
-Iterate with inferred for-of bindings or explicit while indexes.
+Iterate with inferred for-of bindings or explicit while indexes. `readonly T[]`
+accepts compatible element types without granting writes; mutable aliases stay live.
+Decode an unknown array through `readonly unknown[]`, then use Array.from with
+checked element assertions to produce a mutable copy.
 
 | Call | Result/behavior |
 |---|---|
@@ -99,7 +104,7 @@ Iterate with inferred for-of bindings or explicit while indexes.
 | xs.pop() | Remove checked tail; empty returns undefined |
 | xs.splice(start, count) | Remove range atomically into a fresh typed array |
 | xs.toSorted(compare) | Fresh stable shallow sort; required synchronous `(a: E, b: E) => number` comparator |
-| xs.concat(other) | Fresh shallow concatenation; other must have the identical array type |
+| xs.concat(other) | Fresh shallow concatenation; other must assign to readonly E[] |
 | xs.slice(), xs.slice(start), xs.slice(start,end) | Fresh shallow copy/range; negative relative bounds truncate/clamp without swapping; explicit undefined rejects |
 | xs.includes(value, fromIndex), xs.indexOf(value, fromIndex) | Optional relative start; first match, SameValueZero versus strict equality; indexOf returns -1 if absent |
 | names.join(separator) | Required string separator; string elements join without source mutation |
@@ -109,7 +114,8 @@ Iterate with inferred for-of bindings or explicit while indexes.
 | xs.some(predicate), xs.every(predicate) | Early boolean result; empty defaults false/true |
 | Array.from(source, mapper) | Fresh mapped array using live array-source traversal |
 
-Map/predicates receive `(value: E, index: number, source: E[])`; from receives
+Map/predicates receive `(value: E, index: number, source: A)` with A matching
+the receiver's writable/readonly type; from receives
 `(value: E, index: number)`. Context supplies omitted parameter annotations;
 results stay explicit. Shorter callbacks adapt normally. All declared parameter/
 return checks remain, including source-array arguments ignored by shorter callbacks.

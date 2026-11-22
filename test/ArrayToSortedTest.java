@@ -67,7 +67,9 @@ public final class ArrayToSortedTest {
             project.semanticProfile(),invocation.capabilityRegistryHash());
         if(deal.semantic.ir.SemanticIrValidator.validate(project,facts).isPresent()
                 ||deal.semantic.ir.SemanticIrValidator.validateText(deal.semantic.ir.SemanticIrValidator.toProjectText(project),facts).isPresent())
-            throw new AssertionError("sort transport validation");
+            throw new AssertionError("sort transport validation: typed="
+                + deal.semantic.ir.SemanticIrValidator.validate(project,facts) + "; text="
+                + deal.semantic.ir.SemanticIrValidator.validateText(deal.semantic.ir.SemanticIrValidator.toProjectText(project),facts));
         var tables=new java.util.LinkedHashMap<deal.semantic.ir.ModuleId,deal.semantic.ir.StructuredBodyTable>();
         var registries=new java.util.LinkedHashMap<deal.semantic.ir.ModuleId,deal.semantic.ir.ClassFactoryRegistry>();
         project.modules().forEach((id,unit)->{

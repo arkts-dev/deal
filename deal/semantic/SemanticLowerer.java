@@ -4156,7 +4156,7 @@ public final class SemanticLowerer {
                         field.span());
                 }
                 fields.add(new deal.semantic.ir.ClassLayout.FieldLayout(field.name(),
-                    descriptor, !field.optional(), ConstructionProvider.LOCAL));
+                    descriptor, !field.optional(), ConstructionProvider.LOCAL, field.readonly()));
             }
             return new ClassLayoutPlan(
                 new deal.semantic.ir.ClassLayout(classId, fields), declaration);
@@ -8271,7 +8271,8 @@ public final class SemanticLowerer {
                 receiver = emitBuiltinLoad(saved, descriptor, call.span(), null);
                 return emitOperandOp(SemanticOpKind.ARRAY_CONCAT,
                     new KindPayload.ArrayConcatPayload(receiver, other), List.of(receiver, other),
-                    List.of(descriptor, descriptor), call.span(), descriptor, FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, slot);
+                    List.of(descriptor, valueDescriptorOf(checkedType(call.args().getFirst()))), call.span(),
+                    valueDescriptorOf(checkedType(call)), FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, slot);
             }
             if (call.callee() instanceof MemberAccessExpr member
                     && checkedType(member.object()) instanceof Type.Array array
@@ -8289,7 +8290,7 @@ public final class SemanticLowerer {
                 return emitOperandOp(SemanticOpKind.ARRAY_SLICE,
                     new KindPayload.ArraySlicePayload(receiver, start, end), List.of(receiver, start, end),
                     List.of(descriptor, RuntimeDescriptor.Number.INSTANCE, RuntimeDescriptor.Number.INSTANCE),
-                    call.span(), descriptor, FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, slot);
+                    call.span(), valueDescriptorOf(checkedType(call)), FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, slot);
             }
             if (call.callee() instanceof MemberAccessExpr member
                     && checkedType(member.object()) instanceof Type.Array array

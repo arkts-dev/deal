@@ -87,11 +87,13 @@ public sealed interface RuntimeDescriptor extends OpResultType
                 "not a canonical descriptor text (unexpected end): \"" + text + "\"");
         }
         char c = text.charAt(pos[0]);
+        boolean readonly = text.startsWith("readonly[", pos[0]);
+        if (readonly) { pos[0] += "readonly".length(); c = '['; }
         if (c == '[') {
             pos[0]++;
             RuntimeDescriptor element = parseAt(text, pos, false);
             expect(text, pos, ']');
-            return new Array(element);
+            return new Array(element, readonly);
         }
         if (text.startsWith("null|undefined", pos[0])) {
             pos[0] += "null|undefined".length();
@@ -256,6 +258,24 @@ public sealed interface RuntimeDescriptor extends OpResultType
         return descriptor;
     }
 
+    /** Storage/view compatibility without function adaptation or value inspection. */
+    static boolean assignable(RuntimeDescriptor actual, RuntimeDescriptor target) {
+        if (actual.equals(target)) return true;
+        if (target instanceof Unknown) return !(actual instanceof Void || actual instanceof Never);
+        if (target instanceof Nullable t) {
+            if (actual instanceof Null) return t.admitsNull() || t.inner() instanceof Null;
+            if (actual instanceof Undefined) return t.admitsUndefined() || t.inner() instanceof Undefined;
+            if (actual instanceof Nullable a)
+                return (!a.admitsNull() || t.admitsNull()) && (!a.admitsUndefined() || t.admitsUndefined())
+                    && (a.inner().equals(t.inner()) || a.inner() instanceof Array && t.inner() instanceof Array
+                        && assignable(a.inner(), t.inner()));
+            return actual.equals(t.inner()) || actual instanceof Array && t.inner() instanceof Array
+                && assignable(actual, t.inner());
+        }
+        return actual instanceof Array a && target instanceof Array t && t.readonly()
+            && assignable(a.element(), t.element());
+    }
+
     /** The {@code null} descriptor; canonical text {@code "null"}. */
     enum Null implements RuntimeDescriptor {
         INSTANCE;
@@ -379,7 +399,8 @@ public sealed interface RuntimeDescriptor extends OpResultType
      * {@code T[]}/{@code T|null} spellings exist in the schema).
      *
      */
-    record Array(RuntimeDescriptor element) implements RuntimeDescriptor {
+    record Array(RuntimeDescriptor element, boolean readonly) implements RuntimeDescriptor {
+        public Array(RuntimeDescriptor element) { this(element, false); }
 
         public Array {
             requireData(element);
@@ -387,7 +408,7 @@ public sealed interface RuntimeDescriptor extends OpResultType
 
         @Override
         public java.lang.String canonicalSpecText() {
-            return "[" + element.canonicalSpecText() + "]";
+            return (readonly ? "readonly" : "") + "[" + element.canonicalSpecText() + "]";
         }
     }
 

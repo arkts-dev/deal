@@ -226,7 +226,7 @@ public final class ExportExtractor {
             case deal.ast.ArrayType at -> {
                 Type elem = resolveTypeNodeSimple(at.elementType(), classMap);
                 if (elem == Type.Error.INSTANCE) yield Type.Error.INSTANCE;
-                yield new Type.Array(elem);
+                yield new Type.Array(elem, at.readonly());
             }
             case deal.ast.NullableType nt2 -> {
                 Type inner = resolveTypeNodeSimple(nt2.innerType(), classMap);

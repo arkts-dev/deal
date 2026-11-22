@@ -250,7 +250,7 @@ public record ClassRegistrationSeeds(
                 fields.add(new ClassLayout.FieldLayout(
                     field.declaration().name(), descriptor,
                     !field.declaration().optional(),
-                    ConstructionProvider.HOST_DECLARATION));
+                    ConstructionProvider.HOST_DECLARATION, field.declaration().readonly()));
             }
             Production duplicate = register(registrations, classId,
                 new ClassRegistration(new ClassLayout(classId, fields),

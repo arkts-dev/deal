@@ -595,6 +595,7 @@ public final class ContractSnapshotCanonicalizer {
             CanonicalJson.e("constructionProvider", CanonicalJson.str(field.constructionProvider().name())),
             CanonicalJson.e("descriptor", descriptorText(field.descriptor())),
             CanonicalJson.e("name", CanonicalJson.str(field.name())),
+            CanonicalJson.e("readonly", CanonicalJson.bool(field.readonly())),
             CanonicalJson.e("required", CanonicalJson.bool(field.required())));
     }
 
@@ -1141,10 +1142,10 @@ public final class ContractSnapshotCanonicalizer {
             for (int j = 0; j < fieldRows.items().size(); j++) {
                 String fieldWhere = where + ".layout.fields[" + j + "]";
                 CanonicalJson.Obj field = requireObjectValue(fieldRows.items().get(j), fieldWhere);
-                checkKeys(field, "constructionProvider", "descriptor", "name", "required");
+                checkKeys(field, "constructionProvider", "descriptor", "name", "required", "readonly");
                 fields.add(new RawUnit.RawFieldLayout(requireString(field, "name"),
                     requireString(field, "descriptor"), requireBool(field, "required"),
-                    requireString(field, "constructionProvider")));
+                    requireString(field, "constructionProvider"), requireBool(field, "readonly")));
             }
             classLayouts.add(new RawUnit.RawClassLayout(key,
                 new RawUnit.RawLayout(classId, fields)));
@@ -1518,10 +1519,10 @@ public final class ContractSnapshotCanonicalizer {
                 String fieldWhere = classWhere + ".fields[" + j + "]";
                 CanonicalJson.Obj field = requireObjectValue(fieldRows.items().get(j),
                     fieldWhere);
-                checkKeys(field, "name", "declaredType", "optional", "nullable");
+                checkKeys(field, "name", "declaredType", "optional", "nullable", "readonly");
                 fields.add(new FieldInterface(requireString(field, "name"),
                     requireString(field, "declaredType"), requireBool(field, "optional"),
-                    requireBool(field, "nullable")));
+                    requireBool(field, "nullable"), requireBool(field, "readonly")));
             }
             classes.add(new ClassInterface(parseClassId(requireObject(classRow, "classId")),
                 fields, parseClassFactoryId(requireObject(classRow, "constructionEntry"))));
@@ -1605,13 +1606,13 @@ public final class ContractSnapshotCanonicalizer {
                 String fieldWhere = where + ".layout.fields[" + j + "]";
                 CanonicalJson.Obj field = requireObjectValue(fieldRows.items().get(j),
                     fieldWhere);
-                checkKeys(field, "constructionProvider", "descriptor", "name", "required");
+                checkKeys(field, "constructionProvider", "descriptor", "name", "required", "readonly");
                 fields.add(new ClassLayout.FieldLayout(requireString(field, "name"),
                     parseFieldDescriptor(requireString(field, "descriptor"),
                         fieldWhere + ".descriptor"),
                     requireBool(field, "required"),
                     parseConstructionProvider(requireString(field, "constructionProvider"),
-                        fieldWhere + ".constructionProvider")));
+                        fieldWhere + ".constructionProvider"), requireBool(field, "readonly")));
             }
             ConstructionProvider owner = parseConstructionProvider(requireString(row, "owner"),
                 where + ".owner");
@@ -1720,6 +1721,7 @@ public final class ContractSnapshotCanonicalizer {
                 CanonicalJson.e("constructionProvider", CanonicalJson.str(field.constructionProvider())),
                 CanonicalJson.e("descriptor", CanonicalJson.str(field.descriptor())),
                 CanonicalJson.e("name", CanonicalJson.str(field.name())),
+                CanonicalJson.e("readonly", CanonicalJson.bool(field.readonly())),
                 CanonicalJson.e("required", CanonicalJson.bool(field.required()))));
         }
         return CanonicalJson.obj(

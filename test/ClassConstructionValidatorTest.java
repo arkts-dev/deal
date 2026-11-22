@@ -304,6 +304,24 @@ public class ClassConstructionValidatorTest {
         return children;
     }
 
+    private static void checkReadonlyMutationTransports(LoweredModuleUnit unit,
+            SemanticLowerer.ClassDeclarationCoreResult result, ExternalModuleInterface own) {
+        var failure = ClassConstructionValidator.validate(unit, result.lowering().table(),
+            result.registry(), own, Map.of());
+        expectE6005(failure, ClassConstructionValidator.FIELD_OPERATION_SHAPE);
+        check(failure.isPresent() && failure.get().message().contains("targets a readonly field"),
+            "the readonly restriction, not an unrelated shape defect, rejects the mutation: " + failure);
+        var raw = deal.semantic.ir.RawUnit.fromTyped(unit);
+        var materialized = deal.semantic.ir.RawUnitMaterializer.materialize(raw);
+        expectE6005(ClassConstructionValidator.validate(materialized, result.lowering().table(),
+            result.registry(), own, Map.of()), ClassConstructionValidator.FIELD_OPERATION_SHAPE);
+        var parsed = ContractSnapshotCanonicalizer.parseUnit((CanonicalJson.Obj)
+            CanonicalJson.parse(SemanticIrDumper.dumpModuleText(unit)));
+        expectE6005(ClassConstructionValidator.validate(
+            deal.semantic.ir.RawUnitMaterializer.materialize(parsed), result.lowering().table(),
+            result.registry(), own, Map.of()), ClassConstructionValidator.FIELD_OPERATION_SHAPE);
+    }
+
     /** Asserts one E6005 with the exact pinned detail fields. */
     private static void expectE6005(Optional<CompilerDiagnostic> outcome, String rule) {
         check(outcome.isPresent(), "the tampered unit fails with E6005 (" + rule + ")");
@@ -659,6 +677,7 @@ public class ClassConstructionValidatorTest {
             class Point {
               x: number;
               y?: number;
+              readonly fixed?: number;
             }
             let p: Point = {x: 1};
             let v: number | undefined = p.y;
@@ -710,6 +729,20 @@ public class ClassConstructionValidatorTest {
                     result.lowering().table(), result.registry(), lowered.ownInterface(), Map.of()),
                     ClassConstructionValidator.FIELD_OPERATION_SHAPE);
             }
+        }
+
+        SemanticOp write = firstOfKind(unit, SemanticOpKind.FIELD_WRITE);
+        if (write != null) {
+            var payload = (KindPayload.FieldWritePayload) write.payload();
+            var changed = rebuild(write, new KindPayload.FieldWritePayload(payload.classValue(),
+                payload.classId(), "fixed", payload.value()));
+            checkReadonlyMutationTransports(unitWithOps(unit, replaceOp(unit, changed)), result, lowered.ownInterface());
+        }
+        if (delete != null) {
+            var payload = (KindPayload.FieldDeletePayload) delete.payload();
+            var changed = rebuild(delete, new KindPayload.FieldDeletePayload(payload.classValue(),
+                payload.classId(), "fixed"));
+            checkReadonlyMutationTransports(unitWithOps(unit, replaceOp(unit, changed)), result, lowered.ownInterface());
         }
 
         // (d) A required-field delete (the payload field rewritten from
@@ -1958,6 +1991,8 @@ public class ClassConstructionValidatorTest {
             Types.array(Types.array(Type.Number.INSTANCE)),
             Type.Undefined.INSTANCE,
             Type.Unknown.INSTANCE,
+            new Type.Array(Type.Number.INSTANCE, true),
+            new Type.Array(new Type.Array(Type.String.INSTANCE, true)),
             Types.optionalRead(Type.String.INSTANCE),
             Types.optionalRead(Types.nullable(Type.String.INSTANCE)),
             Types.optionalRead(Type.Null.INSTANCE),
@@ -1992,6 +2027,19 @@ public class ClassConstructionValidatorTest {
         check(coherent.isEmpty(),
             "the producer's declared-type and descriptor renderings agree for every "
                 + "structural form: " + coherent);
+        {
+            List<ClassLayout.FieldLayout> mutated = new ArrayList<>(seedFields);
+            var field = mutated.get(0);
+            mutated.set(0, new ClassLayout.FieldLayout(field.name(), field.descriptor(),
+                field.required(), field.constructionProvider(), true));
+            var changed = new LinkedHashMap<>(registrations);
+            changed.put(formsClass, new ClassRegistrationSeeds.ClassRegistration(
+                new ClassLayout(formsClass, mutated), ConstructionProvider.HOST_DECLARATION));
+            var failure = ClassConstructionValidator.checkProjectSeedCoherence(index,
+                new ClassRegistrationSeeds(changed));
+            check(failure.isPresent() && failure.get().contains("readonly"),
+                "readonly registration authority cannot disagree with the interface: " + failure);
+        }
         for (int i = 0; i < forms.size(); i++) {
             int other = (i + 1) % forms.size();
             if (CanonicalTypeText.render(forms.get(other))

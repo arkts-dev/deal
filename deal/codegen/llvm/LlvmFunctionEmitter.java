@@ -1414,6 +1414,8 @@ final class LlvmFunctionEmitter {
         if (from.equals(to) && !LlvmTypeMapper.isStaticSingleton(from)) {
             return operand;
         }
+        if (from instanceof RuntimeDescriptor.Array && to instanceof RuntimeDescriptor.Array
+                && RuntimeDescriptor.assignable(from, to)) return operand;
         // The declared position of a static singleton is that singleton: the
         // value carries no payload, so its storage is the distinct runtime
         // `null`/`undefined` pointer (C3).
@@ -5378,11 +5380,19 @@ final class LlvmFunctionEmitter {
             String array = loadValue(payload.container(), LlvmTypeMapper.ARRAY, op);
             String offset = emitArrayOffset(op, boundary, array, payload.slot(),
                 false, deal.semantic.ir.FailureArmId.ARRAY_READ_BOUNDS);
+            RuntimeDescriptor element = arrayType.element();
+            if (arrayType.readonly()) {
+                session.referenceRuntimeEntry("deal_array_present_element");
+                String input = newAlloca("%struct.deal_check_input", "viewelement");
+                emit("call void @deal_array_present_element(" + LlvmTypeMapper.ARRAY + " "
+                    + array + ", i64 " + offset + ", %struct.deal_check_input* " + input + ")");
+                storeResultOf(op, element, checkedValue(op, element, input));
+                return;
+            }
             session.referenceRuntimeEntry("deal_container_array_element");
             String pointer = emitTemporary(op, "call i8*"
                 + " @deal_container_array_element(" + LlvmTypeMapper.ARRAY + " "
                 + array + ", i64 " + offset + ")");
-            RuntimeDescriptor element = arrayType.element();
             String type = element instanceof RuntimeDescriptor.Number
                 ? LlvmTypeMapper.DATA : LlvmTypeMapper.slotTypeOf(element);
             String slot = emitTemporary(op, "bitcast i8* " + pointer + " to "

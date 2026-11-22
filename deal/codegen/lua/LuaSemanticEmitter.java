@@ -2011,7 +2011,7 @@ public final class LuaSemanticEmitter {
                 .append("if i~=i or i==math.huge or i==-math.huge or i~=math.floor(i) or i<0 or i>=n or rawget(a,i+1)==nil then local e=__arm(\"ARRAY_READ_BOUNDS\",{},")
                 .append(luaString(originOf(op))).append("); e.arrayIndex=__numHex(i); e.arrayLength=tostring(n); ")
                 .append("e.arrayConstraint=(i~=i or i==math.huge or i==-math.huge or i~=math.floor(i)) and 'finite-integer' or ((i<0 or i>=n) and 'read-range' or 'present-element'); error(e,0) end\n")
-                .append("local v=rawget(a,i+1); __okB,__chkB=pcall(__bcheck,").append(bcheckArgs(element, "v")).append(")\n")
+                .append("local v=rawget(a,i+1); local stored=a[__dealCarrierKeys.elementDescriptor]; if stored and stored ~= ").append(luaString(element.canonicalSpecText())).append(" then __okB,__chkB=pcall(require(\"deal.runtime\").check_canonical_type,stored,v) else __okB,__chkB=pcall(__bcheck,").append(bcheckArgs(element, "v")).append(") end\n")
                 .append("if not __okB then local failure=__arm(\"ARRAY_ELEMENT_KIND\",{oneBasedIndex=i+1},")
                 .append(luaString(originOf(op))).append(",").append(luaString(element.canonicalSpecText()))
                 .append(",__elemRefKind(").append(luaString(staticKind(element)))
@@ -2047,7 +2047,7 @@ public final class LuaSemanticEmitter {
                 .append(target).append(payload.includes() ? "=false\n" : "=-1\n")
                 .append("for i=s+1,n do local v=rawget(a,i); ")
                 .append(payload.includes() ? "if v == nil then v=__UNDEFINED else " : "if v ~= nil then ")
-                .append("__okB,__chkB=pcall(__bcheck,").append(bcheckArgs(element, "v")).append(")\n")
+                .append("local stored=a[__dealCarrierKeys.elementDescriptor]; if stored and stored ~= ").append(luaString(element.canonicalSpecText())).append(" then __okB,__chkB=pcall(require(\"deal.runtime\").check_canonical_type,stored,v) else __okB,__chkB=pcall(__bcheck,").append(bcheckArgs(element, "v")).append(") end\n")
                 .append("if not __okB then local failure=__arm(\"ARRAY_ELEMENT_KIND\",{oneBasedIndex=i},")
                 .append(luaString(originOf(op))).append(",").append(luaString(element.canonicalSpecText()))
                 .append(",__elemRefKind(").append(luaString(staticKind(element)))
@@ -2068,8 +2068,8 @@ public final class LuaSemanticEmitter {
                 .append(luaString(element.canonicalSpecText())).append("}; local offset=0\n")
                 .append("for _,a in ipairs({").append(slot(payload.arrayValue())).append(",").append(slot(payload.other())).append("}) do\n")
                 .append("local n=a[__dealCarrierKeys.n] or 0; while rawget(a,n+1) ~= nil do n=n+1 end\n")
-                .append("for i=1,n do local v=rawget(a,i); if v ~= nil then __okB,__chkB=pcall(__bcheck,")
-                .append(bcheckArgs(element,"v")).append(")\n")
+                .append("for i=1,n do local v=rawget(a,i); if v ~= nil then local stored=a[__dealCarrierKeys.elementDescriptor]; if stored and stored ~= ").append(luaString(element.canonicalSpecText())).append(" then __okB,__chkB=pcall(require(\"deal.runtime\").check_canonical_type,stored,v) else __okB,__chkB=pcall(__bcheck,")
+                .append(bcheckArgs(element,"v")).append(") end\n")
                 .append("if not __okB then local failure=__arm(\"ARRAY_ELEMENT_KIND\",{oneBasedIndex=i},")
                 .append(luaString(originOf(op))).append(",").append(luaString(element.canonicalSpecText()))
                 .append(",__elemRefKind(").append(luaString(staticKind(element))).append(",v)); failure.cause=(__chkB.code == \"E8003\" and __chkB.cause) or __chkB; error(failure,0) end\n")
@@ -2091,8 +2091,8 @@ public final class LuaSemanticEmitter {
                 .append(slot(payload.end())).append(")); local c=math.max(0,e-s)\n")
                 .append("local result = {[__dealCarrierKeys.a]=true, [__dealCarrierKeys.n]=c, [__dealCarrierKeys.elementDescriptor]=")
                 .append(luaString(element.canonicalSpecText())).append("}\n")
-                .append("for i=1,c do local v=rawget(a,s+i); if v ~= nil then __okB,__chkB=pcall(__bcheck,")
-                .append(bcheckArgs(element, "v")).append(")\n")
+                .append("for i=1,c do local v=rawget(a,s+i); if v ~= nil then local stored=a[__dealCarrierKeys.elementDescriptor]; if stored and stored ~= ").append(luaString(element.canonicalSpecText())).append(" then __okB,__chkB=pcall(require(\"deal.runtime\").check_canonical_type,stored,v) else __okB,__chkB=pcall(__bcheck,")
+                .append(bcheckArgs(element, "v")).append(") end\n")
                 .append("if not __okB then local failure=__arm(\"ARRAY_ELEMENT_KIND\",{oneBasedIndex=s+i},")
                 .append(luaString(originOf(op))).append(",").append(luaString(element.canonicalSpecText()))
                 .append(",__elemRefKind(").append(luaString(staticKind(element)))
@@ -7666,6 +7666,7 @@ __factories.__hostCarrierOut = function(desc, v, memo)
   end
   local function arrayElementOf(d)
     local base = baseOf(d)
+    if base ~= nil and string.sub(base,1,9)=="readonly[" then return string.sub(base,10,-2) end
     if base == nil or string.sub(base, 1, 1) ~= "[" then return nil end
     return string.sub(base, 2, -2)
   end
@@ -9075,6 +9076,11 @@ end
 -- must be consumed, so a foreign or malformed parameter/result text is
 -- never admitted.
 __canonicalDesc = function(s, i)
+  if string.sub(s,i,i+8)=="readonly[" then
+    local inner=__canonicalDesc(s,i+9)
+    if inner==nil or string.sub(s,inner,inner)~= "]" then return nil end
+    return inner+1
+  end
   local c = string.sub(s, i, i)
   if c == "" then return nil end
   if __isErrorAtom(s, i, false) then return i + 5 end
@@ -9727,6 +9733,9 @@ end
 -- included, so the internal function(params;return) dialect converts to
 -- the canonical (params)->return form recursively.
 local function __canonDesc(desc)
+  if string.sub(desc, 1, 14) == "readonlyarray(" then
+    return "readonly["..__canonDesc(string.sub(desc, 15, -2)).."]"
+  end
   if string.sub(desc, 1, 6) == "array(" then
     return "["..__canonDesc(string.sub(desc, 7, -2)).."]"
   end
@@ -10046,6 +10055,10 @@ __bcheck = function(desc, staticKind, v, csig, completion, path)
           if u then sig = string.sub(sig, 2) end
         end
         d = string.sub(d, string.find(d, "(", 1, true) + 1, -2)
+      end
+      if string.sub(d, 1, 14) == "readonlyarray(" then
+        require("deal.runtime").check_canonical_type(__canonDesc(d), value)
+        return
       end
       local isClass, isArray = string.sub(d, 1, 1) == "@", string.sub(d, 1, 6) == "array("
       if not isClass and not isArray then

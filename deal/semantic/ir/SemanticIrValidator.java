@@ -2038,8 +2038,10 @@ public final class SemanticIrValidator {
                     if (receiver != null && receiver.equals(producer.resultValue())) leftType = producer.resultType();
                     if (other != null && other.equals(producer.resultValue())) rightType = producer.resultType();
                 }
-                if (!(parseDescriptorQuiet(leftType) instanceof RuntimeDescriptor.Array) || !Objects.equals(leftType, rightType)
-                        || !Objects.equals(leftType, op.resultType()) || receiver == null || other == null
+                if (!(parseDescriptorQuiet(leftType) instanceof RuntimeDescriptor.Array leftArray)
+                        || !(parseDescriptorQuiet(rightType) instanceof RuntimeDescriptor.Array rightArray)
+                        || !RuntimeDescriptor.assignable(rightArray, new RuntimeDescriptor.Array(leftArray.element(), true))
+                        || !new RuntimeDescriptor.Array(leftArray.element()).canonicalSpecText().equals(op.resultType()) || receiver == null || other == null
                         || !List.of(receiver, other).equals(op.operands()) || !List.of(leftType, rightType).equals(op.operandTypes()))
                     return fail(op, unit, facts, R_ENUM, SemanticCapability.CONTAINERS_AND_STRINGS,
                         origin(R_ENUM, "ARRAY_CONCAT requires two preceding identical array descriptors and the same result descriptor"));
@@ -2057,7 +2059,8 @@ public final class SemanticIrValidator {
                     if (start != null && start.equals(producer.resultValue()) && "number".equals(producer.resultType())) startReady = true;
                     if (count != null && count.equals(producer.resultValue()) && "number".equals(producer.resultType())) countReady = true;
                 }
-                if (array == null || !startReady || !countReady || !array.canonicalSpecText().equals(op.resultType())
+                if (array == null || "ARRAY_SPLICE".equals(op.kind()) && array.readonly()
+                        || !startReady || !countReady || !new RuntimeDescriptor.Array(array.element()).canonicalSpecText().equals(op.resultType())
                         || !List.of(receiver, start, count).equals(op.operands())
                         || !List.of(array.canonicalSpecText(), "number", "number").equals(op.operandTypes()))
                     return fail(op, unit, facts, R_ENUM, SemanticCapability.CONTAINERS_AND_STRINGS,
@@ -2087,7 +2090,7 @@ public final class SemanticIrValidator {
                             && parseDescriptorQuiet(producer.resultType()) instanceof RuntimeDescriptor.Array found)
                         array = found;
                 }
-                if (array == null || !RuntimeDescriptor.optionalRead(array.element()).canonicalSpecText().equals(op.resultType())
+                if (array == null || array.readonly() || !RuntimeDescriptor.optionalRead(array.element()).canonicalSpecText().equals(op.resultType())
                         || !List.of(receiver).equals(op.operands())
                         || !List.of(array.canonicalSpecText()).equals(op.operandTypes())) {
                     return fail(op, unit, facts, R_ENUM, SemanticCapability.CONTAINERS_AND_STRINGS,

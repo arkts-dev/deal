@@ -6,5 +6,10 @@ public record ClassField(
     String name,
     boolean optional,
     boolean nullable,
-    TypeNode type
-) {}
+    TypeNode type,
+    boolean readonly
+) {
+    public ClassField(Span span, String name, boolean optional, boolean nullable, TypeNode type) {
+        this(span, name, optional, nullable, type, false);
+    }
+}

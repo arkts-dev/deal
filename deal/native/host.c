@@ -305,8 +305,9 @@ static int deal_host_grammar_data(const deal_host_grammar *grammar,
         *position = base;
         return 1;
     }
-    if (character == '[') {
-        size_t element = cursor + 1u;
+    int readonly = deal_host_grammar_literal(grammar, cursor, "readonly[");
+    if (character == '[' || readonly) {
+        size_t element = cursor + (readonly ? 9u : 1u);
         if (!deal_host_grammar_data(grammar, &element)) {
             return 0;
         }

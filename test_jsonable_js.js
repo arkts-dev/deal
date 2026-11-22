@@ -427,5 +427,15 @@ test("reconstruction ignores evaluator metadata through every outcome", () => {
   equal(decode('{"a":1,"b":20}', id).b, 20, "complete control");
   equal(decode('{"a":5,"b":6}', id).a, 5, "second complete control"); equal(runs, 0, "hook count");
 });
+test("readonly array admission preserves mutable storage and validates host corruption", () => {
+  const items = rt.tagArray([1], "number");
+  equal(rt.checkType("readonly[unknown]", items, ...LOC), items, "carrier identity");
+  items[0] = 2;
+  equal(rt.checkType("readonly[unknown]", items, ...LOC), items, "host write remains valid");
+  items[0] = "bad";
+  error(() => rt.checkType("readonly[unknown]", items, ...LOC), "E8003");
+  items[0] = 3;
+  equal(rt.checkType("[number]", items, ...LOC), items, "repair and writable recovery");
+});
 console.log("Contextual JSON JS Results: " + passed + " passed, " + failed + " failed");
 if (failed) throw new Error(failed + " contextual JSON JS test(s) failed");

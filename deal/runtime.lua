@@ -994,6 +994,9 @@ local function decode_descriptor(text, result_position)
     if pos > n then
       return nil
     end
+    local readonly = string.sub(text, pos, pos + 8) == "readonly["
+    local array_start = pos
+    if readonly then pos = pos + 8 end
     local b = string.byte(text, pos)
     if b == 0x5B then  -- '[': array
       local start = pos
@@ -1006,7 +1009,7 @@ local function decode_descriptor(text, result_position)
         return nil
       end
       pos = pos + 1
-      return { kind = "array", element = element, text = string.sub(text, start, pos - 1) }
+      return { kind = "array", element = element, readonly = readonly, text = string.sub(text, array_start, pos - 1) }
     end
     if string.sub(text, pos, pos + 13) == "null|undefined" then
       pos = pos + 14
@@ -1110,6 +1113,22 @@ end
 -- span; never a raw Lua error; never mutates its inputs. Array elements
 -- are checked in 1-based contiguous order and the first failing index is
 -- wrapped in E8003.
+local function descriptor_assignable(actual, target)
+  if actual == target or target == "unknown" then return true end
+  local a, t = parse_descriptor(actual), parse_descriptor(target)
+  if not a or not t then return false end
+  if t.kind == "nullable" then
+    if actual == "null" then return t.admitsNull or t.inner.text == "null" end
+    if actual == "undefined" then return t.admitsUndefined or t.inner.text == "undefined" end
+    if a.kind == "nullable" then
+      return (not a.admitsNull or t.admitsNull) and (not a.admitsUndefined or t.admitsUndefined)
+        and (a.inner.text == t.inner.text or a.inner.kind == "array" and descriptor_assignable(a.inner.text,t.inner.text))
+    end
+    return actual == t.inner.text or a.kind == "array" and descriptor_assignable(actual,t.inner.text)
+  end
+  return a.kind == "array" and t.kind == "array" and t.readonly and descriptor_assignable(a.element.text,t.element.text) or false
+end
+
 local check_canonical_ast
 validation_child = function(parent, segment)
   return {parent=parent, segment=segment, depth=parent and parent.depth+1 or 1}
@@ -1240,7 +1259,7 @@ local function check_canonical_ast_inner(ast, v, file, line, column, seen, path)
         "expected array", file, line, column, "array", __rt.typed_kind(v)))
     end
     local persistent = v[__K.elementDescriptor]
-    if persistent ~= nil and persistent ~= ast.element.text then
+    if persistent ~= nil and not (ast.readonly and descriptor_assignable(persistent, ast.element.text) or persistent == ast.element.text) then
       error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "array" }, "E8001",
         "expected array", file, line, column, "array", __rt.typed_kind(v)))
     end
@@ -1271,7 +1290,7 @@ local function check_canonical_ast_inner(ast, v, file, line, column, seen, path)
     for i = 1, length do
       local childPath = validation_child(path,tostring(i-1))
       local ok, rejected
-      if v[i] ~= nil then ok, rejected = pcall(check_canonical_ast, ast.element, v[i], file, line, column, seen, childPath) end
+      if v[i] ~= nil then ok, rejected = pcall(check_canonical_ast, persistent and parse_descriptor(persistent) or ast.element, v[i], file, line, column, seen, childPath) end
       if not ok then
         local failure = __rt._armErr("ARRAY_ELEMENT_KIND", { oneBasedIndex = i }, "E8003",
           "array element " .. i .. " type mismatch", file, line, column,

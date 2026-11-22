@@ -12,7 +12,7 @@ public final class Language16ArrayProductionTest {
         try {
             Path corpus = Path.of("test/conformance").toAbsolutePath().normalize();
             var fixtures = CorpusConformanceTest.nativeCorpusFixtures(corpus);
-            for (String name : List.of("push", "push-live-retry", "slice", "slice-live-retry", "search", "search-live-retry", "join", "join-live-retry", "map", "map-live-retry", "find", "find-live-retry", "predicates", "predicates-live-retry")) {
+            for (String name : List.of("readonly", "push", "push-live-retry", "slice", "slice-live-retry", "search", "search-live-retry", "join", "join-live-retry", "map", "map-live-retry", "find", "find-live-retry", "predicates", "predicates-live-retry")) {
                 String path = "backend-runtime/arrays/" + name + ".deal";
                 var fixture = fixtures.stream().filter(f -> f.corpusPath().equals(path)).findFirst().orElseThrow();
                 Path host = null;

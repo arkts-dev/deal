@@ -115,7 +115,7 @@ public final class RuntimeTypeMatcher {
             return checkClass(cls.fullDescriptorText(), value, range);
         }
         if (atom instanceof DescriptorAst.ArrayAtom array) {
-            return checkArray(array.element(), value, range);
+            return checkArray(array, value, range);
         }
         if (atom instanceof DescriptorAst.NullableAtom nullable) {
             if (nullable.admitsNull() && model.isNull(value)
@@ -201,9 +201,21 @@ public final class RuntimeTypeMatcher {
 
     /** The array row: elements checked recursively in index order; E8003 at
      * the first failing index (1-based, as pinned). */
-    private Object checkArray(DescriptorAst element, Object value, RuntimeSourceLocation range) {
+    private Object checkArray(DescriptorAst.ArrayAtom array, Object value, RuntimeSourceLocation range) {
         if (!model.isArray(value)) {
             return failure("E8001", "expected array, got " + actualKind(value, range), range);
+        }
+        DescriptorAst element = array.element();
+        String stored = model.arrayElementDescriptor(value);
+        if (stored != null) {
+            String requested = CanonicalRuntimeTypeDescriptor.render(element);
+            DescriptorParseResult parsed = CanonicalRuntimeTypeDescriptor.parse(stored);
+            if (!(parsed instanceof DescriptorAst storage)
+                    || !(array.readonly() ? deal.semantic.ir.RuntimeDescriptor.assignable(
+                        deal.semantic.ir.RuntimeDescriptor.parseCanonicalText(stored),
+                        deal.semantic.ir.RuntimeDescriptor.parseCanonicalText(requested)) : stored.equals(requested)))
+                return failure("E8001", "array element descriptor mismatch", range);
+            element = storage;
         }
         int length = model.arrayLength(value);
         for (int i = 0; i < length; i++) {

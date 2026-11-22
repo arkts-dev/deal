@@ -171,7 +171,7 @@ public final class JvmJson {
     }
 
     private static String runtimeDescriptorText(deal.semantic.ir.RuntimeDescriptor descriptor) {
-        if (descriptor instanceof deal.semantic.ir.RuntimeDescriptor.Array array) return "array(" + runtimeDescriptorText(array.element()) + ")";
+        if (descriptor instanceof deal.semantic.ir.RuntimeDescriptor.Array array) return (array.readonly() ? "readonlyarray(" : "array(") + runtimeDescriptorText(array.element()) + ")";
         if (descriptor instanceof deal.semantic.ir.RuntimeDescriptor.Nullable n)
             return (n.admitsNull() ? (n.admitsUndefined() ? "nullableundefinedable" : "nullable") : "undefinedable") + "(" + runtimeDescriptorText(n.inner()) + ")";
         return descriptor instanceof deal.semantic.ir.RuntimeDescriptor.Table ? "record" : descriptor.canonicalSpecText();

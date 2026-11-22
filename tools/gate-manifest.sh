@@ -28,6 +28,7 @@ TEST_MAINS=(
   'fg|=== Running Nullish Coalescing Contracts ===|java -ea -cp build deal.test.NullishCoalescingTest'
   'fg|=== Running Compound Assignment Contracts ===|java -ea -cp build deal.test.CompoundAssignmentTest'
   'fg|=== Running Update Expression Contracts ===|java -ea -cp build deal.test.UpdateExpressionTest'
+  'fg|=== Running Readonly Contracts ===|java -ea -cp build deal.test.ReadonlyTest'
   'fg|=== Running Array Concat Contracts ===|java -ea -cp build deal.test.ArrayConcatTest'
   'fg|=== Running Array ToSorted Contracts ===|java -ea -cp build deal.test.ArrayToSortedTest'
   'fg|=== Running Optional Chaining Contracts ===|java -ea -cp build deal.test.OptionalChainingTest'

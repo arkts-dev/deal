@@ -1369,6 +1369,19 @@ public class AsyncExportInvokerProductionTest {
                 deleteRecursively(array.root());
             }
 
+            Project readonlyArray = compile("readonly-array-completion-" + backend, backend,
+                String.format(PLAIN_MANIFEST, backend),
+                ARRAY_COMPLETION_SOURCE.replace("Promise<number[]>", "Promise<readonly unknown[]>"),
+                null, null);
+            try {
+                Object result = invoke(readonlyArray, "run", "readonly[unknown]");
+                checkEq(valueResult(backend, "readonly[unknown]", "[7,8]"), result,
+                    backend + ": readonly completion preserves array values: " + result);
+                assertNoInternalKeys(backend, valueJson(result));
+            } finally {
+                deleteRecursively(readonlyArray.root());
+            }
+
             Project table = compile("table-completion-" + backend, backend,
                 String.format(PLAIN_MANIFEST, backend), TABLE_COMPLETION_SOURCE,
                 null, null);

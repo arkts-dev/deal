@@ -388,7 +388,7 @@ final class JvmHostAbiEmission {
             case Type.Number ignored -> "double";
             case Type.String ignored -> "java.lang.String";
             case Type.Class cls -> classCarrier(cls);
-            case Type.Array array -> "$DealRt." + arrayCarrier(array.element());
+            case Type.Array array -> array.readonly() ? "JvmRuntime.Array" : "$DealRt." + arrayCarrier(array.element());
             case Type.Func func -> "$DealRt." + JvmNames.fnShapeId(func);
             case Type.Table ignored -> "java.lang.Object";
             default -> throw new IllegalStateException(
@@ -404,7 +404,7 @@ final class JvmHostAbiEmission {
             case Type.Boolean ignored -> "java.lang.Boolean";
             case Type.String ignored -> "java.lang.String";
             case Type.Class cls -> classCarrier(cls);
-            case Type.Array array -> "$DealRt." + arrayCarrier(array.element());
+            case Type.Array array -> array.readonly() ? "JvmRuntime.Array" : "$DealRt." + arrayCarrier(array.element());
             case Type.Func func -> "$DealRt." + JvmNames.fnShapeId(func);
             default -> "java.lang.Object";
         };
@@ -474,7 +474,7 @@ final class JvmHostAbiEmission {
             case Type.Boolean ignored -> nullable ? "java.lang.Boolean.class" : "boolean.class";
             case Type.String ignored -> "java.lang.String.class";
             case Type.Class cls -> classCarrier(cls) + ".class";
-            case Type.Array array -> "$DealRt." + arrayCarrier(array.element()) + ".class";
+            case Type.Array array -> array.readonly() ? "JvmRuntime.Array.class" : "$DealRt." + arrayCarrier(array.element()) + ".class";
             case Type.Func func -> "$DealRt." + JvmNames.fnShapeId(func) + ".class";
             default -> "java.lang.Object.class";
         };
@@ -1116,7 +1116,7 @@ final class JvmHostAbiEmission {
         out.append("    if (v == null || v == JvmRuntime.UNDEFINED || v == JvmRuntime.MISSING) return v;\n");
         out.append("    java.lang.String inner = __hostBase(d);\n");
         out.append("    if (inner.startsWith(\"(\") || inner.startsWith(\"async(\")) return __hostFnCarrier(inner, v);\n");
-        out.append("    if (inner.startsWith(\"[\")) return __hostArrayFromDeal(inner, v);\n");
+        out.append("    if (inner.startsWith(\"[\") || inner.startsWith(\"readonly[\")) return __hostArrayFromDeal(inner, v);\n");
         out.append("    if (v == JvmRuntime.UNDEFINED) return v;\n");
         out.append("    if (inner.equals(\"number\")) return java.lang.Double.valueOf(((java.lang.Number) v).doubleValue());\n");
         out.append("    return v;\n");
@@ -1125,7 +1125,7 @@ final class JvmHostAbiEmission {
         out.append("    if (v == null || v == JvmRuntime.UNDEFINED || v == JvmRuntime.MISSING) return v;\n");
         out.append("    java.lang.String inner = __hostBase(d);\n");
         out.append("    if (inner.startsWith(\"(\") || inner.startsWith(\"async(\")) return __hostFnToDeal(inner, v);\n");
-        out.append("    if (inner.startsWith(\"[\")) return __hostArrayToDeal(inner, v);\n");
+        out.append("    if (inner.startsWith(\"[\") || inner.startsWith(\"readonly[\")) return __hostArrayToDeal(inner, v);\n");
         out.append("    return v;\n");
         out.append("  }\n\n");
         emitFunctionCrossings(out);
@@ -1256,6 +1256,7 @@ final class JvmHostAbiEmission {
         out.append("  static java.lang.Object __hostArrayFromDeal(java.lang.String d, java.lang.Object v) {\n");
         out.append("    if (v == null) return null;\n");
         out.append("    if (!(v instanceof JvmRuntime.Array __a)) return v;\n");
+        out.append("    if (d.startsWith(\"readonly[\")) return __a;\n");
         out.append("    if (__hostArraysOut.containsKey(v)) return __hostArraysOut.get(v);\n");
         for (Map.Entry<String, Type> entry : arrayElements.entrySet()) {
             String desc = entry.getKey();
@@ -1459,7 +1460,7 @@ final class JvmHostAbiEmission {
         out.append("    if (d.equals(\"number\")) { if (v instanceof java.lang.Double || v instanceof java.lang.Long || v instanceof java.lang.Integer) return v; throw __hostFail(JvmRuntime.kindReason(\"number\"), d, v, oFile, oLine, oCol); }\n");
         out.append("    if (d.equals(\"string\")) { if (v instanceof java.lang.String) return v; if (v instanceof byte[] __b) { JvmRuntime.DealError __r = JvmRuntime.checkHostStringBytes(__b, oFile + \":\" + oLine + \":\" + oCol); if (__r != null) throw __r; return new java.lang.String(__b, java.nio.charset.StandardCharsets.UTF_8); } throw __hostFail(JvmRuntime.kindReason(\"string\"), d, v, oFile, oLine, oCol); }\n");
         out.append("    if (d.equals(\"record\")) { if (v instanceof JvmRuntime.Table) return JvmRuntime.validateData(v, false); throw __hostFail(JvmRuntime.kindReason(\"record\"), d, v, oFile, oLine, oCol); }\n");
-        out.append("    if (d.startsWith(\"[\")) { return __hostCheckArrayPlan(d, v, oFile, oLine, oCol, __pending, __memo); }\n");
+        out.append("    if (d.startsWith(\"[\") || d.startsWith(\"readonly[\")) { return __hostCheckArrayPlan(d, v, oFile, oLine, oCol, __pending, __memo); }\n");
         out.append("    if (d.startsWith(\"(\") || d.startsWith(\"async(\")) {\n");
         out.append("      java.lang.String __carried = null;\n");
         out.append("      if (v instanceof $DealRt.FnValue __f) { __carried = __f.descriptor(); }\n");
@@ -1492,7 +1493,7 @@ final class JvmHostAbiEmission {
             + " java.lang.Object v, java.lang.String oFile, int oLine, int oCol,"
             + " java.util.ArrayList<java.lang.Object[]> __pending,"
             + " java.util.IdentityHashMap<java.lang.Object, java.lang.Object> __memo) {\n");
-        out.append("    java.lang.String __inner = d.substring(1, d.length() - 1);\n");
+        out.append("    boolean __readonly = d.startsWith(\"readonly[\"); java.lang.String __inner = d.substring(__readonly ? 9 : 1, d.length() - 1);\n");
         out.append("    JvmRuntime.Array __arr = null;\n");
         out.append("    if (v instanceof JvmRuntime.Array __a) { __arr = __a; }\n");
         // A declared carrier's elements are the checked position: the
@@ -1526,7 +1527,8 @@ final class JvmHostAbiEmission {
             out.append("    }\n");
         }
         out.append("    if (__arr == null) { throw __hostFail(JvmRuntime.kindReason(\"array\"), d, v, oFile, oLine, oCol); }\n");
-        out.append("    if (__arr.elementDescriptor != null && !JvmRuntime.canonicalDesc(__arr.elementDescriptor).equals(__inner)) throw __hostFail(JvmRuntime.kindReason(\"array\"), d, v, oFile, oLine, oCol);\n");
+        out.append("    if (__arr.elementDescriptor != null && !(__readonly ? deal.semantic.ir.RuntimeDescriptor.assignable(deal.semantic.ir.RuntimeDescriptor.parseCanonicalText(JvmRuntime.canonicalDesc(__arr.elementDescriptor)), deal.semantic.ir.RuntimeDescriptor.parseCanonicalText(__inner)) : JvmRuntime.canonicalDesc(__arr.elementDescriptor).equals(__inner))) throw __hostFail(JvmRuntime.kindReason(\"array\"), d, v, oFile, oLine, oCol);\n");
+        out.append("    if (__arr.elementDescriptor != null) __inner = JvmRuntime.canonicalDesc(__arr.elementDescriptor);\n");
         // The element check is also the element projection: a declared
         // string cell returns the decoded value for the raw UTF-8 byte
         // carrier, and a nested array cell returns the same array with
@@ -1791,7 +1793,7 @@ final class JvmHostAbiEmission {
             return primitive ? boxed
                 : "(" + expression + " == null ? null : " + boxed + ")";
         }
-        if (inner.startsWith("[") || inner.startsWith("(")
+        if (inner.startsWith("[") || inner.startsWith("readonly[") || inner.startsWith("(")
                 || inner.startsWith("async(")) {
             return artifactClass + ".__hostToDeal(" + javaString(inner) + ", "
                 + expression + ")";
@@ -1911,7 +1913,9 @@ final class JvmHostAbiEmission {
             String carrier = inner instanceof Type.Array array
                 ? arrayCarrier(array.element())
                 : JvmNames.fnShapeId((Type.Func) inner);
-            expression = "($DealRt." + carrier + ") " + artifactClass
+            String carrierType = inner instanceof Type.Array array && array.readonly()
+                ? "JvmRuntime.Array" : "$DealRt." + carrier;
+            expression = "(" + carrierType + ") " + artifactClass
                 + ".__hostProjectArg(" + javaString(desc) + ", __r)";
             if (nullable) {
                 expression = "(__r == null ? null : " + expression + ")";

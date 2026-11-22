@@ -58,7 +58,7 @@ final class LlvmHostModules {
 
     /** One declared field of one declared host class. */
     record Field(String name, String descriptor, boolean optional,
-                 RuntimeDescriptor declared) {
+                 RuntimeDescriptor declared, boolean readonly) {
 
         Field {
             Objects.requireNonNull(name, "name must not be null");
@@ -89,7 +89,7 @@ final class LlvmHostModules {
             for (Field field : fields) {
                 declaredFields.add(new ClassLayout.FieldLayout(field.name(),
                     field.declared(), !field.optional(),
-                    ConstructionProvider.HOST_DECLARATION));
+                    ConstructionProvider.HOST_DECLARATION, field.readonly()));
             }
             return new ClassLayout(classId(), declaredFields);
         }
@@ -296,7 +296,7 @@ final class LlvmHostModules {
                     DescriptorService.describe(field.type());
                 fields.add(new Field(field.declaration().name(),
                     declaredField.canonicalSpecText(),
-                    field.declaration().optional(), declaredField));
+                    field.declaration().optional(), declaredField, field.declaration().readonly()));
             }
             classes.add(new DeclaredClass(entry.getKey(), identity, fields));
         }

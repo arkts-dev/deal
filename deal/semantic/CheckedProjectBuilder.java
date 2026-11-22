@@ -484,7 +484,7 @@ public final class CheckedProjectBuilder {
                                                       CanonicalTypeText.Context context) {
         return new FieldInterface(field.name(),
             CanonicalTypeText.render(field.type(), context),
-            field.optional(), field.nullable());
+            field.optional(), field.nullable(), field.readonly());
     }
 
     /**

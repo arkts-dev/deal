@@ -41,7 +41,8 @@ public sealed interface Type
     // -- Compound types --
 
     /** T[] — array with an element type. */
-    record Array(Type element) implements Type {
+    record Array(Type element, boolean readonly) implements Type {
+        public Array(Type element) { this(element, false); }
         public Array {
             Types.requireDataType(element);
         }

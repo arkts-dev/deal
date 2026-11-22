@@ -1034,7 +1034,7 @@ public final class JvmSemanticEmitter {
                     + jsonDescriptorText(nullable.inner());
             }
             if (descriptor instanceof RuntimeDescriptor.Array array) {
-                return "array(" + jsonDescriptorText(array.element()) + ")";
+                return (array.readonly() ? "readonlyarray(" : "array(") + jsonDescriptorText(array.element()) + ")";
             }
             if (descriptor instanceof RuntimeDescriptor.Class cls) {
                 return cls.classId().text();

@@ -347,6 +347,12 @@ function $slice($d, $cps, $startScalar, $endScalar) {
 // No partial AST is ever produced.
 function $parseOne($d, $cps, $st, $resultPosition = false) {
   if ($st.$pos >= $cps.length) return null;
+  if ($matchKeyword($cps, $st.$pos, "readonly[")) {
+    $st.$pos += 8;
+    const node = $parseArray($d, $cps, $st);
+    if (node) node.$readonly = true;
+    return node;
+  }
   const $cp = $cps[$st.$pos].$cp;
   if ($cp === 0x5B) { // '['
     return $parseArray($d, $cps, $st);
@@ -396,6 +402,20 @@ function $parseOne($d, $cps, $st, $resultPosition = false) {
 }
 
 // The identifier-scalar predicate of the parser's identifier-run rule.
+function $descriptorAssignable(actual, target) {
+  if (actual === target || target === "unknown") return true;
+  const a = $parse(actual), t = $parse(target);
+  if (!a || !t) return false;
+  if (t.$t === "nullable") {
+    if (actual === "null") return t.$null || t.$inner === "null";
+    if (actual === "undefined") return t.$undefined || t.$inner === "undefined";
+    if (a.$t === "nullable") return (!a.$null || t.$null) && (!a.$undefined || t.$undefined)
+      && (a.$inner === t.$inner || $parse(a.$inner)?.$t === "array" && $descriptorAssignable(a.$inner, t.$inner));
+    return actual === t.$inner || a.$t === "array" && $descriptorAssignable(actual, t.$inner);
+  }
+  return a.$t === "array" && t.$t === "array" && t.$readonly && $descriptorAssignable(a.$element, t.$element);
+}
+
 function $isIdentifierByte($cp) {
   return ($cp >= 0x41 && $cp <= 0x5A) || ($cp >= 0x61 && $cp <= 0x7A)
       || ($cp >= 0x30 && $cp <= 0x39) || $cp === 0x5F;
@@ -557,6 +577,7 @@ function $arrayElementDescriptor($descriptor, $file, $line, $column) {
     $rt.fail("E8001", "internal: nil array descriptor", $file, $line, $column);
   }
   if (typeof $descriptor === "string") {
+    if ($descriptor.startsWith("readonly[")) return $descriptor.slice(9, -1);
     if ($descriptor.length >= 2 && $descriptor[0] === "[" && $descriptor[$descriptor.length - 1] === "]") {
       return $descriptor.slice(1, $descriptor.length - 1);
     }
@@ -2369,7 +2390,7 @@ const $rt = {
           if (!$Array.isArray(value) && !$rt.isJsonArrayTable(value))
             $rt.fail("E8001", "expected array", file, line, column, "array", $kindOf(value));
           const persistent = $arrayDescriptors.get(value);
-          if (persistent !== $undefined && persistent !== parsed.$element)
+          if (persistent !== $undefined && !(parsed.$readonly ? $descriptorAssignable(persistent, parsed.$element) : persistent === parsed.$element))
             $rt.fail("E8001", "array element descriptor mismatch", file, line, column, current, "array");
         }
         let checked = seen.get(value);
@@ -2393,8 +2414,9 @@ const $rt = {
           }
           for (let i = count - 1; i >= 0; --i) {
             const member = mapped ? value.get(String(i + 1)) : value[i];
-            pending.push({descriptor: parsed.$element, value: member, path: $validationChild(task.path, "" + i),
-              arrays: {index: i + 1, descriptor: parsed.$element, value: member, parent: task.arrays}});
+            const element = $arrayDescriptors.get(value) ?? parsed.$element;
+            pending.push({descriptor: element, value: member, path: $validationChild(task.path, "" + i),
+              arrays: {index: i + 1, descriptor: element, value: member, parent: task.arrays}});
           }
         }
       } catch (error) {
@@ -2544,6 +2566,7 @@ const $rt = {
   },
 
   checkArray: function $checkArray(descriptor, v, file, line, column) {
+    if ($parse(descriptor)?.$readonly) return $rt.checkType(descriptor, v, file, line, column);
     const $isJsonArrayMap = !$Array.isArray(v) && $rt.isJsonArrayTable(v);
     if (!$Array.isArray(v) && !$isJsonArrayMap) {
       $rt.fail("E8001", "expected array", file, line, column, "array", $kindOf(v));
@@ -2723,7 +2746,13 @@ const $rt = {
       throw error;
     }
     const value = $rt.arrayAt(v, index);
-    try { return $rt.checkType(descriptor, value, file, line, column); }
+    const requested = descriptor;
+    descriptor = $arrayDescriptors.get(v) ?? descriptor;
+    try {
+      const admitted = $rt.checkType(descriptor, value, file, line, column);
+      descriptor = requested;
+      return $rt.checkType(descriptor, admitted, file, line, column);
+    }
     catch (cause) {
       const failure = new $DEALError("E8003", "array element " + (index + 1) + " type mismatch",
         file, line, column, descriptor, $elemKindOf(value));
@@ -2749,6 +2778,7 @@ const $rt = {
   },
 
   arraySearch: function(v, needle, from, includes, descriptor, file, line, column) {
+    descriptor = $arrayDescriptors.get(v) || descriptor;
     const length = $rt.arrayLength(v);
     const integer = Number.isNaN(from) ? 0 : Math.trunc(from);
     const start = Math.max(0, Math.min(length, integer < 0 ? length + integer : integer));
@@ -2777,12 +2807,13 @@ const $rt = {
     const result = $rt.tagArray([], descriptor);
     let offset = 0;
     for (const source of [left, right]) {
+      const stored = $arrayDescriptors.get(source) || descriptor;
       const length = $rt.arrayLength(source);
       result.length = offset + length;
       for (let i = 0; i < length; i++) {
         if (!$rt.arrayHas(source, i)) continue;
         const value = $rt.arrayAt(source, i);
-        try { result[offset + i] = $rt.checkType(descriptor, value, file, line, column); }
+        try { result[offset + i] = $rt.checkType(stored, value, file, line, column); }
         catch (cause) {
           const failure = new $DEALError("E8003", "array element " + (i + 1) + " type mismatch",
             file, line, column, descriptor, $elemKindOf(value));
@@ -2797,6 +2828,7 @@ const $rt = {
 
   // Shallow copy; relative bounds observe length only after argument effects.
   arraySlice: function(v, start, end, descriptor, file, line, column) {
+    const stored = $arrayDescriptors.get(v) || descriptor;
     const length = $rt.arrayLength(v);
     const bound = value => {
       const integer = Number.isNaN(value) ? 0 : Math.trunc(value);
@@ -2807,7 +2839,7 @@ const $rt = {
     for (let i = first; i < last; i++) {
       if (!$rt.arrayHas(v, i)) continue;
       const value = $rt.arrayAt(v, i);
-      try { result[i - first] = $rt.checkType(descriptor, value, file, line, column); }
+      try { result[i - first] = $rt.checkType(stored, value, file, line, column); }
       catch (cause) {
         const failure = new $DEALError("E8003", "array element " + (i + 1) + " type mismatch",
           file, line, column, descriptor, $elemKindOf(value));

@@ -83,8 +83,9 @@ public final class CanonicalTypeText {
                     + "sentinel has no canonical rendering and is excluded from the index");
             case Type.Array array -> {
                 String element = render(array.element());
-                yield wrapInArrayPosition(element,
-                    isFunctionForm(array.element()), isNullableForm(array.element()));
+                yield (array.readonly() ? "readonly " : "") + wrapInArrayPosition(element,
+                    isFunctionForm(array.element()) || array.element() instanceof Type.Array a && a.readonly(),
+                    isNullableForm(array.element()));
             }
             case Type.Nullable nullable -> {
                 if (nullable.inner() == Type.Undefined.INSTANCE && nullable.admitsNull()) {
@@ -129,8 +130,9 @@ public final class CanonicalTypeText {
             case NamedType named -> renderNamed(named.name(), context);
             case ArrayType array -> {
                 String element = render(array.elementType(), context);
-                yield wrapInArrayPosition(element,
-                    isFunctionForm(array.elementType()), isNullableForm(array.elementType()));
+                yield (array.readonly() ? "readonly " : "") + wrapInArrayPosition(element,
+                    isFunctionForm(array.elementType()) || array.elementType() instanceof ArrayType a && a.readonly(),
+                    isNullableForm(array.elementType()));
             }
             case NullableType nullable -> renderNullish(nullable, context);
             case FunctionType func -> renderFunctionForm(

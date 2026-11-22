@@ -174,7 +174,7 @@ public record RawUnit(
             for (ClassLayout.FieldLayout field : layout.fields()) {
                 fields.add(new RawFieldLayout(field.name(),
                     field.descriptor().canonicalSpecText(), field.required(),
-                    field.constructionProvider().name()));
+                    field.constructionProvider().name(), field.readonly()));
             }
             classLayouts.add(new RawClassLayout(entry.getKey(),
                 new RawLayout(layout.classId(), fields)));
@@ -305,8 +305,12 @@ public record RawUnit(
         String name,
         String descriptor,
         boolean required,
-        String constructionProvider
+        String constructionProvider,
+        boolean readonly
     ) {
+        public RawFieldLayout(String name, String descriptor, boolean required, String provider) {
+            this(name, descriptor, required, provider, false);
+        }
 
         public RawFieldLayout {
             Objects.requireNonNull(name, "name must not be null");

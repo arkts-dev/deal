@@ -123,6 +123,11 @@ function arrays(): number {
   return sumAll(values);
 }
 
+// Readonly views preserve aliases; copy and validate unknown elements for mutation.
+function decodeNames(value: unknown): string[] {
+  return Array.from(value as readonly unknown[], (item: unknown): string => item as string);
+}
+
 // Records have dynamic string keys and unknown reads. Checked assertions
 // validate concrete uses; writes preserve null versus absence.
 function tableData(): number {

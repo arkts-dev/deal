@@ -829,7 +829,7 @@ public final class LlvmTypeMapper {
                                       RuntimeDescriptor actual) {
         Objects.requireNonNull(declared, "declared must not be null");
         Objects.requireNonNull(actual, "actual must not be null");
-        if (admits(declared, actual)) {
+        if (admits(declared, actual) || RuntimeDescriptor.assignable(actual, declared)) {
             return true;
         }
         if (declared instanceof RuntimeDescriptor.Unknown) {

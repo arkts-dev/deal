@@ -75,7 +75,7 @@ public final class DescriptorService {
                     + "sentinel has no RuntimeDescriptor member in deal.semantic-ir/2 and is "
                     + "excluded from common units");
             case Type.Class cls -> describeClass(cls);
-            case Type.Array array -> new RuntimeDescriptor.Array(describe(array.element()));
+            case Type.Array array -> new RuntimeDescriptor.Array(describe(array.element()), array.readonly());
             case Type.Nullable nullable ->
                 new RuntimeDescriptor.Nullable(describe(nullable.inner()), nullable.admitsNull(), nullable.admitsUndefined());
             case Type.Func func -> new RuntimeDescriptor.Func(

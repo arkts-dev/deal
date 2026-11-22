@@ -93,11 +93,11 @@ or implicit extraction from unknown. Follow the specification/catalog for aritie
 - String length is read-only. Omitted numeric positions/bounds differ from explicit
   undefined; preserve each selector's result type and exact argument checks.
 - Array push checks/adapts one element; pop returns optional element; splice takes
-  two numbers; slice takes zero–two numbers; concat takes one identically typed
-  array. Results preserve exact element types.
+  two numbers; slice takes zero–two numbers; concat takes one array assignable to
+  readonly E[]. Copy results are mutable with the receiver's element type.
 - Map/from infer output from the mapper's explicit synchronous data result, never
   the destination/body. Predicates require synchronous boolean results with normal
-  `(E, number, E[])` adaptation; from uses `(E, number)`. Find adds undefined;
+  `(E, number, A)` adaptation with the receiver's writable/readonly A; from uses `(E, number)`. Find adds undefined;
   findIndex returns number, filter E[], some/every boolean. ToSorted requires one
   synchronous `(E, E) => number` comparator and preserves E[].
 - Object.hasOwn tests presence without value refinement; class keys are literal

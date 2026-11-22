@@ -10,6 +10,6 @@ Update parser, visitors, checker and lowering together.
 - Conditionals keep distinct condition/arm nodes. Optional guards mark receivers/
   callees and completed wrappers own postfix chains; parentheses separate chains.
 - Properties distinguish decoded static names from computed keys; visit keys before
-  values. Classes carry name, fields and spans; fields have type/presence only.
+  values. Classes carry name, fields and spans; fields carry type, presence and compile-time readonly.
 - Comments are whitespace, never directives, schemas or synthetic exports. Manifests
   alone select language versions; no version/initializer AST metadata.

@@ -877,7 +877,7 @@ public final class NameResolver {
             case deal.ast.ArrayType at -> {
                 Type elem = resolveTypeNode(at.elementType());
                 if (elem == Type.Error.INSTANCE) yield Type.Error.INSTANCE;
-                yield Types.array(elem);
+                yield new Type.Array(elem, at.readonly());
             }
             case deal.ast.NullableType nt -> {
                 // Check the surface union before unknown absorbs its nullish members.

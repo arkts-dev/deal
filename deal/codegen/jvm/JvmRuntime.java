@@ -1088,7 +1088,7 @@ public final class JvmRuntime {
         if (desc.startsWith("nullable(")) {
             return kindTextOf(desc.substring(9, desc.length() - 1));
         }
-        if (desc.startsWith("array(")) {
+        if (desc.startsWith("array(") || desc.startsWith("readonlyarray(")) {
             return "array";
         }
         if (desc.startsWith("function(")) {
@@ -1178,7 +1178,7 @@ public final class JvmRuntime {
                 || deal.semantic.ir.ClassId.ERROR.text().equals(desc)) {
             return "class";
         }
-        if (desc.startsWith("array(")) {
+        if (desc.startsWith("array(") || desc.startsWith("readonlyarray(")) {
             return "array";
         }
         if (desc.startsWith("function(")) {
@@ -1637,13 +1637,17 @@ public final class JvmRuntime {
                         pending.push(new ValueCheck(field.descriptor(), "ref", null, task.completion(), null, task.arrays(), instance, field,
                             deal.semantic.RuntimeValidationPath.child(task.path(), field.name())));
                     }
-                } else if (current.startsWith("array(")) {
+                } else if (current.startsWith("array(") || current.startsWith("readonlyarray(")) {
                     if (!(value instanceof Array array)) throw kindFailure("array", actual, task.completion());
-                    String inner = current.substring(6, current.length() - 1);
-                    if (array.elementDescriptor != null && !array.elementDescriptor.equals(inner))
+                    boolean readonly = current.startsWith("readonly");
+                    String inner = current.substring(readonly ? 14 : 6, current.length() - 1);
+                    if (array.elementDescriptor != null && !(readonly
+                            ? deal.semantic.ir.RuntimeDescriptor.assignable(parseDescriptor(canonicalDesc(array.elementDescriptor), false),
+                                parseDescriptor(canonicalDesc(inner), false)) : array.elementDescriptor.equals(inner)))
                         throw fail("E8001", "array element descriptor mismatch", "-", current, "array");
                     if (!seen.computeIfAbsent(value, ignored -> new java.util.HashSet<>()).add(current)) continue;
-                    String innerCanonical = innerCanon(canonical, "[", "]");
+                    if (array.elementDescriptor != null) inner = array.elementDescriptor;
+                    String innerCanonical = readonly ? null : innerCanon(canonical, "[", "]");
                     if (innerCanonical == null) innerCanonical = canonicalDesc(inner);
                     for (int i = array.length() - 1; i >= 0; --i) {
                         Object element = i < array.elements.size() ? array.elements.get(i) : MISSING;
@@ -3104,12 +3108,16 @@ case "NUMBER_ADD" -> {
             if (descriptor.startsWith("@") || descriptor.equals("Error")) {
                 if (!(value instanceof ClassInstance instance) || !descriptor.equals(instance.classIdText()))
                     throw classFailure(descriptor, value, actualOf("ref", value), false);
-            } else if (descriptor.startsWith("array(")) {
+            } else if (descriptor.startsWith("array(") || descriptor.startsWith("readonlyarray(")) {
                 if (!(value instanceof Array array)) throw kindFailure("array", actualOf("ref", value), false);
-                String inner = descriptor.substring(6, descriptor.length() - 1);
-                if (array.elementDescriptor != null && !array.elementDescriptor.equals(inner))
+                boolean readonly = descriptor.startsWith("readonlyarray(");
+                String inner = descriptor.substring(readonly ? 14 : 6, descriptor.length() - 1);
+                if (array.elementDescriptor != null && !(readonly
+                        ? deal.semantic.ir.RuntimeDescriptor.assignable(parseDescriptor(canonicalDesc(array.elementDescriptor), false),
+                            parseDescriptor(canonicalDesc(inner), false))
+                        : array.elementDescriptor.equals(inner)))
                     throw kindFailure("array", "array", false);
-                return inner;
+                return array.elementDescriptor != null ? array.elementDescriptor : inner;
             } else if (descriptor.equals("record")) {
                 if (!(value instanceof Table)) throw kindFailure("table", actualOf("ref", value), false);
             } else if (!descriptor.equals("unknown")) {
@@ -3292,7 +3300,17 @@ case "NUMBER_ADD" -> {
             throw error;
         }
         Object value = array.elements.get((int) index);
-        try { return bcheck(descriptor, "unknown", value, canonical); }
+        String requested = descriptor, requestedCanonical = canonical;
+        if (array.elementDescriptor != null) {
+            descriptor = array.elementDescriptor;
+            canonical = canonicalDesc(descriptor);
+        }
+        try {
+            Object admitted = bcheck(descriptor, "unknown", value, canonical);
+            descriptor = requested;
+            canonical = requestedCanonical;
+            return bcheck(descriptor, "unknown", admitted, canonical);
+        }
         catch (DealError cause) {
             DealError outer = arm(deal.semantic.ir.FailureArmId.ARRAY_ELEMENT_KIND,
                 java.util.Map.of("oneBasedIndex", Integer.toString((int) index + 1)), origin, canonical,
@@ -3323,6 +3341,10 @@ case "NUMBER_ADD" -> {
 
     public static Object arraySearch(Array array, Object needle, double from, boolean includes,
                                      String descriptor, String canonical, String origin) {
+        if (array.elementDescriptor != null) {
+            descriptor = array.elementDescriptor;
+            canonical = canonicalDesc(descriptor);
+        }
         int length = array.length();
         int start = deal.semantic.ir.NumberSemantics.spliceStart(from, length);
         for (int i = start; i < length; i++) {
@@ -3351,7 +3373,7 @@ case "NUMBER_ADD" -> {
 
     public static Array arrayConcat(Array left, Array right, String descriptor, String canonical, String origin) {
         Array result = new Array(0);
-        result.elementDescriptor = canonical;
+        result.elementDescriptor = descriptor;
         for (Array source : new Array[]{left, right}) {
             Array copy = arraySlice(source, 0, Double.POSITIVE_INFINITY, descriptor, canonical, origin);
             result.elements.addAll(copy.elements);
@@ -3367,7 +3389,11 @@ case "NUMBER_ADD" -> {
         int start = deal.semantic.ir.NumberSemantics.spliceStart(from, length);
         int end = deal.semantic.ir.NumberSemantics.spliceStart(to, length);
         Array result = new Array(Math.max(0, end - start));
-        result.elementDescriptor = canonical;
+        result.elementDescriptor = descriptor;
+        if (array.elementDescriptor != null) {
+            descriptor = array.elementDescriptor;
+            canonical = canonicalDesc(descriptor);
+        }
         for (int i = start; i < end; i++) {
             Object value = i < array.elements.size() ? array.elements.get(i) : MISSING;
             if (value == MISSING) { result.elements.add(MISSING); continue; }
@@ -3491,6 +3517,8 @@ case "NUMBER_ADD" -> {
             return "?!" + canonicalDesc(desc.substring(22, desc.length() - 1));
         if (desc.startsWith("undefinedable(") && desc.endsWith(")"))
             return "!" + canonicalDesc(desc.substring(14, desc.length() - 1));
+        if (desc.startsWith("readonlyarray(") && desc.endsWith(")"))
+            return "readonly[" + canonicalDesc(desc.substring(14, desc.length() - 1)) + "]";
         if (desc.startsWith("array(") && desc.endsWith(")")) {
             return "[" + canonicalDesc(desc.substring(6, desc.length() - 1)) + "]";
         }

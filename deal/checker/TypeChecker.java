@@ -745,6 +745,15 @@ public final class TypeChecker {
     private void refineAssignedBinding(Symbol binding, Type target, Type value) {
         Type stored = target instanceof Type.Func && value instanceof Type.Func
             && !Types.equals(target, value) ? target : value;
+        Type base = target instanceof Type.Nullable n ? n.inner() : target;
+        Type valueBase = value instanceof Type.Nullable n ? n.inner() : value;
+        if (base instanceof Type.Array a && a.readonly() && valueBase instanceof Type.Array) {
+            stored = base;
+            if (value instanceof Type.Nullable n) {
+                if (n.admitsNull()) stored = Types.withNullish(stored, false, false);
+                if (n.admitsUndefined()) stored = Types.withNullish(stored, true, false);
+            }
+        }
         narrowing.narrow(binding, stored);
     }
 
@@ -1354,7 +1363,10 @@ public final class TypeChecker {
                 }
                 if (sym != null) {
                     ClassField field = IntrinsicResolvers.findField(sym.fields(), mae.field());
-                    if (field != null && !field.optional()) {
+                    if (field != null && field.readonly()) {
+                        mutationError(DiagnosticCode.E3017, "Readonly fields cannot be deleted", ds.span(),
+                            "mutation.readonly-field-delete", "delete", "readonly field", mae.field(), field.span().range());
+                    } else if (field != null && !field.optional()) {
                         mutationError(DiagnosticCode.E4004,
                             "Cannot delete required field '" + mae.field() + "'", ds.span(),
                             "mutation.required-field-delete", "delete", "required field presence", mae.field(),
@@ -2099,7 +2111,7 @@ public final class TypeChecker {
             : new Type.Func(List.of(source.element(), Type.Number.INSTANCE, source), Type.Boolean.INSTANCE);
         Type result = switch (member.field()) {
             case "findIndex" -> Type.Number.INSTANCE;
-            case "filter", "toSorted" -> source;
+            case "filter", "toSorted" -> new Type.Array(source.element());
             case "some", "every" -> Type.Boolean.INSTANCE;
             default -> Types.optionalRead(source.element());
         };
@@ -2444,6 +2456,10 @@ public final class TypeChecker {
             return Type.Error.INSTANCE;
         }
         if (objType instanceof Type.Array array && List.of("push", "pop", "splice", "slice", "concat", "includes", "indexOf", "join").contains(field)) {
+            if (array.readonly() && List.of("push", "pop", "splice").contains(field)) {
+                error(DiagnosticCode.E3017, "Readonly array cannot be mutated", mae.span());
+                return Type.Error.INSTANCE;
+            }
             if (directBuiltinCall == null || mae != directBuiltinCall.callee()) {
                 directOnlyError("Receiver intrinsics support direct calls only", mae.span(), "Array." + field, "call.receiver-direct-only");
                 return Type.Error.INSTANCE;
@@ -2456,12 +2472,12 @@ public final class TypeChecker {
                     }
                     yield new Type.Func(List.of(Type.String.INSTANCE), Type.String.INSTANCE, false);
                 }
-                case "concat" -> new Type.Func(List.of(array), array, false);
+                case "concat" -> new Type.Func(List.of(new Type.Array(array.element(), true)), new Type.Array(array.element()), false);
                 case "push" -> new Type.Func(List.of(array.element()), Type.Number.INSTANCE, false);
                 case "pop" -> new Type.Func(List.of(), Types.optionalRead(array.element()), false);
                 case "slice" -> new Type.Func(directBuiltinCall.args().size() == 0 ? List.of()
                     : directBuiltinCall.args().size() == 1 ? List.of(Type.Number.INSTANCE)
-                    : List.of(Type.Number.INSTANCE, Type.Number.INSTANCE), array, false);
+                    : List.of(Type.Number.INSTANCE, Type.Number.INSTANCE), new Type.Array(array.element()), false);
                 case "includes", "indexOf" -> new Type.Func(
                     directBuiltinCall.args().size() == 1 ? List.of(array.element())
                         : List.of(array.element(), Type.Number.INSTANCE),
@@ -3300,7 +3316,22 @@ public final class TypeChecker {
 
     private Type conditionalResult(Type consequent, Type alternate, Type context, Span span) {
         if (consequent == Type.Error.INSTANCE || alternate == Type.Error.INSTANCE) return Type.Error.INSTANCE;
-        if (context != null && isAssignable(context, consequent) && isAssignable(context, alternate)) return context;
+        if (context != null && isAssignable(context, consequent) && isAssignable(context, alternate)) {
+            Type base = context instanceof Type.Nullable n ? n.inner() : context;
+            if (base instanceof Type.Array array && array.readonly()) {
+                Type leftBase = consequent instanceof Type.Nullable n ? n.inner() : consequent;
+                Type rightBase = alternate instanceof Type.Nullable n ? n.inner() : alternate;
+                Type result = leftBase instanceof Type.Array || rightBase instanceof Type.Array ? base : null;
+                for (Type arm : List.of(consequent, alternate)) {
+                    boolean admitsNull = arm instanceof Type.Null || arm instanceof Type.Nullable n && n.admitsNull();
+                    boolean admitsUndefined = arm instanceof Type.Undefined || arm instanceof Type.Nullable n && n.admitsUndefined();
+                    if (admitsNull) result = result == null ? Type.Null.INSTANCE : Types.withNullish(result, false, false);
+                    if (admitsUndefined) result = result == null ? Type.Undefined.INSTANCE : Types.withNullish(result, true, false);
+                }
+                return result;
+            }
+            return context;
+        }
         if (Types.equals(consequent, alternate)) return consequent;
         if (consequent instanceof Type.Never || alternate instanceof Type.Never) {
             error(DiagnosticCode.E3006, "Never expressions are not conditional data", span);
@@ -3455,6 +3486,20 @@ public final class TypeChecker {
             mutationError(DiagnosticCode.E3017, "Length is read-only", assign.target().span(),
                     "mutation.length-readonly", "assignment", "read-only length", typeName(typeOf(mae.object())), null);
             readOnlyTarget = true;
+        }
+
+        if (receiver != null && typeOf(receiver) instanceof Type.Array a && a.readonly()) {
+            error(DiagnosticCode.E3017, "Readonly array cannot be mutated", assign.target().span());
+            readOnlyTarget = true;
+        }
+        if (assign.target() instanceof MemberAccessExpr member
+                && typeOf(member.object()) instanceof Type.Class cls) {
+            Symbol.ClassSymbol owner = exactReceiverClassSymbol(member.object(), cls);
+            ClassField field = owner == null ? null : IntrinsicResolvers.findField(owner.fields(), member.field());
+            if (field != null && field.readonly()) {
+                error(DiagnosticCode.E3017, "Readonly field cannot be assigned", member.span());
+                readOnlyTarget = true;
+            }
         }
 
         // F3: Use the target type as contextual expected type for the value
@@ -4147,7 +4192,7 @@ public final class TypeChecker {
             case Type.String ignored -> "string";
             case Type.Table ignored -> "Record<string, unknown>";
             case Type.Error ignored -> "<error>";
-            case Type.Array a -> (a.element() instanceof Type.Nullable || a.element() instanceof Type.Func
+            case Type.Array a -> (a.readonly() ? "readonly " : "") + (a.element() instanceof Type.Nullable || a.element() instanceof Type.Func
                     ? "(" + typeName(a.element(), depth + 1) + ")"
                     : typeName(a.element(), depth + 1)) + "[]";
             case Type.Nullable n -> (n.inner() instanceof Type.Func

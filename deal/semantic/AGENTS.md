@@ -74,7 +74,7 @@ Array lowering retains exact descriptors and ordinary boundary ownership:
 |---|---|
 | push | Save receiver/value, capture live append position after effects, validate/adapt before commit, return new length |
 | toSorted | Admitted comparator, post-argument dense snapshot, stable shared merge sort; undefined sorts last without callbacks |
-| concat | ARRAY_CONCAT with identical array descriptors; saved receiver, post-argument reads, sparse presence and fresh shallow storage |
+| concat | ARRAY_CONCAT with a compatible readonly argument and mutable result; saved receiver, post-argument reads, sparse presence and fresh shallow storage |
 | slice | ARRAY_SLICE(receiver,start,end); omitted bounds become 0/+infinity; post-argument length, selected-position checks, fresh shallow result |
 | join/search | Saved operands, post-argument snapshot, ordered reached checks; preserve source indexes, holes and early exit |
 | map | Saved/admitted mapper, length snapshot, fresh array, strict ARRAY_ELEMENT_GET, indirect calls and checked append |

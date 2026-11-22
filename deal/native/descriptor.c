@@ -34,6 +34,7 @@
 
 #define DEAL_DESCRIPTOR_ADMITS_NULL      1u
 #define DEAL_DESCRIPTOR_ADMITS_UNDEFINED 2u
+#define DEAL_DESCRIPTOR_READONLY 4u
 
 struct deal_descriptor {
     char *text;                       /* the canonical text, immutable */
@@ -313,13 +314,14 @@ static size_t deal_descriptor_parse_at(const char *text, size_t length,
         deal_platform_fault("descriptor: unexpected end of text");
     }
     char lead = text[position];
-    if (lead == '[') {
+    int readonly = length - position >= 9u && memcmp(text + position, "readonly[", 9u) == 0;
+    if (lead == '[' || readonly) {
         deal_descriptor *element = NULL;
-        size_t cursor = deal_descriptor_parse_at(text, length, position + 1u, 0,
+        size_t cursor = deal_descriptor_parse_at(text, length, position + (readonly ? 9u : 1u), 0,
             &element);
         cursor = deal_descriptor_expect(text, length, cursor, ']');
         deal_descriptor *atom = deal_descriptor_make(text, position, cursor,
-            DEAL_DESCRIPTOR_ARRAY, 0u);
+            DEAL_DESCRIPTOR_ARRAY, readonly ? DEAL_DESCRIPTOR_READONLY : 0u);
         atom->inner = element;
         *out = deal_descriptor_intern_atom(atom);
         return cursor;
@@ -833,6 +835,20 @@ static int deal_check_element_compatible(deal_descriptor *element,
     return recorded == deal_descriptor_reference(element);
 }
 
+static int deal_descriptor_assignable(deal_descriptor *actual, deal_descriptor *target) {
+    if (actual == target || target->kind == DEAL_DESCRIPTOR_UNKNOWN) return 1;
+    if (target->kind == DEAL_DESCRIPTOR_NULLISH) {
+        if (actual->kind == DEAL_DESCRIPTOR_NULL) return (target->flags & DEAL_DESCRIPTOR_ADMITS_NULL) != 0u || target->inner->kind == DEAL_DESCRIPTOR_NULL;
+        if (actual->kind == DEAL_DESCRIPTOR_UNDEFINED) return (target->flags & DEAL_DESCRIPTOR_ADMITS_UNDEFINED) != 0u || target->inner->kind == DEAL_DESCRIPTOR_UNDEFINED;
+        if (actual->kind == DEAL_DESCRIPTOR_NULLISH)
+            return (actual->flags & ~target->flags) == 0u && (actual->inner == target->inner
+                || (actual->inner->kind == DEAL_DESCRIPTOR_ARRAY && deal_descriptor_assignable(actual->inner, target->inner)));
+        return actual == target->inner || (actual->kind == DEAL_DESCRIPTOR_ARRAY && deal_descriptor_assignable(actual, target->inner));
+    }
+    return actual->kind == DEAL_DESCRIPTOR_ARRAY && target->kind == DEAL_DESCRIPTOR_ARRAY
+        && (target->flags & DEAL_DESCRIPTOR_READONLY) && deal_descriptor_assignable(actual->inner, target->inner);
+}
+
 static deal_check_case deal_check_core(deal_descriptor *descriptor,
                                        const deal_classification *value,
                                        deal_check_failure *failure) {
@@ -898,6 +914,12 @@ static deal_check_case deal_check_core(deal_descriptor *descriptor,
         return DEAL_CHECK_CLASS_IDENTITY;
     case DEAL_DESCRIPTOR_ARRAY:
         if (value->kind != DEAL_KIND_ARRAY) {
+            return DEAL_CHECK_KIND_MISMATCH;
+        }
+        if (descriptor->flags & DEAL_DESCRIPTOR_READONLY) {
+            uint32_t stored = deal_container_array_element_descriptor(value->referent);
+            if (stored == 0u || deal_descriptor_assignable(deal_descriptor_of_reference(stored), descriptor->inner))
+                return DEAL_CHECK_PASS;
             return DEAL_CHECK_KIND_MISMATCH;
         }
         return deal_check_element_compatible(descriptor->inner, value->referent)
@@ -1540,6 +1562,9 @@ static deal_outcome deal_check_live_value_core(deal_descriptor *expected, deal_c
             while (declared->kind == DEAL_DESCRIPTOR_NULLISH) declared = declared->inner;
             deal_descriptor *element = declared->kind == DEAL_DESCRIPTOR_ARRAY
                 ? declared->inner : deal_descriptor_intern("unknown");
+            uint32_t stored = deal_container_array_element_descriptor(array);
+            if (declared->kind == DEAL_DESCRIPTOR_ARRAY && stored != 0u)
+                element = deal_descriptor_of_reference(stored);
             for (size_t index = deal_container_array_count(array); index != 0u; index--) {
                 deal_check_input child = deal_live_element(array, index - 1u);
                 deal_live_push(&walk, child, element, &item);
@@ -1688,7 +1713,15 @@ deal_outcome_data deal_array_splice(deal_array *array, double from, double delet
     return result;
 }
 
+static deal_descriptor *deal_array_storage_descriptor(deal_array *array,
+                                                       deal_descriptor *fallback) {
+    uint32_t reference = deal_container_array_element_descriptor(array);
+    return reference != 0u ? deal_descriptor_of_reference(reference) : fallback;
+}
+
 deal_outcome_data deal_array_element_get(deal_array *array, double index, deal_descriptor *element, const deal_origin *origin) {
+    deal_descriptor *requested = element;
+    element = deal_array_storage_descriptor(array, element);
     deal_outcome_data result = {0};
     size_t position;
     size_t length = deal_container_array_count(array);
@@ -1705,6 +1738,12 @@ deal_outcome_data deal_array_element_get(deal_array *array, double index, deal_d
     uint32_t boundary = deal_descriptor_type(element) == DEAL_DESCRIPTOR_FUNCTION
         ? DEAL_BOUNDARY_FUNCTION_SIGNATURE : DEAL_BOUNDARY_TYPE_DESCRIPTOR;
     deal_outcome checked = deal_check_live_value_core(element, input, boundary, &context, 0);
+    if (checked.error == NULL && requested != element) {
+        element = requested;
+        boundary = deal_descriptor_type(element) == DEAL_DESCRIPTOR_FUNCTION
+            ? DEAL_BOUNDARY_FUNCTION_SIGNATURE : DEAL_BOUNDARY_TYPE_DESCRIPTOR;
+        checked = deal_check_live_value_core(element, input, boundary, &context, 0);
+    }
     if (checked.error != NULL) {
         result.error = deal_array_element_error(position + 1u, element, &input, origin, checked.error);
     } else result.value = input.datum;
@@ -1756,6 +1795,7 @@ deal_outcome_data deal_array_join(deal_array *array, deal_string *separator, con
 
 deal_outcome_data deal_array_search(deal_array *array, const deal_data *needle, double from,
                                      uint32_t includes, deal_descriptor *element, const deal_origin *origin) {
+    element = deal_array_storage_descriptor(array, element);
     deal_outcome_data result = {0};
     result.value = includes ? deal_data_of_boolean(0) : deal_data_of_number(-1.0);
     size_t length = deal_container_array_count(array);
@@ -1785,6 +1825,50 @@ deal_outcome_data deal_array_search(deal_array *array, const deal_data *needle, 
     return result;
 }
 
+static uint32_t deal_array_copy_layout(deal_descriptor *element) {
+    if (deal_descriptor_type(element) == DEAL_DESCRIPTOR_NULLISH) {
+        deal_descriptor_kind base = deal_descriptor_type(deal_descriptor_inner(element));
+        if (base == DEAL_DESCRIPTOR_NUMBER) return DEAL_LAYOUT_ELEMENT_NULLISH_NUMBER;
+        if (base == DEAL_DESCRIPTOR_BOOLEAN) return DEAL_LAYOUT_ELEMENT_NULLISH_BOOLEAN;
+        return DEAL_LAYOUT_ELEMENT_REFERENCE;
+    }
+    switch (deal_descriptor_type(element)) {
+    case DEAL_DESCRIPTOR_UNKNOWN:
+    case DEAL_DESCRIPTOR_NUMBER: return DEAL_LAYOUT_ELEMENT_DATUM;
+    case DEAL_DESCRIPTOR_BOOLEAN: return DEAL_LAYOUT_ELEMENT_BOOLEAN;
+    default: return DEAL_LAYOUT_ELEMENT_REFERENCE;
+    }
+}
+
+static void deal_array_copy_element(deal_array *target, size_t destination,
+                                    deal_array *source, size_t index) {
+    deal_data datum = deal_live_element(source, index).datum;
+    switch (deal_container_array_element_layout(target)) {
+    case DEAL_LAYOUT_ELEMENT_DATUM:
+        deal_container_array_store(target, destination, &datum); return;
+    case DEAL_LAYOUT_ELEMENT_BOOLEAN: {
+        uint8_t value = datum.number != 0.0 ? 1u : 0u;
+        deal_container_array_store(target, destination, &value); return;
+    }
+    case DEAL_LAYOUT_ELEMENT_NULLISH_NUMBER: {
+        deal_nullish_number_element value = {datum.tag == DEAL_DATA_NULL ? DEAL_NULLISH_NULL
+            : datum.tag == DEAL_DATA_UNDEFINED ? DEAL_NULLISH_UNDEFINED : DEAL_NULLISH_BASE, datum.number};
+        deal_container_array_store(target, destination, &value); return;
+    }
+    case DEAL_LAYOUT_ELEMENT_NULLISH_BOOLEAN: {
+        deal_nullish_boolean_element value = {datum.tag == DEAL_DATA_NULL ? DEAL_NULLISH_NULL
+            : datum.tag == DEAL_DATA_UNDEFINED ? DEAL_NULLISH_UNDEFINED : DEAL_NULLISH_BASE,
+            datum.number != 0.0 ? 1u : 0u};
+        deal_container_array_store(target, destination, &value); return;
+    }
+    default: {
+        void *reference = datum.tag == DEAL_DATA_NULL ? deal_null_singleton
+            : datum.tag == DEAL_DATA_UNDEFINED ? deal_undefined_singleton : datum.reference;
+        deal_container_array_store(target, destination, &reference); return;
+    }
+    }
+}
+
 deal_outcome_data deal_array_slice(deal_array *array, double from, double to,
                                     deal_descriptor *element, const deal_origin *origin) {
     deal_outcome_data result = {0};
@@ -1797,24 +1881,25 @@ deal_outcome_data deal_array_slice(deal_array *array, double from, double to,
     size_t count = last > first ? (size_t)last - start : 0u;
     deal_root_scope_push();
     (void)deal_root_scope_hold(array);
+    deal_descriptor *stored = deal_array_storage_descriptor(array, element);
     for (size_t i = 0u; i < count; i++) {
         deal_check_input input = deal_live_element(array, start + i);
         deal_check_context context = {0};
         context.origin = origin;
-        uint32_t boundary = deal_descriptor_type(element) == DEAL_DESCRIPTOR_FUNCTION
+        uint32_t boundary = deal_descriptor_type(stored) == DEAL_DESCRIPTOR_FUNCTION
             ? DEAL_BOUNDARY_FUNCTION_SIGNATURE : DEAL_BOUNDARY_TYPE_DESCRIPTOR;
-        deal_outcome checked = deal_check_live_value_core(element, input, boundary, &context, 0);
+        deal_outcome checked = deal_check_live_value_core(stored, input, boundary, &context, 0);
         if (checked.error != NULL) {
-            result.error = deal_array_element_error(start + i + 1u, element, &input, origin, checked.error);
+            result.error = deal_array_element_error(start + i + 1u, stored, &input, origin, checked.error);
             deal_root_scope_pop();
             return result;
         }
     }
-    deal_array *copy = deal_container_array_new_typed(deal_container_array_element_layout(array),
+    deal_array *copy = deal_container_array_new_typed(deal_array_copy_layout(element),
         deal_descriptor_reference(element), count);
     (void)deal_root_scope_hold(copy);
     for (size_t i = 0u; i < count; i++)
-        deal_container_array_store(copy, i, deal_container_array_element(array, start + i));
+        deal_array_copy_element(copy, i, array, start + i);
     result.value = deal_data_of_reference(DEAL_DATA_ARRAY, copy);
     deal_root_scope_pop();
     return result;
@@ -1836,7 +1921,7 @@ deal_outcome_data deal_array_concat(deal_array *array, deal_array *other,
     (void)deal_root_scope_hold(second);
     size_t a = deal_container_array_count(first), b = deal_container_array_count(second);
     if (a > SIZE_MAX - b) deal_platform_fault("array concat size overflow");
-    deal_array *copy = deal_container_array_new_typed(deal_container_array_element_layout(array),
+    deal_array *copy = deal_container_array_new_typed(deal_array_copy_layout(element),
         deal_descriptor_reference(element), a + b);
     (void)deal_root_scope_hold(copy);
     for (size_t i = 0u; i < a; i++)
