@@ -180,7 +180,23 @@ public final class NumberProductionTest {
         } finally { CompositionProductionTest.remove(root); }
     }
 
+    static void conversionOnlyPrograms() throws Exception {
+        Path root = Files.createTempDirectory("deal-conversion-only-");
+        try {
+            int index = 0;
+            for (String statement : List.of("console.log(String(0));", "console.log(String(Number(\"7\")));",
+                    "Number(\"0\");", "String(0);", "console.log(String(-0));")) {
+                String expected = statement.startsWith("console")
+                    ? (statement.contains("7") ? "7\n" : "0\n") : "";
+                CompositionProductionTest.execute("export function main():void{" + statement + "}", expected,
+                    root.resolve("case-" + index++), null, List.of(deal.codegen.Backend.JS,
+                        deal.codegen.Backend.LUAJIT, deal.codegen.Backend.JVM, deal.codegen.Backend.LLVM));
+            }
+        } finally { CompositionProductionTest.remove(root); }
+    }
+
     public static void main(String[] args) throws Exception {
+        conversionOnlyPrograms();
         numericBuiltins();
         Path home = Path.of("").toAbsolutePath();
         Path project = Files.createTempDirectory("deal-number-production-");

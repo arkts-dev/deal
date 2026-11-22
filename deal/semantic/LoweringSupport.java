@@ -569,7 +569,10 @@ public final class LoweringSupport {
                     // this call, so the stored-expression arm exempts it
                     // (the dynamic-callee arm above claims the call).
                     walkFunctionExpr(functionExpr, module, scan, checkerScope, true);
-                } else {
+                } else if (!(calleeSymbol instanceof Symbol.IntrinsicSymbol
+                        && callee instanceof IdentifierExpr identifier
+                        && (identifier.name().equals("String") || identifier.name().equals("Number")))) {
+                    // Direct conversions lower to algorithm selectors, not binding loads.
                     walkExpression(callee, module, scan, checkerScope);
                 }
                 for (ExpressionNode argument : callExpr.args()) {

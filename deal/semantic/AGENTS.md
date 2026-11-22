@@ -64,7 +64,7 @@ remain distinct dialects.
 Direct-only builtins carry closed selectors/signatures, never fictitious source
 exports or callable catalog entries. String receivers precede admitted arguments.
 Omitted string end becomes +infinity; search defaults preserve indexOf/lastIndexOf
-rules. String/Number conversions are checked number/string-only; interpolation
+rules. String/Number conversions are checked number/string-only; intrinsic callees create no binding-read coverage obligation. Interpolation
 converts numbers before later fragment effects. Shared scalar rules live in
 NumberSemantics/StringSemantics; preserve binary64 specials and every UTF-16 unit.
 
