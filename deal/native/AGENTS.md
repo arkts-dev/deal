@@ -104,7 +104,7 @@ before construction callbacks.
 Stringify checks declared positions when reached, not later descendants eagerly.
 Required absence rejects independently of nullability. Preserve path-local cycle
 identity, ordinary Record key order, class declaration order and generic omission/
-substitution rules. Class/array metadata never retags actual values. Class plans
+substitution rules, including undefined at declared unknown fields. Class/array metadata never retags actual values. Class plans
 carry precise reference maps and exact construct/read seams; no helper/default hooks.
 
 ## Errors and hosts

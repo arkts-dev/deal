@@ -179,6 +179,53 @@ public final class CompositionProductionTest {
                     + "export function hasForeign(box:Box):boolean{return Object.hasOwn(box.item,\"foreign\");}"));
     }
 
+    static void jsonUnknownOmission(Path root) throws Exception {
+        String body = """
+            class C {
+              required:unknown; optional?:unknown; kept:number;
+              explicit:undefined; nullish:number|undefined; fn:()=>number;
+            }
+            export function run():void {
+              let fn=():number=>1;
+              let value:C={required:undefined,optional:undefined,kept:7,
+                explicit:undefined,nullish:undefined,fn:fn};
+              if((JSON.stringify(value)??"missing")!==`{"kept":7}`){
+                throw {name:"JSON_OMISSION",message:"declared unknown undefined must be omitted"};
+              }
+              value.required=null;
+              if((JSON.stringify(value)??"missing")!==`{"required":null,"kept":7}`){
+                throw {name:"JSON_OMISSION",message:"null remains present"};
+              }
+              value.required=undefined; delete value.optional;
+              if((JSON.stringify(value)??"missing")!==`{"kept":7}`){
+                throw {name:"JSON_OMISSION",message:"presence and payload stay independent"};
+              }
+              let values:unknown[]=[undefined,fn,null];
+              if((JSON.stringify(values)??"missing")!==`[null,null,null]`){
+                throw {name:"JSON_OMISSION",message:"array substitution"};
+              }
+            }
+            export function main():void {run();}
+            """;
+        execute(body, "", "", root, null,
+            List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM), Map.of(), true);
+        Path entry = root.resolve("JS/src/main.deal");
+        var invocation = CompilerProfileProvider.resolve(ReleaseConfiguration.CURRENT_RELEASE_STATE,
+            ReleaseConfiguration.releaseCapabilityRegistry());
+        var compiler = new CompilationOrchestrator(entry, root.resolve("oracle"), false, false,
+            false, false, Backend.JS, null, List.of(entry.getParent()),
+            Path.of("").toAbsolutePath(), null, invocation);
+        if (!compiler.compile()) throw new AssertionError(compiler.diagnostics());
+        var project = compiler.producedProject();
+        var tables = new java.util.LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.StructuredBodyTable>();
+        var factories = new java.util.LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.ClassFactoryRegistry>();
+        project.modules().forEach((id, unit) -> {tables.put(id, unit.bodyTable()); factories.put(id, unit.classFactories());});
+        var result = deal.semantic.SemanticOracle.invokeSyncEntry(project, tables, factories,
+            new deal.semantic.SemanticOracle.HostResponder() {}, project.entryModule(), "run", List.of());
+        if (!(result.terminal() instanceof deal.semantic.SemanticRuntimeModel.Terminal.Success)
+                || !result.effects().isEmpty()) throw new AssertionError(result.comparisonReport());
+    }
+
     public static void main(String[] args) throws Exception {
         // Bridge used by Hypothesis: one minimized source is tested against an
         // independent transcript on every lane, never against another backend.
@@ -519,6 +566,7 @@ public final class CompositionProductionTest {
                     "leaf.deal", "class Node{value:number;next?:Node;}export class Payload{node:Node;}"
                         + "export function read(payload:Payload):number{return payload.node.value+(payload.node.next as Node).value;}"));
             jsonDeclarationComposition(root);
+            jsonUnknownOmission(root.resolve("json-unknown-omission"));
             execute(Files.readString(Path.of("skills/write-deal/examples/serialization/main.deal")),
                 "", "", root.resolve("json-serialization-example"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM), Map.of(

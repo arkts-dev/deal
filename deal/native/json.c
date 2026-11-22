@@ -1336,12 +1336,12 @@ static void deal_json_number_text(deal_json_buffer *out, double value) {
     deal_json_buffer_append(out, text, length);
 }
 
-/* 1 when the descriptor admits the undefined datum (a nullish descriptor with
- * the undefined member, or the `undefined`/`void` kinds). */
+/* 1 when the descriptor admits the undefined datum, including unknown. */
 static int deal_json_admits_undefined(deal_descriptor *descriptor) {
     switch (deal_descriptor_type(descriptor)) {
     case DEAL_DESCRIPTOR_UNDEFINED:
     case DEAL_DESCRIPTOR_VOID:
+    case DEAL_DESCRIPTOR_UNKNOWN:
         return 1;
     case DEAL_DESCRIPTOR_NULLISH:
         if (deal_descriptor_admits_undefined(descriptor)) {
