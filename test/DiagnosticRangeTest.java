@@ -1409,12 +1409,12 @@ public class DiagnosticRangeTest {
         for (String[] sample : new String[][] {
                 {"let a=[1];a.map((n:string):number=>1);", "Array.map", "E5001"},
                 {"let a=[1];a.find((n:number):number=>n);", "Array.find", "E5001"},
-                {"let a=[1];a.filter();", "Array.filter", "E3009"},
+                {"let a=[1];a.filter();", "Array.filter", "E5001"},
                 {"let a=[1];a.some((n:number):string=>\"yes\");", "Array.some", "E5001"},
                 {"let a=[1];a.every((n:string):boolean=>true);", "Array.every", "E5001"},
                 {"let a=[1];a.push(\"bad\");", "Array.push", "E5001"},
                 {"let s=\"abc\";s.slice(\"bad\");", "String.slice", "E5001"},
-                {"Math.min(1);", "Math.min", "E3009"},
+                {"Math.min(1);", "Math.min", "E5001"},
                 {"JSON.parse(1);", "JSON.parse", "E5001"},
                 {"String(true);", "String", "E5001"}}) {
             String source = "function f():void{" + sample[0] + "}";
@@ -1427,7 +1427,7 @@ public class DiagnosticRangeTest {
                     "selected intrinsic retains its actual name/signature without a fabricated declaration: " + sample[1]);
         }
         var callableField = checkerDiag(checkerDiagnostics("class C{map:()=>number;}function f(c:C):void{c.map(1);}",
-                "intrinsic-names.deal"), "E3009");
+                "intrinsic-names.deal"), "E5001");
         check(callableField != null && callableField.facts().call().callee().isEmpty(),
                 "same-spelled ordinary class callable field is not labeled an array intrinsic");
         var nonCallable = checkerDiag(checkerDiagnostics("function f():void{let value=1;value();}", "intrinsic-names.deal"), "E3008");

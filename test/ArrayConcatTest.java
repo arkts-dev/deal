@@ -9,8 +9,8 @@ public final class ArrayConcatTest {
     public static void main(String[] args) throws Exception {
         TypeLegalityFlowTest.check("function f():void{let a=[1];let b=a.concat([]);}",null);
         TypeLegalityFlowTest.check("function f():void{let a=[1];a.concat([\"x\"]);}","E3011");
-        TypeLegalityFlowTest.check("function f():void{let a=[1];a.concat();}","E3009");
-        TypeLegalityFlowTest.check("function f():void{let a=[1];a.concat([2],[3]);}","E3009");
+        TypeLegalityFlowTest.check("function f():void{let a=[1];a.concat();}","E5001");
+        TypeLegalityFlowTest.check("function f():void{let a=[1];a.concat([2],[3]);}","E5001");
         TypeLegalityFlowTest.check("function f():void{let a=[1];let fn=a.concat;}","E3001");
         String path="backend-runtime/arrays/concat.deal";
         String source=ConformanceHarnessMetadata.productionCorpusSource(Files.readString(Path.of("test/conformance/"+path)),path);

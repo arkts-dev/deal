@@ -211,8 +211,25 @@ public class DiagnosticClassificationTest {
         triggers.put("E3018", inMain.replace("%s",
             "let t: Record<string, unknown> = {}; t[0] = 1; "));
         triggers.put("E3008", inMain.replace("%s", "let x = 1; x(); "));
-        triggers.put("E3009", inMain.replace("%s",
-            "let f = function(x: number): null { return null; }; f(1, 2); "));
+        // Arity is function-signature validation (E5xxx), not a type-category code.
+        for (String source : List.of(
+                "function f(x:number):void{} export function main():void{f();}",
+                "export function main():void{let f=(x:number):void=>{};f(1,2);}",
+                "export function main():void{Number();}",
+                "export function main():void{[1].map();}",
+                "export function main():void{Array.from([1]);}",
+                "export function main():void{Math.min(1);}")) {
+            var diagnostics = compileAndGetDiagnostics(source, "arity.deal");
+            check(diagnostics.size() == 1 && diagnostics.getFirst().code().equals("E5001"),
+                "arity uses E5001 without cascading diagnostics: " + diagnostics);
+            if (diagnostics.size() == 1) {
+                check(diagnostics.getFirst().diagnosticCode().classification().category()
+                        == deal.diagnostics.DiagnosticClassification.Category.CALL,
+                    "arity retains call classification");
+                check(diagnostics.getFirst().facts().call() != null,
+                    "arity retains producer-owned signature facts");
+            }
+        }
         triggers.put("E4001",
             "class Foo { name: string; } "
             + inMain.replace("%s", "let f: Foo = {}; "));

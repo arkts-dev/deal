@@ -216,12 +216,12 @@ public final class TypeLegalityFlowTest {
             check("function f():void{let n=Number("+value+");}", "E5001");
         check("function f(x:unknown):number{return Number(x);}", "E5001");
         check("function f(x:Record<string,unknown>):number{return Number(x);}", "E5001");
-        check("function f():void{let n=Number();}", "E3009");
-        check("function f():void{let n=Number(\"1\",\"2\");}", "E3009");
+        check("function f():void{let n=Number();}", "E5001");
+        check("function f():void{let n=Number(\"1\",\"2\");}", "E5001");
         check("function f():void{let n=Number;}", "E3001");
         check("function f(xs:number[]):void{let a=xs.slice();let b=xs.slice(1);}", null);
         check("function f(xs:number[]):void{let a=xs.slice(undefined);}", "E5001");
-        check("function f(xs:number[]):void{let a=xs.slice(1,2,3);}", "E3009");
+        check("function f(xs:number[]):void{let a=xs.slice(1,2,3);}", "E5001");
         boundedNarrowing();
         for (String expression : List.of("x!==null && x>0", "x===null || x>0", "!(x===null) && x>0"))
             check("function f(x:number|null):boolean{return " + expression + ";}", null);

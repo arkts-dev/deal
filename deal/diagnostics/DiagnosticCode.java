@@ -235,7 +235,7 @@ public enum DiagnosticCode {
     E3007(Phase.FRONTEND, "Invalid operand types"),
     /** Not callable. */
     E3008(Phase.FRONTEND, "Not callable"),
-    /** Call argument count mismatch. */
+    /** Legacy registry entry; current call-arity producers use E5001 (E5xxx). */
     E3009(Phase.FRONTEND, "Call argument count mismatch"),
     /** Invalid operand types for '+'. */
     E3010(Phase.FRONTEND, "Invalid operand types for '+'"),

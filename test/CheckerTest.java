@@ -743,7 +743,7 @@ public class CheckerTest {
                 "call failure owns zero-based argument, full signature and exact parameter annotation");
         assertNoErrors(checkProgram(badCall.replace("f(\"bad\")", "f(1)")), "intended number argument repairs the call");
         var arity = checkProgram("function f(x:number):void{} f();").result().diagnostics().stream()
-                .filter(d -> d.code().equals("E3009")).findFirst().orElseThrow();
+                .filter(d -> d.code().equals("E5001")).findFirst().orElseThrow();
         check(arity.facts().call().argumentIndex() == -1 && arity.facts().call().expectedCount() == 1
                         && arity.facts().call().actualCount() == 0 && arity.facts().call().parameterRange() == null,
                 "arity mismatch records counts without inventing a failing argument");
@@ -1930,7 +1930,7 @@ public class CheckerTest {
             "function add(a: number, b: number): number { return a + b; }\n" +
             "let x: number = add(1);"
         );
-        assertError(out, "E3009", "arg count mismatch");
+        assertError(out, "E5001", "arg count mismatch");
     }
 
     static void testFunctionArgTypeMismatch() {

@@ -8,11 +8,11 @@ import java.util.List;
 public final class ArrayToSortedTest {
     public static void main(String[] args) throws Exception {
         TypeLegalityFlowTest.check("function f():void{let a=[1];a.toSorted((x,y):number=>x-y);}",null);
-        TypeLegalityFlowTest.check("function f():void{let a=[1];a.toSorted();}","E3009");
+        TypeLegalityFlowTest.check("function f():void{let a=[1];a.toSorted();}","E5001");
         TypeLegalityFlowTest.check("function f():void{let a=[1];a.toSorted((x,y):boolean=>true);}","E5001");
         TypeLegalityFlowTest.check("function f():void{let a=[1];a.toSorted(async(x,y):Promise<number>=>1);}","E5001");
         TypeLegalityFlowTest.check("function f():void{let a=[1];let c=a.toSorted;}","E3001");
-        TypeLegalityFlowTest.check("function f():void{let a=[1];a.toSorted((x,y):number=>x-y,0);}","E3009");
+        TypeLegalityFlowTest.check("function f():void{let a=[1];a.toSorted((x,y):number=>x-y,0);}","E5001");
         TypeLegalityFlowTest.check("function f():void{let a=[1];a.toSorted((x:string,y:string):number=>0);}","E5001");
         TypeLegalityFlowTest.check("function f():void{let a=[1];a.toSorted((x,y)=>x-y);}","E1015");
         Path root=Files.createTempDirectory("deal-sorted-");

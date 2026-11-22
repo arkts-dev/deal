@@ -84,6 +84,8 @@ optional calls; preserve direct-only/deletion restrictions.
 Record, Promise, Object, Array, String, JSON, Number, Math, Date, console and undefined
 are unshadowable. Resolve receiver intrinsics by checked type, not spelling;
 class/Record callable fields and namespace exports retain ordinary resolution.
+Call arity and parameter compatibility use E5xxx function-signature diagnostics;
+preserve call facts, ranges and rejection order when categorizing failures.
 Builtin operations are direct-call-only with exact signatures, no callable exports
 or implicit extraction from unknown. Follow the specification/catalog for arities.
 

@@ -2150,7 +2150,7 @@ public final class TypeChecker {
             contextualClassDecl = savedContext;
         }
         if (arguments.size() != 1) {
-            intrinsicCallError(DiagnosticCode.E3009, "Array.map requires exactly one argument", call, -1,
+            intrinsicCallError(DiagnosticCode.E5001, "Array.map requires exactly one argument", call, -1,
                 "Array.map", "call.array-map.argument-count", "1", Integer.toString(arguments.size()), 1, "", "");
             return Type.Error.INSTANCE;
         }
@@ -2187,7 +2187,7 @@ public final class TypeChecker {
         }
         typeMap.put(member.object(), Type.Table.INSTANCE);
         if (arguments.size() != 2) {
-            intrinsicCallError(DiagnosticCode.E3009, "Array.from requires exactly two arguments", call, -1,
+            intrinsicCallError(DiagnosticCode.E5001, "Array.from requires exactly two arguments", call, -1,
                 "Array.from", "call.array-from.argument-count", "2", Integer.toString(arguments.size()), 2, "", "");
             typeMap.put(member, BuiltinCall.ARRAY_FROM.signature());
             return Type.Error.INSTANCE;
@@ -2355,7 +2355,7 @@ public final class TypeChecker {
 
         // DEAL v1.2: fixed arity only — function types carry no rest arm.
         if (argTypes.size() != paramCount) {
-            diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E3009,
+            diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E5001,
                 "Function argument count mismatch: expected " + paramCount
                 + ", got " + argTypes.size(), call.span()).withFacts(callFacts(
                         "call.argument-count", call, funcType, -1,
