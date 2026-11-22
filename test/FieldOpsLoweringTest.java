@@ -493,7 +493,8 @@ public class FieldOpsLoweringTest {
             return;
         }
         LoweredModuleUnit unit = result.lowering().unit();
-        ClassId parentId = new ClassId(lib, "Parent");
+        ClassId parentId = new ClassId(deal.semantic.DescriptorService.semanticModulePath(
+            IdentityTestFixtures.identityOf(lib, "Parent")), "Parent");
         List<SemanticOp> reads = new ArrayList<>();
         for (SemanticOp op : ofKind(unit.ops(), SemanticOpKind.FIELD_READ)) {
             if (op.payload() instanceof KindPayload.FieldReadPayload fp
@@ -543,7 +544,8 @@ public class FieldOpsLoweringTest {
                 && children.get(1).payload() instanceof KindPayload.BoundaryPayload
                     fieldPayload) {
             RuntimeDescriptor childArray = new RuntimeDescriptor.Array(
-                new RuntimeDescriptor.Class(new ClassId(lib, "Child")));
+                new RuntimeDescriptor.Class(new ClassId(deal.semantic.DescriptorService.semanticModulePath(
+                    IdentityTestFixtures.identityOf(lib, "Child")), "Child")));
             check(fieldPayload.kind() == BoundaryKind.OPTIONAL_FIELD_READ
                     && fieldPayload.descriptor().equals(childArray),
                 "child 2 carries the read's checked result descriptor [@lib/Child]; got "
