@@ -42,9 +42,16 @@ public final class CompositionProductionTest {
     private static void execute(String source, String expected, String expectedStderr,
                         Path root, Path host, List<Backend> backends, Map<String, String> modules,
                         boolean nativeSanitizers) throws Exception {
+        execute(source, expected, expectedStderr, root, host, backends, modules, nativeSanitizers, null);
+    }
+
+    private static void execute(String source, String expected, String expectedStderr,
+                        Path root, Path host, List<Backend> backends, Map<String, String> modules,
+                        boolean nativeSanitizers, String configuredRoot) throws Exception {
         for (Backend backend : backends) {
             Path project = root.resolve(backend.name());
-            Path src = project.resolve("src");
+            Path src = ".".equals(configuredRoot) ? project
+                : project.resolve("space dir".equals(configuredRoot) ? "space dir" : "src");
             Path out = project.resolve("out");
             Files.createDirectories(src);
             Path entry = src.resolve("main.deal");
@@ -65,6 +72,16 @@ public final class CompositionProductionTest {
                     : Map.of("host/probe", src.resolve("host/probe.d.deal").toAbsolutePath().toString()),
                 List.of(src.toAbsolutePath()),
                 Path.of("").toAbsolutePath(), null, invocation);
+            if (configuredRoot != null) {
+                Files.writeString(project.resolve("deal.json"),
+                    "{\"languageVersion\":\"1.6\",\"moduleRoots\":[\"" + configuredRoot + "\"]}");
+                var located = deal.project.ProjectLocator.locate(entry.toString(),
+                    new deal.project.CliOverrides(backend.name().toLowerCase(java.util.Locale.ROOT),
+                        out.toAbsolutePath().toString()));
+                if (located.context() == null) throw new AssertionError("CONFIG_REJECTION: " + located);
+                compiler = new CompilationOrchestrator(located.context(), entry, false, false,
+                    false, false, null, invocation);
+            }
             compiler.compile();
             if (!compiler.diagnostics().isEmpty() || compiler.semanticEmissionCount() != 1)
                 throw new AssertionError("SOURCE_REJECTION " + backend + ": " + compiler.diagnostics());
@@ -224,6 +241,26 @@ public final class CompositionProductionTest {
             new deal.semantic.SemanticOracle.HostResponder() {}, project.entryModule(), "run", List.of());
         if (!(result.terminal() instanceof deal.semantic.SemanticRuntimeModel.Terminal.Success)
                 || !result.effects().isEmpty()) throw new AssertionError(result.comparisonReport());
+    }
+
+    static void configuredRootClasses(Path root) throws Exception {
+        String source = """
+            class C { x: number; }
+            export function main():void {
+              let c:C=JSON.parse(`{"x":7}`);
+              let raw:unknown=c;
+              if(!(raw instanceof C)){throw {name:"TEST",message:"class identity"};}
+              if((raw as C).x!==7){throw {name:"TEST",message:"field"};}
+              if((JSON.stringify(c)??"")!==`{"x":7}`){throw {name:"TEST",message:"JSON"};}
+            }
+            """;
+        List<String> roots = List.of("src", "./src", "src/", "src//", "folder/../src",
+            ".", "space dir", "space dir/../src", "$external/../src", "%/../src");
+        for (int i=0;i<roots.size();i++) {
+            execute(source, "", "", root.resolve("case"+i), null,
+                List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM),
+                Map.of(), true, roots.get(i));
+        }
     }
 
     public static void main(String[] args) throws Exception {
@@ -567,6 +604,7 @@ public final class CompositionProductionTest {
                         + "export function read(payload:Payload):number{return payload.node.value+(payload.node.next as Node).value;}"));
             jsonDeclarationComposition(root);
             jsonUnknownOmission(root.resolve("json-unknown-omission"));
+            configuredRootClasses(root.resolve("configured-root-classes"));
             execute(Files.readString(Path.of("skills/write-deal/examples/serialization/main.deal")),
                 "", "", root.resolve("json-serialization-example"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM), Map.of(

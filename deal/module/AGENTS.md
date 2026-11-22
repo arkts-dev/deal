@@ -12,7 +12,10 @@ Use active version constants in discovery and isolated constructors.
   string, table, math and time; stray std/json declarations grant no builtin identity.
 - Carry exact providers through imports, annotations, literals, calls and inferred
   carriers, including under namespace/parameter shadowing. Nominal identities name
-  defining files; never retag across providers. Project indexes include declarations
+  defining files; never retag across providers. Project path spellings must not
+  reject classes: share injective descriptor-component escaping across production
+  and isolated indexes, preserving ordinary atoms and configured identity.
+  Project indexes include declarations
   reached indirectly through fields/parameters/results.
 - Record optional guards/completed chains separately; preserve callee providers and
   propagate result context through completed wrappers/conditional arms, not guards.

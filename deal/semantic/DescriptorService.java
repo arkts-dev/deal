@@ -110,15 +110,8 @@ public final class DescriptorService {
             case CanonicalModuleIdentity.BuiltinModule ignored -> "";
             case CanonicalModuleIdentity.ExternalModule external ->
                 "$external/" + external.rawImportSpecifier();
-            case CanonicalModuleIdentity.ProjectModule project -> {
-                StringBuilder sb = new StringBuilder(
-                    project.projectIdentity().configuredRootText());
-                for (String component
-                        : project.projectIdentity().relativeModuleComponents()) {
-                    sb.append('/').append(component);
-                }
-                yield sb.toString();
-            }
+            case CanonicalModuleIdentity.ProjectModule project ->
+                deal.module.ModuleIdentityResolver.projectDescriptorModulePath(project.projectIdentity());
         };
     }
 

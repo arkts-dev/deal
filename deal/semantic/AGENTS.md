@@ -8,7 +8,9 @@ include executable body validity, not signature alone.
 ## Providers and admission
 
 Resolve layouts from exact checked declarations/providers and project indexes.
-Canonical identities name defining files; ambiguity fails at the offending origin,
+Canonical identities name defining files; descriptor ClassIds share the module
+assembly's filesystem-component projection, never raw path reconstruction.
+Ambiguity fails at the offending origin,
 never first/last match. Contextual schemas include private descendants only through
 the defining provider's import closure. Global seeds, relocated consumer layouts
 and unrelated consumer imports grant no visibility. External aliases join through

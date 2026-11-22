@@ -200,13 +200,10 @@ public final class ModuleIdentityAssembly {
      * text.
      *
      * <ul>
-     *   <li><b>Project form (a):</b> E2010 at the class-name span when
-     *       the identity is unrepresentable (class name not
-     *       identifier-shaped, reserved first root component, forbidden
-     *       characters, whitespace/control scalars, {@code .}/{@code ..}
-     *       or empty components, contiguous {@code ->}) or when the
-     *       containment is ambiguous (the defensive equal-root tie).
-     *       Success returns
+     *   <li><b>Project form:</b> E2010 for an invalid class identifier or
+     *       ambiguous containment (the defensive equal-root tie). Path
+     *       components are encoded injectively into the descriptor alphabet.
+     *       Success returns the encoded form of
      *       {@code @<configuredRootText>/<relativeModuleComponents>/<ClassName>},
      *       the components running from the configured root to the
      *       declaring file and ending with the file's own name, so two
@@ -309,32 +306,13 @@ public final class ModuleIdentityAssembly {
     // =========================================================================
 
     /**
-     * Rule (a): the project form. Checks, in pinned deterministic order:
-     * the configured root text (T5 configured-root predicate, including
-     * the {@code $external}/{@code $builtin} exact-first-component
-     * reservation), the relative module path components (per-component
-     * predicate), and the class-name identifier shape. A failure is E2010
-     * at the class-name span; success assembles and registers
-     * {@code @<rootText>/<components>/<ClassName>}.
+     * Project form: encode path components into canonical descriptor text,
+     * preserving the configured root and defining-file identity. Filesystem
+     * spelling is not a source-language class restriction.
      */
     private ClassIdentityResult requireProject(
             ProjectModuleIdentity projectIdentity, String className,
             Span classNameSpan) {
-        if (!ModuleIdentityResolver.isRepresentableConfiguredRootText(
-                projectIdentity.configuredRootText())) {
-            return failure("Class '" + className + "' cannot be represented"
-                + " in the project descriptor form: the configured root '"
-                + projectIdentity.configuredRootText()
-                + "' is not representable", classNameSpan, List.of());
-        }
-        String badComponent = firstUnrepresentableComponent(
-            projectIdentity.relativeModuleComponents());
-        if (badComponent != null) {
-            return failure("Class '" + className + "' cannot be represented"
-                + " in the project descriptor form: the relative module path"
-                + " component '" + badComponent + "' is not representable",
-                classNameSpan, List.of());
-        }
         if (!ModuleIdentityResolver.isIdentifierShapedClassName(className)) {
             return failure("Class '" + className + "' cannot be represented:"
                 + " the class name is not identifier-shaped", classNameSpan,
@@ -343,7 +321,7 @@ public final class ModuleIdentityAssembly {
         CanonicalClassIdentity identity = new CanonicalClassIdentity(
             new CanonicalModuleIdentity.ProjectModule(projectIdentity),
             className);
-        String descriptorText = projectDescriptorText(projectIdentity, className);
+        String descriptorText = ModuleIdentityResolver.projectDescriptorText(projectIdentity, className);
         register(identity, descriptorText);
         return new ClassIdentityResult.Identity(
             identitiesByText.get(descriptorText), descriptorText);
@@ -450,42 +428,6 @@ public final class ModuleIdentityAssembly {
     // =========================================================================
     // Projection and registration internals
     // =========================================================================
-
-    /**
-     * The pinned project descriptor-text projection:
-     * {@code @<configuredRootText>/<relativeModuleComponents>/<ClassName>},
-     * where the relative components run from the configured root to the
-     * defining file and end with the defining file's own name (the source
-     * suffix included as part of that name). The identity therefore names
-     * one declaration: two same-named sibling files in one directory
-     * project two distinct atoms. An empty component list is admitted only
-     * for a synthetic/harness identity, never for a resolved source file.
-     */
-    private static String projectDescriptorText(
-            ProjectModuleIdentity projectIdentity, String className) {
-        StringBuilder sb = new StringBuilder("@")
-            .append(projectIdentity.configuredRootText());
-        for (String component : projectIdentity.relativeModuleComponents()) {
-            sb.append('/').append(component);
-        }
-        return sb.append('/').append(className).toString();
-    }
-
-    /**
-     * The first relative module path component failing the pinned
-     * per-component representability predicate, or null when every
-     * component is representable.
-     */
-    private static String firstUnrepresentableComponent(
-            List<String> relativeModuleComponents) {
-        for (String component : relativeModuleComponents) {
-            if (!ModuleIdentityResolver.isRepresentableDescriptorComponent(
-                    component)) {
-                return component;
-            }
-        }
-        return null;
-    }
 
     /**
      * The pinned externals-entry note for rule (b): a note naming the

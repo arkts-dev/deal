@@ -62,6 +62,7 @@ public final class ModuleIdentityResolverTest {
             testRepresentabilityRootText();
             testRepresentabilityRelativeAndExternal();
             testIdentifierShapedClassNames();
+            testEncodedProjectPaths();
             if (environmentClean) {
                 testSymlinkedStdlibSpecListedFile();
                 testCombinedRealDeployment();
@@ -822,6 +823,29 @@ public final class ModuleIdentityResolverTest {
         }
         check(!ModuleIdentityResolver.isIdentifierShapedClassName(null),
             "a null class name is not identifier-shaped");
+    }
+
+    private static void testEncodedProjectPaths() {
+        var texts = new java.util.HashSet<String>();
+        for (String root : List.of("src", "./src", "src/", "src//", ".", "..",
+                "space dir", "%", "%002e", "$external", "$builtin", "a->b", "a[b]")) {
+            var identity = new ProjectModuleIdentity(root, "/project/src", List.of("file name.deal"));
+            String text = ModuleIdentityResolver.projectDescriptorText(identity, "C");
+            check(texts.add(text), "distinct configured spellings cannot collide: " + root);
+            check(deal.descriptors.CanonicalRuntimeTypeDescriptor.parse(text)
+                    instanceof deal.descriptors.DescriptorAst.ClassAtom,
+                "filesystem spelling projects to canonical class atom: " + root);
+        }
+        check(ModuleIdentityResolver.projectDescriptorText(
+            new ProjectModuleIdentity("src", "/project/src", List.of("main.deal")), "C")
+                .equals("@src/main.deal/C"), "ordinary descriptor spelling is unchanged");
+        var index = ModuleIdentityResolver.buildIndex(Map.of("main",
+            new CanonicalModuleIdentity.ProjectModule(new ProjectModuleIdentity(".", "/project", List.of("main.deal")))));
+        var identity = new deal.identity.CanonicalClassIdentity(index.moduleIdentityLookup().apply("main"), "C");
+        String text = index.descriptorTextFor(identity);
+        check(text.equals(ModuleIdentityResolver.projectDescriptorText(
+            new ProjectModuleIdentity(".", "/project", List.of("main.deal")), "C")), "isolated index shares projection");
+        check(index.identityForDescriptorText(text).equals(identity), "encoded text reverses only through index");
     }
 
     private static void testSymlinkedStdlibSpecListedFile() throws Exception {

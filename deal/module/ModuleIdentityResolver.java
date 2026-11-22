@@ -528,6 +528,41 @@ public final class ModuleIdentityResolver {
                 projectModuleIdentity.relativeModuleComponents());
     }
 
+    /** Encodes filesystem components into the existing descriptor alphabet without
+     * restricting source paths. The leading '%' escape namespace is itself escaped,
+     * so empty, dot, reserved and delimiter-bearing components cannot collide with
+     * ordinary names. UTF-16 framing also preserves every host path code unit. */
+    private static String descriptorPathComponent(String component, boolean first) {
+        if (isRepresentableDescriptorComponent(component) && !component.startsWith("%")
+                && !(first && (component.equals("$external") || component.equals("$builtin")))) {
+            return component;
+        }
+        StringBuilder encoded = new StringBuilder("%");
+        for (int i = 0; i < component.length(); i++) {
+            int unit = component.charAt(i);
+            for (int shift = 12; shift >= 0; shift -= 4)
+                encoded.append("0123456789abcdef".charAt((unit >>> shift) & 15));
+        }
+        return encoded.toString();
+    }
+
+    /** Project identity projection shared by production assembly and isolated indexes. */
+    public static String projectDescriptorText(ProjectModuleIdentity identity, String className) {
+        return "@" + projectDescriptorModulePath(identity) + "/" + className;
+    }
+
+    public static String projectDescriptorModulePath(ProjectModuleIdentity identity) {
+        StringBuilder text = new StringBuilder();
+        String[] roots = identity.configuredRootText().split("/", -1);
+        for (int i = 0; i < roots.length; i++) {
+            if (i > 0) text.append('/');
+            text.append(descriptorPathComponent(roots[i], i == 0));
+        }
+        for (String component : identity.relativeModuleComponents())
+            text.append('/').append(descriptorPathComponent(component, false));
+        return text.toString();
+    }
+
     /**
      * The class-name shape predicate: a class name is identifier-shaped
      * by the grammar iff it matches {@code [a-zA-Z_$][a-zA-Z0-9_$]*}
@@ -694,21 +729,7 @@ public final class ModuleIdentityResolver {
                 }
                 case CanonicalModuleIdentity.ProjectModule proj -> {
                     ProjectModuleIdentity projectIdentity = proj.projectIdentity();
-                    String rootText = projectIdentity.configuredRootText();
-                    // A project root whose first component is one of the
-                    // reserved namespaces can never be projected (D6).
-                    String first = firstComponent(rootText);
-                    if ("$external".equals(first) || "$builtin".equals(first)) {
-                        throw new IllegalStateException(
-                            "configured root text '" + rootText
-                                + "' is unrepresentable (reserved first component)");
-                    }
-                    StringBuilder sb = new StringBuilder("@").append(rootText);
-                    for (String component
-                            : projectIdentity.relativeModuleComponents()) {
-                        sb.append('/').append(component);
-                    }
-                    yield sb.append('/').append(identity.className()).toString();
+                    yield projectDescriptorText(projectIdentity, identity.className());
                 }
             };
         }
