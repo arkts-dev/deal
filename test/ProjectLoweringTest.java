@@ -2781,19 +2781,10 @@ public class ProjectLoweringTest {
         }
     }
 
-    /**
-     * The unrepresentable defining-file name (ISSUE-0847 review cycle 1):
-     * the canonical identity names the defining file, so a file whose name
-     * is not representable in the descriptor form ({@code a@b.deal}: the
-     * {@code @} is a descriptor metacharacter) can carry no public class
-     * identity. The required-identity gate refuses it with E2010 at the
-     * class name span on every backend — never a backend-dependent raw
-     * exception at descriptor emission, and never a published artifact.
-     */
-    private static void testUnrepresentableDefiningFileNameRejected()
+    /** Descriptor delimiters in filenames are encoded, not source restrictions. */
+    private static void testEncodedDefiningFileName()
             throws Exception {
-        System.out.println("-- an unrepresentable defining-file name is E2010 "
-            + "on every backend and publishes no project --");
+        System.out.println("-- a defining-file descriptor delimiter is encoded on every backend --");
         Path proj = Files.createTempDirectory("project-lowering-unrep");
         try {
             writeFileIn(proj, "src/a@b.deal", """
@@ -2809,8 +2800,8 @@ public class ProjectLoweringTest {
                 }
                 """);
             for (Backend backend : List.of(Backend.LUAJIT, Backend.JVM,
-                    Backend.JS)) {
-                assertUnrepresentableDefiningFileRejected(proj, backend);
+                    Backend.JS, Backend.LLVM)) {
+                assertEncodedDefiningFile(proj, backend);
             }
         } finally {
             deleteRecursively(proj);
@@ -2873,13 +2864,8 @@ public class ProjectLoweringTest {
                 + "): " + output);
     }
 
-    /**
-     * Asserts one backend refuses the fixture's unrepresentable defining
-     * file name: E2010 during the required-identity gate, the offending
-     * file-name component named in the diagnostic, no partially checked
-     * project and no published artifact.
-     */
-    private static void assertUnrepresentableDefiningFileRejected(Path proj,
+    /** The shared projection admits the project without changing defining-file identity. */
+    private static void assertEncodedDefiningFile(Path proj,
             Backend backend) throws Exception {
         Path entry = proj.resolve("src/app.deal").toAbsolutePath();
         Path output = proj.resolve("out-" + backend.name().toLowerCase())
@@ -2889,20 +2875,13 @@ public class ProjectLoweringTest {
             Map.of(), List.of(proj.resolve("src").toAbsolutePath()),
             Path.of(".").toAbsolutePath().normalize(), null,
             ConformanceHarnessMetadata.invocation());
-        check(!orchestrator.compile(),
-            "the unrepresentable defining-file name is refused on " + backend
-                + ": " + orchestrator.diagnostics());
-        check(orchestrator.diagnostics().stream()
-                .anyMatch(d -> "E2010".equals(d.code())
-                    && d.message().contains("'a@b.deal'")),
-            "the refusal names the defining-file component on " + backend
-                + ": " + orchestrator.diagnostics());
-        check(orchestrator.checkedProject() == null,
-            "the refused project publishes no partial checked project on "
-                + backend);
-        check(!Files.exists(output) || isEmptyTree(output),
-            "the refused project publishes no output artifact on " + backend
-                + ": " + output);
+        check(orchestrator.compile(),
+            "the defining-file name is admitted on " + backend + ": " + orchestrator.diagnostics());
+        check(orchestrator.diagnostics().isEmpty(), "no path-representation diagnostic on " + backend);
+        check(orchestrator.checkedProject() != null && orchestrator.producedProject() != null,
+            "the admitted project publishes checked and semantic views on " + backend);
+        check(Files.exists(output) && !isEmptyTree(output),
+            "the admitted project publishes artifacts on " + backend);
     }
 
     /** True when the tree contains no regular file and no directory entry. */
@@ -6816,7 +6795,7 @@ public class ProjectLoweringTest {
             testSameSpelledProviderResolution();
             testSameNameSiblingProviderResolution();
             testSameIdentityProviderCrossingRejected();
-            testUnrepresentableDefiningFileNameRejected();
+            testEncodedDefiningFileName();
             testNestedFieldProviderBesideSameIdentityLocal();
             testTransitiveProviderLiteralBesideSameIdentitySibling();
             testSameIdentityFieldOperationResolution();

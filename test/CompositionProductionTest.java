@@ -256,6 +256,20 @@ public final class CompositionProductionTest {
             Map.of("model.deal", "export class C { x:number; }"), true, "");
     }
 
+    static void encodedDefiningFile(Path root) throws Exception {
+        execute("""
+            import * as model from "./a@b";
+            export function main():void {
+              let c:model.C=JSON.parse(`{"x":7}`);
+              let raw:unknown=c;
+              if(!(raw instanceof model.C)){throw {name:"TEST",message:"encoded filename"};}
+              console.log(JSON.stringify(c)??"");
+            }
+            """, "{\"x\":7}\n", "", root, null,
+            List.of(Backend.JS,Backend.LUAJIT,Backend.JVM,Backend.LLVM),
+            Map.of("a@b.deal", "export class C { x:number; }"), true, "src");
+    }
+
     static void configuredRootClasses(Path root) throws Exception {
         String source = """
             class C { x: number; }
@@ -619,6 +633,7 @@ public final class CompositionProductionTest {
             jsonUnknownOmission(root.resolve("json-unknown-omission"));
             configuredRootClasses(root.resolve("configured-root-classes"));
             manifestFreeProject(root.resolve("manifest-free"));
+            encodedDefiningFile(root.resolve("encoded-defining-file"));
             execute(Files.readString(Path.of("skills/write-deal/examples/serialization/main.deal")),
                 "", "", root.resolve("json-serialization-example"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM), Map.of(
