@@ -1119,7 +1119,7 @@ public class LexerTest {
                 "range after numeric literal");
         }
         for (String spelling : List.of("0x", "0x_1", "0x1_", "0x1g", "0b2", "0b102", "0o8",
-                "1__0", "1_", "1_.0", "1._0", "1e", "1e+", "1e_2", "1e2_", "123abc", "1n")) {
+                "1__0", "1_", "1_.0", "1._0", "1e", "1e+", "1e_2", "1e2_", "123abc", "1.0n", "1e2n")) {
             r = tokenize(spelling + ";let x=1;");
             assertDiagnosticCount(r.diagnostics(), 1, "one numeric diagnostic: " + spelling);
             assertDiagnosticCode(r.diagnostics(), "E1002", spelling);

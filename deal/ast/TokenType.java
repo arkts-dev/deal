@@ -82,6 +82,7 @@ public enum TokenType {
 
     AMPERSAND,   // &
     REJECTED_OPERATOR, // recognized spelling outside the language grammar
+    REJECTED_BIGINT,
 
     // -- Punctuation --
     LBRACE,      // {

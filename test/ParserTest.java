@@ -37,6 +37,13 @@ public class ParserTest {
     private static void testDiagnosticActionability() {
         testCoercingEqualityDiagnostics();
         testConservativeTerminatorOffers();
+        for (String expression : List.of("[...values]", "f(...values)", "{...value}", "{name}", "[,1]", "/abc/g", "tag`hello`", "123n", "0xffn")) {
+            var literal = parse("let result=" + expression + ";let after=1;");
+            check(literal.diagnostics().size() == 1 && literal.diagnostics().getFirst().facts().languageDifference() != null,
+                    "unsupported literal/expansion is explicit without recovery cascade: " + expression + ": " + literal.diagnostics());
+        }
+        assertNoParseErrors(parse("let xs=[1,2,];let obj={name:1,};let result=6/2;let text=`a${1}`;"),
+                "dense literals, explicit fields, division and untagged templates remain admitted");
         for (String source : List.of("let [a,b]=values;", "const {a,b}=value;", "function f({a}:Model):void{}",
                 "function f([a]:number[]):void{}", "for(let [a] of values){}", "for(const {a} of values){}",
                 "let a=1,b=2;", "var value=1;", "let value:number;")) {
@@ -313,7 +320,7 @@ public class ParserTest {
                 {"f(else [1,2],4);", "f([1,2],4);"}}) {
             var result = parse(prefix + sample[0] + "let later=7;");
             check(result.diagnostics().stream().allMatch(d -> d.code().equals("E1037")
-                            && d.facts().reason().equals("syntax.expression-required"))
+                            && (d.facts().reason().equals("syntax.expression-required") || d.facts().reason().equals("syntax.subset.array-hole")))
                             && result.diagnostics().size() == (sample[0].contains("else") ? 1 : 2)
                             && result.program().statements().size() == 2,
                     "argument/array recovery retains independent omissions and later declaration without closer cascades: " + sample[0]);
@@ -336,7 +343,8 @@ public class ParserTest {
         for (String sample : List.of("take(,);", "let values=[,];", "take(,", "let values=[,")) {
             var rejected = parse(prefix + sample);
             check(!rejected.diagnostics().isEmpty()
-                            && rejected.diagnostics().getFirst().facts().reason().equals("syntax.expression-required"),
+                            && (rejected.diagnostics().getFirst().facts().reason().equals("syntax.expression-required")
+                                || rejected.diagnostics().getFirst().facts().reason().equals("syntax.subset.array-hole")),
                     "comma-only and EOF-terminated malformed lists remain rejected and terminate: " + sample);
         }
         assertNoParseErrors(parse("let f=(x,y:number):number=>y;"),

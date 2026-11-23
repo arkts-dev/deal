@@ -317,6 +317,8 @@ public final class Lexer {
                 bump();
                 bump();
                 DiagnosticRange rejected = readNumberDigits(radix);
+                if (rejected == null && consumeBigIntSuffix())
+                    return makeToken(TokenType.REJECTED_BIGINT, source.substring(startPos, pos));
                 if (pos < source.length() && isIdentifierPart(source.charAt(pos))) {
                     if (rejected == null) rejected = currentComponentRange();
                     while (pos < source.length() && isIdentifierPart(source.charAt(pos))) bump();
@@ -361,6 +363,9 @@ public final class Lexer {
                         "decimal exponent digits; separators only between digits", exponent);
             }
         }
+        if (rejected == null && !hasDot && source.substring(startPos, pos).indexOf('e') < 0
+                && source.substring(startPos, pos).indexOf('E') < 0 && consumeBigIntSuffix())
+            return makeToken(TokenType.REJECTED_BIGINT, source.substring(startPos, pos));
         if (pos < source.length() && isIdentifierPart(source.charAt(pos))) {
             if (rejected == null) rejected = currentComponentRange();
             while (pos < source.length() && isIdentifierPart(source.charAt(pos))) bump();
@@ -368,6 +373,13 @@ public final class Lexer {
         if (rejected != null) numberError("Malformed number literal: invalid digits or separators",
                 "syntax.number.component", "lex.number", "decimal digits; separators only between digits; no identifier suffix", rejected);
         return makeToken(TokenType.NUMBER_LITERAL, source.substring(startPos, pos));
+    }
+
+    private boolean consumeBigIntSuffix() {
+        if (pos >= source.length() || source.charAt(pos) != 'n'
+                || pos + 1 < source.length() && isIdentifierPart(source.charAt(pos + 1))) return false;
+        bump();
+        return true;
     }
 
     /** Consumes one digit sequence; returns its first rejected component, or null when valid. */

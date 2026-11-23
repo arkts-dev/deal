@@ -1333,6 +1333,10 @@ public final class Parser {
                 } else {
                     expr = new CallExpr(sp, expr, List.copyOf(args));
                 }
+            } else if (peek().type() == TokenType.TEMPLATE_LITERAL) {
+                Token template = advance();
+                rejectedSyntax(template, "tagged-template", "Tagged templates are not supported; use an ordinary call or template",
+                        "Choose an ordinary function call with explicit arguments or an untagged template; neither reproduces tag invocation automatically.");
             } else if (peek().type() == TokenType.BANG && peek().line() == expr.span().endLine()) {
                 Token bang = advance();
                 rejectedSyntax(bang, "non-null-assertion", "Postfix '!' is not supported; guard null and undefined explicitly",
@@ -1383,6 +1387,21 @@ public final class Parser {
                 advance();
                 return new LiteralExpr(spanOf(previous()),
                         new LiteralValue.BooleanLiteral(false));
+            }
+            case REJECTED_BIGINT -> {
+                advance();
+                rejectedSyntax(token, "bigint-literal", "BigInt literals are not supported; DEAL numbers are binary64",
+                        "Choose a number only if binary64 precision is suitable, or represent exact integers explicitly; removing n can lose precision.");
+                return new LiteralExpr(spanOf(token), new LiteralValue.NullLiteral());
+            }
+            case SLASH -> {
+                advance();
+                rejectedSyntax(token, "regexp-literal", "Regular-expression literals are not supported; use supported string operations",
+                        "Use the specified string methods for literal searches, or an explicitly imported host API for regular-expression behavior.");
+                while (!isAtEnd() && peek().type() != TokenType.SLASH && peek().type() != TokenType.SEMICOLON
+                        && peek().type() != TokenType.RBRACE && peek().line() == token.line()) advance();
+                if (match(TokenType.SLASH) && peek().type() == TokenType.IDENTIFIER) advance();
+                return new LiteralExpr(spanOf(token), new LiteralValue.NullLiteral());
             }
             case NUMBER_LITERAL -> {
                 advance();
@@ -1903,7 +1922,16 @@ public final class Parser {
 
         if (peek().type() != TokenType.RBRACKET) {
             do {
-                ExpressionNode elem = parseListElement();
+                ExpressionNode elem;
+                if (peek().type() == TokenType.COMMA) {
+                    subsetError(DiagnosticCode.E1037, "Array holes are not supported; provide an explicit element", peek(),
+                            "array-hole", "explicit array element",
+                            "Choose an element of the intended type; a hole is not a stored undefined value.");
+                    int last = diagnostics.size() - 1;
+                    diagnostics.set(last, diagnostics.get(last).withFacts(diagnostics.get(last).facts()
+                            .withLanguageDifference(deal.diagnostics.LanguageDifference.syntax("array-hole"))));
+                    elem = null;
+                } else elem = parseListElement();
                 if (elem != null) elements.add(elem);
                 else recoverExpressionList(TokenType.RBRACKET);
             } while (match(TokenType.COMMA) && peek().type() != TokenType.RBRACKET);
@@ -1924,13 +1952,13 @@ public final class Parser {
         Token lbrace = advance();
         List<Property> properties = new ArrayList<>();
 
-        if (isObjectKey(peek())) {
+        if (isObjectKey(peek()) || peek().type() == TokenType.ELLIPSIS) {
             Property first = parseProperty();
             if (first != null) properties.add(first);
 
             while (match(TokenType.COMMA)) {
                 if (peek().type() == TokenType.RBRACE) break;
-                if (!isObjectKey(peek())) {
+                if (!isObjectKey(peek()) && peek().type() != TokenType.ELLIPSIS) {
                     error(DiagnosticCode.E1038,
                         "Expected object literal key", peek());
                     break;
@@ -1976,6 +2004,12 @@ public final class Parser {
 
     private Property parseProperty() {
         Token nameToken = advance();
+        if (nameToken.type() == TokenType.ELLIPSIS) {
+            rejectedSyntax(nameToken, "object-spread", "Object spread is not supported; supply explicit fields",
+                    "Write the intended class/Record fields explicitly, preserving evaluation order and optional-field presence.");
+            parseAssignment();
+            return null;
+        }
         ExpressionNode key = null;
         String name = nameToken.lexeme();
         if (nameToken.type() == TokenType.LBRACKET) {
@@ -1987,6 +2021,11 @@ public final class Parser {
             name = unescapeString(name);
         }
         if (!match(TokenType.COLON)) {
+            if (key == null && (peek().type() == TokenType.COMMA || peek().type() == TokenType.RBRACE)) {
+                rejectedSyntax(nameToken, "shorthand-property", "Shorthand properties are not supported; write name: value",
+                        "Supply the intended field value explicitly; field names and variable bindings are independent.");
+                return null;
+            }
             error(DiagnosticCode.E1008, "Expected ':' after property name", peek());
             return null;
         }
@@ -2396,6 +2435,12 @@ public final class Parser {
     }
 
     private ExpressionNode parseListElement() {
+        if (peek().type() == TokenType.ELLIPSIS) {
+            Token spread = advance();
+            rejectedSyntax(spread, "spread", "Spread is not supported; supply explicit arguments or elements",
+                    "Pass the declared arguments explicitly; for arrays choose supported copy/concat operations with the intended element type.");
+            return parseAssignment();
+        }
         if (peek().type() == TokenType.COMMA) {
             expressionRequired(peek());
             return null;
