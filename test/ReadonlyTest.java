@@ -1,6 +1,7 @@
 package deal.test;
 
 import deal.codegen.Backend;
+import deal.semantic.ir.*;
 import java.nio.file.Files;
 import java.util.List;
 
@@ -41,6 +42,7 @@ public final class ReadonlyTest {
         TypeLegalityFlowTest.check("function f(a:(()=>number)[]):void{let v:readonly ((x:number)=>number)[]=a;}", "E3001");
         TypeLegalityFlowTest.check("function f(a:number[]|null):void{let v:readonly number[]=a;}", "E3001");
         TypeLegalityFlowTest.check("function f(a:number[]|undefined):void{let v:readonly number[]|null=a;}", "E3001");
+        readonlyJoinRejections();
         descriptorCompatibility();
         nativeViewAdmission();
         matcherStorage();
@@ -105,6 +107,7 @@ public final class ReadonlyTest {
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             hostAccess(root.resolve("host-access"));
             readonlyFieldReads(root.resolve("field-reads"));
+            readonlyJoins(root.resolve("joins"));
         } finally { CompositionProductionTest.remove(root); }
         System.out.println("Readonly: frontend and production backends passed");
     }
@@ -210,6 +213,137 @@ public final class ReadonlyTest {
         }
     }
 
+    private static void readonlyJoinRejections() {
+        for(String source:List.of(
+                "function f(a:readonly number[],b:readonly number[],yes:boolean):number[]{return yes?a:b;}",
+                "function f(a:readonly number[]|null,b:readonly number[]):number[]{return a??b;}",
+                "function f(a:number[]|undefined,b:number[],yes:boolean):readonly number[]|null{return yes?a:b;}",
+                "function f(a:number[]|null,b:number[]|undefined):readonly number[]|null{return a??b;}",
+                "function f(a:(()=>number)[],b:(()=>number)[],yes:boolean):readonly ((x:number)=>number)[]{return yes?a:b;}",
+                "function f(a:(()=>number)[]|null,b:(()=>number)[]):readonly ((x:number)=>number)[]{return a??b;}"))
+            TypeLegalityFlowTest.check(source,"E5003");
+    }
+
+    static void readonlyJoins(java.nio.file.Path root) throws Exception {
+        String source = """
+            function conditional(xs:number[],yes:boolean):readonly number[]{return yes?xs:[];}
+            function coalescing(xs:number[]|null):readonly number[]{return xs??[];}
+            function mixed(a:number[],b:readonly number[],yes:boolean):readonly number[]{return yes?a:b;}
+            function fallback(a:number[]|null,b:readonly number[]):readonly number[]{return a??b;}
+            function exact(a:readonly number[],b:readonly number[],yes:boolean):readonly number[]{return yes?a:b;}
+            function exactFallback(a:readonly number[]|null,b:readonly number[]):readonly number[]{return a??b;}
+            function widen(a:readonly number[],b:readonly number[],yes:boolean):readonly unknown[]{return yes?a:b;}
+            function widenFallback(a:readonly number[]|null,b:readonly number[]):readonly unknown[]{return a??b;}
+            function nullable(a:number[]|null,b:number[]|undefined,yes:boolean):readonly number[]|null|undefined{return yes?a:b;}
+            function nullableFallback(a:number[]|null,b:number[]|undefined):readonly number[]|undefined{return a??b;}
+            function nullArm(a:number[],yes:boolean):readonly number[]|null{return yes?a:null;}
+            function nullFallback(a:number[]|undefined):readonly number[]|null{return a??null;}
+            function nested(a:number[][],b:number[][],yes:boolean):readonly (readonly unknown[])[]{return yes?a:b;}
+            function nestedFallback(a:number[][]|null,b:number[][]):readonly (readonly unknown[])[]{return a??b;}
+            function functions(a:(()=>number)[],b:(()=>number)[],yes:boolean):readonly (()=>number)[]{return yes?a:b;}
+            function functionsFallback(a:(()=>number)[]|null,b:(()=>number)[]):readonly (()=>number)[]{return a??b;}
+            export function main(): void {
+              let a=[1];let b:readonly number[]=[2];let view:readonly number[]=a;
+              if(conditional(a,true)!==view || conditional(a,false).length!==0
+                  || coalescing(a)!==view || coalescing(null).length!==0){throw {name:"FAIL",message:"original joins"};}
+              if(mixed(a,b,true)!==view || mixed(a,b,false)!==b
+                  || fallback(a,b)!==view || fallback(null,b)!==b
+                  || exact(view,b,true)!==view || exact(view,b,false)!==b
+                  || exactFallback(view,b)!==view || exactFallback(null,b)!==b){throw {name:"FAIL",message:"literal-free joins"};}
+              let wide=widen(a,b,true);let wideOther=widen(a,b,false);
+              if((wide[0] as number)!==1 || (wideOther[0] as number)!==2
+                  || (widenFallback(a,b)[0] as number)!==1
+                  || (widenFallback(null,b)[0] as number)!==2){throw {name:"FAIL",message:"covariant joins"};}
+              a.push(3);
+              if(wide.length!==2 || (wide[1] as number)!==3){throw {name:"FAIL",message:"view identity/storage"};}
+              let dynamic:unknown=wide;let recovered=dynamic as number[];recovered.push(4);
+              let invariant=false;try{let wrong=dynamic as unknown[];}catch(e){invariant=(e as Error).name==="E8001";}
+              if(!invariant || a.length!==3){throw {name:"FAIL",message:"original storage descriptor"};}
+              if((nullable(a,undefined,true) as readonly number[])!==view || nullable(null,undefined,true)!==null
+                  || nullable(a,undefined,false)!==undefined || nullableFallback(null,undefined)!==undefined
+                  || (nullableFallback(a,undefined) as readonly number[])!==view || nullArm(a,false)!==null
+                  || (nullArm(a,true) as readonly number[])!==view || nullFallback(undefined)!==null
+                  || (nullFallback(a) as readonly number[])!==view){throw {name:"FAIL",message:"nullish joins"};}
+              let aa=[a];let bb=[[5]];
+              if((nested(aa,bb,true)[0][0] as number)!==1 || (nested(aa,bb,false)[0][0] as number)!==5
+                  || (nestedFallback(aa,bb)[0][0] as number)!==1
+                  || (nestedFallback(null,bb)[0][0] as number)!==5){throw {name:"FAIL",message:"nested joins"};}
+              let fa=[():number=>6];let fb=[():number=>7];
+              if(functions(fa,fb,true)[0]()!==6 || functions(fa,fb,false)[0]()!==7
+                  || functionsFallback(fa,fb)[0]()!==6 || functionsFallback(null,fb)[0]()!==7){throw {name:"FAIL",message:"function array joins"};}
+              let effects=0;
+              let left=():number[]|null=>{effects=effects+1;return a;};
+              let absent=():number[]|null=>{effects=effects+1;return null;};
+              let right=():number[]=>{effects=effects+10;return [8];};
+              let selected:readonly number[]=left()??right();
+              if(effects!==1 || selected!==view){throw {name:"FAIL",message:"saved nonnull left"};}
+              let alternate:readonly number[]=absent()??right();
+              if(effects!==12 || alternate[0]!==8){throw {name:"FAIL",message:"lazy fallback"};}
+              let condition=():boolean=>{effects=effects+100;return true;};
+              let branch:readonly number[]=condition()?a:right();
+              if(effects!==112 || branch!==view){throw {name:"FAIL",message:"lazy conditional"};}
+            }
+            """;
+        var project=oracleAndTransport(root.resolve("oracle"),source,java.util.Map.of(),java.util.Map.of());
+        var facts=new SemanticIrValidator.ComparisonFacts(project.interfaceIndex().interfaceIndexDigest(),
+            project.semanticProfile(),deal.semantic.ReleaseConfiguration.releaseCapabilityRegistry().capabilityRegistryHash());
+        rejectJoinResults(project,facts);
+        var production=root.resolve("production");
+        CompositionProductionTest.execute(source,"",production,null,List.of(Backend.JS,Backend.LUAJIT,Backend.JVM,Backend.LLVM));
+        sanitizedNative(production.resolve("LLVM/out"),root);
+    }
+
+    private static void rejectJoinResults(ExecutableLoweredProject project,SemanticIrValidator.ComparisonFacts facts) {
+        var unit=project.modules().get(project.entryModule());
+        for(String[] pair:new String[][]{
+                {"readonly[number]","[unknown]"},
+                {"readonly[number]","readonly[string]"},
+                {"?!readonly[number]","readonly[number]"},
+                {"?!readonly[number]","?readonly[number]"},
+                {"?!readonly[number]","!readonly[number]"},
+                {"readonly[()->number]","readonly[(number)->number]"},
+                {"readonly[readonly[unknown]]","readonly[[unknown]]"},
+                {"readonly[number]","void"},
+                {"readonly[number]","never"}}) {
+            var join=unit.ops().stream().filter(op->op.payload() instanceof KindPayload.BranchPayload p
+                && p.selector()==ControlSelector.CONDITIONAL
+                && op.resultType() instanceof RuntimeDescriptor d && d.canonicalSpecText().equals(pair[0])).findFirst().orElseThrow();
+            var type=RuntimeDescriptor.parseResultText(pair[1]);
+            var old=join.contract();
+            var draft=new OperationContractSnapshot(old.version(),old.opKind(),type,old.operandTypes(),
+                old.selector(),old.payload(),old.failurePolicy(),old.referencedSemanticIds(),"pending");
+            var contract=new OperationContractSnapshot(old.version(),old.opKind(),type,old.operandTypes(),
+                old.selector(),old.payload(),old.failurePolicy(),old.referencedSemanticIds(),ContractSnapshotCanonicalizer.digest(draft));
+            var changed=new SemanticOp(join.opId(),join.kind(),join.origin(),join.result(),type,
+                join.operands(),join.operandTypes(),join.payload(),join.failurePolicy(),contract);
+            var ops=new java.util.ArrayList<>(unit.ops());ops.set(ops.indexOf(join),changed);
+            var malformed=new LoweredModuleUnit(unit.formatVersion(),unit.semanticProfile(),unit.moduleId(),
+                unit.interfaceHash(),unit.loweringContextHash(),unit.requiredCapabilities(),unit.constructCoverage(),unit.classLayouts(),
+                unit.functions(),unit.moduleInit(),unit.exportPlan(),unit.functionBindings(),ops,unit.bodyTable(),unit.classFactories(),unit.classBindingFacts());
+            var typed=SemanticIrValidator.validate(malformed,facts);
+            var raw=SemanticIrValidator.validate(RawUnitMaterializer.materialize(RawUnit.fromTyped(malformed)),facts);
+            var text=SemanticIrValidator.validateText(SemanticIrValidator.toUnitText(malformed),facts);
+            if(typed.isEmpty() || !typed.equals(raw) || !typed.equals(text)
+                    || !typed.get().message().contains("R-ENUM") || !typed.get().message().contains("CONDITIONAL")
+                    || !typed.get().range().equals(join.origin().span().range()))
+                throw new AssertionError(java.util.Arrays.toString(pair)+": "+typed+" / "+raw+" / "+text);
+        }
+    }
+
+    private static void sanitizedNative(java.nio.file.Path output,java.nio.file.Path root) throws Exception {
+        for(int level:new int[]{0,2}) {
+            var product=root.resolve("sanitized-o"+level);
+            NativeCompiler.build(new deal.toolchain.NativeBuildRequest(output,product,level,List.of(),null),NativeCompiler.SANITIZER_FLAGS);
+            for(boolean stress:new boolean[]{false,true}) {
+                var environment=new java.util.HashMap<>(NativeCompiler.sanitizerEnvironment());
+                environment.put("DEAL_GC_STRESS",stress?"1":"0");
+                var result=NativeCompiler.runSanitized(product,root,environment).result();
+                if(result.exitCode()!=0 || !result.stdout().isEmpty() || !result.stderr().isEmpty())
+                    throw new AssertionError("readonly LLVM O"+level+" sanitized stress="+stress+": "+result.describe());
+            }
+        }
+    }
+
     private static void matcherStorage() {
         var model = new RuntimeTypeMatcherTest.TestModel() {
             @Override public String arrayElementDescriptor(Object value) { return "number"; }
@@ -258,7 +392,7 @@ public final class ReadonlyTest {
         oracleAndTransport(root,source,java.util.Map.of(),java.util.Map.of());
     }
 
-    private static void oracleAndTransport(java.nio.file.Path root, String source,
+    private static ExecutableLoweredProject oracleAndTransport(java.nio.file.Path root, String source,
             java.util.Map<String,String> modules, java.util.Map<String,String> expectedFields) throws Exception {
         Files.createDirectories(root);
         for(var module:modules.entrySet()) Files.writeString(root.resolve(module.getKey()),module.getValue());
@@ -296,6 +430,7 @@ public final class ReadonlyTest {
             compiler.checkedProject().input().entryModule(),"run",List.of());
         if (!(result.terminal() instanceof deal.semantic.SemanticRuntimeModel.Terminal.Success))
             throw new AssertionError(result.comparisonReport());
+        return project;
     }
 
     private static void hostAccess(java.nio.file.Path root) throws Exception {

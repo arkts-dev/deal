@@ -65,8 +65,10 @@ which immediately precedes CONDITIONAL; projection begins the alternate block.
 Reject void/singleton-nullish projections or forged order/ownership.
 
 BRANCH/CONDITIONAL owns a preceding boolean and distinct lazy arm blocks with explicit
-compatible result links, never eager arm operands. Resolve repeated IDs within their
-blocks. Contextual adapters belong to the corresponding arm/CONDITIONAL_BRANCH cell;
+compatible result links, never eager arm operands. Admit arm descriptors with the
+shared storage/view assignment relation, including readonly covariance and nullish
+permissions; do not retag storage or introduce implicit adapters. Resolve repeated
+IDs within their blocks. Contextual adapters belong to the corresponding arm/CONDITIONAL_BRANCH cell;
 ordinary read boundaries do not adapt.
 
 NARROWED_READ consumes a binding load or declared field read from a binding receiver,

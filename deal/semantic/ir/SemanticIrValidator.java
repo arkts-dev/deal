@@ -2435,19 +2435,9 @@ public final class SemanticIrValidator {
 
     private static boolean conditionalTypeAdmits(String target, String source) {
         RuntimeDescriptor result = parseDescriptorQuiet(target), value = parseDescriptorQuiet(source);
-        if (result == null || value == null) return false;
-        if (result.equals(value)) return true;
-        if (result instanceof RuntimeDescriptor.Unknown) return !(value instanceof RuntimeDescriptor.Void || value instanceof RuntimeDescriptor.Never);
-        if (result instanceof RuntimeDescriptor.Nullable n) {
-            if (n.inner() instanceof RuntimeDescriptor.Void || value instanceof RuntimeDescriptor.Void) return false;
-            if (n.inner().equals(value)) return true;
-            if (value instanceof RuntimeDescriptor.Null) return n.admitsNull();
-            if (value instanceof RuntimeDescriptor.Undefined) return n.admitsUndefined();
-            if (value instanceof RuntimeDescriptor.Nullable v) return n.inner().equals(v.inner())
-                && (!v.admitsNull() || n.admitsNull()) && (!v.admitsUndefined() || n.admitsUndefined());
-            return n.inner().equals(value);
-        }
-        return false;
+        // Joins change the static view, not the arm's identity or storage.
+        // Function adapters are explicit arm operations, never implicit here.
+        return result != null && value != null && RuntimeDescriptor.assignable(value, result);
     }
 
     private static Optional<CompilerDiagnostic> checkSlotEnum(RawOp op, RawUnit unit,
