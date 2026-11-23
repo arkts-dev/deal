@@ -1203,6 +1203,17 @@ public final class Parser {
 
         boolean optionalChain = false;
         while (true) {
+            int genericEnd = genericCallTypeArgumentsEnd();
+            if (genericEnd >= 0) {
+                Token opener = advance();
+                subsetError(DiagnosticCode.E1042, "Explicit type arguments on calls are not supported; use the declared signature", opener,
+                        "generic-call", "call without type arguments",
+                        "Call the declared function without type arguments. For array literals use a T[] annotation; Array<T>() is not a constructor in DEAL.");
+                int last = diagnostics.size() - 1;
+                diagnostics.set(last, diagnostics.get(last).withFacts(diagnostics.get(last).facts()
+                        .withLanguageDifference(deal.diagnostics.LanguageDifference.syntax("generic-call"))));
+                pos = genericEnd + 1;
+            }
             boolean optionalPart = match(TokenType.OPTIONAL_CHAIN);
             if (optionalPart) {
                 optionalChain = true;
@@ -1262,6 +1273,27 @@ public final class Parser {
         }
 
         return optionalChain ? new OptionalChainExpr(expr.span(), expr) : expr;
+    }
+
+    /** A complete angle-bracket list followed by arguments, not an ordinary relational operand. */
+    private int genericCallTypeArgumentsEnd() {
+        if (peek().type() != TokenType.LT) return -1;
+        int depth = 0;
+        boolean member = false;
+        for (int i = pos; i < tokens.size(); i++) {
+            TokenType kind = tokens.get(i).type();
+            if (kind == TokenType.LT) depth++;
+            else if (kind == TokenType.GT) {
+                if (--depth == 0) return member && i + 1 < tokens.size()
+                        && tokens.get(i + 1).type() == TokenType.LPAREN ? i : -1;
+            } else if (kind == TokenType.IDENTIFIER || kind == TokenType.NULL || kind == TokenType.ASYNC
+                    || kind == TokenType.AS || kind == TokenType.FROM || kind == TokenType.OF) member = true;
+            else if (kind != TokenType.COMMA && kind != TokenType.DOT && kind != TokenType.PIPE
+                    && kind != TokenType.LBRACKET && kind != TokenType.RBRACKET
+                    && kind != TokenType.LPAREN && kind != TokenType.RPAREN
+                    && kind != TokenType.COLON && kind != TokenType.ARROW) return -1;
+        }
+        return -1;
     }
 
     private ExpressionNode parsePrimary() {

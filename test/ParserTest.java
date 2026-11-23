@@ -37,6 +37,15 @@ public class ParserTest {
     private static void testDiagnosticActionability() {
         testCoercingEqualityDiagnostics();
         testConservativeTerminatorOffers();
+        for (String expression : List.of("f<number>()", "Array<number>()", "mod.f<Record<string, unknown>>()")) {
+            var generic = parse("let value=" + expression + ";let after=1;");
+            check(generic.diagnostics().size() == 1 && generic.diagnostics().getFirst().facts().reason().equals("syntax.subset.generic-call")
+                            && generic.diagnostics().getFirst().facts().languageDifference().feature().equals("generic-call")
+                            && generic.program().statements().size() == 2,
+                    "generic calls reject type arguments without chained-comparison recovery: " + expression);
+        }
+        assertNoParseErrors(parse("let value=a < b;let other=a > (b);let same=(a<b)===(c>d);"),
+                "relational operands and parenthesized comparisons remain ordinary expressions");
         for (String binding : List.of("let", "const")) {
             String source = "function f():void{for (" + binding + " key in value){} let after=1;}";
             var result = parse(source);
