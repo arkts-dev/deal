@@ -112,6 +112,15 @@ public final class Parser {
     // =======================================================================
 
     private StatementNode parseStatement() {
+        if (peek().type() == TokenType.IDENTIFIER && peek().lexeme().equals("var") && pos + 1 < tokens.size()
+                && (isIdentifier(tokens.get(pos + 1).type()) || tokens.get(pos + 1).type() == TokenType.LBRACKET
+                    || tokens.get(pos + 1).type() == TokenType.LBRACE)) {
+            Token keyword = advance();
+            rejectedSyntax(keyword, "var-binding", "Var declarations are not supported; choose let or const",
+                    "Use let for a reassignable binding or const for a fixed binding; both are block-scoped, unlike JavaScript var.");
+            recoverUnsupportedStatement();
+            return null;
+        }
         TokenType type = peek().type();
         StatementNode stmt = switch (type) {
             case LBRACE    -> parseBlock();
@@ -373,6 +382,7 @@ public final class Parser {
     // -- VariableDeclaration --
     private StatementNode parseVariableDeclaration() {
         Token letToken = advance();
+        if (rejectDestructuring("declaration")) { recoverUnsupportedStatement(); return null; }
         Token nameToken = expect(TokenType.IDENTIFIER, DiagnosticCode.E1007, "Expected variable name after '" + letToken.lexeme() + "'");
         if (nameToken == null) { synchronize(); return null; }
 
@@ -383,13 +393,20 @@ public final class Parser {
         }
 
         if (!match(TokenType.EQ_SIGN)) {
-            error(DiagnosticCode.E1013, "Expected '=' initializer in variable declaration", peek());
+            subsetError(DiagnosticCode.E1013, "Every binding requires an initializer; choose an explicit value", peek(),
+                    "binding-initializer", "= initializer",
+                    "Initialize the binding with an intentional value of its type; annotations do not create values and no default is inferred.");
             synchronize(); return null;
         }
 
         ExpressionNode init = parseExpression();
         if (init == null) { synchronize(); return null; }
-
+        if (peek().type() == TokenType.COMMA) {
+            Token comma = advance();
+            rejectedSyntax(comma, "multiple-declarations", "Multiple bindings in one declaration are not supported; use separate declarations",
+                    "Declare and initialize each binding separately, in the intended evaluation order.");
+            recoverUnsupportedStatement();
+        }
         optionalSemicolon();
 
         Span sp = spanBetween(letToken, previousOrCurrent());
@@ -466,6 +483,12 @@ public final class Parser {
         expect(TokenType.LPAREN, DiagnosticCode.E1014, "Expected '(' after 'for'");
         boolean isConst = match(TokenType.CONST);
         if (!isConst) expect(TokenType.LET, DiagnosticCode.E1007, "Expected 'let' or 'const' in for-of loop");
+        if (rejectDestructuring("iteration")) {
+            while (!isAtEnd() && peek().type() != TokenType.RPAREN && peek().type() != TokenType.RBRACE) advance();
+            match(TokenType.RPAREN);
+            if (peek().type() == TokenType.LBRACE) parseBlock();
+            return null;
+        }
         Token name = expect(TokenType.IDENTIFIER, DiagnosticCode.E1007,
             "Expected iteration variable name");
         if (name == null) { synchronize(); return null; }
@@ -716,6 +739,7 @@ public final class Parser {
     }
 
     private FunctionTypeParam parseFunctionTypeParam() {
+        if (rejectDestructuring("parameter")) return null;
         Token nameToken = expect(TokenType.IDENTIFIER, DiagnosticCode.E1029,
                 "Expected parameter name in function type");
         if (nameToken == null) return null;
@@ -986,6 +1010,7 @@ public final class Parser {
     }
 
     private Parameter parseParameter() {
+        if (rejectDestructuring("parameter")) return null;
         Token nameToken = expect(TokenType.IDENTIFIER, DiagnosticCode.E1029, "Expected parameter name");
         if (nameToken == null) return null;
 
@@ -2084,6 +2109,24 @@ public final class Parser {
                 && Character.isLowSurrogate(lexeme.charAt(end))) end--;
         return new deal.diagnostics.DiagnosticFacts.SyntaxContext(context, expectedKinds, found.type().name(),
                 lexeme.substring(0, end), lexeme.length(), end < lexeme.length());
+    }
+
+    private boolean rejectDestructuring(String position) {
+        if (peek().type() != TokenType.LBRACKET && peek().type() != TokenType.LBRACE) return false;
+        Token opener = peek();
+        rejectedSyntax(opener, "destructuring-" + position,
+                "Destructuring " + position + " bindings are not supported; bind one name and access its members",
+                "Use a single binding, then explicit indexed or field reads; preserve evaluation order and handle null/undefined explicitly.");
+        List<TokenType> closers = new ArrayList<>();
+        do {
+            TokenType kind = advance().type();
+            if (kind == TokenType.LBRACKET) closers.add(TokenType.RBRACKET);
+            else if (kind == TokenType.LBRACE) closers.add(TokenType.RBRACE);
+            else if (kind == TokenType.LPAREN) closers.add(TokenType.RPAREN);
+            else if (!closers.isEmpty() && kind == closers.getLast()) closers.removeLast();
+            if (peek().type() == TokenType.SEMICOLON) break;
+        } while (!isAtEnd() && !closers.isEmpty());
+        return true;
     }
 
     private boolean isRejectedBinaryOperator() {

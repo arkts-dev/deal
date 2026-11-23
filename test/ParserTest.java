@@ -37,6 +37,14 @@ public class ParserTest {
     private static void testDiagnosticActionability() {
         testCoercingEqualityDiagnostics();
         testConservativeTerminatorOffers();
+        for (String source : List.of("let [a,b]=values;", "const {a,b}=value;", "function f({a}:Model):void{}",
+                "function f([a]:number[]):void{}", "for(let [a] of values){}", "for(const {a} of values){}",
+                "let a=1,b=2;", "var value=1;", "let value:number;")) {
+            var binding = parse(source);
+            check(binding.diagnostics().size() == 1 && binding.diagnostics().getFirst().facts().reason().startsWith("syntax.subset."),
+                    "unsupported binding form has one actionable diagnostic: " + source + ": " + binding.diagnostics());
+        }
+        assertNoParseErrors(parse("let a=1;const b=2;let varName=3;let var=4;"), "ordinary binding names and separate declarations remain legal");
         for (String operator : List.of("&", "|", "^", "<<", ">>", ">>>", "&&=", "||=", "??=", "**=",
                 "&=", "|=", "^=", "<<=", ">>=", ">>>=")) {
             String source = "// 😀\r\nlet value=left " + operator + " right;let after=1;";
