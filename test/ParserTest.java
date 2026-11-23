@@ -37,6 +37,11 @@ public class ParserTest {
     private static void testDiagnosticActionability() {
         testCoercingEqualityDiagnostics();
         testConservativeTerminatorOffers();
+        for (String expression : List.of("value?.field=1", "value?.field++", "++value?.field")) {
+            var target = parse(expression + ";");
+            check(target.diagnostics().size() == 1 && target.diagnostics().getFirst().message().contains("Optional chains are not"),
+                    "optional mutation target is rejected directly: " + expression);
+        }
         for (String source : List.of("import {name} from \"./m\";", "import name from \"./m\";", "import \"./m\";",
                 "import type {Name} from \"./m\";", "let value=import(\"./m\");", "export default 1;", "export const value=1;",
                 "export {name};", "export {name} from \"./m\";", "export * from \"./m\";", "declare function f():void;")) {

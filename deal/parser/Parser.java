@@ -1237,7 +1237,11 @@ public final class Parser {
             if (right == null) return left;
 
             if (!isValidAssignmentTarget(left)) {
-                error(DiagnosticCode.E1033, "Invalid assignment target", left);
+                if (left instanceof OptionalChainExpr) subsetError(DiagnosticCode.E1033,
+                        "Optional chains are not assignment targets; guard the receiver before writing", previous(),
+                        "optional-chain-assignment", "non-optional writable target",
+                        "Use an explicit null/undefined guard and perform the intended write on the checked receiver; skipped writes are not inferred.");
+                else error(DiagnosticCode.E1033, "Invalid assignment target", left);
             }
 
             Span sp = spanBetween(left.span(), right.span());
@@ -1436,7 +1440,13 @@ public final class Parser {
     }
 
     private AssignmentExpr updateExpression(Token operator, ExpressionNode target, boolean postfix) {
-        if (!isValidAssignmentTarget(target)) error(DiagnosticCode.E1033, "Invalid update target", target);
+        if (!isValidAssignmentTarget(target)) {
+            if (target instanceof OptionalChainExpr) subsetError(DiagnosticCode.E1033,
+                    "Optional chains are not update targets; guard the receiver before updating", operator,
+                    "optional-chain-update", "non-optional writable target",
+                    "Guard every admitted null/undefined receiver before the intended numeric update; no skipped-update result is inferred.");
+            else error(DiagnosticCode.E1033, "Invalid update target", target);
+        }
         AssignmentOperator kind = operator.type() == TokenType.INCREMENT
             ? (postfix ? AssignmentOperator.POST_INCREMENT : AssignmentOperator.PRE_INCREMENT)
             : (postfix ? AssignmentOperator.POST_DECREMENT : AssignmentOperator.PRE_DECREMENT);

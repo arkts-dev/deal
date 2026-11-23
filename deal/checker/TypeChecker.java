@@ -2486,7 +2486,9 @@ public final class TypeChecker {
         }
         if (objType instanceof Type.Array array && List.of("push", "pop", "splice", "slice", "concat", "includes", "indexOf", "join").contains(field)) {
             if (array.readonly() && List.of("push", "pop", "splice").contains(field)) {
-                error(DiagnosticCode.E3017, "Readonly array cannot be mutated", mae.span());
+                mutationError(DiagnosticCode.E3017, "Readonly array cannot be mutated", mae.span(),
+                        "mutation.readonly-array", "call", "readonly array", typeName(objType),
+                        mae.object() instanceof IdentifierExpr id ? bindingDeclarationRange(resolveVisibleBinding(id.name())) : null);
                 return Type.Error.INSTANCE;
             }
             if (directBuiltinCall == null || mae != directBuiltinCall.callee()) {
@@ -3553,7 +3555,9 @@ public final class TypeChecker {
         }
 
         if (receiver != null && typeOf(receiver) instanceof Type.Array a && a.readonly()) {
-            error(DiagnosticCode.E3017, "Readonly array cannot be mutated", assign.target().span());
+            mutationError(DiagnosticCode.E3017, "Readonly array cannot be mutated", assign.target().span(),
+                    "mutation.readonly-array", "assignment", "readonly array", typeName(typeOf(receiver)),
+                    receiver instanceof IdentifierExpr id ? bindingDeclarationRange(resolveVisibleBinding(id.name())) : null);
             readOnlyTarget = true;
         }
         if (assign.target() instanceof MemberAccessExpr member
@@ -3561,7 +3565,8 @@ public final class TypeChecker {
             Symbol.ClassSymbol owner = exactReceiverClassSymbol(member.object(), cls);
             ClassField field = owner == null ? null : IntrinsicResolvers.findField(owner.fields(), member.field());
             if (field != null && field.readonly()) {
-                error(DiagnosticCode.E3017, "Readonly field cannot be assigned", member.span());
+                mutationError(DiagnosticCode.E3017, "Readonly field cannot be assigned", member.span(),
+                        "mutation.readonly-field", "assignment", "readonly field", member.field(), field.span().range());
                 readOnlyTarget = true;
             }
         }
@@ -3716,7 +3721,9 @@ public final class TypeChecker {
             String operation, String expected, String actual, deal.diagnostics.DiagnosticRange declaration) {
         CompilerDiagnostic diagnostic = CompilerDiagnostic.error(code, message, span).withFacts(
                 new deal.diagnostics.DiagnosticFacts(reason, operation, expected, actual,
-                        List.of("Choose storage and mutation consistent with the declared contract; no declaration rewrite is inferred.")));
+                        List.of(reason.startsWith("mutation.readonly")
+                                ? "Mutate only through an intentionally writable contract or create a mutable copy; readonly is shallow and compile-time-only, not freezing or runtime write protection."
+                                : "Choose storage and mutation consistent with the declared contract; no declaration rewrite is inferred.")));
         if (declaration != null) diagnostic = diagnostic.withNote("Restriction declared here", declaration);
         diagnostics.add(diagnostic);
     }

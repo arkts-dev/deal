@@ -709,6 +709,13 @@ public class CheckerTest {
         }
         assertNoErrors(checkProgram("function fetch():number{return 1;}let result=fetch();"),
                 "a legitimate declared global-like name is not classified as unavailable");
+        for (String source : List.of("class C{readonly value:number;}let c:C={value:1};c.value=2;",
+                "let xs:readonly number[]=[1];xs[0]=2;", "let xs:readonly number[]=[1];xs.push(2);")) {
+            var mutation = checkProgram(source).result().diagnostics().stream().filter(d -> d.code().equals("E3017")).findFirst().orElseThrow();
+            check(mutation.facts().reason().startsWith("mutation.readonly") && !mutation.notes().isEmpty()
+                            && mutation.facts().guidance().getFirst().contains("compile-time-only"),
+                    "readonly mutation retains restriction declaration and shallow static semantics: " + source);
+        }
         String missingTypes = "function f(value:Missing):Missing{return value;} function g(value:Missing):void{}";
         var unknownTypes = checkProgram(missingTypes).result().diagnostics().stream()
                 .filter(d -> d.code().equals("E3004") && d.message().contains("Missing")).toList();
