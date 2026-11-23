@@ -123,6 +123,14 @@ public final class Parser {
         }
         if (peek().type() == TokenType.IDENTIFIER) {
             String word = peek().lexeme();
+            if (Set.of("interface", "type", "enum", "namespace").contains(word) && pos + 1 < tokens.size()
+                    && isIdentifier(tokens.get(pos + 1).type())) {
+                Token keyword = advance();
+                rejectedSyntax(keyword, word + "-declaration", "Declaration '" + word + "' is not supported; use the specified type forms",
+                        "DEAL supports nominal classes with fields, function declarations and the closed builtin types; do not substitute a structural or generic contract implicitly.");
+                skipRejectedControlFlow(word);
+                return null;
+            }
             if (Set.of("switch", "do", "yield").contains(word)
                     || pos + 1 < tokens.size() && tokens.get(pos + 1).type() == TokenType.COLON) {
                 Token keyword = advance();
@@ -152,7 +160,7 @@ public final class Parser {
                 if (pos + 1 < tokens.size()
                         && isIdentifier(tokens.get(pos + 1).type())
                         && pos + 2 < tokens.size()
-                        && tokens.get(pos + 2).type() == TokenType.LPAREN) {
+                        && (tokens.get(pos + 2).type() == TokenType.LPAREN || tokens.get(pos + 2).type() == TokenType.LT)) {
                     yield parseFunctionDeclaration();
                 }
                 functionExpressionStatementError();
@@ -164,7 +172,7 @@ public final class Parser {
                         && pos + 2 < tokens.size()
                         && isIdentifier(tokens.get(pos + 2).type())
                         && pos + 3 < tokens.size()
-                        && tokens.get(pos + 3).type() == TokenType.LPAREN) {
+                        && (tokens.get(pos + 3).type() == TokenType.LPAREN || tokens.get(pos + 3).type() == TokenType.LT)) {
                     yield parseFunctionDeclaration();
                 }
                 if (pos + 1 < tokens.size() && tokens.get(pos + 1).type() == TokenType.FUNCTION) {
@@ -245,6 +253,7 @@ public final class Parser {
         Token nameToken = expect(TokenType.IDENTIFIER, DiagnosticCode.E1007, "Expected class name after 'class'");
         if (nameToken == null) { synchronize(); return null; }
 
+        rejectGenericDeclaration("class");
         Token lbrace = expect(TokenType.LBRACE, DiagnosticCode.E1005, "Expected '{' after class name");
         if (lbrace == null) { synchronize(); return null; }
 
@@ -323,6 +332,7 @@ public final class Parser {
         Token nameToken = expect(TokenType.IDENTIFIER, DiagnosticCode.E1007, "Expected function name after 'function'");
         if (nameToken == null) { synchronize(); return null; }
 
+        rejectGenericDeclaration("function");
         FunctionSuffix suffix = parseFunctionSuffix("Expected '(' after function name",
             "Expected ':' return type annotation", true);
         if (suffix == null) { return null; }
@@ -2189,6 +2199,21 @@ public final class Parser {
                 && Character.isLowSurrogate(lexeme.charAt(end))) end--;
         return new deal.diagnostics.DiagnosticFacts.SyntaxContext(context, expectedKinds, found.type().name(),
                 lexeme.substring(0, end), lexeme.length(), end < lexeme.length());
+    }
+
+    private void rejectGenericDeclaration(String declaration) {
+        if (peek().type() != TokenType.LT) return;
+        Token opener = advance();
+        rejectedSyntax(opener, "generic-" + declaration, "Generic " + declaration + " declarations are not supported; use explicit concrete types",
+                "Choose concrete parameter, result and field types, or distinct declarations; DEAL has no source-level type parameters.");
+        int depth = 1;
+        while (!isAtEnd() && depth > 0) {
+            TokenType kind = peek().type();
+            if (kind == TokenType.LBRACE || kind == TokenType.SEMICOLON) return;
+            advance();
+            if (kind == TokenType.LT) depth++;
+            else if (kind == TokenType.GT) depth--;
+        }
     }
 
     private void rejectJumpLabel() {

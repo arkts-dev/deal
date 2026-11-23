@@ -37,6 +37,15 @@ public class ParserTest {
     private static void testDiagnosticActionability() {
         testCoercingEqualityDiagnostics();
         testConservativeTerminatorOffers();
+        for (String source : List.of("interface Shape{value:number;}", "type Shape=number;", "enum Color{Red,Blue}",
+                "namespace Space{let value=1;}", "class Box<T>{value:T;}", "function identity<T>(value:T):T{return value;}",
+                "async function identity<T>(value:T):Promise<T>{return value;}")) {
+            var declaration = parse(source + "let after=1;");
+            check(declaration.diagnostics().size() == 1 && declaration.diagnostics().getFirst().facts().languageDifference() != null,
+                    "unsupported declaration has a targeted rejection: " + source + ": " + declaration.diagnostics());
+        }
+        assertNoParseErrors(parse("class type{value:number;}let interface=1;let namespace=2;function f():void{}"),
+                "contextual declaration spellings remain ordinary names where grammar permits");
         for (String source : List.of("switch(value){case 1: break;default:break;}", "do{step();}while(true);",
                 "try{}finally{}", "try{}catch(error){}finally{}", "try{}catch{}", "outer:while(true){break outer;}",
                 "while(true){break outer;}", "while(true){continue outer;}", "function* values(){yield 1;}", "yield 1;",
