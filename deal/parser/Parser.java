@@ -476,6 +476,20 @@ public final class Parser {
                     "DEAL derives the iteration binding type from the checked iterable. See docs/spec-v1.6.md#for-of; example: for (let item of values) { consume(item); }. Choose the intended iterable; no element type is invented.");
             parseType();
         }
+        if (peek().type() == TokenType.IDENTIFIER && peek().lexeme().equals("in")) {
+            Token in = advance();
+            subsetError(DiagnosticCode.E1013, "For-in key enumeration is not supported; choose explicit key or value iteration", in,
+                    "for-in", "for-of value iteration or Object.keys key iteration",
+                    "Use for-of for array/string values; for class/Record keys, iterate Object.keys(value). These differ from JavaScript for-in inherited-property enumeration.");
+            int last = diagnostics.size() - 1;
+            diagnostics.set(last, diagnostics.get(last).withFacts(diagnostics.get(last).facts()
+                    .withLanguageDifference(deal.diagnostics.LanguageDifference.syntax("for-in"))));
+            ExpressionNode iterable = parseExpression();
+            expect(TokenType.RPAREN, DiagnosticCode.E1015, "Expected ')' after for-in expression");
+            Block body = parseBlock();
+            return new ForOfStatement(spanBetween(forToken, previousOrCurrent()), name.lexeme(), type,
+                    iterable == null ? new LiteralExpr(spanOf(in), new LiteralValue.NullLiteral()) : iterable, body, isConst);
+        }
         if (!match(TokenType.OF)) {
             subsetError(DiagnosticCode.E1013, "Expected 'of'; C-style for loops are not supported", peek(),
                     "c-style-for", "for (let name of iterable) or for (const name of iterable)",

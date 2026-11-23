@@ -37,6 +37,16 @@ public class ParserTest {
     private static void testDiagnosticActionability() {
         testCoercingEqualityDiagnostics();
         testConservativeTerminatorOffers();
+        for (String binding : List.of("let", "const")) {
+            String source = "function f():void{for (" + binding + " key in value){} let after=1;}";
+            var result = parse(source);
+            check(result.diagnostics().size() == 1 && result.diagnostics().getFirst().facts().reason().equals("syntax.subset.for-in")
+                            && result.diagnostics().getFirst().range().startScalarOffset() == source.indexOf("in value")
+                            && result.diagnostics().getFirst().facts().languageDifference().feature().equals("for-in")
+                            && !result.diagnostics().getFirst().message().contains("C-style"),
+                    "for-in identifies key enumeration without C-style or brace cascades");
+        }
+        assertNoParseErrors(parse("for(let in of values){}"), "in remains a legitimate contextual iteration name");
         testSubsetAndListRecoveryFacts();
         for (String source : List.of(
                 "let make=(value:number):(()=>number)=>():number=>value;",
