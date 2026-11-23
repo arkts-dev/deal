@@ -2961,7 +2961,7 @@ public final class TypeChecker {
         }
 
         List<ClassField> classFields = cs.fields();
-        Map<String, Property> provided = new HashMap<>();
+        Map<String, Property> provided = new LinkedHashMap<>();
         for (Property prop : obj.properties()) {
             provided.put(prop.name(), prop);
         }
@@ -2980,10 +2980,13 @@ public final class TypeChecker {
             }
         }
 
+        Map<String, ClassField> declarations = new LinkedHashMap<>();
+        Map<String, Type> fieldTypes = new LinkedHashMap<>();
         for (ClassField field : classFields) {
-            Property property = provided.get(field.name());
+            declarations.put(field.name(), field);
             Type fieldType = resolveFieldTypeInClassModule(cs, field.type());
-            if (property == null) {
+            fieldTypes.put(field.name(), fieldType);
+            if (!provided.containsKey(field.name())) {
                 if (!field.optional()) {
                     diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E4001,
                         "Missing required field '" + field.name()
@@ -2994,8 +2997,13 @@ public final class TypeChecker {
                                 .withConstruction(constructionContext(cls, cs, field.name(), field)))
                                 .withNote("Required field declaration", field.span().range()));
                 }
-                continue;
             }
+        }
+        // Field lookup/layout use declarations; effects follow source evaluation order.
+        for (Property property : obj.properties()) {
+            ClassField field = declarations.get(property.name());
+            if (field == null) continue; // Extra-field diagnostics were produced above.
+            Type fieldType = fieldTypes.get(field.name());
             Type savedExpected = expectedType;
             Symbol.ClassSymbol savedContextualClass = contextualClassDecl;
             expectedType = fieldType;

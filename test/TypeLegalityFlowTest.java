@@ -46,6 +46,33 @@ public final class TypeLegalityFlowTest {
                 throw new AssertionError("frontend rejection " + backend + ": " + compiler.diagnostics());
         }
     }
+    private static void constructionOrder(Path root) throws Exception {
+        String prefix = "class C{first:number;second:number;}function f():void{let x:number|null=null;";
+        check(prefix + "let c:C={second:(x=1),first:x};}", null);
+        check(prefix + "let c:C={second:x,first:(x=1)};}", "E4003");
+        String fields = "class P{n:number|null;}class C{first:number;second:number;}function ping():number{return 1;}function f(p:P):void{if(p.n!==null){";
+        check(fields + "let c:C={second:ping(),first:p.n};}}", "E4003");
+        check(fields + "let c:C={second:p.n,first:ping()};}}", null);
+        check(fields + "let x=0;let c:C={second:(x=1),first:p.n};}}", "E4003");
+        String source = """
+            class C{first:number;second:number;}
+            class Nested{a:C;b:number;}
+            export function main():void{
+              let x:number|null=null;let c:C={second:(x=1),first:x};
+              let trace="";
+              let read=(s:string,n:number):number=>{trace=trace+s;return n;};
+              let nested:Nested={b:read("b",2),a:{second:read("s",3),first:read("f",4)}};
+              let caught=false;let untouched:number=0;
+              let fail=():number=>{trace=trace+"x";throw {name:"STOP",message:"stop"};};
+              try{let bad:C={second:fail(),first:(untouched=1)};}catch(e){caught=(e as Error).name==="STOP";}
+              if(c.first!==1||c.second!==1||nested.a.first!==4||trace!=="bsfx"||!caught||untouched!==0){
+                throw {name:"FAIL",message:"literal evaluation order"};
+              }
+            }
+            """;
+        CompositionProductionTest.execute(source, "", root, null, List.of(Backend.values()));
+    }
+
     private static void contextualInvariants(Path root) throws Exception {
         for (String expression : List.of("b?1:\"s\"", "n??\"s\"", "b?a:s"))
             check("function f(b:boolean,n:number,a:number[],s:string[]):unknown{return " + expression + ";}", "E3006");
@@ -342,6 +369,7 @@ public final class TypeLegalityFlowTest {
         Path root = Files.createTempDirectory("type-legality-flow-");
         try {
             contextualInvariants(root.resolve("context"));
+            constructionOrder(root.resolve("construction-order"));
             for (String statement : List.of("[v()];", "let xs=[[v()]];", "let xs:unknown=[v()];", "let xs=[true?v():v()];"))
                 productionReject(statement, root);
             for (String fixture : List.of("arrays/reference-array-identity-equality", "variables/block-shadowing-no-narrowing", "variables/parameter-shadowing-no-narrowing")) {

@@ -12,7 +12,9 @@ Publish exact checked facts; downstream phases must not rediscover meaning.
   and computed class keys. Quoted class keys use ordinary field checks.
 - Resolve unused field annotations and reject duplicate declared fields before
   layout planning. Recursive classes are legal. Require all nonoptional literal
-  fields, including nullable fields and Error name/message.
+  fields, including nullable fields and Error name/message. Resolve field declarations
+  for lookup/completeness, but check supplied expressions once in literal order;
+  declaration order must not drive flow effects.
 - Void and never are result-only; reject inferred result-only array elements before
   type construction. Functions returning either remain legal data. Never terminates
   only statement/return evaluation, not assignment compatibility or catch paths. TypeChecker alone owns definite
