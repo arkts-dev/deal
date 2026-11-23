@@ -2052,6 +2052,7 @@ public final class Parser {
             TokenType type = tokens.get(index).type();
             if (type == TokenType.LPAREN) depth++;
             if (type == TokenType.RPAREN && --depth == 0) {
+                if (index + 1 < tokens.size() && tokens.get(index + 1).type() == TokenType.ARROW) return true;
                 if (index + 1 >= tokens.size() || tokens.get(index + 1).type() != TokenType.COLON) return false;
                 if (tokens.get(start + 1).type() == TokenType.RPAREN
                         || tokens.get(start + 2).type() == TokenType.COLON) return true;
@@ -2081,6 +2082,13 @@ public final class Parser {
         expect(TokenType.LPAREN, DiagnosticCode.E1009, "Expected '(' before arrow parameters");
         ParamListResult params = parseParameterList();
         expect(TokenType.RPAREN, DiagnosticCode.E1010, "Expected ')' after arrow parameters");
+        if (peek().type() == TokenType.ARROW) {
+            Token arrow = advance();
+            rejectedSyntax(arrow, "arrow-result", "Arrow result annotation is required; write (parameters): R => body",
+                    "Choose the intended explicit result type; no result type is inferred from the body.");
+            if (peek().type() == TokenType.LBRACE) { parseBlock(); return new LiteralExpr(spanOf(arrow), new LiteralValue.NullLiteral()); }
+            return parseAssignment();
+        }
         expect(TokenType.COLON, DiagnosticCode.E1011, "Expected arrow result annotation");
         ResultAnnotation result = parseResultAnnotation();
         if (result.type() == null) return null;

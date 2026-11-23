@@ -14,7 +14,7 @@ public final class ArrayToSortedTest {
         TypeLegalityFlowTest.check("function f():void{let a=[1];let c=a.toSorted;}","E3001");
         TypeLegalityFlowTest.check("function f():void{let a=[1];a.toSorted((x,y):number=>x-y,0);}","E5001");
         TypeLegalityFlowTest.check("function f():void{let a=[1];a.toSorted((x:string,y:string):number=>0);}","E5001");
-        TypeLegalityFlowTest.check("function f():void{let a=[1];a.toSorted((x,y)=>x-y);}","E1015");
+        TypeLegalityFlowTest.check("function f():void{let a=[1];a.toSorted((x,y)=>x-y);}","E1042");
         Path root=Files.createTempDirectory("deal-sorted-");
         var corpus=Path.of("test/conformance").toAbsolutePath();
         try {
