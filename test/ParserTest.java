@@ -37,6 +37,15 @@ public class ParserTest {
     private static void testDiagnosticActionability() {
         testCoercingEqualityDiagnostics();
         testConservativeTerminatorOffers();
+        for (String source : List.of("import {name} from \"./m\";", "import name from \"./m\";", "import \"./m\";",
+                "import type {Name} from \"./m\";", "let value=import(\"./m\");", "export default 1;", "export const value=1;",
+                "export {name};", "export {name} from \"./m\";", "export * from \"./m\";", "declare function f():void;")) {
+            var module = parse(source + "let after=1;");
+            check(module.diagnostics().size() == 1 && module.diagnostics().getFirst().facts().languageDifference() != null,
+                    "unsupported module form is explicit: " + source + ": " + module.diagnostics());
+        }
+        assertNoParseErrors(parse("import * as api from \"./m\";export function f():void{}export class C{value:number;}"),
+                "specified namespace imports and declaration exports remain admitted");
         for (String source : List.of("function f(value?:number):void{}", "function f(value:number=1):void{}",
                 "let f=value=>value;", "let f=(value)=>value;", "function f(){}", "let f=function(){};")) {
             var callable = parse(source + "let after=1;");

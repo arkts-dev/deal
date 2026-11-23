@@ -137,6 +137,14 @@ public final class Parser {
                         "Declare an intended concrete data contract; DEAL has no abstract methods or inheritance.");
                 return parseClassDeclaration();
             }
+            if (word.equals("declare") && (peek(1).type() == TokenType.FUNCTION || peek(1).type() == TokenType.CLASS
+                    || peek(1).type() == TokenType.LET || peek(1).type() == TokenType.CONST)) {
+                Token keyword = advance();
+                rejectedSyntax(keyword, "declare", "Declare modifiers are not supported; use a .d.deal declaration module",
+                        "Describe external exports in .d.deal, configure the host module in deal.json and import its namespace; do not create ambient globals.");
+                if (peek().type() == TokenType.FUNCTION || peek().type() == TokenType.CLASS) return parseStatement();
+                recoverUnsupportedStatement(); return null;
+            }
             if (Set.of("interface", "type", "enum", "namespace").contains(word) && pos + 1 < tokens.size()
                     && isIdentifier(tokens.get(pos + 1).type())) {
                 Token keyword = advance();
@@ -638,9 +646,12 @@ public final class Parser {
         Token importToken = advance();
 
         if (!match(TokenType.STAR)) {
-            subsetError(DiagnosticCode.E1019, "Expected '*' after 'import' (only namespace imports supported)", peek(),
+            subsetError(DiagnosticCode.E1019, "Only namespace imports are supported; write import * as alias from a module path", peek(),
                     "namespace-import", "import * as alias from a module path string",
                     "DEAL supports namespace imports, not named/default imports. See docs/spec-v1.6.md#import-forms-and-import-typing; example: import * as api from \"./module\";. Choose the intended alias and module explicitly; no replacement import or exported name is inferred.");
+            int last = diagnostics.size() - 1;
+            diagnostics.set(last, diagnostics.get(last).withFacts(diagnostics.get(last).facts()
+                    .withLanguageDifference(deal.diagnostics.LanguageDifference.syntax("import-form"))));
             recoverUnsupportedStatement();
             return null;
         }
@@ -680,8 +691,15 @@ public final class Parser {
         } else if (nextType == TokenType.CLASS) {
             declaration = parseClassDeclaration();
         } else {
-            error(DiagnosticCode.E1024, "'export' must be followed by 'function', 'async function', or 'class'", peek());
-            synchronize(); return null;
+            subsetError(DiagnosticCode.E1024, "Only function and class declarations can be exported; default, value and re-exports are unsupported", peek(),
+                    "export-form", "export function or export class",
+                    "Export a declared function or class from its defining module and import its namespace; no default binding, exported variable or forwarding module is inferred.");
+            int last = diagnostics.size() - 1;
+            diagnostics.set(last, diagnostics.get(last).withFacts(diagnostics.get(last).facts()
+                    .withLanguageDifference(deal.diagnostics.LanguageDifference.syntax("export-form"))));
+            // An export-let/const is part of the rejected form, not a new statement.
+            if (peek().type() == TokenType.LET || peek().type() == TokenType.CONST) advance();
+            recoverUnsupportedStatement(); return null;
         }
 
         if (declaration == null) return null;
@@ -1551,6 +1569,13 @@ public final class Parser {
                 advance();
                 return new LiteralExpr(spanOf(previous()),
                         new LiteralValue.BooleanLiteral(false));
+            }
+            case IMPORT -> {
+                advance();
+                rejectedSyntax(token, "dynamic-import", "Dynamic import is not supported; use a module-level namespace import",
+                        "Declare import * as alias from a fixed module path at module level; imports are statically resolved and do not produce Promise data.");
+                if (match(TokenType.LPAREN)) skipBalancedType(TokenType.LPAREN, TokenType.RPAREN);
+                return new LiteralExpr(spanOf(token), new LiteralValue.NullLiteral());
             }
             case REJECTED_BIGINT -> {
                 advance();
