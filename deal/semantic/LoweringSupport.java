@@ -488,9 +488,12 @@ public final class LoweringSupport {
                 // selector-bearing BRANCH, named by the same row).
                 if (binaryExpr.op() == BinaryOp.ADD && type == Type.String.INSTANCE) {
                     scan.cover(ConstructKind.STRING_CONCAT_TEMPLATE);
-                } else {
+                } else if (binaryExpr.op() != BinaryOp.COALESCE
+                        || !nullishOnly(checkedType(module, binaryExpr.left()))) {
                     scan.cover(ConstructKind.UNARY_ARITHMETIC_COMPARISON);
                 }
+                // A statically nullish-only coalesce is sequential evaluation,
+                // not a selector: both operands retain their own obligations.
                 walkExpression(binaryExpr.left(), module, scan, checkerScope);
                 walkExpression(binaryExpr.right(), module, scan, checkerScope);
             }
@@ -789,6 +792,11 @@ public final class LoweringSupport {
      * expression carries its type, so this guard never fires on valid
      * input.
      */
+    private static boolean nullishOnly(Type type) {
+        Type base = type instanceof Type.Nullable n ? n.inner() : type;
+        return base instanceof Type.Null || base instanceof Type.Undefined;
+    }
+
     private static Type checkedType(CheckedModuleInput module, ExpressionNode expression)
             throws FactDefect {
         Type type = module.checks().typeMap().get(expression);

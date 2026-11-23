@@ -41,6 +41,9 @@ remain distinct dialects.
 - Adapters capture evaluated VALUE sources once, including immediate recursive let
   initializers and awaited results. Assignment yields the original RHS identity/
   type while storage may receive an adapter; later loads cannot justify captures.
+  Creation wiring is distinct from later validation: tracked function loads can
+  republish an allocation ValueId, so classify boundary inputs by their preceding
+  producer rather than allocation identity alone.
 - NARROWED_READ publishes admitted operands for non-boundary consumers. Direct
   fields retain declared FIELD_READ types, followed by explicit refined reads.
   Preserve ordinary boundary projections and read origins; never narrow null tests
@@ -53,6 +56,8 @@ remain distinct dialects.
 - Conditionals own lazy blocks and explicit result links. Selected-arm adapters
   wire to the owning join; void joins publish no data. Coalescing saves the left,
   tests IS_NULLISH and uses matching NON_NULLISH projection in the alternate arm.
+  A statically nullish-only left instead evaluates both operands in sequence;
+  coverage records their operations, not a selector that is correctly absent.
   Optional chains nest these guards so skipped keys/arguments never execute.
 - Computed Record literals evaluate key then value once through ordinary shared
   operations; duplicates throw Error and publish no partial destination. Traverse

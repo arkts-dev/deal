@@ -12,6 +12,7 @@ public final class NullishCoalescingTest {
     public static void main(String[] args) throws Exception {
         Path root = Files.createTempDirectory("deal-coalescing-");
         try {
+            simplifiedAndReloaded(root.resolve("minimal"));
             String source = ConformanceHarnessMetadata.productionCorpusSource(
                 Files.readString(Path.of("test/conformance/" + PATH)), PATH);
             Path input = Files.createDirectories(root.resolve("oracle/src")).resolve("main.deal");
@@ -78,6 +79,77 @@ public final class NullishCoalescingTest {
             LlvmConformanceTest.runInstrumented(corpus, fixture);
             System.out.println("Nullish coalescing: admission, transported Oracle and all production backends passed");
         } finally {CompositionProductionTest.remove(root);}
+    }
+
+    private static void simplifiedAndReloaded(Path root) throws Exception {
+        // Isolated sources must not borrow coverage from unrelated comparisons.
+        for (String left : List.of("null", "undefined")) {
+            String source = "export function main():void{let a:number[]=" + left + "??[];}";
+            CompositionProductionTest.execute(source, "", root.resolve(left), null, List.of(Backend.values()));
+        }
+        String source = """
+            function one():number{return 7;}
+            export function run():void{
+              let effects="";
+              let left=():null=>{effects=effects+"l";return null;};
+              let right=():number[]=>{effects=effects+"r";return [];};
+              let xs=left()??right();
+              let b:(n:number)=>number=one;
+              let c=b as (n:number)=>number;
+              let dynamic:unknown=b;let d=dynamic as (n:number)=>number;
+              let opaque:unknown=c;
+              if(c(2)!==7||d(3)!==7||opaque!==dynamic||effects!=="lr"||xs.length!==0){
+                throw {name:"FAIL",message:"simplification/reloaded function identity"};
+              }
+            }
+            export function main():void{run();}
+            """;
+        // The null-parameter backend defect is independent; null-returning
+        // functions exercise effects without introducing singleton parameters.
+        CompositionProductionTest.execute(source, "", root.resolve("uses"), null, List.of(Backend.values()));
+        var invocation = CompilerProfileProvider.resolve(ReleaseConfiguration.CURRENT_RELEASE_STATE,
+            ReleaseConfiguration.releaseCapabilityRegistry());
+        Path entry = Files.createDirectories(root.resolve("oracle")).resolve("main.deal").toAbsolutePath();
+        Files.writeString(entry, source.replace("export function main():void{run();}", "export function main():void{}"));
+        var compiler = new deal.module.CompilationOrchestrator(entry, entry.getParent().resolve("out"),
+            false,false,false,false,Backend.JS,null,List.of(entry.getParent()),null,null,invocation);
+        if (!compiler.compile()) throw new AssertionError(compiler.diagnostics());
+        var project = compiler.producedProject();
+        var facts = new SemanticIrValidator.ComparisonFacts(project.interfaceIndex().interfaceIndexDigest(),
+            project.semanticProfile(),invocation.capabilityRegistryHash());
+        var parsed = ContractSnapshotCanonicalizer.parseProject((CanonicalJson.Obj)CanonicalJson.parse(SemanticIrValidator.toProjectText(project)));
+        var modules = new LinkedHashMap<ModuleId,LoweredModuleUnit>();
+        parsed.modules().forEach(raw->{var unit=RawUnitMaterializer.materialize(raw);modules.put(unit.moduleId(),unit);});
+        var transported = new ExecutableLoweredProject(project.semanticProfile(),parsed.interfaceIndex(),modules,project.entryModule(),parsed.classSeeds());
+        for (var executable : List.of(project,transported)) {
+            if(SemanticIrValidator.validate(executable,facts).isPresent()) throw new AssertionError("minimal admission");
+            var tables=new LinkedHashMap<ModuleId,StructuredBodyTable>();
+            var registries=new LinkedHashMap<ModuleId,ClassFactoryRegistry>();
+            executable.modules().forEach((id,u)->{tables.put(id,u.bodyTable());registries.put(id,u.classFactories());});
+            var result=SemanticOracle.invokeSyncEntry(executable,tables,registries,new SemanticOracle.HostResponder(){},
+                executable.entryModule(),"run",List.of());
+            if(!(result.terminal() instanceof SemanticRuntimeModel.Terminal.Success s) || !s.resultAtom().equals("undefined"))
+                throw new AssertionError(result.comparisonReport());
+        }
+        var unit=project.modules().values().iterator().next();
+        var assertion=unit.ops().stream().filter(op->op.payload() instanceof KindPayload.BoundaryPayload p
+            && p.kind()==BoundaryKind.ASSERTION && p.descriptor() instanceof RuntimeDescriptor.Func).findFirst().orElseThrow();
+        var value=((KindPayload.BoundaryPayload)assertion.payload()).input();
+        var reload=unit.ops().stream().filter(op->op.kind()==SemanticOpKind.BINDING_LOAD && value.equals(op.result())
+            && unit.ops().indexOf(op)<unit.ops().indexOf(assertion)).reduce((a,b)->b).orElseThrow();
+        var ops=new ArrayList<>(unit.ops());ops.remove(reload);
+        var blocks=new LinkedHashMap<BlockId,List<OpId>>();
+        unit.bodyTable().blockOps().forEach((b,ids)->blocks.put(b,ids.stream().filter(id->!id.equals(reload.opId())).toList()));
+        var memberships=new LinkedHashMap<>(unit.bodyTable().opBlocks());memberships.remove(reload.opId());
+        var malformed=new LoweredModuleUnit(unit.formatVersion(),unit.semanticProfile(),unit.moduleId(),unit.interfaceHash(),
+            unit.loweringContextHash(),unit.requiredCapabilities(),unit.constructCoverage(),unit.classLayouts(),unit.functions(),
+            unit.moduleInit(),unit.exportPlan(),unit.functionBindings(),ops,new StructuredBodyTable(blocks,memberships),unit.classFactories(),unit.classBindingFacts());
+        var typed=SemanticIrValidator.validate(malformed,facts);
+        var raw=SemanticIrValidator.validate(RawUnitMaterializer.materialize(RawUnit.fromTyped(malformed)),facts);
+        var text=SemanticIrValidator.validateText(SemanticIrValidator.toUnitText(malformed),facts);
+        if(typed.isEmpty() || !typed.equals(raw) || !typed.equals(text)
+                || !typed.get().message().contains("NO_ADAPTER_AT_BOUNDARY"))
+            throw new AssertionError("direct adapter assertion: "+typed+" / "+raw+" / "+text);
     }
 
     private static void providerLiteralFallbacks(Path root) throws Exception {

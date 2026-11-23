@@ -2454,7 +2454,9 @@ public final class BindingsProductionValidator {
      * loads/reads/passes/returns preserve it, so a later load's boundary of
      * any kind may legitimately name the same identity, and those ordinary
      * flows are never this rule's concern (the adapter result is no longer
-     * their input).</p>
+     * their input). Tracked BINDING_LOAD operations may republish the same
+     * allocation ValueId; resolve the local preceding producer before applying
+     * the creation-only rule to a boundary consumer.</p>
      */
     private static Optional<CompilerDiagnostic> checkNoAdapterAtBoundary(Model model) {
         for (SemanticOp op : model.unit.ops()) {
@@ -2469,6 +2471,7 @@ public final class BindingsProductionValidator {
                         && candidate.payload()
                             instanceof KindPayload.BoundaryPayload boundary
                         && adapterValue.equals(boundary.input())
+                        && !consumesReloadedIdentity(model, candidate, adapterValue)
                         && consumerIds.add(candidate.opId())) {
                     consumers.add(candidate);
                 }
@@ -2531,6 +2534,22 @@ public final class BindingsProductionValidator {
             }
         }
         return Optional.empty();
+    }
+
+    /** A tracked function load may republish the allocation's existing ValueId. */
+    private static boolean consumesReloadedIdentity(Model model, SemanticOp consumer, ValueId value) {
+        List<SemanticOp> block = model.opsInBlock.get(model.blockOf(consumer.opId()));
+        Integer index = model.indexInBlock.get(consumer.opId());
+        if (block == null || index == null) return false;
+        for (int i = index - 1; i >= 0; i--) {
+            SemanticOp producer = block.get(i);
+            if (value.equals(producer.result())) {
+                // Binding registration, generation and dominating initialization
+                // are independently checked; this is use, not wrapper creation.
+                return producer.kind() == SemanticOpKind.BINDING_LOAD;
+            }
+        }
+        return false;
     }
 
     /**
