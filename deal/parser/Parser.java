@@ -1237,10 +1237,7 @@ public final class Parser {
             if (right == null) return left;
 
             if (!isValidAssignmentTarget(left)) {
-                if (left instanceof OptionalChainExpr) subsetError(DiagnosticCode.E1033,
-                        "Optional chains are not assignment targets; guard the receiver before writing", previous(),
-                        "optional-chain-assignment", "non-optional writable target",
-                        "Use an explicit null/undefined guard and perform the intended write on the checked receiver; skipped writes are not inferred.");
+                if (left instanceof OptionalChainExpr) optionalMutationTarget(left, false);
                 else error(DiagnosticCode.E1033, "Invalid assignment target", left);
             }
 
@@ -1439,12 +1436,18 @@ public final class Parser {
         return target;
     }
 
+    private void optionalMutationTarget(ExpressionNode target, boolean update) {
+        diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E1033, update
+                        ? "Optional chains are not update targets; guard the receiver before updating"
+                        : "Optional chains are not assignment targets; guard the receiver before writing", target.span())
+                .withFacts(new deal.diagnostics.DiagnosticFacts("syntax.subset.optional-chain-" + (update ? "update" : "assignment"),
+                        "parse.target", "non-optional writable target", "optional chain",
+                        List.of("Guard every admitted null/undefined receiver before the intended mutation; skipped writes or update results are not inferred."))));
+    }
+
     private AssignmentExpr updateExpression(Token operator, ExpressionNode target, boolean postfix) {
         if (!isValidAssignmentTarget(target)) {
-            if (target instanceof OptionalChainExpr) subsetError(DiagnosticCode.E1033,
-                    "Optional chains are not update targets; guard the receiver before updating", operator,
-                    "optional-chain-update", "non-optional writable target",
-                    "Guard every admitted null/undefined receiver before the intended numeric update; no skipped-update result is inferred.");
+            if (target instanceof OptionalChainExpr) optionalMutationTarget(target, true);
             else error(DiagnosticCode.E1033, "Invalid update target", target);
         }
         AssignmentOperator kind = operator.type() == TokenType.INCREMENT
@@ -1634,10 +1637,14 @@ public final class Parser {
                 return parseTemplateLiteral();
             }
             case IDENTIFIER, AS, FROM, OF -> {
-                if (peek(1).type() == TokenType.ARROW) {
+                boolean annotatedArrow = false;
+                if (peek(1).type() == TokenType.COLON && peek(3).type() == TokenType.ARROW
+                        && peek(2).type() == TokenType.IDENTIFIER) annotatedArrow = true;
+                if (peek(1).type() == TokenType.ARROW || annotatedArrow) {
                     Token parameter = advance();
                     rejectedSyntax(parameter, "unparenthesized-arrow", "Arrow parameters require parentheses and an explicit result annotation",
                             "Write (name: T): R => expression, or omit the parameter type only under a positional function context; choose R explicitly.");
+                    if (annotatedArrow) { advance(); advance(); }
                     advance();
                     return parseAssignment();
                 }

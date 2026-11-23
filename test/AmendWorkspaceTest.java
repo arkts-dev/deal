@@ -628,7 +628,8 @@ public final class AmendWorkspaceTest {
                     new CompilerProtocol.ChangeSetPrecondition(base.sourceDigest(), Map.of(body.id().value(), body.fingerprint())),
                     change, List.of(new AmendWorkspace.ReplaceFunctionBody(body.id(), invalid)));
             check(!staged.accepted() && staged.source().equals(clean)
-                            && staged.diagnostics().stream().anyMatch(d -> d.facts().reason().equals("syntax.expression-required")
+                            && staged.diagnostics().stream().anyMatch(d -> (d.facts().reason().equals("syntax.expression-required")
+                                    || d.facts().reason().equals("syntax.subset.array-hole"))
                                     && d.facts().syntax().foundKind().equals("COMMA")
                                     && d.facts().syntax().lexeme().equals(","))
                             && staged.diagnostics().stream().allMatch(d -> d.missingSymbols().isEmpty() && !d.code().equals("E2001")),
@@ -734,7 +735,9 @@ public final class AmendWorkspaceTest {
                 check(staged.diagnostics().stream().allMatch(d -> d.operationIndex() == badIndex),
                         "diagnostics must retain their transaction-local operation identity");
                 if (syntaxFailure) {
-                    check(rejected.get(0).diagnostics().stream().anyMatch(d -> d.code().equals("E1015")),
+                    check(rejected.get(0).diagnostics().stream().anyMatch(d -> d.code().equals("E1042")
+                                    && d.facts().reason().equals("syntax.subset.coercing-equality")
+                                    && d.facts().languageDifference() != null),
                             "the syntax failure must reach the failing slot only");
                 }
                 var untouched = staged.workspace().slots().get(reverse ? 1 : 0);

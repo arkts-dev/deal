@@ -724,6 +724,13 @@ public class CheckerTest {
                     "template rejection explains explicit formatting without invented coercion: " + expression);
         }
         assertNoErrors(checkProgram("let text=`value ${1} ${true?\"yes\":\"no\"}`;"), "explicit string/number interpolation remains legal");
+        var ordinaryMember = checkProgram("class C{value:number;}let c:C={value:1};c.absent;").result().diagnostics().getFirst();
+        check(ordinaryMember.facts().reason().equals("access.undeclared-field") && ordinaryMember.facts().languageDifference() == null,
+                "an undeclared user field does not acquire builtin API metadata");
+        check(checkProgram("Math.sin(1);").result().diagnostics().stream().anyMatch(d -> d.facts().reason().equals("builtin.unsupported-member")),
+                "an unavailable builtin member is not reported as a missing import");
+        check(checkProgram("Number(true);").result().diagnostics().stream().anyMatch(d -> d.facts().guidance().stream()
+                        .anyMatch(g -> g.contains("Number(text: string): number"))), "conversion rejection prints actual restricted signature");
         String missingTypes = "function f(value:Missing):Missing{return value;} function g(value:Missing):void{}";
         var unknownTypes = checkProgram(missingTypes).result().diagnostics().stream()
                 .filter(d -> d.code().equals("E3004") && d.message().contains("Missing")).toList();

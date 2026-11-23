@@ -1623,7 +1623,7 @@ public final class TypeChecker {
         Symbol sym = resolveVisibleBinding(id.name());
         if (sym == null) {
             if (Set.of("parseInt", "parseFloat", "isNaN", "isFinite", "Boolean", "BigInt", "Symbol", "RegExp", "Map", "Set",
-                    "window", "document", "globalThis", "process", "fetch", "setTimeout", "setInterval", "require").contains(id.name())) {
+                    "Promise", "window", "document", "globalThis", "process", "fetch", "setTimeout", "setInterval", "require").contains(id.name())) {
                 diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E2001,
                         "Global '" + id.name() + "' is not predefined in DEAL; choose a supported builtin or declared host API", id.span())
                         .withFacts(new deal.diagnostics.DiagnosticFacts("name.unavailable-global", "read", "visible value binding", id.name(),
@@ -2339,7 +2339,10 @@ public final class TypeChecker {
             default -> List.of(
                     "Match the selected callable's declared parameter count and types; no omitted value, coercion or signature change is inferred.");
         };
-        if ((name.equals("String") || name.equals("Number")) && reason.startsWith("call.argument"))
+        if (call.callee() instanceof IdentifierExpr conversion
+                && resolveVisibleBinding(conversion.name()) instanceof Symbol.IntrinsicSymbol
+                && (conversion.name().equals("String") || conversion.name().equals("Number"))
+                && reason.startsWith("call.argument"))
             guidance = List.of("DEAL supports String(value: number): string and Number(text: string): number only; these are not general JavaScript coercions. Choose the intended explicit conversion or guard.");
         return new deal.diagnostics.DiagnosticFacts(reason, "call", expected, actual, guidance)
                 .withCall(new deal.diagnostics.DiagnosticFacts.CallContext(name, typeName(signature),
@@ -2424,8 +2427,8 @@ public final class TypeChecker {
         if (mae.object() instanceof IdentifierExpr builtinNamespace) {
             BuiltinCall builtin = BuiltinCall.resolve(builtinNamespace.name(), mae.field());
             if (builtin == null && Set.of("Object", "Array", "String", "Number", "JSON", "Math", "Date", "console").contains(builtinNamespace.name())
-                    && resolveVisibleBinding(builtinNamespace.name()) != null
-                    && !(resolveVisibleBinding(builtinNamespace.name()) instanceof Symbol.ModuleSymbol)) {
+                    && (resolveVisibleBinding(builtinNamespace.name()) == null
+                        || resolveVisibleBinding(builtinNamespace.name()) instanceof Symbol.IntrinsicSymbol)) {
                 String members = String.join(", ", BuiltinCall.members(builtinNamespace.name()));
                 if (members.isEmpty()) members = "no namespace members";
                 diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E3003,

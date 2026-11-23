@@ -37,6 +37,9 @@ public class ParserTest {
     private static void testDiagnosticActionability() {
         testCoercingEqualityDiagnostics();
         testConservativeTerminatorOffers();
+        var annotatedArrow = parse("let f=a:number=>a;");
+        check(annotatedArrow.diagnostics().size() == 1 && annotatedArrow.diagnostics().getFirst().facts().reason().equals("syntax.subset.unparenthesized-arrow"),
+                "annotated unparenthesized arrow receives the same local rejection");
         for (String expression : List.of("value?.field=1", "value?.field++", "++value?.field")) {
             var target = parse(expression + ";");
             check(target.diagnostics().size() == 1 && target.diagnostics().getFirst().message().contains("Optional chains are not"),
