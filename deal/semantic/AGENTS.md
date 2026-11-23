@@ -54,7 +54,8 @@ remain distinct dialects.
   save address operands and the admitted old value before RHS effects, then use
   ordinary binary operations and validated assignment chains.
 - Conditionals own lazy blocks and explicit result links. Selected-arm adapters
-  wire to the owning join; void joins publish no data. Coalescing saves the left,
+  wire to the owning join; selected function arms retain their typed boundary
+  even when signatures match and no adapter is needed. Void joins publish no data. Coalescing saves the left,
   tests IS_NULLISH and uses matching NON_NULLISH projection in the alternate arm.
   A statically nullish-only left instead evaluates both operands in sequence;
   coverage records their operations, not a selector that is correctly absent.

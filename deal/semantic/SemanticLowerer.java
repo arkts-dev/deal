@@ -13693,8 +13693,12 @@ public final class SemanticLowerer {
 
         private ValueId lowerConditionalArm(ExpressionNode arm, Type resultType, OpId owner) {
             RuntimeDescriptor target = valueDescriptorOf(resultType);
-            if (!positionAdapts(arm, target)) return lowerOperand(arm);
-            ValueId adapted = lowerPositionAdapter(arm, (RuntimeDescriptor.Func) target, () -> lowerOperand(arm));
+            if (!(target instanceof RuntimeDescriptor.Func)) return lowerOperand(arm);
+            // A selected function arm is a typed value position even when its
+            // signature already matches. Ordinary joins do not invent adapters.
+            ValueId adapted = positionAdapts(arm, target)
+                ? lowerPositionAdapter(arm, (RuntimeDescriptor.Func) target, () -> lowerOperand(arm))
+                : lowerOperand(arm);
             OpId boundary = emitNullOp(SemanticOpKind.BOUNDARY,
                 new KindPayload.BoundaryPayload(BoundaryKind.CONDITIONAL_BRANCH, target, adapted,
                     new BoundaryRealization.RuntimeValidation(CANONICAL_RUNTIME_VALIDATION_ID)),
