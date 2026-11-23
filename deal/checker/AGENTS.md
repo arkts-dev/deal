@@ -65,6 +65,11 @@ Unresolved-call alternatives consume already checked argument types; never reche
 Array callback contexts derive from receiver/source; ordinary shorter-arity
 adaptation remains. Void expression-bodied arrows require void or terminating never expressions.
 
+Array literals retain the complete contextual array base, including readonly,
+for empty and nonempty literals; nullish target members do not enter the literal's
+type. Element contexts recurse independently, preserving shallow mutability.
+Assignment expressions keep the actual RHS type, not the storage envelope.
+
 Conditional arms receive result context and their own guard states. Without an
 outer target, a literal arm uses its independently typed sibling's exact array/
 class/Record target/provider. Static checking order must not change branch facts.

@@ -108,6 +108,7 @@ public final class ReadonlyTest {
             hostAccess(root.resolve("host-access"));
             readonlyFieldReads(root.resolve("field-reads"));
             readonlyJoins(root.resolve("joins"));
+            readonlyLiterals(root.resolve("literals"));
         } finally { CompositionProductionTest.remove(root); }
         System.out.println("Readonly: frontend and production backends passed");
     }
@@ -210,6 +211,97 @@ public final class ReadonlyTest {
                 if(result.exitCode()!=0 || !result.stdout().isEmpty() || !result.stderr().isEmpty())
                     throw new AssertionError("readonly fields O"+level+" stress="+stress+": "+result.describe());
             }
+        }
+    }
+
+    static void readonlyLiterals(java.nio.file.Path root) throws Exception {
+        literalTypes();
+        for(String literal:List.of("[]","[1]")) {
+            for(String source:List.of(
+                    "export function main():void{let xs:readonly number[]=[];(xs="+literal+").push(2);}",
+                    "export function main():void{let xs:readonly number[]|null=null;(xs="+literal+").push(2);}",
+                    "class C{v:readonly number[];}export function main():void{let c:C={v:[]};(c.v="+literal+").push(2);}",
+                    "class C{v:readonly number[]|null;}export function main():void{let c:C={v:null};(c.v="+literal+").push(2);}")) {
+                TypeLegalityFlowTest.check(source,"E3017");
+                for(Backend backend:Backend.values()) {
+                    var directory=Files.createDirectories(root.resolve("reject-"+literal.length()+"-"+source.hashCode()+"-"+backend));
+                    var entry=directory.resolve("main.deal");Files.writeString(entry,source);
+                    var invocation=deal.semantic.CompilerProfileProvider.resolve(deal.semantic.ReleaseConfiguration.CURRENT_RELEASE_STATE,
+                        deal.semantic.ReleaseConfiguration.releaseCapabilityRegistry());
+                    var compiler=new deal.module.CompilationOrchestrator(entry,directory.resolve("out"),false,false,false,false,
+                        backend,null,List.of(directory),null,null,invocation);
+                    if(compiler.compile() || compiler.semanticEmissionCount()!=0 || compiler.diagnostics().size()!=1
+                            || !compiler.diagnostics().getFirst().code().equals("E3017") || Files.exists(directory.resolve("out")))
+                        throw new AssertionError("readonly literal mutation "+backend+": "+compiler.diagnostics());
+                }
+            }
+        }
+        String source="""
+            class C{v:readonly number[];nested:readonly (readonly number[])[];}
+            function conditional(a:readonly number[],yes:boolean):number{
+              let empty=yes?a:[];let filled=yes?[9]:a;let reversed=yes?[]:a;
+              let fullReversed=yes?a:[8];
+              return empty.length+filled.length+reversed.length+fullReversed.length;
+            }
+            function fallback(a:readonly number[]|null):number{
+              let empty=a??[];let filled=a??[9];return empty.length+filled.length;
+            }
+            function give():readonly number[]{return [];}
+            function accept(a:readonly number[]):number{return a.length;}
+            export function main(): void {
+              let a:readonly number[]=[1,2];
+              if(conditional(a,true)!==5 || conditional(a,false)!==5 || fallback(a)!==4
+                  || fallback(null)!==1 || give().length!==0 || accept([3])!==1){throw {name:"FAIL",message:"literal contexts"};}
+              let c:C={v:[],nested:[[1],[]]};
+              let xs:readonly number[]=[];let assigned=(xs=[4]);
+              let fieldAssigned=(c.v=[5]);
+              if(assigned!==xs || fieldAssigned!==c.v || assigned[0]!==4 || fieldAssigned[0]!==5
+                  || c.nested[0][0]!==1 || c.nested[1].length!==0){throw {name:"FAIL",message:"literal identity"};}
+              let dynamic:unknown=assigned;let recovered=dynamic as number[];recovered.push(6);
+              if(xs.length!==2 || assigned[1]!==6){throw {name:"FAIL",message:"readonly is not frozen"};}
+              let original=[7];let originalResult=(xs=original);originalResult.push(8);
+              if(xs.length!==2 || xs[1]!==8){throw {name:"FAIL",message:"original mutable RHS"};}
+              let mutable:number[]=[];let writable=(mutable=[1]);writable.push(2);
+              let shallow:readonly number[][]=[[3]];shallow[0].push(4);
+              let copy=assigned.slice();copy.push(9);
+              if(mutable.length!==2 || shallow[0][1]!==4 || copy.length!==3 || assigned.length!==2){throw {name:"FAIL",message:"mutable controls"};}
+            }
+            """;
+        oracleAndTransport(root.resolve("oracle"),source);
+        var production=root.resolve("production");
+        CompositionProductionTest.execute(source,"",production,null,List.of(Backend.JS,Backend.LUAJIT,Backend.JVM,Backend.LLVM));
+        sanitizedNative(production.resolve("LLVM/out"),root);
+    }
+
+    private static void literalTypes() {
+        for(String[] row:new String[][]{
+                {"function f():void{let a:readonly number[]=[];}","readonly[number]"},
+                {"function f():void{let a:readonly number[]=[1];}","readonly[number]"},
+                {"function f():void{let a:readonly number[]|null=[];}","readonly[number]"},
+                {"function f():void{let a:readonly number[]|undefined=[1];}","readonly[number]"},
+                {"function f():void{let a:readonly (readonly number[])[]=[[1],[]];}","readonly[readonly[number]]","readonly[number]","readonly[number]"},
+                {"function f():void{let a:readonly number[][]=[[1]];}","readonly[[number]]","[number]"},
+                {"function f():void{let a:readonly number[]=[];let b=(a=[1]);}","readonly[number]","readonly[number]"},
+                {"function f():void{let a:number[]=[];let b=(a=[1]);}","[number]","[number]"},
+                {"function f():void{let a=[1];}","[number]"},
+                {"function f():readonly number[]{return [];}","readonly[number]"},
+                {"function g(a:readonly number[]):void{}function f():void{g([1]);}","readonly[number]"},
+                {"class C{v:readonly number[];}function f():void{let c:C={v:[1]};}","readonly[number]"},
+                {"function f(a:readonly number[],yes:boolean):void{let b=yes?a:[];}","readonly[number]"},
+                {"function f(a:readonly number[],yes:boolean):void{let b=yes?[]:a;}","readonly[number]"},
+                {"function f(a:readonly number[]|null):void{let b=a??[1];}","readonly[number]"}}) {
+            var lex=new deal.lexer.Lexer(row[0],"literal.deal").tokenize();
+            var parse=new deal.parser.Parser(lex.tokens(),"literal.deal").parse();
+            var resolver=new deal.checker.NameResolver("literal.deal",new StubModuleResolver());
+            var symbols=resolver.resolve(parse.program());
+            var result=deal.checker.TypeChecker.check("literal.deal",symbols,resolver,parse.program());
+            if(!lex.diagnostics().isEmpty() || !parse.diagnostics().isEmpty() || !resolver.diagnostics().isEmpty() || !result.diagnostics().isEmpty())
+                throw new AssertionError(row[0]+": "+lex.diagnostics()+parse.diagnostics()+resolver.diagnostics()+result.diagnostics());
+            var observed=result.typeMap().entrySet().stream().filter(e->e.getKey() instanceof deal.ast.ArrayLiteralExpr)
+                .sorted(java.util.Comparator.comparingInt(e->e.getKey().span().startScalarOffset()))
+                .map(e->deal.semantic.DescriptorService.describe(e.getValue()).canonicalSpecText()).toList();
+            var expected=java.util.Arrays.asList(row).subList(1,row.length);
+            if(!observed.equals(expected))throw new AssertionError(row[0]+": expected "+expected+", got "+observed);
         }
     }
 
@@ -418,18 +510,28 @@ public final class ReadonlyTest {
         var text = deal.semantic.ir.SemanticIrValidator.validateText(
             deal.semantic.ir.SemanticIrValidator.toProjectText(project),facts);
         if (typed.isPresent() || text.isPresent()) throw new AssertionError("readonly transport: "+typed+" / "+text);
-        var tables = new java.util.LinkedHashMap<deal.semantic.ir.ModuleId,deal.semantic.ir.StructuredBodyTable>();
-        var registries = new java.util.LinkedHashMap<deal.semantic.ir.ModuleId,deal.semantic.ir.ClassFactoryRegistry>();
-        project.modules().forEach((id,unit)->{
-            tables.put(id,unit.bodyTable());registries.put(id,unit.classFactories());
-            var rebuilt=deal.semantic.ir.RawUnitMaterializer.materialize(deal.semantic.ir.RawUnit.fromTyped(unit));
-            if(!deal.semantic.ir.SemanticIrValidator.toUnitText(unit).equals(deal.semantic.ir.SemanticIrValidator.toUnitText(rebuilt)))
-                throw new AssertionError("readonly raw roundtrip");
-        });
-        var result = deal.semantic.SemanticOracle.invokeSyncEntry(project,tables,registries,null,
-            compiler.checkedProject().input().entryModule(),"run",List.of());
-        if (!(result.terminal() instanceof deal.semantic.SemanticRuntimeModel.Terminal.Success))
-            throw new AssertionError(result.comparisonReport());
+        var decoded=ContractSnapshotCanonicalizer.parseProject((CanonicalJson.Obj)CanonicalJson.parse(
+            SemanticIrValidator.toProjectText(project)));
+        var modulesFromText=new java.util.LinkedHashMap<ModuleId,LoweredModuleUnit>();
+        decoded.modules().forEach(raw->{var unit=RawUnitMaterializer.materialize(raw);modulesFromText.put(unit.moduleId(),unit);});
+        var transported=new ExecutableLoweredProject(project.semanticProfile(),decoded.interfaceIndex(),modulesFromText,
+            project.entryModule(),decoded.classSeeds());
+        for(var executable:List.of(project,transported)) {
+            var admitted=SemanticIrValidator.validate(executable,facts);
+            if(admitted.isPresent())throw new AssertionError("readonly transported admission: "+admitted);
+            var tables=new java.util.LinkedHashMap<ModuleId,StructuredBodyTable>();
+            var registries=new java.util.LinkedHashMap<ModuleId,ClassFactoryRegistry>();
+            executable.modules().forEach((id,unit)->{
+                tables.put(id,unit.bodyTable());registries.put(id,unit.classFactories());
+                var rebuilt=RawUnitMaterializer.materialize(RawUnit.fromTyped(unit));
+                if(!SemanticIrValidator.toUnitText(unit).equals(SemanticIrValidator.toUnitText(rebuilt)))
+                    throw new AssertionError("readonly raw roundtrip");
+            });
+            var result=deal.semantic.SemanticOracle.invokeSyncEntry(executable,tables,registries,null,
+                compiler.checkedProject().input().entryModule(),"run",List.of());
+            if(!(result.terminal() instanceof deal.semantic.SemanticRuntimeModel.Terminal.Success success)
+                    || !success.resultAtom().equals("undefined"))throw new AssertionError(result.comparisonReport());
+        }
         return project;
     }
 

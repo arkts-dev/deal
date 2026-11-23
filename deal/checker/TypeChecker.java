@@ -2682,19 +2682,15 @@ public final class TypeChecker {
     // =======================================================================
 
     private Type checkArrayLiteral(ArrayLiteralExpr arr) {
-        // The contextual element type: an array-typed expectation, or the
-        // array inside a nullable expectation (e.g. int[] | null).
-        Type elementContext = null;
-        if (expectedType instanceof Type.Array expectedArr) {
-            elementContext = expectedArr.element();
-        } else if (expectedType instanceof Type.Nullable ne
-                && ne.inner() instanceof Type.Array innerArr) {
-            elementContext = innerArr.element();
-        }
+        // A literal is non-nullish, but retains the target's complete array
+        // base (including readonly), not just its element descriptor.
+        Type base = expectedType instanceof Type.Nullable n ? n.inner() : expectedType;
+        Type.Array arrayContext = base instanceof Type.Array a ? a : null;
+        Type elementContext = arrayContext == null ? null : arrayContext.element();
 
         List<ExpressionNode> elements = arr.elements();
         if (elements.isEmpty()) {
-            if (elementContext != null) return Types.array(elementContext);
+            if (arrayContext != null) return arrayContext;
             error(DiagnosticCode.E3002, "Cannot infer type of empty array literal", arr.span());
             return Type.Error.INSTANCE;
         }
@@ -2723,7 +2719,7 @@ public final class TypeChecker {
                 }
             }
             if (!ok) return Type.Error.INSTANCE;
-            return Types.array(elementContext);
+            return arrayContext;
         }
 
         Type firstType = null;
