@@ -672,6 +672,15 @@ public class CheckerTest {
         check(context.facts().reason().equals("context.required")
                         && context.facts().guidance().get(0).contains("intended element type"),
                 "context rejection requests user intent, not a guessed type");
+        var missingAwait = checkProgram("async function f():Promise<number>{return 1;} async function g():Promise<void>{f();}")
+                .result().diagnostics().stream().filter(d -> d.facts().reason().equals("call.async-requires-await"))
+                .findFirst().orElseThrow();
+        check(missingAwait.facts().guidance().getFirst().contains("await")
+                        && !missingAwait.facts().guidance().getFirst().contains("parameter count")
+                        && missingAwait.facts().call() != null,
+                "missing await retains callable evidence with placement-specific advice");
+        assertNoErrors(checkProgram("async function f():Promise<number>{return 1;} async function g():Promise<void>{await f();}"),
+                "await in an async body repairs placement without changing arguments");
         for (String source : List.of("let f=(value):number=>1;", "let f=function(value):number{return 1;};")) {
             var parameter = checkProgram(source).result().diagnostics().stream()
                     .filter(d -> d.code().equals("E3002")).findFirst().orElseThrow();

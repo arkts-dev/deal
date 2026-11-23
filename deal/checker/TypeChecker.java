@@ -2318,10 +2318,15 @@ public final class TypeChecker {
         FunctionDeclaration source = declaration == null ? null : declaration.declaration();
         Parameter parameter = source != null && argument >= 0 && argument < source.params().size()
             ? source.params().get(argument) : null;
-        return new deal.diagnostics.DiagnosticFacts(reason, "call", expected, actual, List.of(
-                "Match the selected callable's declared parameter count and types using explicitly chosen arguments; "
-                        + "no omitted value, coercion or signature change is inferred. "
-                        + "See docs/spec-v1.6.md#function-values-calls-and-wrappers and #function-type-compatibility."))
+        List<String> guidance = switch (reason) {
+            case "call.async-requires-await" -> List.of(
+                    "Call this async function immediately under await inside an async body; async operations cannot be stored or returned as data.");
+            case "call.async-optional-chain" -> List.of(
+                    "Async calls cannot use optional chains; guard the nullable callable explicitly, then await the direct call in an async body.");
+            default -> List.of(
+                    "Match the selected callable's declared parameter count and types; no omitted value, coercion or signature change is inferred.");
+        };
+        return new deal.diagnostics.DiagnosticFacts(reason, "call", expected, actual, guidance)
                 .withCall(new deal.diagnostics.DiagnosticFacts.CallContext(name, typeName(signature),
                         source == null ? null : source.span().range(), argument,
                         parameter == null ? "" : parameter.name(), signature.paramTypes().size(),
