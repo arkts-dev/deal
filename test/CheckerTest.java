@@ -672,6 +672,14 @@ public class CheckerTest {
         check(context.facts().reason().equals("context.required")
                         && context.facts().guidance().get(0).contains("intended element type"),
                 "context rejection requests user intent, not a guessed type");
+        String coalescing = "function f(value:number|null):void{let result=value??\"fallback\";}";
+        var fallback = checkProgram(coalescing).result().diagnostics().stream()
+                .filter(d -> d.facts().reason().equals("coalesce.incompatible-fallback")).findFirst().orElseThrow();
+        check(fallback.message().contains("?? fallback") && !fallback.message().contains("branches")
+                        && fallback.facts().expected().equals("number") && fallback.facts().actual().equals("string")
+                        && fallback.range().startScalarOffset() == coalescing.indexOf("\"fallback\""),
+                "coalescing mismatch identifies the fallback occurrence and non-nullish left type");
+        assertNoErrors(checkProgram(coalescing.replace("\"fallback\"", "0")), "compatible numeric fallback remains legal");
         var missingAwait = checkProgram("async function f():Promise<number>{return 1;} async function g():Promise<void>{f();}")
                 .result().diagnostics().stream().filter(d -> d.facts().reason().equals("call.async-requires-await"))
                 .findFirst().orElseThrow();

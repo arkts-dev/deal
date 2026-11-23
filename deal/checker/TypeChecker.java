@@ -3317,10 +3317,14 @@ public final class TypeChecker {
         }
         Type base = left instanceof Type.Nullable n ? n.inner() : left;
         if (base instanceof Type.Null || base instanceof Type.Undefined) return right;
-        return conditionalResult(base, right, context, binary.span());
+        return conditionalResult(base, right, context, binary.right().span(), true);
     }
 
     private Type conditionalResult(Type consequent, Type alternate, Type context, Span span) {
+        return conditionalResult(consequent, alternate, context, span, false);
+    }
+
+    private Type conditionalResult(Type consequent, Type alternate, Type context, Span span, boolean coalescing) {
         if (consequent == Type.Error.INSTANCE || alternate == Type.Error.INSTANCE) return Type.Error.INSTANCE;
         if (context != null && isAssignable(context, consequent) && isAssignable(context, alternate)) {
             Type base = context instanceof Type.Nullable n ? n.inner() : context;
@@ -3362,7 +3366,15 @@ public final class TypeChecker {
                     || (alternate instanceof Type.Nullable other && other.admitsUndefined())) result = Types.withNullish(result, true, false);
             return result;
         }
-        error(DiagnosticCode.E3006, "Incompatible conditional branches: " + typeName(consequent) + " and " + typeName(alternate), span);
+        diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E3006,
+                coalescing ? "Incompatible ?? fallback: non-nullish left is " + typeName(consequent)
+                        + ", fallback is " + typeName(alternate)
+                    : "Incompatible conditional branches: " + typeName(consequent) + " and " + typeName(alternate), span)
+                .withFacts(new deal.diagnostics.DiagnosticFacts(coalescing ? "coalesce.incompatible-fallback" : "conditional.incompatible-branches",
+                        coalescing ? "coalesce" : "conditional", typeName(consequent), typeName(alternate),
+                        List.of(coalescing
+                                ? "Choose a fallback compatible with the non-nullish left type; ?? replaces null/undefined, not other values."
+                                : "Choose branches with identical or permitted nullish types, or supply an intentional compatible target type."))));
         return Type.Error.INSTANCE;
     }
 
