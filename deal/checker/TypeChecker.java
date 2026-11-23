@@ -917,7 +917,7 @@ public final class TypeChecker {
                         "Return type mismatch: expected " + typeName(currentReturnType)
                         + ", got " + typeName(exprType), rs.expr().get().span()).withFacts(
                                 new deal.diagnostics.DiagnosticFacts("return.incompatible", "return",
-                                        typeName(currentReturnType), typeName(exprType), List.of())
+                                        typeName(currentReturnType), typeName(exprType), RuleGuidance.assignment(currentReturnType, exprType))
                                         .withMismatch(typeMismatch(currentReturnType, exprType)))
                                 .withNote("Declared result annotation", currentReturnAnnotation.span().range()), rs.expr().get()));
                 }
@@ -3842,7 +3842,7 @@ public final class TypeChecker {
         }
         CompilerDiagnostic diagnostic = diagnostics.get(diagnosticIndex).withFacts(
                 new deal.diagnostics.DiagnosticFacts("type.assignability", "assignment",
-                        typeName(targetType), typeName(actualType), List.of())
+                        typeName(targetType), typeName(actualType), RuleGuidance.assignment(targetType, actualType))
                         .withMismatch(typeMismatch(targetType, actualType)));
         if (annotation != null) diagnostic = diagnostic.withNote("Expected binding annotation", annotation.span().range());
         diagnostics.set(diagnosticIndex, diagnostic);

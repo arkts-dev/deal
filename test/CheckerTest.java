@@ -687,6 +687,14 @@ public class CheckerTest {
             assertNoErrors(checkProgram("class " + name + "{value:number;}function f(value:" + name + "):void{}"),
                     "legitimate user class wins over absent predefined spelling: " + name);
         }
+        for (String source : List.of("function f(value:string|undefined):string{return value;}",
+                "function f(value:unknown):number{return value;}", "let xs:number[]=[1];let ys:unknown[]=xs;",
+                "let xs:readonly number[]=[1];let ys:number[]=xs;", "class C{value:number;}let c:C={value:1};let r:Record<string,unknown>=c;",
+                "let f:(x:number)=>number=(x:string):number=>1;")) {
+            var mismatch = checkProgram(source).result().diagnostics().stream().filter(d -> d.facts().mismatch() != null).findFirst().orElseThrow();
+            check(!mismatch.facts().guidance().isEmpty() && mismatch.facts().languageDifference() == null,
+                    "assignment/return mismatch gets intent-safe guidance without tagging a generic mismatch: " + source);
+        }
         String missingTypes = "function f(value:Missing):Missing{return value;} function g(value:Missing):void{}";
         var unknownTypes = checkProgram(missingTypes).result().diagnostics().stream()
                 .filter(d -> d.code().equals("E3004") && d.message().contains("Missing")).toList();

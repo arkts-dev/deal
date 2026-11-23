@@ -31,6 +31,28 @@ final class RuleGuidance {
                 + "optional access deliberately adds undefined for skipped non-void results.";
     }
 
+    static java.util.List<String> assignment(deal.types.Type target, deal.types.Type actual) {
+        var advice = new java.util.ArrayList<String>();
+        if (actual instanceof deal.types.Type.Unknown) advice.add(unknownRead());
+        if (actual instanceof deal.types.Type.Null || actual instanceof deal.types.Type.Undefined
+                || actual instanceof deal.types.Type.Nullable)
+            advice.add("Handle each remaining null/undefined member with an explicit guard or intentional fallback; presence alone does not narrow values. Do not invent a default or widen the declared contract implicitly.");
+        var targetBase = target instanceof deal.types.Type.Nullable n ? n.inner() : target;
+        var actualBase = actual instanceof deal.types.Type.Nullable n ? n.inner() : actual;
+        if (targetBase instanceof deal.types.Type.Array to && actualBase instanceof deal.types.Type.Array from) {
+            if (!to.readonly() && from.readonly())
+                advice.add("A readonly array view cannot become writable; retain readonly in the receiving contract or create an intentional mutable copy.");
+            else advice.add("Writable arrays are invariant in their element type. Choose a compatible readonly view for widening, or construct a fresh array under the intended element annotation; an assertion does not retag existing storage.");
+        }
+        if (targetBase instanceof deal.types.Type.Class && actualBase instanceof deal.types.Type.Table
+                || targetBase instanceof deal.types.Type.Table && actualBase instanceof deal.types.Type.Class)
+            advice.add("Classes and Record<string, unknown> do not implicitly convert. Construct the intended target explicitly with its required fields; a checked assertion is not a conversion.");
+        if (targetBase instanceof deal.types.Type.Func && actualBase instanceof deal.types.Type.Func)
+            advice.add("Function compatibility requires matching async status, identical results and corresponding parameter types, with no more source parameters than target parameters. Choose an explicit wrapper if behavior must adapt.");
+        if (advice.isEmpty()) advice.add("Supply a value compatible with the declared type; no coercion, placeholder or signature widening is inferred.");
+        return java.util.List.copyOf(advice);
+    }
+
     static String recordKey() {
         return "Choose an intended string key; no implicit key conversion is performed.";
     }
