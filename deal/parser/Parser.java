@@ -2048,9 +2048,19 @@ public final class Parser {
                         TokenType.SEMICOLON.name(), peek().type().name(),
                         List.of("Terminate the preceding statement with ';' at this boundary."))
                         .withSyntax(syntaxContext("terminator", peek(), List.of("SEMICOLON"))
-                            .withInsertion(peek().range(file).origin() == deal.diagnostics.RangeOrigin.SOURCE
+                            .withInsertion(isCertainTerminatorBoundary() && peek().range(file).origin() == deal.diagnostics.RangeOrigin.SOURCE
                                 ? new deal.diagnostics.DiagnosticFacts.SyntaxInsertion(peek().range(file).startScalarOffset(), ";")
                                 : null))));
+    }
+
+    /** Insertion is safe only at an independently recognizable statement boundary. */
+    private boolean isCertainTerminatorBoundary() {
+        return switch (peek().type()) {
+            case EOF, RBRACE, LET, CONST, CLASS, FUNCTION, RETURN, IF, WHILE, FOR,
+                    BREAK, CONTINUE, IMPORT, EXPORT, DELETE, TRY, THROW -> true;
+            case ASYNC -> pos + 1 < tokens.size() && tokens.get(pos + 1).type() == TokenType.FUNCTION;
+            default -> false;
+        };
     }
 
     /** The E1053 message for the current (missing-terminator) position. */

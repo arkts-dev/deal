@@ -36,6 +36,7 @@ public class ParserTest {
 
     private static void testDiagnosticActionability() {
         testCoercingEqualityDiagnostics();
+        testConservativeTerminatorOffers();
         testSubsetAndListRecoveryFacts();
         for (String source : List.of(
                 "let make=(value:number):(()=>number)=>():number=>value;",
@@ -73,6 +74,21 @@ public class ParserTest {
         var close = diagOf(literal, "E1006");
         check(close != null && close.notes().getFirst().range().startScalarOffset() == 12,
                 "object literal rejection identifies its own opener");
+    }
+
+    private static void testConservativeTerminatorOffers() {
+        for (String source : List.of("let value=1 & 2;", "let value=1 | 2;", "let value=1!;",
+                "let value=1 satisfies number;", "let value=tag`text`;", "let value=new Model();")) {
+            var result = parse(source);
+            check(!result.diagnostics().isEmpty() && result.diagnostics().stream().allMatch(d ->
+                            d.facts().syntax() == null || d.facts().syntax().insertion() == null),
+                    "unsupported continuation cannot authorize a semicolon insertion: " + source);
+        }
+        for (String source : List.of("let value=1", "let value=1 let later=2;", "function f():void{return}")) {
+            var diagnostic = diagOf(parse(source), "E1053");
+            check(diagnostic != null && diagnostic.facts().syntax().insertion() != null,
+                    "independent missing-terminator boundary retains insertion evidence: " + source);
+        }
     }
 
     private static void testCoercingEqualityDiagnostics() {
