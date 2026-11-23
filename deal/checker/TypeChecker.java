@@ -1511,9 +1511,12 @@ public final class TypeChecker {
                     if (i % 2 == 1 && partType != Type.Error.INSTANCE
                             && !(partType instanceof Type.String)
                             && !(partType instanceof Type.Number)) {
-                        error(DiagnosticCode.E3016,
+                        diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E3016,
                             "Template literal interpolation must have type string or number, got "
-                            + typeName(partType), part.span());
+                            + typeName(partType), part.span()).withFacts(new deal.diagnostics.DiagnosticFacts(
+                                    "template.interpolation-type", "template.interpolate", "string or number", typeName(partType),
+                                    List.of("Choose the intended text explicitly: guard null/undefined, narrow unknown, or format a boolean/object in ordinary code. String(value) accepts number only; templates do not perform general JavaScript string coercion."))
+                                    .withLanguageDifference(deal.diagnostics.LanguageDifference.semantics("template-interpolation"))));
                     }
                 }
                 yield Type.String.INSTANCE;

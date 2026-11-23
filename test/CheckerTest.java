@@ -716,6 +716,14 @@ public class CheckerTest {
                             && mutation.facts().guidance().getFirst().contains("compile-time-only"),
                     "readonly mutation retains restriction declaration and shallow static semantics: " + source);
         }
+        for (String expression : List.of("true", "null", "undefined")) {
+            var template = checkProgram("let text=`value ${" + expression + "}`;").result().diagnostics().stream()
+                    .filter(d -> d.code().equals("E3016")).findFirst().orElseThrow();
+            check(template.facts().reason().equals("template.interpolation-type") && template.facts().languageDifference() != null
+                            && template.facts().guidance().getFirst().contains("String(value) accepts number only"),
+                    "template rejection explains explicit formatting without invented coercion: " + expression);
+        }
+        assertNoErrors(checkProgram("let text=`value ${1} ${true?\"yes\":\"no\"}`;"), "explicit string/number interpolation remains legal");
         String missingTypes = "function f(value:Missing):Missing{return value;} function g(value:Missing):void{}";
         var unknownTypes = checkProgram(missingTypes).result().diagnostics().stream()
                 .filter(d -> d.code().equals("E3004") && d.message().contains("Missing")).toList();
