@@ -1353,19 +1353,20 @@ public final class Language16RuntimeTest {
             for (var cell : unit.ops()) {
                 if (!(cell.payload() instanceof deal.semantic.ir.KindPayload.BoundaryPayload boundary)
                         || boundary.kind() != deal.semantic.ir.BoundaryKind.CONDITIONAL_BRANCH) continue;
-                for (String defect : List.of("owner", "input", "descriptor", "read")) {
-                    var descriptor = defect.equals("descriptor") ? deal.semantic.ir.RuntimeDescriptor.parseCanonicalText("()->number") : boundary.descriptor();
+                for (String defect : List.of("owner", "input", "descriptor", "policy")) {
+                    var descriptor = defect.equals("descriptor") ? deal.semantic.ir.RuntimeDescriptor.String.INSTANCE : boundary.descriptor();
                     var payload = new deal.semantic.ir.KindPayload.BoundaryPayload(
-                        defect.equals("read") ? deal.semantic.ir.BoundaryKind.CONTEXTUAL_TABLE_READ : boundary.kind(), descriptor,
+                        boundary.kind(), descriptor,
                         defect.equals("input") ? pValue(unit, cell.origin().parentOpId()) : boundary.input(), boundary.realization());
                     var origin = cell.origin();
                     if (defect.equals("owner")) origin = new deal.semantic.ir.SourceOrigin(origin.sourceId(), origin.span(), origin.kind(), origin.anchorId(), cell.opId());
                     var old = cell.contract();
+                    var policy = defect.equals("policy") ? deal.semantic.ir.FailurePolicyId.NO_DEAL_FAILURE : cell.failurePolicy();
                     var provisional = new deal.semantic.ir.OperationContractSnapshot(old.version(), old.opKind(), cell.resultType(), cell.operandTypes(),
-                        old.selector(), payload, old.failurePolicy(), old.referencedSemanticIds(), "pending");
+                        old.selector(), payload, policy, old.referencedSemanticIds(), "pending");
                     var contract = new deal.semantic.ir.OperationContractSnapshot(old.version(), old.opKind(), cell.resultType(), cell.operandTypes(),
-                        old.selector(), payload, old.failurePolicy(), old.referencedSemanticIds(), deal.semantic.ir.ContractSnapshotCanonicalizer.digest(provisional));
-                    var changed = new deal.semantic.ir.SemanticOp(cell.opId(), cell.kind(), origin, cell.result(), cell.resultType(), cell.operands(), cell.operandTypes(), payload, cell.failurePolicy(), contract);
+                        old.selector(), payload, policy, old.referencedSemanticIds(), deal.semantic.ir.ContractSnapshotCanonicalizer.digest(provisional));
+                    var changed = new deal.semantic.ir.SemanticOp(cell.opId(), cell.kind(), origin, cell.result(), cell.resultType(), cell.operands(), cell.operandTypes(), payload, policy, contract);
                     var ops = unit.ops().stream().map(op -> op == cell ? changed : op).toList();
                     var malformed = new deal.semantic.ir.LoweredModuleUnit(unit.formatVersion(),unit.semanticProfile(),unit.moduleId(),
                         unit.interfaceHash(),unit.loweringContextHash(),unit.requiredCapabilities(),unit.constructCoverage(),unit.classLayouts(),
