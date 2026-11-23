@@ -948,8 +948,7 @@ public final class TypeChecker {
         expectedType = savedExpected;
 
         if (condType != Type.Error.INSTANCE && !(condType instanceof Type.Boolean)) {
-            error(DiagnosticCode.E3007, "If condition must be boolean, got " + typeName(condType),
-                is.condition().span());
+            conditionError("If", condType, is.condition().span());
         }
 
         // The condition's true/false states include short-circuit effects.
@@ -1051,8 +1050,7 @@ public final class TypeChecker {
         expectedType = savedExpected;
 
         if (condType != Type.Error.INSTANCE && !(condType instanceof Type.Boolean)) {
-            error(DiagnosticCode.E3007, "While condition must be boolean, got " + typeName(condType),
-                ws.condition().span());
+            conditionError("While", condType, ws.condition().span());
         }
 
         narrowCondition(ws.condition(), true);
@@ -3210,12 +3208,20 @@ public final class TypeChecker {
         return Type.Boolean.INSTANCE;
     }
 
+    private void conditionError(String construct, Type actual, Span span) {
+        diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E3007,
+                construct + " condition must be boolean, got " + typeName(actual) + "; DEAL has no implicit truthiness", span)
+                .withFacts(new deal.diagnostics.DiagnosticFacts("condition.boolean-required", "condition", "boolean", typeName(actual),
+                        List.of("Write the intended boolean test explicitly (for example a numeric/string comparison or separate null/undefined guards); unknown values require narrowing or checked extraction."))
+                        .withLanguageDifference(deal.diagnostics.LanguageDifference.semantics("boolean-condition"))));
+    }
+
     private Type checkConditional(ConditionalExpr conditional) {
         Type context = expectedType;
         expectedType = Type.Boolean.INSTANCE;
         Type condition = checkExpression(conditional.condition());
         if (condition != Type.Error.INSTANCE && !(condition instanceof Type.Boolean))
-            error(DiagnosticCode.E3007, "Conditional condition must be boolean, got " + typeName(condition), conditional.condition().span());
+            conditionError("Conditional", condition, conditional.condition().span());
         NullNarrowing entry = narrowing.branch();
         Symbol.ClassSymbol declaration = contextualClassDecl;
         boolean reverse = context == null

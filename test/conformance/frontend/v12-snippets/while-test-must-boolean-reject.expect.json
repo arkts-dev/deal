@@ -5,6 +5,6 @@
     "code": "E3007",
     "line": 6,
     "column": 34,
-    "message": "While condition must be boolean, got number"
+    "message": "While condition must be boolean, got number; DEAL has no implicit truthiness"
   }
 }

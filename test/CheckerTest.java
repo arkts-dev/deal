@@ -672,6 +672,13 @@ public class CheckerTest {
         check(context.facts().reason().equals("context.required")
                         && context.facts().guidance().get(0).contains("intended element type"),
                 "context rejection requests user intent, not a guessed type");
+        for (String source : List.of("if(1){}", "while(\"x\"){}", "let value=1?2:3;")) {
+            var condition = checkProgram(source).result().diagnostics().stream()
+                    .filter(d -> d.facts().reason().equals("condition.boolean-required")).findFirst().orElseThrow();
+            check(condition.message().contains("no implicit truthiness") && condition.facts().languageDifference() != null,
+                    "condition explains boolean-only semantics: " + source);
+        }
+        assertNoErrors(checkProgram("if(1!==0){}while(false){}let value=true?2:3;"), "explicit boolean conditions remain legal");
         for (String name : List.of("any", "object", "bigint", "int", "table", "float")) {
             var absent = checkProgram("function f(value:" + name + "):void{}").result().diagnostics().stream()
                     .filter(d -> d.code().equals("E3004")).findFirst().orElseThrow();
