@@ -672,6 +672,17 @@ public class CheckerTest {
         check(context.facts().reason().equals("context.required")
                         && context.facts().guidance().get(0).contains("intended element type"),
                 "context rejection requests user intent, not a guessed type");
+        for (String source : List.of("let f=(value):number=>1;", "let f=function(value):number{return 1;};")) {
+            var parameter = checkProgram(source).result().diagnostics().stream()
+                    .filter(d -> d.code().equals("E3002")).findFirst().orElseThrow();
+            check(parameter.facts().reason().equals("context.parameter-required")
+                            && parameter.facts().guidance().getFirst().contains("parameter")
+                            && !parameter.facts().guidance().getFirst().contains("empty array")
+                            && parameter.range().startScalarOffset() == source.indexOf("value"),
+                    "untyped expression parameter receives its own guidance and exact occurrence");
+        }
+        assertNoErrors(checkProgram("let f:(value:number)=>number=(value):number=>value;"),
+                "positional contextual parameter remains legal");
         String duplicateFields = "class C{x:number;x:string;x:boolean;} class D{x:number;}";
         var duplicates = checkProgram(duplicateFields).result().diagnostics().stream()
                 .filter(d -> d.code().equals("E2002")).toList();

@@ -3027,7 +3027,12 @@ public final class TypeChecker {
             if (p.type() != null) paramTypes.add(nameResolver.resolveTypeNode(p.type()));
             else if (contextual != null && i < contextual.paramTypes().size()) paramTypes.add(contextual.paramTypes().get(i));
             else {
-                error(DiagnosticCode.E3002, "Parameter '" + p.name() + "' requires a type annotation or contextual signature", p.span());
+                diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E3002,
+                        "Parameter '" + p.name() + "' needs an annotation or a contextual signature", p.span())
+                        .withFacts(new deal.diagnostics.DiagnosticFacts("context.parameter-required", "inference.parameter",
+                                "explicit parameter type or positional contextual signature", "no usable parameter type",
+                                List.of("Annotate this parameter or supply a typed function context; DEAL does not infer parameter types from the body.")))
+                        .withNote("Function result annotations remain required", fe.returnType().span().range()));
                 paramTypes.add(Type.Error.INSTANCE);
             }
         }
