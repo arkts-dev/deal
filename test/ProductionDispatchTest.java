@@ -5602,7 +5602,7 @@ public class ProductionDispatchTest {
                     List.of()));
                 continue;
             }
-            if (raw.contains("// @expected: compile-error E1037")) {
+            if (raw.contains("// @expected: compile-error E1042")) {
                 List<V12CorpusLeg> rejectedLegs = new ArrayList<>();
                 for (String backend : List.of("luajit", "jvm")) {
                     Path project = Files.createTempDirectory("removed-power-" + backend);
@@ -5613,10 +5613,11 @@ public class ProductionDispatchTest {
                         List<CompilerDiagnostic> errors = rejected.orchestrator().diagnostics().stream()
                             .filter(d -> "error".equals(d.severity())).toList();
                         boolean correct = !rejected.success() && !errors.isEmpty()
-                            && "E1037".equals(errors.get(0).code())
-                            && "Expected expression".equals(errors.get(0).message())
+                            && "E1042".equals(errors.get(0).code())
+                            && "Operator '**' is not supported; choose an explicit supported operation".equals(errors.get(0).message())
+                            && errors.get(0).facts().reason().equals("syntax.subset.operator")
                             && errors.get(0).range().startLine() == 4
-                            && errors.get(0).range().startColumn() == 8
+                            && errors.get(0).range().startColumn() == 7
                             && rejected.orchestrator().semanticEmissionCount() == 0
                             && !Files.exists(project.resolve("out"));
                         rejectedLegs.add(new V12CorpusLeg(backend, correct ? null
