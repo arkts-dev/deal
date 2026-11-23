@@ -3632,7 +3632,8 @@ public class JsBackendTest {
 
         Frontend removedPower = compileFrontend(
             "export function test(): number { return 2 ** 10000; }", "number-pow-overflow.deal");
-        check(removedPower.errors().stream().anyMatch(d -> d.code().equals("E1037")),
+        check(removedPower.errors().stream().anyMatch(d -> d.code().equals("E1042")
+                        && d.facts().reason().equals("syntax.subset.operator")),
             "removed power syntax rejects before emission");
         for (String[] row : new String[][] {
                 {"infinity", "1.0 / 0.0", "Infinity"},
@@ -3645,7 +3646,8 @@ public class JsBackendTest {
 
         Frontend negativePower = compileFrontend(
             "export function test(): number { return 2 ** -1; }", "number-neg-exp.deal");
-        check(negativePower.errors().stream().anyMatch(d -> d.code().equals("E1037")),
+        check(negativePower.errors().stream().anyMatch(d -> d.code().equals("E1042")
+                        && d.facts().reason().equals("syntax.subset.operator")),
             "removed negative power syntax rejects before emission");
 
         Frontend removedSafeMax = compileFrontend(
