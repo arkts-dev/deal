@@ -952,9 +952,23 @@ public final class NameResolver {
                     yield Types.classType(cs.name(), cs.identity(),
                         Types.providerModule(cs.modulePath()));
                 }
-                if (unknownTypeOccurrences.add(nt.span().range()))
-                    diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E3004, "Unknown type '" + name + "'", nt.span())
-                            .withMissingSymbol("TYPE", name, modulePath, List.of("class")));
+                if (unknownTypeOccurrences.add(nt.span().range())) {
+                    var diagnostic = CompilerDiagnostic.error(DiagnosticCode.E3004, "Unknown type '" + name + "'", nt.span())
+                            .withMissingSymbol("TYPE", name, modulePath, List.of("class"));
+                    if (Set.of("any", "object", "bigint", "int", "table", "float").contains(name)) {
+                        String guidance = switch (name) {
+                            case "any" -> "DEAL has no unchecked any type; choose unknown and narrow or use a checked assertion before typed operations.";
+                            case "object" -> "DEAL has no predefined object type; choose an intended nominal class, Record<string, unknown>, array or unknown contract.";
+                            case "bigint" -> "DEAL has no BigInt type; number is binary64 and may lose integer precision. Choose an explicit exact-integer representation when needed.";
+                            case "table" -> "DEAL has no predefined table type; use Record<string, unknown> for a string-keyed container or a nominal class for typed fields.";
+                            default -> "DEAL's sole numeric type is number (binary64); it does not imply integral values. Validate integrality explicitly when required.";
+                        };
+                        diagnostic = diagnostic.withFacts(new deal.diagnostics.DiagnosticFacts("type.absent-predefined", "type.resolve",
+                                "declared type or supported builtin", name, List.of(guidance))
+                                .withLanguageDifference(deal.diagnostics.LanguageDifference.api("predefined-type-" + name)));
+                    }
+                    diagnostics.add(diagnostic);
+                }
                 yield Type.Error.INSTANCE;
             }
         };

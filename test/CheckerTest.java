@@ -672,6 +672,14 @@ public class CheckerTest {
         check(context.facts().reason().equals("context.required")
                         && context.facts().guidance().get(0).contains("intended element type"),
                 "context rejection requests user intent, not a guessed type");
+        for (String name : List.of("any", "object", "bigint", "int", "table", "float")) {
+            var absent = checkProgram("function f(value:" + name + "):void{}").result().diagnostics().stream()
+                    .filter(d -> d.code().equals("E3004")).findFirst().orElseThrow();
+            check(absent.facts().reason().equals("type.absent-predefined") && !absent.facts().guidance().isEmpty(),
+                    "absent predefined type receives specific advice: " + name);
+            assertNoErrors(checkProgram("class " + name + "{value:number;}function f(value:" + name + "):void{}"),
+                    "legitimate user class wins over absent predefined spelling: " + name);
+        }
         String missingTypes = "function f(value:Missing):Missing{return value;} function g(value:Missing):void{}";
         var unknownTypes = checkProgram(missingTypes).result().diagnostics().stream()
                 .filter(d -> d.code().equals("E3004") && d.message().contains("Missing")).toList();
