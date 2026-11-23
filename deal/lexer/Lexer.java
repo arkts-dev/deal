@@ -784,6 +784,31 @@ public final class Lexer {
                 }
                 yield makeToken(TokenType.QUESTION, "?");
             }
+            case '#' -> {
+                if (pos + 1 < source.length() && isIdentifierStart(source.charAt(pos + 1))) {
+                    bump(); yield makeToken(TokenType.REJECTED_CLASS_TOKEN, "#");
+                }
+                DiagnosticRange offending = currentComponentRange();
+                diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E1001, "Unrecognized character: '#'", offending)
+                        .withFacts(new deal.diagnostics.DiagnosticFacts("syntax.unrecognized-character", "lex.character",
+                                "admitted DEAL token", componentText(offending), List.of("Choose an admitted token spelling for the intended syntax; no replacement is inferred."))));
+                bump(); yield null;
+            }
+            case '@' -> {
+                // Preserve generic invalid-character evidence except at a recognizable decorator site.
+                int next = pos + 1;
+                while (next < source.length() && isIdentifierPart(source.charAt(next))) next++;
+                int after = next;
+                while (after < source.length() && Character.isWhitespace(source.charAt(after))) after++;
+                if (next > pos + 1 && (source.startsWith("class ", after) || after < source.length() && source.charAt(after) == '(')) {
+                    bump(); yield makeToken(TokenType.REJECTED_CLASS_TOKEN, "@");
+                }
+                DiagnosticRange offending = currentComponentRange();
+                diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E1001, "Unrecognized character: '@'", offending)
+                        .withFacts(new deal.diagnostics.DiagnosticFacts("syntax.unrecognized-character", "lex.character",
+                                "admitted DEAL token", componentText(offending), List.of("Choose an admitted token spelling for the intended syntax; no replacement is inferred."))));
+                bump(); yield null;
+            }
             case ':' -> { bump(); yield makeToken(TokenType.COLON, ":"); }
             case ';' -> { bump(); yield makeToken(TokenType.SEMICOLON, ";"); }
             case ',' -> { bump(); yield makeToken(TokenType.COMMA, ","); }

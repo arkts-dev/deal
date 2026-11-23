@@ -121,8 +121,22 @@ public final class Parser {
             recoverUnsupportedStatement();
             return null;
         }
+        if (peek().type() == TokenType.REJECTED_CLASS_TOKEN) {
+            Token decorator = advance();
+            rejectedSyntax(decorator, "decorator", "Decorators are not supported; declare classes and fields directly",
+                    "DEAL does not run decorator hooks or class initializers; choose explicit ordinary initialization code.");
+            if (isIdentifier(peek().type())) advance();
+            if (match(TokenType.LPAREN)) skipBalancedType(TokenType.LPAREN, TokenType.RPAREN);
+            return parseStatement();
+        }
         if (peek().type() == TokenType.IDENTIFIER) {
             String word = peek().lexeme();
+            if (word.equals("abstract") && peek(1).type() == TokenType.CLASS) {
+                Token modifier = advance();
+                rejectedSyntax(modifier, "abstract-class", "Abstract classes are not supported; classes are concrete nominal field records",
+                        "Declare an intended concrete data contract; DEAL has no abstract methods or inheritance.");
+                return parseClassDeclaration();
+            }
             if (Set.of("interface", "type", "enum", "namespace").contains(word) && pos + 1 < tokens.size()
                     && isIdentifier(tokens.get(pos + 1).type())) {
                 Token keyword = advance();
@@ -254,6 +268,12 @@ public final class Parser {
         if (nameToken == null) { synchronize(); return null; }
 
         rejectGenericDeclaration("class");
+        while (peek().type() == TokenType.IDENTIFIER && Set.of("extends", "implements").contains(peek().lexeme())) {
+            Token clause = advance();
+            rejectedSyntax(clause, "class-" + clause.lexeme(), "Class " + clause.lexeme() + " is not supported; classes are nominal field records",
+                    "Declare the intended fields directly; DEAL has no inheritance or interface implementation contract.");
+            while (!isAtEnd() && peek().type() != TokenType.LBRACE && peek().type() != TokenType.SEMICOLON) advance();
+        }
         Token lbrace = expect(TokenType.LBRACE, DiagnosticCode.E1005, "Expected '{' after class name");
         if (lbrace == null) { synchronize(); return null; }
 
@@ -281,6 +301,31 @@ public final class Parser {
     }
 
     private ClassField parseClassField() {
+        if (peek().type() == TokenType.REJECTED_CLASS_TOKEN) {
+            Token marker = advance();
+            rejectedSyntax(marker, marker.lexeme().equals("#") ? "private-field" : "decorator",
+                    "Private fields and decorators are not supported; declare ordinary typed fields",
+                    "DEAL classes expose nominal data fields only; visibility, decorator hooks and runtime initialization are not available.");
+            skipRejectedClassMember();
+            return null;
+        }
+        if (peek().type() == TokenType.IDENTIFIER && Set.of("public", "private", "protected", "static", "abstract").contains(peek().lexeme())
+                && peek(1).type() != TokenType.COLON && peek(1).type() != TokenType.QUESTION) {
+            Token modifier = advance();
+            rejectedSyntax(modifier, "class-modifier", "Class modifier '" + modifier.lexeme() + "' is not supported; declare instance fields",
+                    "Use ordinary typed fields; removing visibility/static/abstract modifiers changes the contract and is not an automatic repair.");
+            skipRejectedClassMember();
+            return null;
+        }
+        if (peek().type() == TokenType.LBRACKET || isPropertyName(peek())
+                && (peek(1).type() == TokenType.LPAREN || peek(1).type() == TokenType.QUESTION && peek(2).type() == TokenType.LPAREN
+                    || Set.of("get", "set").contains(peek().lexeme()) && isPropertyName(peek(1)))) {
+            Token member = peek();
+            rejectedSyntax(member, "class-method", "Methods, accessors and index signatures are not supported; classes declare fields only",
+                    "Use a typed field (which may hold a function) or a separate function with an explicit receiver parameter; no this/constructor behavior is implied.");
+            skipRejectedClassMember();
+            return null;
+        }
         boolean readonly = peek().lexeme().equals("readonly") && isPropertyName(peek(1));
         if (readonly) advance();
         if (!isPropertyName(peek())) {
@@ -1279,6 +1324,12 @@ public final class Parser {
     }
 
     private ExpressionNode parseUnary() {
+        if (peek().type() == TokenType.IDENTIFIER && peek().lexeme().equals("new")) {
+            Token keyword = advance();
+            rejectedSyntax(keyword, "new-expression", "New expressions are not supported; construct a class with a typed object literal",
+                    "Supply every required field in a literal under the intended class annotation; classes have no constructor calls or initializer hooks.");
+            return parsePostfix();
+        }
         if (peek().type() == TokenType.REJECTED_OPERATOR || peek().type() == TokenType.AMPERSAND
                 || peek().type() == TokenType.PIPE
                 || peek().type() == TokenType.IDENTIFIER && peek().lexeme().equals("void")) {
@@ -2238,6 +2289,22 @@ public final class Parser {
                 && Character.isLowSurrogate(lexeme.charAt(end))) end--;
         return new deal.diagnostics.DiagnosticFacts.SyntaxContext(context, expectedKinds, found.type().name(),
                 lexeme.substring(0, end), lexeme.length(), end < lexeme.length());
+    }
+
+    private void skipRejectedClassMember() {
+        int parentheses = 0, brackets = 0;
+        while (!isAtEnd() && peek().type() != TokenType.RBRACE) {
+            TokenType kind = advance().type();
+            if (kind == TokenType.LPAREN) parentheses++;
+            else if (kind == TokenType.RPAREN && parentheses > 0) parentheses--;
+            else if (kind == TokenType.LBRACKET) brackets++;
+            else if (kind == TokenType.RBRACKET && brackets > 0) brackets--;
+            else if (kind == TokenType.LBRACE && parentheses == 0 && brackets == 0) {
+                skipBalancedType(TokenType.LBRACE, TokenType.RBRACE);
+                match(TokenType.SEMICOLON);
+                return;
+            } else if (kind == TokenType.SEMICOLON && parentheses == 0 && brackets == 0) return;
+        }
     }
 
     private void skipBalancedType(TokenType open, TokenType close) {

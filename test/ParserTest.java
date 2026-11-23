@@ -37,6 +37,18 @@ public class ParserTest {
     private static void testDiagnosticActionability() {
         testCoercingEqualityDiagnostics();
         testConservativeTerminatorOffers();
+        for (String source : List.of("let value=new Model();", "class C extends B{}", "class C implements I{}",
+                "class C{method():void{}}", "class C{method?():void{}}", "class C{[key]():void{}}",
+                "class C{get value():number{return 1;}}", "class C{set value(v:number):void{}}",
+                "class C{public value:number;}", "class C{private value:number;}", "class C{protected value:number;}",
+                "class C{static value:number;}", "abstract class C{}", "class C{#value:number;}",
+                "@data class C{}", "class C{constructor(public value:number){}}", "class C{[key:string]:unknown;}")) {
+            var shape = parse(source + "let after=1;");
+            check(shape.diagnostics().size() == 1 && shape.diagnostics().getFirst().facts().languageDifference() != null,
+                    "unsupported class syntax has one explicit rejection: " + source + ": " + shape.diagnostics());
+        }
+        assertNoParseErrors(parse("class C{readonly value:number;get:number;static:string;}let c:C={value:1,get:2,static:\"x\"};"),
+                "readonly fields and modifier spellings used as field names remain admitted");
         for (String type : List.of("[number,string]", "{value:number}", "A&B", "\"text\"", "42", "true", "number|string",
                 "Array<number>", "Record<number, string>", "Promise<number>")) {
             var annotation = parse("function f(value:" + type + "):void{}");
