@@ -1082,6 +1082,17 @@ public final class Parser {
             if (prec < minPrec) break;
 
             advance();
+            if (op.type() == TokenType.EQ || op.type() == TokenType.NEQ) {
+                subsetError(DiagnosticCode.E1042,
+                        "Coercing equality '" + op.lexeme() + "' is not supported; choose an explicit comparison", op,
+                        "coercing-equality", "explicit comparison without coercion",
+                        "Strict ===/!== do not coerce and distinguish null from undefined; replacing this operator can change the result. Test both nullish values explicitly when intended.");
+                int last = diagnostics.size() - 1;
+                diagnostics.set(last, diagnostics.get(last).withFacts(diagnostics.get(last).facts()
+                        .withLanguageDifference(deal.diagnostics.LanguageDifference.syntax("coercing-equality"))));
+                parseBinary(prec + 1);
+                continue;
+            }
             if (op.type() == TokenType.AS || op.type() == TokenType.INSTANCEOF) {
                 TypeNode target = op.type() == TokenType.AS ? parseType() : parsePrimaryType();
                 if (target == null) return left;
@@ -2293,7 +2304,7 @@ public final class Parser {
         return switch (type) {
             case OR         -> PREC_OR;
             case AND        -> PREC_AND;
-            case EQ_STRICT, NEQ_STRICT -> PREC_EQUALITY;
+            case EQ_STRICT, NEQ_STRICT, EQ, NEQ -> PREC_EQUALITY;
             case LT, LTE, GT, GTE, AS, INSTANCEOF -> PREC_RELATIONAL;
             case PLUS, MINUS -> PREC_ADDITIVE;
             case STAR, SLASH, PERCENT -> PREC_MULTIPLICATIVE;

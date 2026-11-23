@@ -35,6 +35,7 @@ public class ParserTest {
     // =========================================================================
 
     private static void testDiagnosticActionability() {
+        testCoercingEqualityDiagnostics();
         testSubsetAndListRecoveryFacts();
         for (String source : List.of(
                 "let make=(value:number):(()=>number)=>():number=>value;",
@@ -72,6 +73,30 @@ public class ParserTest {
         var close = diagOf(literal, "E1006");
         check(close != null && close.notes().getFirst().range().startScalarOffset() == 12,
                 "object literal rejection identifies its own opener");
+    }
+
+    private static void testCoercingEqualityDiagnostics() {
+        for (String operator : List.of("==", "!=")) {
+            for (String expression : List.of("1 " + operator + " 1", "(1 " + operator + " 1)",
+                    "f(1 " + operator + " 1)", "`value ${1 " + operator + " 1}`", "null " + operator + " undefined")) {
+                String source = "// 😀\r\nfunction next():void{} let value = " + expression + "; let after=2;";
+                var parsed = parse(source);
+                check(parsed.diagnostics().size() == 1, "one coercing equality error without delimiter cascade: " + parsed.diagnostics());
+                var diagnostic = parsed.diagnostics().getFirst();
+                check(diagnostic.code().equals("E1042") && diagnostic.facts().reason().equals("syntax.subset.coercing-equality")
+                                && diagnostic.range().startScalarOffset() == source.indexOf(operator)
+                                && diagnostic.range().scalarLength() == 2
+                                && diagnostic.facts().languageDifference().feature().equals("coercing-equality")
+                                && diagnostic.editOffer() == null
+                                && diagnostic.facts().guidance().getFirst().contains("change the result"),
+                        "equality rejection retains exact operator and semantic caveat: " + expression);
+                check(parsed.program().statements().size() == 3, "equality recovery preserves independent declarations");
+            }
+        }
+        assertNoParseErrors(parse("let a=1===1; let b=null!==undefined;"), "strict equality grammar is unchanged");
+        var missing = parse("let a=1 let b=2;");
+        check(missing.diagnostics().stream().anyMatch(d -> d.code().equals("E1053")
+                        && d.facts().languageDifference() == null), "ordinary missing terminator is not equality syntax");
     }
 
     private static void testLineAndResultFacts() {
