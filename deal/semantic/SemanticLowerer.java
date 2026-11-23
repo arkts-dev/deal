@@ -4498,8 +4498,8 @@ public final class SemanticLowerer {
             return switch (node) {
                 case deal.ast.NamedType named -> resolveNamedFieldType(named);
                 case deal.ast.QualifiedType qualified -> resolveQualifiedFieldType(qualified);
-                case deal.ast.ArrayType array -> deal.types.Types.array(
-                    fieldTypeOf(array.elementType()));
+                case deal.ast.ArrayType array -> new Type.Array(
+                    fieldTypeOf(array.elementType()), array.readonly());
                 case deal.ast.NullableType nullable -> deal.types.Types.withNullish(
                     fieldTypeOf(nullable.innerType()), nullable.undefinedMember(), true);
                 case deal.ast.FunctionType function -> {

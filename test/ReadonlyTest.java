@@ -42,6 +42,7 @@ public final class ReadonlyTest {
         TypeLegalityFlowTest.check("function f(a:number[]|null):void{let v:readonly number[]=a;}", "E3001");
         TypeLegalityFlowTest.check("function f(a:number[]|undefined):void{let v:readonly number[]|null=a;}", "E3001");
         descriptorCompatibility();
+        nativeViewAdmission();
         matcherStorage();
         var root = Files.createTempDirectory("deal-readonly-");
         try {
@@ -103,8 +104,110 @@ public final class ReadonlyTest {
             CompositionProductionTest.execute(source, "one,two\n", root, null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             hostAccess(root.resolve("host-access"));
+            readonlyFieldReads(root.resolve("field-reads"));
         } finally { CompositionProductionTest.remove(root); }
         System.out.println("Readonly: frontend and production backends passed");
+    }
+
+    private static void nativeViewAdmission() {
+        for (String[] pair : new String[][] {
+                {"[number]", "readonly[number]"},
+                {"[number]", "?readonly[number]"},
+                {"[number]", "!readonly[unknown]"},
+                {"?[number]", "?readonly[unknown]"},
+                {"[[number]]", "readonly[readonly[unknown]]"}}) {
+            var actual = deal.semantic.ir.RuntimeDescriptor.parseCanonicalText(pair[0]);
+            var target = deal.semantic.ir.RuntimeDescriptor.parseCanonicalText(pair[1]);
+            if (!deal.codegen.llvm.LlvmTypeMapper.admits(target, actual)
+                    || !deal.codegen.llvm.LlvmTypeMapper.convertible(target, actual))
+                throw new AssertionError("native readonly admission: " + java.util.Arrays.toString(pair));
+        }
+        for (String[] pair : new String[][] {
+                {"[number]", "[unknown]"},
+                {"readonly[number]", "?[number]"},
+                {"?[number]", "!readonly[number]"},
+                {"[()->number]", "readonly[(number)->number]"}}) {
+            var actual = deal.semantic.ir.RuntimeDescriptor.parseCanonicalText(pair[0]);
+            var target = deal.semantic.ir.RuntimeDescriptor.parseCanonicalText(pair[1]);
+            if (deal.codegen.llvm.LlvmTypeMapper.admits(target, actual)
+                    || deal.codegen.llvm.LlvmTypeMapper.convertible(target, actual))
+                throw new AssertionError("native invalid view admission: " + java.util.Arrays.toString(pair));
+        }
+    }
+
+    static void readonlyFieldReads(java.nio.file.Path root) throws Exception {
+        String minimal = """
+            class C { values: readonly number[]; }
+            export function main(): void {
+              let c: C = { values: [1] };
+              if (c.values.length !== 1) {
+                throw { name: "FAIL", message: "field" };
+              }
+            }
+            """;
+        var backends = List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM);
+        oracleAndTransport(root.resolve("minimal-oracle"), minimal);
+        CompositionProductionTest.execute(minimal, "", root.resolve("minimal"), null, backends);
+        String source = """
+            import * as model from "./model";
+            class Fields {
+              values: readonly number[];
+              optional?: readonly number[];
+              nullable: readonly number[] | null;
+              nested: readonly (readonly number[])[];
+              callbacks: (() => readonly number[])[];
+            }
+            export function main(): void {
+              let storage = [1];
+              let c:Fields={values:storage,nullable:null,nested:[storage],
+                callbacks:[():readonly number[]=>storage]};
+              if(c.values.length!==1 || c.optional!==undefined || c.nullable!==null){
+                throw {name:"FAIL",message:"required/optional/nullish read"};
+              }
+              storage.push(2);
+              if(c.values[1]!==2 || c.nested[0][1]!==2 || c.callbacks[0]()[1]!==2){
+                throw {name:"FAIL",message:"nested/function descriptors and live aliases"};
+              }
+              c.optional=storage;c.nullable=storage;
+              let optional=c.optional;let nullable=c.nullable;
+              if(optional===undefined || nullable===null){throw {name:"FAIL",message:"present"};}
+              if(optional[1]!==2 || nullable[1]!==2){throw {name:"FAIL",message:"wrapped views"};}
+              delete c.optional;
+              let imported:model.Imported={values:storage};
+              if(model.read(imported)!==2 || imported.values[1]!==2){
+                throw {name:"FAIL",message:"imported provider"};
+              }
+              let decoded:model.Imported=JSON.parse(`{"values":[3]}`);
+              if(decoded.values[0]!==3 || (JSON.stringify(decoded)??"")!==`{"values":[3]}`){
+                throw {name:"FAIL",message:"JSON readonly field"};
+              }
+              let copy=c.values.slice();copy.push(9);
+              if(copy.length!==3 || storage.length!==2){throw {name:"FAIL",message:"mutable copy"};}
+            }
+            """;
+        var modules = java.util.Map.of("model.deal", """
+            export class Imported { readonly values: readonly number[]; }
+            export function read(value:Imported):number {return value.values.length;}
+            """);
+        oracleAndTransport(root.resolve("oracle"), source, modules, java.util.Map.of(
+            "Fields.values", "readonly[number]", "Fields.optional", "readonly[number]",
+            "Fields.nullable", "?readonly[number]", "Fields.nested", "readonly[readonly[number]]",
+            "Fields.callbacks", "[()->readonly[number]]", "Imported.values", "readonly[number]"));
+        var production = root.resolve("production");
+        CompositionProductionTest.execute(source, "", "", production, null, backends, modules);
+        for (int level : new int[]{0,2}) {
+            var product=root.resolve("sanitized-o"+level);
+            NativeCompiler.build(new deal.toolchain.NativeBuildRequest(production.resolve("LLVM/out"),
+                product,level,List.of(),null),NativeCompiler.SANITIZER_FLAGS);
+            for(boolean stress:new boolean[]{false,true}) {
+                var environment=new java.util.HashMap<>(NativeCompiler.sanitizerEnvironment());
+                environment.put("DEAL_GC_STRESS",stress?"1":"0");
+                System.out.println("Readonly fields LLVM O"+level+" sanitized=true stress="+stress);
+                var result=NativeCompiler.runSanitized(product,root,environment).result();
+                if(result.exitCode()!=0 || !result.stdout().isEmpty() || !result.stderr().isEmpty())
+                    throw new AssertionError("readonly fields O"+level+" stress="+stress+": "+result.describe());
+            }
+        }
     }
 
     private static void matcherStorage() {
@@ -152,7 +255,13 @@ public final class ReadonlyTest {
     }
 
     private static void oracleAndTransport(java.nio.file.Path root, String source) throws Exception {
+        oracleAndTransport(root,source,java.util.Map.of(),java.util.Map.of());
+    }
+
+    private static void oracleAndTransport(java.nio.file.Path root, String source,
+            java.util.Map<String,String> modules, java.util.Map<String,String> expectedFields) throws Exception {
         Files.createDirectories(root);
+        for(var module:modules.entrySet()) Files.writeString(root.resolve(module.getKey()),module.getValue());
         var entry = root.resolve("main.deal");
         Files.writeString(entry, source.replace("export function main(): void {",
             "export function main():void{run();} export function run(): void {"));
@@ -163,6 +272,12 @@ public final class ReadonlyTest {
             false,false,false,false,Backend.JS,null,List.of(root),null,null,invocation);
         if (!compiler.compile()) throw new AssertionError(compiler.diagnostics());
         var project = compiler.producedProject();
+        var observedFields=new java.util.HashMap<String,String>();
+        for(var unit:project.modules().values()) for(var layout:unit.classLayouts().values())
+            for(var field:layout.fields()) observedFields.put(layout.classId().name()+"."+field.name(),
+                field.descriptor().canonicalSpecText());
+        for(var field:expectedFields.entrySet()) if(!field.getValue().equals(observedFields.get(field.getKey())))
+            throw new AssertionError("declared readonly field layout: "+field+" observed="+observedFields);
         var facts = new deal.semantic.ir.SemanticIrValidator.ComparisonFacts(
             project.interfaceIndex().interfaceIndexDigest(),project.semanticProfile(),invocation.capabilityRegistryHash());
         var typed = deal.semantic.ir.SemanticIrValidator.validate(project,facts);

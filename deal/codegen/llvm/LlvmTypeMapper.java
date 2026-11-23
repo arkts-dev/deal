@@ -753,8 +753,8 @@ public final class LlvmTypeMapper {
 
     /**
      * Whether one declared descriptor statically admits a value of the
-     * recorded actual descriptor: equality, a {@code nullish} member, or a
-     * supported data value at an {@code unknown} position. An admitted value
+     * recorded actual descriptor: equality, compatible readonly array views,
+     * a {@code nullish} member, or a supported data value at an {@code unknown} position. An admitted value
      * needs no runtime check; the staged boundary renders the identity of the
      * value (with the representation change of C3), never a guess.
      */
@@ -765,6 +765,9 @@ public final class LlvmTypeMapper {
         if (declared instanceof RuntimeDescriptor.Never) return false;
         if (declared.equals(actual)) {
             return true;
+        }
+        if (declared instanceof RuntimeDescriptor.Array && actual instanceof RuntimeDescriptor.Array) {
+            return RuntimeDescriptor.assignable(actual, declared);
         }
         if (declared instanceof RuntimeDescriptor.Unknown) {
             return hasDatumForm(actual)

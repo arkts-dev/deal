@@ -18,6 +18,8 @@ resolved import targets, not ClassId text. Keep dependency layouts out of transp
 consumer-local inventories; standalone admission rejects unavailable project links.
 
 Seeds agree with interface/module identity, fields, optional reads and annotations.
+Field layouts preserve every nested array's readonly qualifier, including inside
+nullish and function types; field readonly authority is a separate fact.
 Optional absence becomes undefined, never null. Typed/raw/text surfaces consume
 identical complete facts; supplied companion views must match owned records.
 Carry active profiles through admission/comparisons/context hashes; update digests

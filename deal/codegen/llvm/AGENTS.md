@@ -44,7 +44,9 @@ adapter arguments; returns/completions use their own boundary cells.
 
 ## Storage and control
 
-Arrays preserve persistent descriptors and actual storage layouts. Validate finite
+Arrays preserve persistent descriptors and actual storage layouts. Static admission
+uses shared readonly-array compatibility recursively under nullish wrappers;
+view widening preserves the original pointer and storage descriptor. Validate finite
 integral bounds before offset casts; negative zero addresses zero. Class slots
 retain actual datums and presence separately. Optional absence projects to
 undefined, never null. Stores and shifted/deleted links use insertion barriers.
