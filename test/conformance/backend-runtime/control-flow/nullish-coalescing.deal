@@ -48,12 +48,12 @@ export function main():void {
   const skipped:Item=c??JSON.parse("invalid");check(skipped===item,"lazy parse");
   c=null;const parsed:Item=c??JSON.parse('{"x":11}');check(parsed.x===11,"contextual parse");
   let fn:(()=>number)|null=():number=>12;
-  let selected:(x:number)=>number=fn??((x:number):number=>x);
-  check(selected(5)===12,"selected adapter");
+  let selected:(x:number)=>number=fn??(():number=>15);
+  check(selected(5)===12,"joined function assignment");
   const singleton:(x:number)=>number=null??(():number=>14);
   check(singleton(5)===14,"nullish-only adapter");
   fn=null;selected=fn??((x:number):number=>x+1);check(selected(5)===6,"assignment adapter");
-  let u:unknown=false;let v:unknown=u??rhs();check((v as boolean)===false && calls===2,"unknown false");
+  let u:unknown=opaque(false);let v:unknown=u??rhs();check((v as boolean)===false && calls===2,"unknown false");
   u=undefined;v=u??rhs();check((v as number)===7 && calls===3,"unknown undefined");
   let xs:Item[]|null=null;const fallback:Item[]=xs??[{x:13}];xs=fallback;
   const alias:Item[]=xs??[];check(alias===fallback && alias[0]===fallback[0],"array identity");

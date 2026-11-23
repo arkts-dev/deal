@@ -46,6 +46,69 @@ public final class TypeLegalityFlowTest {
                 throw new AssertionError("frontend rejection " + backend + ": " + compiler.diagnostics());
         }
     }
+    private static void contextualInvariants(Path root) throws Exception {
+        for (String expression : List.of("b?1:\"s\"", "n??\"s\"", "b?a:s"))
+            check("function f(b:boolean,n:number,a:number[],s:string[]):unknown{return " + expression + ";}", "E3006");
+        for (String expression : List.of("`${JSON.parse(\"1\")}`", "`${JSON.parse(\"\\\"ok\\\"\")}`"))
+            check("function f():void{let s:string=" + expression + ";}", "E3016");
+        for (String statement : List.of("let r:Record<string,unknown>={};r.a=v();",
+                "let r:Record<string,unknown>={};r[\"a\"]=v();",
+                "let xs:Record<string,unknown>[]=[{}];xs[0]=v();",
+                "let xs:Record<string,unknown>[]=[{}];xs[0]=1;",
+                "let xs:Record<string,unknown>[]=[];xs[xs.length]=1;",
+                "let xs:Record<string,unknown>[]=[{}];let x:unknown=1;xs[0]=x;")) {
+            check("function v():void{}function f():void{" + statement + "}", "E3001");
+            productionReject(statement, root.resolve("reject-" + Integer.toUnsignedString(statement.hashCode())));
+        }
+        for (String field : List.of("r:Record<string,unknown>", "r?:Record<string,unknown>")) {
+            check("class C{" + field + ";}function f(c:C):void{c.r=1;}", "E3001");
+            check("class C{" + field + ";}function f(c:C):void{c.r={x:1};}", null);
+        }
+        check("function n():never{throw {name:\"X\",message:\"x\"};}function f():void{let r:Record<string,unknown>={};r.a=n();}", "E3001");
+        // Destination acceptance must not erase the expression's actual type.
+        for (String[] row : new String[][] {
+                {"function f(b:boolean):unknown{return b?1:2;}", "number"},
+                {"function f(b:boolean):number|null|undefined{return b?1:undefined;}", "!number"},
+                {"function f(n:number|null):unknown{return n??1;}", "number"},
+                {"function f(n:number|null):number|null{return n??1;}", "number"},
+                {"function f(b:boolean,a:number[]):readonly unknown[]|null{return b?a:[];}", "readonly[unknown]"}}) {
+            var lex = new Lexer(row[0], "context.deal").tokenize();
+            var parsed = new Parser(lex.tokens(), "context.deal").parse();
+            var resolver = new NameResolver("context.deal", new StubModuleResolver());
+            var symbols = resolver.resolve(parsed.program());
+            var checked = TypeChecker.check("context.deal", symbols, resolver, parsed.program());
+            if (!lex.diagnostics().isEmpty() || !parsed.diagnostics().isEmpty()
+                    || !resolver.diagnostics().isEmpty() || !checked.diagnostics().isEmpty())
+                throw new AssertionError(row[0] + checked.diagnostics());
+            var types = checked.typeMap().entrySet().stream()
+                .filter(e -> e.getKey() instanceof deal.ast.ConditionalExpr
+                    || e.getKey() instanceof deal.ast.BinaryExpr b && b.op() == deal.ast.BinaryOp.COALESCE)
+                .map(e -> deal.semantic.DescriptorService.describe(e.getValue()).canonicalSpecText()).toList();
+            if (!types.equals(List.of(row[1]))) throw new AssertionError(row[0] + ": " + types);
+        }
+        String source = """
+            class C{x:number; r:Record<string,unknown>; opt?:Record<string,unknown>;}
+            function same(b:boolean):unknown{let x:unknown=b?1:2;let n:number=x;return n;}
+            function fallback(n:number|null):unknown{let x:unknown=n??3;let v:number=x;return v;}
+            export function main():void{
+              let a:boolean=JSON.parse("1") instanceof C;
+              let b=JSON.parse("1") instanceof C;
+              let c:boolean=JSON.parse("null") instanceof C;
+              let s:string=`${1}:${"ok"}`;
+              let decoded:string=JSON.parse("\\"ok\\"");
+              let record:Record<string,unknown>={};record.n=1;record["u"]=undefined;
+              let xs:Record<string,unknown>[]=[{}];xs[0]={n:2};xs[xs.length]=record;
+              let box:C={x:1,r:{}};box.r={n:3};box.opt=record;
+              if(a||b||c||s!=="1:ok"||decoded!=="ok"||(same(true) as number)!==1
+                  ||(fallback(null) as number)!==3||(xs[0].n as number)!==2
+                  ||(box.r.n as number)!==3||!Object.hasOwn(record,"u")){
+                throw {name:"FAIL",message:"context/storage invariants"};
+              }
+            }
+            """;
+        CompositionProductionTest.execute(source, "", root.resolve("positive"), null, List.of(Backend.values()));
+    }
+
     private static void illegal(Runnable action) {
         try { action.run(); } catch (IllegalArgumentException expected) { return; }
         throw new AssertionError("illegal data type constructed");
@@ -154,7 +217,7 @@ public final class TypeLegalityFlowTest {
                 "let x:Other=c??{value:1};")) {
             // The last case must not retag the existing left value as the outer target.
             check(classes + "function f(a:number[]|null|undefined,c:Item|null,cs:Item[]|undefined,ns:number[][]|null,r:Record<string,unknown>|undefined):void{" + body + "}",
-                body.startsWith("let x:Other") ? "E3006" : null);
+                body.startsWith("let x:Other") || body.equals("let x:unknown=c??{};") ? "E3006" : null);
         }
         for (String body : List.of(
                 "let x=a??[\"bad\"];",
@@ -170,7 +233,7 @@ public final class TypeLegalityFlowTest {
         for (String expression : List.of("null??[]", "undefined??{}", "u??[]", "n??[]", "b?a:[]", "a??(b?[]:[])", "[[1],[]]"))
             check("function f(a:number[]|null,u:unknown,n:number,b:boolean):void{let x=" + expression + ";}", "E3002");
         check("function f(a:number[]|null):void{let x=a??JSON.parse(\"[]\");let y:number[]=x;}", "E3001");
-        check("function f(a:number[]|null):void{let x:unknown=a??[\"s\"];}", null);
+        check("function f(a:number[]|null):void{let x:unknown=a??[\"s\"];}", "E3006");
     }
 
     private static void ternaryLiteralContext() {
@@ -278,6 +341,7 @@ public final class TypeLegalityFlowTest {
         if (!(CanonicalRuntimeTypeDescriptor.parseResult("void") instanceof DescriptorAst)) throw new AssertionError("void result");
         Path root = Files.createTempDirectory("type-legality-flow-");
         try {
+            contextualInvariants(root.resolve("context"));
             for (String statement : List.of("[v()];", "let xs=[[v()]];", "let xs:unknown=[v()];", "let xs=[true?v():v()];"))
                 productionReject(statement, root);
             for (String fixture : List.of("arrays/reference-array-identity-equality", "variables/block-shadowing-no-narrowing", "variables/parameter-shadowing-no-narrowing")) {

@@ -69,12 +69,15 @@ Array literals retain the complete contextual array base, including readonly,
 for empty and nonempty literals; nullish target members do not enter the literal's
 type. Element contexts recurse independently, preserving shallow mutability.
 Assignment expressions keep the actual RHS type, not the storage envelope.
+Schema-free writes are properties inside a Record, never Record-valued class fields
+or array slots; every storage write requires data, excluding void/never.
 
 Conditional arms receive result context and their own guard states. Without an
 outer target, a literal arm uses its independently typed sibling's exact array/
 class/Record target/provider. Static checking order must not change branch facts.
-Context-free joins allow identical/nullish types or an actual unknown absorbing a
-non-void alternative, not arbitrary unions. Void joins require two void arms and
+Ordinary joins, even under a destination context, allow identical/nullish types or
+an actual unknown absorbing a non-void alternative, not arbitrary unions. Only
+readonly-array targets select a contextual result base. Void joins require two void arms and
 cannot become data. Contextual adapters belong to selected arms.
 
 Coalescing checks the left without outer context and contextualizes only fallback.
@@ -112,7 +115,8 @@ or implicit extraction from unknown. Follow the specification/catalog for aritie
 - JSON.stringify accepts unknown without extraction context and returns
   string|undefined. JSON.parse takes one checked string and uses genuine enclosing
   context through parentheses/conditional arms, never assertions. No target means
-  unknown. Function bodies reset outer expression context.
+  unknown. Composite operands (including templates, nominal tests, callees, receivers
+and keys) do not inherit destination schemas. Function bodies reset outer expression context.
 
 Validate the complete contextual JSON schema, including unread optional fields.
 Follow exact defining declarations with identity-and-provider cycle guards; stop at

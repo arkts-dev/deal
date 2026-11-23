@@ -127,7 +127,8 @@ public final class Language16FrontendTest {
         check("class Item{x:number;}function f():Item{return {x:1}??{x:2};}", false);
         check("class Item{x:number;}function f(a:Item|null):Item{return a??JSON.parse(\"{}\");}", true);
         check("class Item{x:number;}function f(a:Item[]|null):Item[]{return a??[{x:1}];}", true);
-        check("function f(a:(()=>number)|null):(x:number)=>number{return a??((x:number):number=>x);}", true);
+        check("function f(a:(()=>number)|null):(x:number)=>number{return a??((x:number):number=>x);}", false);
+        check("function f(a:(()=>number)|null):(x:number)=>number{return a??(():number=>1);}", true);
         check("function f(a:number|null):number{let x=0;return x=a??2;}", true);
         for (int count = 0; count < 6; count++) {
             String slashes = "\\".repeat(count);
@@ -420,12 +421,13 @@ public final class Language16FrontendTest {
         check("function f(): null { let Object = 1; return null; }", false);
         check("function f(): null { let t: Record<string, unknown> = {}; let k = \"x\"; let b = Object.hasOwn(t,k); return null; }", true);
         check("function f(flag:boolean):number{return flag?1:2;}",true);
-        check("function f(flag:boolean):void{let g:(n:number)=>number=flag?():number=>1:(n:number):number=>n;}",true);
+        check("function f(flag:boolean):void{let g:(n:number)=>number=flag?():number=>1:(n:number):number=>n;}",false);
+        check("function f(flag:boolean):void{let g:(n:number)=>number=flag?():number=>1:():number=>2;}",true);
         check("function f(flag:boolean):void{let g=flag?():number=>1:(n:number):number=>n;}",false);
         check("function f(flag:boolean):void{let g:(n:number)=>number=flag?():string=>\"s\":(n:number):number=>n;}",false);
         check("function f(flag:boolean,r:Record<string,unknown>):number{return flag?r.x:0;}",false);
         check("class C{x:number;} class D{x:number;} function f(flag:boolean,c:C,d:D):void{let v=flag?c:d;}",false);
-        check("function f(flag:boolean):void{let x:unknown=flag?1:\"s\";}",true);
+        check("function f(flag:boolean):void{let x:unknown=flag?1:\"s\";}",false);
         check("function v():void{} function f(flag:boolean):void{flag?v():null;}",false);
         check("function v():void{} function f(flag:boolean):void{flag?v():v();}",true);
         check("function f(flag:boolean,x:number|null):void{if(x!==null){flag?(x=null):0;let y:number=x;}}",false);

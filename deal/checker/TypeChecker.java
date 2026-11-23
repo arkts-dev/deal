@@ -1463,11 +1463,21 @@ public final class TypeChecker {
         }
     }
 
+    /** Composite operands have no destination schema of their own. */
+    private Type checkWithoutContext(ExpressionNode expr) {
+        Type savedExpected = expectedType;
+        Symbol.ClassSymbol savedClass = contextualClassDecl;
+        expectedType = null;
+        contextualClassDecl = null;
+        try { return checkExpression(expr); }
+        finally { expectedType = savedExpected; contextualClassDecl = savedClass; }
+    }
+
     /** Receiver and key subexpressions are reads even inside a storage target. */
     private Type checkAddressOperand(ExpressionNode expr) {
         boolean savedMode = assignmentTargetMode;
         assignmentTargetMode = false;
-        try { return checkExpression(expr); }
+        try { return checkWithoutContext(expr); }
         finally { assignmentTargetMode = savedMode; }
     }
 
@@ -1502,7 +1512,7 @@ public final class TypeChecker {
             case TemplateLiteralExpr tl -> {
                 for (int i = 0; i < tl.parts().size(); i++) {
                     ExpressionNode part = tl.parts().get(i);
-                    Type partType = checkExpression(part);
+                    Type partType = checkWithoutContext(part);
                     // The interpolation's string/number requirement is the whole
                     // context of an embedded expression (docs/spec-v1.6.md
                     // §Template literals): it grants no contextual-read
@@ -1935,7 +1945,7 @@ public final class TypeChecker {
         CallExpr savedBuiltinCall = directBuiltinCall;
         directBuiltinCall = call;
         Type calleeType;
-        try { calleeType = checkExpression(call.callee()); }
+        try { calleeType = checkWithoutContext(call.callee()); }
         finally { directBuiltinCall = savedBuiltinCall; }
         if (optionalCallee(call.callee()) && calleeType instanceof Type.Func f && f.isAsync()) {
             diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E3014,
@@ -1977,9 +1987,8 @@ public final class TypeChecker {
 
             Type savedExpected = expectedType;
             Symbol.ClassSymbol savedContextual = contextualClassDecl;
-            if (paramTypesForContext != null && i < paramTypesForContext.size()) {
-                expectedType = paramTypesForContext.get(i);
-            }
+            expectedType = paramTypesForContext != null && i < paramTypesForContext.size()
+                ? paramTypesForContext.get(i) : null;
             // The enclosing construction context (an annotated binding,
             // field default or assignment target) stays authoritative
             // when it exists: the parameter context supplies the literal's
@@ -3236,7 +3245,7 @@ public final class TypeChecker {
     }
 
     private Type checkInstanceof(InstanceofExpr test) {
-        Type source = checkExpression(test.value());
+        Type source = checkWithoutContext(test.value());
         Type target = nameResolver.resolveTypeNode(test.target());
         if (!(target instanceof Type.Class cls) || source instanceof Type.Void) {
             if (!(target instanceof Type.Class)) {
@@ -3266,8 +3275,7 @@ public final class TypeChecker {
 
     private Type checkConditional(ConditionalExpr conditional) {
         Type context = expectedType;
-        expectedType = Type.Boolean.INSTANCE;
-        Type condition = checkExpression(conditional.condition());
+        Type condition = checkWithoutContext(conditional.condition());
         if (condition != Type.Error.INSTANCE && !(condition instanceof Type.Boolean))
             conditionError("Conditional", condition, conditional.condition().span());
         NullNarrowing entry = narrowing.branch();
@@ -3394,7 +3402,6 @@ public final class TypeChecker {
                 }
                 return result;
             }
-            return context;
         }
         if (Types.equals(consequent, alternate)) return consequent;
         if (consequent instanceof Type.Never || alternate instanceof Type.Never) {
@@ -3433,8 +3440,8 @@ public final class TypeChecker {
     }
 
     private Type checkHas(HasExpr has) {
-        Type objType = checkExpression(has.object());
-        Type keyType = checkExpression(has.key());
+        Type objType = checkWithoutContext(has.object());
+        Type keyType = checkWithoutContext(has.key());
         if (!(keyType instanceof Type.String)) {
             presenceError("Object.hasOwn key must be string", has.key().span(), "presence.key-type",
                     "string", typeName(keyType), null, null);
@@ -3613,14 +3620,14 @@ public final class TypeChecker {
             return Type.Error.INSTANCE;
         }
 
-        // A table write through a member/index target is unchecked (no
-        // field schema). A table VARIABLE target is an ordinary typed
-        // assignment: only a table value is assignable to it.
-        boolean uncheckedTableFieldWrite = targetType instanceof Type.Table
-            && !(assign.target() instanceof IdentifierExpr);
-        if (uncheckedTableFieldWrite) {
-            // Table write — always allowed
-        } else if (!isAssignable(declaredTarget, valueType)) {
+        // Only a property inside a Record is schema-free. A class field or
+        // array element whose value type is Record remains ordinary typed storage.
+        boolean uncheckedTableFieldWrite = receiver != null
+            && typeOf(receiver) instanceof Type.Table;
+        if (Types.resultOnly(valueType)) {
+            voidDataError(DiagnosticCode.E3001, "Result-only values cannot be assigned to storage",
+                    assign.value().span(), assign.value(), "assignment.value");
+        } else if (!uncheckedTableFieldWrite && !isAssignable(declaredTarget, valueType)) {
             if (!reportClassProviderCrossing(declaredTarget, valueType,
                     assign.span())) {
                 TypeNode annotation = assign.target() instanceof IdentifierExpr id
