@@ -71,6 +71,29 @@ public class DiagnosticRangeTest {
         }
     }
 
+    private static void testLanguageDifference() {
+        var difference = deal.diagnostics.LanguageDifference.syntax("coercing-equality");
+        var facts = new deal.diagnostics.DiagnosticFacts("syntax.subset.coercing-equality", "parse.subset",
+                "strict equality", "==", List.of()).withLanguageDifference(difference);
+        var diagnostic = CompilerDiagnostic.error(DiagnosticCode.E1042, "Unsupported operator", DiagnosticRange.synthetic("test.deal"))
+                .withFacts(facts.withGuidance(List.of("Choose the intended comparison."))
+                    .withSyntax(null).withCall(null).withOperator(null).withMismatch(null).withNames(null)
+                    .withConstruction(null).withExports(null).withResolution(null).withCycle(null)
+                    .withTool(null).withLowering(null).withCause(null));
+        check(diagnostic.facts().languageDifference().equals(difference), "fact copies preserve occurrence-specific language difference");
+        String json = DiagnosticStructuredOutput.toJson(List.of(diagnostic));
+        check(json.contains("\"languageDifference\": {\"reference\": \"TYPESCRIPT\", \"kind\": \"UNSUPPORTED_SYNTAX\", \"feature\": \"coercing-equality\"}"),
+                "JSON v2 transports explicit language difference beside existing classification");
+        var ordinary = CompilerDiagnostic.error(DiagnosticCode.E1042, "Malformed expression", DiagnosticRange.synthetic("test.deal"));
+        check(ordinary.facts().languageDifference() == null
+                        && DiagnosticStructuredOutput.toJson(List.of(ordinary)).contains("\"languageDifference\": null"),
+                "same code does not imply a language difference");
+        check(deal.amend.CompilerProtocolJson.encode(facts).contains("\"languageDifference\""),
+                "amendment fact transport retains language difference");
+        check(DiagnosticFormatter.format(diagnostic).equals("test.deal:1:1-1:1: ERROR E1042: Unsupported operator [span 0]"),
+                "metadata does not duplicate terse human advice");
+    }
+
     private static void testSourceBatchIdentity() {
         var texts = new LinkedHashMap<String, String>();
         texts.put("b.deal", "// \ud800\r\n");
@@ -188,6 +211,7 @@ public class DiagnosticRangeTest {
     public static void main(String[] args) throws Exception {
         System.out.println("=== Running Diagnostic Range Tests ===");
 
+        testLanguageDifference();
         testSourceBatchIdentity();
         testRetainedDetailPages();
         testCursorInitialAndEmpty();
@@ -3781,11 +3805,11 @@ public class DiagnosticRangeTest {
     private static String expectedJsonDocument(String code, String message, String range, String notes) {
         return "{\n  \"version\": 2,\n  \"diagnostics\": [\n    {\n"
             + "      \"code\": \"" + code + "\",\n      \"classification\": "
-            + expectedClassification(code) + ",\n      \"severity\": \"error\",\n"
+            + expectedClassification(code) + ",\n      \"languageDifference\": null,\n      \"severity\": \"error\",\n"
             + "      \"message\": \"" + message + "\",\n      \"range\": "
             + range.replace("\n", "\n      ") + ",\n      \"excerpt\": null,\n      \"occurrence\": null,\n      \"editOffer\": null,\n      \"notes\": "
             + notes.replace("\n", "\n      ") + ",\n"
-            + "      \"facts\": {\n        \"reason\": \"\",\n        \"operation\": \"\",\n"
+            + "      \"facts\": {\n        \"languageDifference\": null,\n        \"reason\": \"\",\n        \"operation\": \"\",\n"
             + "        \"expected\": \"\",\n        \"actual\": \"\",\n        \"guidance\": [],\n        \"path\": [],\n        \"call\": null,\n        \"operator\": null,\n        \"mismatch\": null,\n        \"cause\": null,\n        \"syntax\": null,\n        \"names\": null,\n        \"construction\": null,\n        \"exports\": null,\n        \"resolution\": null,\n        \"cycle\": null,\n        \"tool\": null,\n        \"lowering\": null\n      },\n"
             + "      \"missingSymbols\": []\n    }\n  ],\n  \"operations\": [],\n  \"compilation\": null\n}";
     }

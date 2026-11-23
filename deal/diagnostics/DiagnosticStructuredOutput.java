@@ -161,6 +161,8 @@ public final class DiagnosticStructuredOutput {
         indent(sb, 3).append("\"code\": ").append(jsonString(d.code())).append(",\n");
         appendClassification(sb, DiagnosticClassification.forCode(d.code()), 3);
         sb.append(",\n");
+        appendLanguageDifference(sb, d.facts().languageDifference(), 3);
+        sb.append(",\n");
         indent(sb, 3).append("\"severity\": ").append(jsonString(d.severity())).append(",\n");
         indent(sb, 3).append("\"message\": ").append(jsonString(d.message())).append(",\n");
         appendRange(sb, d.range(), 3);
@@ -206,6 +208,14 @@ public final class DiagnosticStructuredOutput {
             .append(", \"primaryTruncated\": ").append(excerpt.primaryTruncated()).append('}');
     }
 
+    private static void appendLanguageDifference(StringBuilder sb, LanguageDifference difference, int level) {
+        indent(sb, level).append("\"languageDifference\": ");
+        if (difference == null) { sb.append("null"); return; }
+        sb.append("{\"reference\": ").append(jsonString(difference.reference().name()))
+            .append(", \"kind\": ").append(jsonString(difference.kind().name()))
+            .append(", \"feature\": ").append(jsonString(difference.feature())).append('}');
+    }
+
     private static void appendClassification(StringBuilder sb, DiagnosticClassification classification, int level) {
         indent(sb, level).append("\"classification\": ");
         if (classification == null) { sb.append("null"); return; }
@@ -216,6 +226,8 @@ public final class DiagnosticStructuredOutput {
 
     private static void appendFacts(StringBuilder sb, DiagnosticFacts facts, int level) {
         indent(sb, level).append("\"facts\": {\n");
+        appendLanguageDifference(sb, facts.languageDifference(), level + 1);
+        sb.append(",\n");
         indent(sb, level + 1).append("\"reason\": ").append(jsonString(facts.reason())).append(",\n");
         indent(sb, level + 1).append("\"operation\": ").append(jsonString(facts.operation())).append(",\n");
         indent(sb, level + 1).append("\"expected\": ").append(jsonString(facts.expected())).append(",\n");
