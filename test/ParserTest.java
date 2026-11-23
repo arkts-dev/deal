@@ -37,6 +37,15 @@ public class ParserTest {
     private static void testDiagnosticActionability() {
         testCoercingEqualityDiagnostics();
         testConservativeTerminatorOffers();
+        for (String source : List.of("import {name, other as alias} from \"./mod\";let after=1;",
+                "function f():void{for(let i=0;i<3;i++){let body=1;}let after=2;}")) {
+            var recovered = parse(source);
+            check(recovered.diagnostics().size() == 1, "unsupported compound syntax owns its recovery without manufactured braces: " + recovered.diagnostics());
+        }
+        var independentAfterImport = parse("import {name} from \"./mod\";let after=;");
+        check(independentAfterImport.diagnostics().size() == 2
+                        && independentAfterImport.diagnostics().getLast().facts().reason().equals("syntax.expression-required"),
+                "unsupported-statement recovery preserves independent later errors");
         for (String expression : List.of("f<number>()", "Array<number>()", "mod.f<Record<string, unknown>>()")) {
             var generic = parse("let value=" + expression + ";let after=1;");
             check(generic.diagnostics().size() == 1 && generic.diagnostics().getFirst().facts().reason().equals("syntax.subset.generic-call")

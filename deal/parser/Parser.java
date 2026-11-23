@@ -494,7 +494,9 @@ public final class Parser {
             subsetError(DiagnosticCode.E1013, "Expected 'of'; C-style for loops are not supported", peek(),
                     "c-style-for", "for (let name of iterable) or for (const name of iterable)",
                     "DEAL supports for-of and while, not C-style for headers. See docs/spec-v1.6.md#for-of and #while; example shapes: for (let item of values) { consume(item); } and while (condition) { step(); }. Choose iteration semantics explicitly; initialization, update and continue behavior are not rewritten.");
-            synchronize(); return null;
+            recoverUnsupportedForHeader();
+            if (peek().type() == TokenType.LBRACE) parseBlock();
+            return null;
         }
         ExpressionNode iterable = parseExpression();
         if (iterable == null) { synchronize(); return null; }
@@ -525,7 +527,8 @@ public final class Parser {
             subsetError(DiagnosticCode.E1019, "Expected '*' after 'import' (only namespace imports supported)", peek(),
                     "namespace-import", "import * as alias from a module path string",
                     "DEAL supports namespace imports, not named/default imports. See docs/spec-v1.6.md#import-forms-and-import-typing; example: import * as api from \"./module\";. Choose the intended alias and module explicitly; no replacement import or exported name is inferred.");
-            synchronize(); return null;
+            recoverUnsupportedStatement();
+            return null;
         }
         if (!match(TokenType.AS)) {
             error(DiagnosticCode.E1020, "Expected 'as' after '*' in import", peek());
@@ -2310,6 +2313,36 @@ public final class Parser {
             else if (kind == TokenType.LBRACE) braces++;
             else if (kind == TokenType.RBRACE) { if (braces == 0) return; braces--; }
             advance();
+        }
+    }
+
+    /** Skip one rejected statement without exposing nested braces as enclosing-block closers. */
+    private void recoverUnsupportedStatement() {
+        int parentheses = 0, brackets = 0, braces = 0;
+        while (!isAtEnd()) {
+            TokenType kind = peek().type();
+            if (parentheses == 0 && brackets == 0 && braces == 0) {
+                if (kind == TokenType.SEMICOLON) { advance(); return; }
+                if (isStatementBoundary(kind) && kind != TokenType.LBRACE) return;
+            }
+            if (kind == TokenType.LPAREN) parentheses++;
+            else if (kind == TokenType.LBRACKET) brackets++;
+            else if (kind == TokenType.LBRACE) braces++;
+            else if (kind == TokenType.RPAREN) { if (parentheses == 0) return; parentheses--; }
+            else if (kind == TokenType.RBRACKET) { if (brackets == 0) return; brackets--; }
+            else if (kind == TokenType.RBRACE) { if (braces == 0) return; braces--; }
+            advance();
+        }
+    }
+
+    private void recoverUnsupportedForHeader() {
+        int depth = 0;
+        while (!isAtEnd()) {
+            TokenType kind = peek().type();
+            if (kind == TokenType.RBRACE || kind == TokenType.LBRACE && depth == 0) return;
+            advance();
+            if (kind == TokenType.LPAREN) depth++;
+            else if (kind == TokenType.RPAREN) { if (depth == 0) return; depth--; }
         }
     }
 
