@@ -121,6 +121,29 @@ public final class Parser {
             recoverUnsupportedStatement();
             return null;
         }
+        if (peek().type() == TokenType.IDENTIFIER) {
+            String word = peek().lexeme();
+            if (Set.of("switch", "do", "yield").contains(word)
+                    || pos + 1 < tokens.size() && tokens.get(pos + 1).type() == TokenType.COLON) {
+                Token keyword = advance();
+                String feature = Set.of("switch", "do", "yield").contains(word) ? word : "label";
+                rejectedSyntax(keyword, feature, switch (feature) {
+                    case "switch" -> "Switch statements are not supported; use explicit if/else branches";
+                    case "do" -> "Do-while is not supported; use an explicit while loop";
+                    case "yield" -> "Yield is not supported; use ordinary function returns";
+                    default -> "Labels are not supported; use unlabelled loop control";
+                }, "Choose explicit supported control flow; preserve once-only tests, effects and the intended break/continue target.");
+                skipRejectedControlFlow(feature);
+                return null;
+            }
+        }
+        if (peek().type() == TokenType.FUNCTION && pos + 1 < tokens.size() && tokens.get(pos + 1).type() == TokenType.STAR) {
+            Token keyword = advance();
+            rejectedSyntax(keyword, "generator", "Generators are not supported; use an ordinary function",
+                    "Return an explicit data value or collection; DEAL has no generator or iterator protocol.");
+            skipRejectedControlFlow("generator");
+            return null;
+        }
         TokenType type = peek().type();
         StatementNode stmt = switch (type) {
             case LBRACE    -> parseBlock();
@@ -480,6 +503,11 @@ public final class Parser {
     // -- For-of --
     private StatementNode parseForOfStatement() {
         Token forToken = advance();
+        if (peek().type() == TokenType.AWAIT) {
+            Token await = advance();
+            rejectedSyntax(await, "for-await", "For-await is not supported; await calls explicitly in an async body",
+                    "Iterate a checked array/string with for-of and await each intended async call inside the body; DEAL has no async iterable protocol.");
+        }
         expect(TokenType.LPAREN, DiagnosticCode.E1014, "Expected '(' after 'for'");
         boolean isConst = match(TokenType.CONST);
         if (!isConst) expect(TokenType.LET, DiagnosticCode.E1007, "Expected 'let' or 'const' in for-of loop");
@@ -532,12 +560,14 @@ public final class Parser {
     // -- Break / Continue --
     private StatementNode parseBreakStatement() {
         Token t = advance();
+        rejectJumpLabel();
         optionalSemicolon();
         return new BreakStatement(spanOf(t));
     }
 
     private StatementNode parseContinueStatement() {
         Token t = advance();
+        rejectJumpLabel();
         optionalSemicolon();
         return new ContinueStatement(spanOf(t));
     }
@@ -625,11 +655,21 @@ public final class Parser {
         Token tryToken = advance();
         Block tryBlock = parseBlock();
 
+        if (peek().type() == TokenType.IDENTIFIER && peek().lexeme().equals("finally")) {
+            rejectFinally();
+            return null;
+        }
         if (!match(TokenType.CATCH)) {
             error(DiagnosticCode.E1026, "Expected 'catch' after try block", peek());
             synchronize(); return null;
         }
 
+        if (peek().type() == TokenType.LBRACE) {
+            rejectedSyntax(peek(), "bindingless-catch", "Catch requires a binding; write catch (error)",
+                    "Bind the caught value as unknown; narrow or check it before typed use, even when the value is otherwise unused.");
+            parseBlock();
+            return null;
+        }
         expect(TokenType.LPAREN, DiagnosticCode.E1027, "Expected '(' after 'catch'");
         Token catchVarToken = expect(TokenType.IDENTIFIER, DiagnosticCode.E1028,
                 "Expected catch variable name");
@@ -637,6 +677,7 @@ public final class Parser {
         expect(TokenType.RPAREN, DiagnosticCode.E1015, "Expected ')' after catch variable");
 
         Block catchBlock = parseBlock();
+        if (peek().type() == TokenType.IDENTIFIER && peek().lexeme().equals("finally")) rejectFinally();
 
         Span sp = spanBetween(tryToken, previousOrCurrent());
         return new TryStatement(sp, tryBlock, catchVarToken.lexeme(),
@@ -2148,6 +2189,44 @@ public final class Parser {
                 && Character.isLowSurrogate(lexeme.charAt(end))) end--;
         return new deal.diagnostics.DiagnosticFacts.SyntaxContext(context, expectedKinds, found.type().name(),
                 lexeme.substring(0, end), lexeme.length(), end < lexeme.length());
+    }
+
+    private void rejectJumpLabel() {
+        if (!isIdentifier(peek().type()) || peek().line() != previous().line()) return;
+        Token label = advance();
+        rejectedSyntax(label, "labelled-jump", "Labelled jumps are not supported; break/continue target the nearest loop",
+                "Restructure the loop control explicitly; removing a label can change the target.");
+    }
+
+    private void rejectFinally() {
+        Token keyword = advance();
+        rejectedSyntax(keyword, "finally", "Finally blocks are not supported; make cleanup control flow explicit",
+                "Handle intended success and failure cleanup explicitly with try/catch; preserve returns and rethrows rather than deleting cleanup.");
+        if (peek().type() == TokenType.LBRACE) parseBlock();
+    }
+
+    private void skipRejectedControlFlow(String feature) {
+        int parentheses = 0;
+        while (!isAtEnd() && peek().type() != TokenType.RBRACE) {
+            TokenType kind = peek().type();
+            if (parentheses == 0 && kind == TokenType.LBRACE) {
+                int braces = 0;
+                do {
+                    TokenType nested = advance().type();
+                    if (nested == TokenType.LBRACE) braces++;
+                    else if (nested == TokenType.RBRACE) braces--;
+                } while (!isAtEnd() && braces > 0);
+                if (feature.equals("do") && match(TokenType.WHILE)) {
+                    while (!isAtEnd() && peek().type() != TokenType.SEMICOLON && peek().type() != TokenType.RBRACE) advance();
+                    match(TokenType.SEMICOLON);
+                }
+                return;
+            }
+            if (parentheses == 0 && kind == TokenType.SEMICOLON) { advance(); return; }
+            if (kind == TokenType.LPAREN) parentheses++;
+            else if (kind == TokenType.RPAREN && parentheses > 0) parentheses--;
+            advance();
+        }
     }
 
     private boolean rejectDestructuring(String position) {

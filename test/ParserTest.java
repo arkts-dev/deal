@@ -37,6 +37,16 @@ public class ParserTest {
     private static void testDiagnosticActionability() {
         testCoercingEqualityDiagnostics();
         testConservativeTerminatorOffers();
+        for (String source : List.of("switch(value){case 1: break;default:break;}", "do{step();}while(true);",
+                "try{}finally{}", "try{}catch(error){}finally{}", "try{}catch{}", "outer:while(true){break outer;}",
+                "while(true){break outer;}", "while(true){continue outer;}", "function* values(){yield 1;}", "yield 1;",
+                "for await(let item of items){}")) {
+            var flow = parse(source + "let after=1;");
+            check(flow.diagnostics().size() == 1 && flow.diagnostics().getFirst().facts().languageDifference() != null,
+                    "unsupported control flow has one targeted rejection: " + source + ": " + flow.diagnostics());
+        }
+        assertNoParseErrors(parse("let doWork=1;let yieldValue=2;while(true){break;}try{}catch(error){}"),
+                "ordinary names, nearest-loop jumps and catch binding remain admitted");
         for (String expression : List.of("[...values]", "f(...values)", "{...value}", "{name}", "[,1]", "/abc/g", "tag`hello`", "123n", "0xffn")) {
             var literal = parse("let result=" + expression + ";let after=1;");
             check(literal.diagnostics().size() == 1 && literal.diagnostics().getFirst().facts().languageDifference() != null,
