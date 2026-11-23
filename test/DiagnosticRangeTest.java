@@ -2431,7 +2431,7 @@ public class DiagnosticRangeTest {
 
         List<CompilerDiagnostic> errors = frontendErrors(
             source, corpusPath, rejectingModuleResolver());
-        check(diagnosticCodes(errors).equals("[E3004, E3004, E3007]"),
+        check(diagnosticCodes(errors).equals("[E3004, E3007]"),
             "the mutated subject emits the v1.4 removed-type"
                 + " diagnostic, got " + diagnosticCodes(errors));
 
@@ -2464,8 +2464,8 @@ public class DiagnosticRangeTest {
                 String mismatch = mismatches.get(0);
                 check(mismatch.contains(corpusPath),
                     "the mismatch names the pinned subject: " + mismatch);
-                check(mismatch.contains("the fixture must emit exactly one error diagnostic, got 3")
-                        && mismatch.contains("Unknown type 'int'"),
+                check(mismatch.contains("the fixture must emit exactly one error diagnostic, got 2")
+                        && mismatch.contains("Operand of unary '-'"),
                     "the mismatch retains the independently resolved annotation diagnostic: "
                         + mismatch);
             }

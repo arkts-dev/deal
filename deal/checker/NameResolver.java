@@ -54,6 +54,9 @@ public final class NameResolver {
 
     private SymbolTable currentScope;
 
+    /** Rechecking an annotation must not publish the same unresolved occurrence twice. */
+    private final Set<deal.diagnostics.DiagnosticRange> unknownTypeOccurrences = new HashSet<>();
+
     /** Declaration evidence uses exact symbol identity, never a spelling lookup across scopes. */
     private final Map<Symbol, Span> declarationSpans = new IdentityHashMap<>();
 
@@ -949,8 +952,9 @@ public final class NameResolver {
                     yield Types.classType(cs.name(), cs.identity(),
                         Types.providerModule(cs.modulePath()));
                 }
-                diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E3004, "Unknown type '" + name + "'", nt.span())
-                        .withMissingSymbol("TYPE", name, modulePath, List.of("class")));
+                if (unknownTypeOccurrences.add(nt.span().range()))
+                    diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E3004, "Unknown type '" + name + "'", nt.span())
+                            .withMissingSymbol("TYPE", name, modulePath, List.of("class")));
                 yield Type.Error.INSTANCE;
             }
         };

@@ -672,6 +672,11 @@ public class CheckerTest {
         check(context.facts().reason().equals("context.required")
                         && context.facts().guidance().get(0).contains("intended element type"),
                 "context rejection requests user intent, not a guessed type");
+        String missingTypes = "function f(value:Missing):Missing{return value;} function g(value:Missing):void{}";
+        var unknownTypes = checkProgram(missingTypes).result().diagnostics().stream()
+                .filter(d -> d.code().equals("E3004") && d.message().contains("Missing")).toList();
+        check(unknownTypes.size() == 3 && unknownTypes.stream().map(d -> d.range()).distinct().count() == 3,
+                "unknown annotation rechecks deduplicate only the same occurrence, not same-spelled independent annotations");
         String coalescing = "function f(value:number|null):void{let result=value??\"fallback\";}";
         var fallback = checkProgram(coalescing).result().diagnostics().stream()
                 .filter(d -> d.facts().reason().equals("coalesce.incompatible-fallback")).findFirst().orElseThrow();
