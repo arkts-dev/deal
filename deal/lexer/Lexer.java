@@ -664,6 +664,14 @@ public final class Lexer {
      * All consumed chars are non-newline, so bump() is safe.
      */
     private Token readOperatorOrPunctuation() {
+        // Recognize rejected operators by longest match so parsing owns one exact occurrence.
+        for (String spelling : List.of(">>>=", "&&=", "||=", "??=", "**=", "<<=", ">>=",
+                "&=", "|=", "^=", "**", "^", "~")) {
+            if (source.startsWith(spelling, pos)) {
+                for (int i = 0; i < spelling.length(); i++) bump();
+                return makeToken(TokenType.REJECTED_OPERATOR, spelling);
+            }
+        }
         char c = source.charAt(pos);
 
         return switch (c) {

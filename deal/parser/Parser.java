@@ -1095,6 +1095,27 @@ public final class Parser {
 
         while (true) {
             Token op = peek();
+            if (isRejectedBinaryOperator()) {
+                String spelling = op.lexeme();
+                if ((op.type() == TokenType.LT || op.type() == TokenType.GT)) {
+                    advance();
+                    spelling += advance().lexeme();
+                    if (op.type() == TokenType.GT && peek().type() == TokenType.GT
+                            && previous().range(file).endScalarOffset() == peek().range(file).startScalarOffset()) spelling += advance().lexeme();
+                    op = new Token(TokenType.REJECTED_OPERATOR, spelling, op.line(), op.column(), spelling.length(), op.range(file).startScalarOffset(), spelling.length());
+                } else advance();
+                rejectedSyntax(op, "operator", "Operator '" + spelling + "' is not supported; choose an explicit supported operation",
+                        "DEAL has arithmetic and boolean operators, not bitwise, shift or logical/exponentiation assignments; preserve operand evaluation and intended numeric semantics explicitly.");
+                parseBinary(PREC_MULTIPLICATIVE + 1);
+                continue;
+            }
+            if (op.type() == TokenType.IDENTIFIER && op.lexeme().equals("satisfies")) {
+                advance();
+                rejectedSyntax(op, "satisfies", "The satisfies operator is not supported; use a declared type annotation",
+                        "Annotate the intended binding or parameter; an as assertion performs a runtime check and is not equivalent to satisfies.");
+                parseType();
+                continue;
+            }
             int prec = getBinaryPrecedence(op.type());
             if (prec < minPrec) break;
 
@@ -1143,6 +1164,23 @@ public final class Parser {
     }
 
     private ExpressionNode parseUnary() {
+        if (peek().type() == TokenType.REJECTED_OPERATOR || peek().type() == TokenType.AMPERSAND
+                || peek().type() == TokenType.PIPE
+                || peek().type() == TokenType.IDENTIFIER && peek().lexeme().equals("void")) {
+            Token operator = advance();
+            rejectedSyntax(operator, operator.lexeme().equals("void") ? "void-expression" : "operator",
+                    "Unary '" + operator.lexeme() + "' is not supported; choose an explicit supported expression",
+                    "Use an ordinary expression statement to discard a result; no bitwise conversion or implicit coercion is available.");
+            return parseUnary();
+        }
+        if (peek().type() == TokenType.LT) {
+            Token opener = advance();
+            rejectedSyntax(opener, "angle-assertion", "Angle-bracket assertions are not supported; use a checked 'as T' assertion",
+                    "DEAL's value as T checks the value at runtime without coercion; choose the intended target type explicitly.");
+            parseType();
+            expect(TokenType.GT, DiagnosticCode.E1031, "Expected '>' after assertion type");
+            return parseUnary();
+        }
         if (match(TokenType.TYPEOF)) {
             Token token = previous();
             ExpressionNode value = parseUnary();
@@ -1270,6 +1308,10 @@ public final class Parser {
                 } else {
                     expr = new CallExpr(sp, expr, List.copyOf(args));
                 }
+            } else if (peek().type() == TokenType.BANG && peek().line() == expr.span().endLine()) {
+                Token bang = advance();
+                rejectedSyntax(bang, "non-null-assertion", "Postfix '!' is not supported; guard null and undefined explicitly",
+                        "Use explicit null/undefined guards before access; a checked as T assertion can fail at runtime and is not a non-null assertion.");
             } else {
                 break;
             }
@@ -1359,6 +1401,12 @@ public final class Parser {
                 if (inner == null) {
                     synchronize();
                     return new LiteralExpr(spanOf(token), new LiteralValue.NullLiteral());
+                }
+                if (peek().type() == TokenType.COMMA) {
+                    Token comma = advance();
+                    rejectedSyntax(comma, "comma-expression", "Comma expressions are not supported; use separate statements",
+                            "Keep expressions in their intended evaluation order as separate statements; select the intended result explicitly.");
+                    do { parseAssignment(); } while (match(TokenType.COMMA));
                 }
                 expectCloser(TokenType.RPAREN, DiagnosticCode.E1015, "Expected ')' after expression", token);
                 return inner;
@@ -2036,6 +2084,21 @@ public final class Parser {
                 && Character.isLowSurrogate(lexeme.charAt(end))) end--;
         return new deal.diagnostics.DiagnosticFacts.SyntaxContext(context, expectedKinds, found.type().name(),
                 lexeme.substring(0, end), lexeme.length(), end < lexeme.length());
+    }
+
+    private boolean isRejectedBinaryOperator() {
+        Token op = peek();
+        if (op.type() == TokenType.REJECTED_OPERATOR || op.type() == TokenType.AMPERSAND || op.type() == TokenType.PIPE) return true;
+        return (op.type() == TokenType.LT || op.type() == TokenType.GT) && pos + 1 < tokens.size()
+                && tokens.get(pos + 1).type() == op.type()
+                && op.range(file).endScalarOffset() == tokens.get(pos + 1).range(file).startScalarOffset();
+    }
+
+    private void rejectedSyntax(Token token, String feature, String message, String guidance) {
+        subsetError(DiagnosticCode.E1042, message, token, feature, "supported DEAL syntax", guidance);
+        int last = diagnostics.size() - 1;
+        diagnostics.set(last, diagnostics.get(last).withFacts(diagnostics.get(last).facts()
+                .withLanguageDifference(deal.diagnostics.LanguageDifference.syntax(feature))));
     }
 
     private void subsetError(DiagnosticCode code, String message, Token token, String rule,

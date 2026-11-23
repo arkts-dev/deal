@@ -1470,7 +1470,7 @@ public class CheckerTest {
             "let f: number = 2 * 3;"
         );
         assertNoErrors(out, "number arithmetic");
-        assertError(checkProgram("let f: number = 2 ** 3;"), "E1037", "removed power operator rejects");
+        assertError(checkProgram("let f: number = 2 ** 3;"), "E1042", "removed power operator rejects");
 
         out = checkProgram(
             "let a: number = 1.0 + 2.0;\n" +

@@ -37,6 +37,22 @@ public class ParserTest {
     private static void testDiagnosticActionability() {
         testCoercingEqualityDiagnostics();
         testConservativeTerminatorOffers();
+        for (String operator : List.of("&", "|", "^", "<<", ">>", ">>>", "&&=", "||=", "??=", "**=",
+                "&=", "|=", "^=", "<<=", ">>=", ">>>=")) {
+            String source = "// 😀\r\nlet value=left " + operator + " right;let after=1;";
+            var rejected = parse(source);
+            check(rejected.diagnostics().size() == 1
+                            && rejected.diagnostics().getFirst().facts().languageDifference() != null
+                            && rejected.diagnostics().getFirst().range().scalarLength() == operator.length(),
+                    "unsupported operator has one whole-spelling rejection: " + operator + ": " + rejected.diagnostics());
+        }
+        for (String expression : List.of("~value", "value!", "<number>value", "value satisfies number", "(a,b)", "void value")) {
+            var rejected = parse("let result=" + expression + ";let after=1;");
+            check(rejected.diagnostics().size() == 1 && rejected.diagnostics().getFirst().facts().languageDifference() != null,
+                    "unsupported expression form is explicit: " + expression + ": " + rejected.diagnostics());
+        }
+        assertNoParseErrors(parse("let f:(x:Record<string, unknown>)=>void=(x):void=>{};let v=(a<b)===(c>d);"),
+                "type delimiters, function arrows and comparisons remain admitted");
         for (String source : List.of("import {name, other as alias} from \"./mod\";let after=1;",
                 "function f():void{for(let i=0;i<3;i++){let body=1;}let after=2;}")) {
             var recovered = parse(source);
@@ -1603,11 +1619,9 @@ public class ParserTest {
     static void testExponentiationRejected() {
         System.out.println("-- Exponentiation rejection (v1.4) --");
 
-        // '**' is not in the v1.4 operator set, so it lexes as two '*'
-        // tokens and the second one has no operand (E1037). No POW node
-        // can enter the AST.
+        // Recognizing the rejected spelling must not admit a POW expression.
         ParseResult r = parse("let a: number = 2 ** 3;");
-        assertParseError(r, "E1037", "exponentiation is not admitted");
+        assertParseError(r, "E1042", "exponentiation is not admitted");
         VariableDeclaration vd = (VariableDeclaration) r.program().statements().get(0);
         check(!(vd.initializer() instanceof BinaryExpr bin)
                 || bin.op() != BinaryOp.POW,
@@ -1615,8 +1629,8 @@ public class ParserTest {
 
         // The removed operator is rejected regardless of the int32 profile.
         LexResult lex = new Lexer("let a: number = 2 ** 3;", "test.deal").tokenize();
-        check(lex.tokens().stream().filter(t -> t.type() == TokenType.STAR).count() == 2,
-            "'**' lexes as two STAR tokens");
+        check(lex.tokens().stream().filter(t -> t.type() == TokenType.REJECTED_OPERATOR && t.lexeme().equals("**")).count() == 1,
+            "'**' retains one rejected operator spelling");
     }
 
     // =========================================================================

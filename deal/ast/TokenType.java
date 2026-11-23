@@ -81,6 +81,7 @@ public enum TokenType {
     ELLIPSIS,    // ...
 
     AMPERSAND,   // &
+    REJECTED_OPERATOR, // recognized spelling outside the language grammar
 
     // -- Punctuation --
     LBRACE,      // {

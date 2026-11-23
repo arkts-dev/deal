@@ -2,9 +2,9 @@
   "version": 1,
   "mode": "compile-error",
   "diagnostic": {
-    "code": "E1037",
+    "code": "E1042",
     "line": 7,
-    "column": 13,
-    "message": "Expected expression"
+    "column": 12,
+    "message": "Operator '**' is not supported; choose an explicit supported operation"
   }
 }
