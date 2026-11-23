@@ -4821,7 +4821,7 @@ public class CheckerTest {
 
         // Test 3: nested class Error inside a function should produce E4006
         out = checkProgram(
-            "function f() { class Error { code: string, message: string } }"
+            "function f():void { class Error { code: string, message: string } }"
         );
         assertError(out, "E4006", "nested class Error inside function produces E4006");
     }
@@ -4861,7 +4861,7 @@ public class CheckerTest {
 
         // Test 6: dollar in nested class name
         out = checkProgram(
-            "function f() { class Nested$Class { } }"
+            "function f():void { class Nested$Class { } }"
         );
         assertError(out, "E2008", "dollar in nested class name produces E2008");
 
@@ -4873,7 +4873,7 @@ public class CheckerTest {
 
         // Test 8: dollar in class field name (nested class)
         out = checkProgram(
-            "function f() { class Foo { bar$baz: number } }"
+            "function f():void { class Foo { bar$baz: number } }"
         );
         assertError(out, "E2008", "dollar in nested class field name produces E2008");
     }

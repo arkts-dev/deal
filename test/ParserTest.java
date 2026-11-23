@@ -37,6 +37,14 @@ public class ParserTest {
     private static void testDiagnosticActionability() {
         testCoercingEqualityDiagnostics();
         testConservativeTerminatorOffers();
+        for (String source : List.of("function f(value?:number):void{}", "function f(value:number=1):void{}",
+                "let f=value=>value;", "let f=(value)=>value;", "function f(){}", "let f=function(){};")) {
+            var callable = parse(source + "let after=1;");
+            check(callable.diagnostics().size() == 1 && !callable.diagnostics().getFirst().facts().guidance().isEmpty(),
+                    "unsupported function form has specific guidance: " + source + ": " + callable.diagnostics());
+        }
+        assertNoParseErrors(parse("function f(value:number|undefined):void{}let g=(value:number):number=>value;"),
+                "explicit required parameters and arrow results remain admitted");
         for (String source : List.of("let value=new Model();", "class C extends B{}", "class C implements I{}",
                 "class C{method():void{}}", "class C{method?():void{}}", "class C{[key]():void{}}",
                 "class C{get value():number{return 1;}}", "class C{set value(v:number):void{}}",

@@ -416,8 +416,14 @@ public final class Parser {
         expectCloser(TokenType.RPAREN, DiagnosticCode.E1010, "Expected ')' after function parameters", lparen);
 
         if (!match(TokenType.COLON)) {
-            error(DiagnosticCode.E1011, returnTypeMessage, peek());
-            synchronize(); return null;
+            subsetError(DiagnosticCode.E1011, "Function result annotation is required; declare the intended result type", peek(),
+                    "function-result", ": result type",
+                    "Annotate the intended result explicitly; void permits no value return, and async implementations require Promise<R>.");
+            int last = diagnostics.size() - 1;
+            diagnostics.set(last, diagnostics.get(last).withFacts(diagnostics.get(last).facts()
+                    .withLanguageDifference(deal.diagnostics.LanguageDifference.semantics("explicit-function-result"))));
+            if (peek().type() == TokenType.LBRACE) parseBlock(); else synchronize();
+            return null;
         }
         ResultAnnotation result = parseResultAnnotation();
         TypeNode returnType = result.type();
@@ -1148,8 +1154,17 @@ public final class Parser {
         if (rejectDestructuring("parameter")) return null;
         Token nameToken = expect(TokenType.IDENTIFIER, DiagnosticCode.E1029, "Expected parameter name");
         if (nameToken == null) return null;
+        if (peek().type() == TokenType.QUESTION) {
+            Token optional = advance();
+            rejectedSyntax(optional, "optional-parameter", "Optional parameters are not supported; declare an explicit required parameter",
+                    "Use a required T|undefined parameter when intended and pass undefined explicitly; this does not make arguments optional.");
+        }
 
         if (!match(TokenType.COLON)) {
+            if (peek().type() == TokenType.EQ_SIGN) {
+                rejectDefaultParameter();
+                return new Parameter(spanOf(nameToken), nameToken.lexeme(), null);
+            }
             if (peek().type() != TokenType.COMMA && peek().type() != TokenType.RPAREN) {
                 expectedToken(DiagnosticCode.E1008, "Expected ':' after parameter name", TokenType.COLON);
                 return null;
@@ -1158,6 +1173,7 @@ public final class Parser {
         }
         TypeNode type = parseType();
         if (type == null) return null;
+        if (peek().type() == TokenType.EQ_SIGN) rejectDefaultParameter();
 
         return new Parameter(spanBetween(nameToken, previousOrCurrent()),
                 nameToken.lexeme(), type);
@@ -1388,6 +1404,13 @@ public final class Parser {
             return target == null ? null : updateExpression(operator, target, false);
         }
         ExpressionNode target = parsePostfix();
+        if (target != null && peek().type() == TokenType.ARROW) {
+            Token arrow = advance();
+            rejectedSyntax(arrow, "arrow-result", "Arrow result annotation is required; write (parameters): R => body",
+                    "Choose the result type explicitly; parameter inference from context does not infer the result annotation.");
+            if (peek().type() == TokenType.LBRACE) parseBlock(); else parseAssignment();
+            return target;
+        }
         if (target != null && (peek().type() == TokenType.INCREMENT || peek().type() == TokenType.DECREMENT)
                 && peek().line() == target.span().endLine())
             return updateExpression(advance(), target, true);
@@ -1576,6 +1599,13 @@ public final class Parser {
                 return parseTemplateLiteral();
             }
             case IDENTIFIER, AS, FROM, OF -> {
+                if (peek(1).type() == TokenType.ARROW) {
+                    Token parameter = advance();
+                    rejectedSyntax(parameter, "unparenthesized-arrow", "Arrow parameters require parentheses and an explicit result annotation",
+                            "Write (name: T): R => expression, or omit the parameter type only under a positional function context; choose R explicitly.");
+                    advance();
+                    return parseAssignment();
+                }
                 advance();
                 return new IdentifierExpr(spanOf(previous()), previous().lexeme());
             }
@@ -2317,6 +2347,13 @@ public final class Parser {
     }
 
     private void skipAngleType() { skipBalancedType(TokenType.LT, TokenType.GT); }
+
+    private void rejectDefaultParameter() {
+        Token equals = advance();
+        rejectedSyntax(equals, "default-parameter", "Default parameters are not supported; initialize explicitly inside the body",
+                "Keep a required parameter and handle an explicitly admitted undefined value in the body, or use a separate wrapper; update callers intentionally.");
+        parseAssignment();
+    }
 
     private void rejectGenericDeclaration(String declaration) {
         if (peek().type() != TokenType.LT) return;
