@@ -1619,6 +1619,15 @@ public final class TypeChecker {
         if (id.name().equals("undefined")) return Type.Undefined.INSTANCE;
         Symbol sym = resolveVisibleBinding(id.name());
         if (sym == null) {
+            if (Set.of("parseInt", "parseFloat", "isNaN", "isFinite", "Boolean", "BigInt", "Symbol", "RegExp", "Map", "Set",
+                    "window", "document", "globalThis", "process", "fetch", "setTimeout", "setInterval", "require").contains(id.name())) {
+                diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E2001,
+                        "Global '" + id.name() + "' is not predefined in DEAL; choose a supported builtin or declared host API", id.span())
+                        .withFacts(new deal.diagnostics.DiagnosticFacts("name.unavailable-global", "read", "visible value binding", id.name(),
+                                List.of("Number(string) parses a whole string; Number.isNaN/isFinite do not coerce. Other host APIs require an explicitly configured declaration module and namespace import; no missing import is inferred."))
+                                .withLanguageDifference(deal.diagnostics.LanguageDifference.api("global-" + id.name().toLowerCase(java.util.Locale.ROOT)))));
+                return Type.Error.INSTANCE;
+            }
             diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E2001,
                     "Undeclared identifier '" + id.name() + "'", id.span())
                     .withMissingSymbol("VALUE", id.name(), id.span().file(), List.of())
@@ -2327,6 +2336,8 @@ public final class TypeChecker {
             default -> List.of(
                     "Match the selected callable's declared parameter count and types; no omitted value, coercion or signature change is inferred.");
         };
+        if ((name.equals("String") || name.equals("Number")) && reason.startsWith("call.argument"))
+            guidance = List.of("DEAL supports String(value: number): string and Number(text: string): number only; these are not general JavaScript coercions. Choose the intended explicit conversion or guard.");
         return new deal.diagnostics.DiagnosticFacts(reason, "call", expected, actual, guidance)
                 .withCall(new deal.diagnostics.DiagnosticFacts.CallContext(name, typeName(signature),
                         source == null ? null : source.span().range(), argument,
@@ -2409,6 +2420,18 @@ public final class TypeChecker {
     private Type checkMemberAccess(MemberAccessExpr mae) {
         if (mae.object() instanceof IdentifierExpr builtinNamespace) {
             BuiltinCall builtin = BuiltinCall.resolve(builtinNamespace.name(), mae.field());
+            if (builtin == null && Set.of("Object", "Array", "String", "Number", "JSON", "Math", "Date", "console").contains(builtinNamespace.name())
+                    && resolveVisibleBinding(builtinNamespace.name()) != null
+                    && !(resolveVisibleBinding(builtinNamespace.name()) instanceof Symbol.ModuleSymbol)) {
+                String members = String.join(", ", BuiltinCall.members(builtinNamespace.name()));
+                if (members.isEmpty()) members = "no namespace members";
+                diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E3003,
+                        "Builtin member '" + builtinNamespace.name() + "." + mae.field() + "' is unavailable; choose a supported operation", mae.span())
+                        .withFacts(new deal.diagnostics.DiagnosticFacts("builtin.unsupported-member", "member", members, mae.field(),
+                                List.of("Supported " + builtinNamespace.name() + " members: " + members + ". String(number) and Number(string) are direct conversions; receiver methods require a checked receiver."))
+                                .withLanguageDifference(deal.diagnostics.LanguageDifference.api("builtin-member"))));
+                return Type.Error.INSTANCE;
+            }
             if (builtin != null) {
                 if (directBuiltinCall == null || mae != directBuiltinCall.callee()) {
                     directOnlyError("Builtin operations support direct calls only", mae.span(),

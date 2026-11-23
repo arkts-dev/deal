@@ -702,6 +702,13 @@ public class CheckerTest {
         }
         assertNoErrors(checkProgram("let values:unknown[]=[1,\"x\"];for(let value of values){}"),
                 "intentional contextual unknown array and supported iteration remain admitted");
+        for (String source : List.of("Math.sin(1);", "JSON.clone(1);", "Number(true);", "String(null);", "parseInt(\"1\");")) {
+            var builtin = checkProgram(source).result().diagnostics().stream()
+                    .filter(d -> !d.facts().guidance().isEmpty()).findFirst().orElseThrow();
+            check(!builtin.facts().guidance().isEmpty(), "unavailable builtin or conversion supplies actual alternatives: " + source);
+        }
+        assertNoErrors(checkProgram("function fetch():number{return 1;}let result=fetch();"),
+                "a legitimate declared global-like name is not classified as unavailable");
         String missingTypes = "function f(value:Missing):Missing{return value;} function g(value:Missing):void{}";
         var unknownTypes = checkProgram(missingTypes).result().diagnostics().stream()
                 .filter(d -> d.code().equals("E3004") && d.message().contains("Missing")).toList();

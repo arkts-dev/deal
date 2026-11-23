@@ -36,6 +36,13 @@ public enum BuiltinCall {
 
     public Type.Func signature() { return signature; }
 
+    static List<String> members(String namespace) {
+        var result = new java.util.ArrayList<String>();
+        for (BuiltinCall call : values()) if (call.namespace.equals(namespace)) result.add(call.member);
+        if (namespace.equals("Object")) result.add("hasOwn");
+        return List.copyOf(result);
+    }
+
     public static BuiltinCall resolve(String namespace, String member) {
         for (BuiltinCall call : values()) {
             if (call.namespace.equals(namespace) && call.member.equals(member)) return call;
