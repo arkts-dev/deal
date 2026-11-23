@@ -6,7 +6,7 @@ LuaSemanticEmitter renders validated IR, preserving ABI, evaluation order, host 
 
 ## Carriers and boundaries
 
-Share private `__dealCarrierKeys` and undefined sentinel across deployed/emitted runtimes. User string keys cannot select or forge carrier identity, presence, length or order. Normalize admitted host strings, keys and graph data to UTF-16-unit storage on ingress; transport paired units as scalar UTF-8 on egress. Preserve live nodes, cycles and private maps. Producer defects remain fail-closed.
+Share private `__dealCarrierKeys` and null/undefined sentinels across deployed/emitted runtimes, including host-free chunks that delegate canonical checks. Establish shared sentinels before constructing user values. User string keys cannot select or forge carrier identity, presence, length or order. Normalize admitted host strings, keys and graph data to UTF-16-unit storage on ingress; transport paired units as scalar UTF-8 on egress. Preserve live nodes, cycles and private maps. Producer defects remain fail-closed.
 
 Keep canonical descriptors separate from internal representations and JSON-plan/diagnostic tokens: canonical record translates explicitly to table where required, never through a descriptor alias. Persistent array descriptors use canonical text, including independent nullish flags and async callable identity; prefer the recorded canonical trailer over reconstruction.
 

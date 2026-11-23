@@ -921,6 +921,9 @@ public final class LlvmTypeMapper {
         if (descriptor instanceof RuntimeDescriptor.Boolean) {
             return BOOLEAN_ABI;
         }
+        // Singleton results omit their value slot, but parameter positions
+        // carry the immutable singleton pointer, just like singleton storage.
+        if (isStaticSingleton(descriptor)) return REFERENCE_NULLISH;
         return representationOf(descriptor).orElseThrow(() ->
             new IllegalArgumentException(
                 "no staged ABI parameter type for " + unsupported(descriptor)));

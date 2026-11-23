@@ -279,10 +279,7 @@ final class LlvmFunctionEmitter {
         }
         for (int index = 0; index < parameters.size(); index++) {
             RuntimeDescriptor descriptor = types.get(index);
-            String representation = LlvmTypeMapper.representationOf(descriptor)
-                .orElseThrow(() -> new IllegalStateException(
-                    "a parameter of " + id + " carries no staged"
-                        + " representation: " + descriptor.canonicalSpecText()));
+            String representation = stagedRepresentation(descriptor);
             String abi = LlvmTypeMapper.abiParameterType(descriptor);
             String value = "%p" + index;
             if (descriptor instanceof RuntimeDescriptor.Boolean) {

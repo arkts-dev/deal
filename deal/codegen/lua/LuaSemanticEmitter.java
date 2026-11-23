@@ -969,8 +969,14 @@ public final class LuaSemanticEmitter {
             // chunk's helpers and sentinels — and the store is already a
             // chunk-level local, so the helpers spend no main-chunk local
             // (the LuaJIT 200-local bound).
+            // Even host-free chunks delegate canonical checks to the deployed
+            // runtime. Share sentinels before any user value is constructed.
+            out.append("local __rt = require(\"deal.runtime\")\n");
+            out.append("__NULL = __rt.__NULL\n");
+            out.append("__UNDEFINED = __rt.__UNDEFINED\n");
+            out.append("__rtNull = __rt.__NULL\n");
+            out.append("__rtMissing = __rt.__MISSING\n");
             if (bindsHostRuntime()) {
-                out.append("local __rt = require(\"deal.runtime\")\n");
                 // The one language-null representation (ISSUE-0814): the
                 // chunk's null sentinel becomes the deployed runtime's own
                 // __rt.__NULL, the identity every representation-only
@@ -980,12 +986,8 @@ public final class LuaSemanticEmitter {
                 // cross a host boundary with no projection at all: the
                 // carrier keeps its identity, its aliases, and the host's
                 // in-place writes, exactly like a null-free array (a copy
-                // would detach all three). The prelude's own sentinel
-                // remains the fallback of a chunk that binds no runtime.
-                out.append("__NULL = __rt.__NULL\n");
-                out.append("__UNDEFINED = __rt.__UNDEFINED\n");
-                out.append("__rtNull = __rt.__NULL\n");
-                out.append("__rtMissing = __rt.__MISSING\n");
+                // would detach all three). Host-free checks use the same
+                // representation established above.
                 // The host-load arm renderer (canonical failure-projection
                 // authority P1/P4): the deployed runtime's load_host
                 // delegates every mapped HOST_LOAD failure (the failed load,

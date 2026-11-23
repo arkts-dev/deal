@@ -131,7 +131,7 @@ public final class LlvmProjectEmissionTest {
             testDeterminism(scratch, published, module);
             testStaleAndFailedPublication(scratch, projectRoot, published);
             testFrontendErrorPublishesNothing(scratch);
-            testUnsupportedExportPreservesPublication(scratch, published);
+            testSingletonExportPublication(scratch);
             testPreviouslyUnsupportedFactPublishes(scratch);
             testNoExternalTool(scratch);
             testMissingRuntimeFailsClosed(scratch);
@@ -574,9 +574,8 @@ public final class LlvmProjectEmissionTest {
             "the frontend diagnostic is preserved, not replaced");
     }
 
-    /** A valid singleton parameter outside the published boxed apply surface. */
-    private static void testUnsupportedExportPreservesPublication(Path scratch,
-            Path published) throws Exception {
+    /** Singleton parameter exports use the ordinary published apply surface. */
+    private static void testSingletonExportPublication(Path scratch) throws Exception {
         Path root = scratch.resolve("unsupported-export");
         writeProject(root, Map.of("src/main.deal", """
             export function accepts(value: null): null { return value; }
@@ -584,35 +583,14 @@ public final class LlvmProjectEmissionTest {
             """), Map.of("backend", "llvm"));
         Path entry = root.resolve("src/main.deal");
         Path fresh = root.resolve("build/llvm");
-        CompileOutcome rejected = compile(entry, fresh, false, false);
-        check(!rejected.success(), "the unsupported export rejects production emission");
-        checkEq(1, rejected.diagnostics().size(), "one coverage diagnostic, not a frontend rejection");
-        if (rejected.diagnostics().size() == 1) {
-            CompilerDiagnostic diagnostic = rejected.diagnostics().getFirst();
-            checkEq("E6005", diagnostic.code(), "the production coverage rejection is E6005");
-            checkEq(entry.toAbsolutePath().toString(), diagnostic.file(),
-                "the coverage rejection retains its source file");
-            checkEq(1, diagnostic.line(), "the export coverage origin starts on line one");
-            checkEq(1, diagnostic.column(), "the export coverage origin starts in column one");
-            check(diagnostic.message().contains("EXPORT_PUBLISH")
-                    && diagnostic.message().contains("'(null)->null'")
-                    && diagnostic.message().contains("SHARED_EMITTER_COVERAGE"),
-                "the diagnostic identifies the independently selected unsupported fact");
-        }
-        check(!Files.exists(fresh), "E6005 publishes no fresh artifact tree");
-        Map<String, byte[]> before = new LinkedHashMap<>();
-        for (String name : filesUnder(published)) before.put(name, Files.readAllBytes(published.resolve(name)));
-        CompileOutcome replacement = compile(entry, published, false, false);
-        check(!replacement.success() && replacement.diagnostics().stream()
-                .anyMatch(d -> d.code().equals("E6005")), "E6005 also rejects replacement publication");
-        checkEq(new ArrayList<>(before.keySet()), filesUnder(published),
-            "coverage rejection preserves the entire prior artifact membership");
-        for (var artifact : before.entrySet())
-            check(java.util.Arrays.equals(artifact.getValue(), Files.readAllBytes(published.resolve(artifact.getKey()))),
-                "coverage rejection preserves prior bytes: " + artifact.getKey());
+        CompileOutcome accepted = compile(entry, fresh, false, false);
+        check(accepted.success() && accepted.diagnostics().isEmpty(), "singleton exports compile without coverage errors");
+        check(Files.exists(fresh.resolve("main.ll")), "singleton export publishes native IR");
+        CompositionProductionTest.execute(Files.readString(entry), "", scratch.resolve("singleton-execution"),
+            null, List.of(Backend.LLVM));
         try (Stream<Path> walk = Files.walk(scratch)) {
             check(walk.noneMatch(path -> path.getFileName().toString().contains(PublicationMarker.STAGE)),
-                "coverage rejection leaves no publication staging tree");
+                "singleton publication leaves no staging tree");
         }
     }
 

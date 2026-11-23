@@ -1453,7 +1453,7 @@ public final class LlvmStageClassifier {
             return false;
         }
         for (RuntimeDescriptor parameter : signature.paramTypes()) {
-            if (!LlvmTypeMapper.representationOf(parameter).isPresent()) {
+            if (!LlvmTypeMapper.isStagedRepresentation(parameter)) {
                 return false;
             }
         }

@@ -109,6 +109,7 @@ public final class ReadonlyTest {
             readonlyFieldReads(root.resolve("field-reads"));
             readonlyJoins(root.resolve("joins"));
             readonlyLiterals(root.resolve("literals"));
+            singletonRepresentations(root.resolve("singletons"));
         } finally { CompositionProductionTest.remove(root); }
         System.out.println("Readonly: frontend and production backends passed");
     }
@@ -420,6 +421,48 @@ public final class ReadonlyTest {
                     || !typed.get().range().equals(join.origin().span().range()))
                 throw new AssertionError(java.util.Arrays.toString(pair)+": "+typed+" / "+raw+" / "+text);
         }
+    }
+
+    private static void singletonRepresentations(java.nio.file.Path root) throws Exception {
+        String source = """
+            function nil(a:null):null{return a;}
+            function absent(a:undefined):undefined{return a;}
+            function captured(a:null):()=>null{return ():null=>a;}
+            function changed(a:undefined):()=>undefined{a=undefined;return ():undefined=>a;}
+            function two(a:null,b:undefined):null|undefined{return a;}
+            function hide(a:unknown):unknown{return a;}
+            export function main(): void {
+              let n=nil(null);let u=absent(undefined);
+              let f=captured(null);let g=changed(undefined);
+              let nf:(a:null)=>null=nil;let uf:(a:undefined)=>undefined=absent;
+              let opaque:unknown=nf;let checked=opaque as (a:null)=>null;
+              let nulls:null[]=[null];let nullView:readonly unknown[]=nulls;
+              let mixed:(number|null|undefined)[]=[null,undefined,1];
+              let view:readonly unknown[]=mixed;let dynamic:unknown=hide(mixed);
+              let recovered=dynamic as readonly unknown[];
+              let same:readonly unknown[]=mixed;
+              if(n!==null||u!==undefined||f()!==null||g()!==undefined||nf(null)!==null
+                  ||uf(undefined)!==undefined||checked(null)!==null||two(null,undefined)!==null
+                  ||nullView[0]!==null||view[0]!==null||recovered[1]!==undefined||view!==same){
+                throw {name:"FAIL",message:"singleton representations"};
+              }
+              mixed[0]=2;
+              if((view[0] as number)!==2){throw {name:"FAIL",message:"view preserves storage"};}
+              let bad=false;try{let wrong=dynamic as readonly string[];}catch(e){bad=(e as Error).name==="E8001";}
+              if(!bad){throw {name:"FAIL",message:"incompatible view"};}
+            }
+            """;
+        TypeLegalityFlowTest.check("function nil(a:null):null{return a;}function f():void{nil(undefined);}", "E5001");
+        oracleAndTransport(root.resolve("oracle"),source);
+        var production=root.resolve("production");
+        CompositionProductionTest.execute(source,"",production,null,List.of(Backend.values()));
+        sanitizedNative(production.resolve("LLVM/out"),root);
+        // A host-free artifact must share sentinels even when runtime loads first.
+        var lua=production.resolve("LUAJIT/out/main.lua").toAbsolutePath();
+        var process=new ProcessBuilder("luajit","-e","require('deal.runtime'); dofile(" + CanonicalJson.serializeText(new CanonicalJson.Str(lua.toString())) + ")")
+            .directory(lua.getParent().toFile()).redirectErrorStream(true).start();
+        String output=new String(process.getInputStream().readAllBytes(),java.nio.charset.StandardCharsets.UTF_8);
+        if(process.waitFor()!=0 || !output.isEmpty())throw new AssertionError("runtime-first singleton view: "+output);
     }
 
     private static void sanitizedNative(java.nio.file.Path output,java.nio.file.Path root) throws Exception {

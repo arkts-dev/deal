@@ -33,7 +33,9 @@ Present actual stored tags, class atoms and callable signatures before checking
 or unboxing; declared descriptors constrain admission, not actual identity.
 Never dereference a singleton as a function carrier. Functions use managed
 `deal_fn*`, including unknown/container positions; void has no data representation.
-Failure returns use the enclosing activation's outcome shape. Fully terminating
+Singleton parameter/storage positions carry immutable singleton pointers, including
+captured/reassigned parameters and boxed/static call paths; only singleton result
+outcomes omit their value slot. Failure returns use the enclosing activation's outcome shape. Fully terminating
 child paths leave an unreachable join, not a synthetic fallthrough.
 
 Resolve binding write descriptors from each declaration/assignment boundary,
