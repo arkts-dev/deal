@@ -842,7 +842,14 @@ public final class Parser {
         TypeNode inner = parseArrayType();
         if (inner == null) return null;
 
-        return parseNullableSuffix(inner);
+        TypeNode result = parseNullableSuffix(inner);
+        if (peek().type() == TokenType.AMPERSAND) {
+            Token intersection = advance();
+            rejectedSyntax(intersection, "intersection-type", "Intersection types are not supported; choose one declared type",
+                    "Declare the intended nominal fields in one class; DEAL does not combine structural type contracts.");
+            parseType();
+        }
+        return result;
     }
 
     /** Whether a parsed type node is the bare {@code null} builtin primary. */
@@ -870,10 +877,13 @@ public final class Parser {
                         spanBetween(tokenSpanStart(inner), previous()),
                         inner, member.lexeme().equals("undefined"));
             } else {
-                subsetError(DiagnosticCode.E1030, "Expected 'null' after '|' in nullable type", peek(),
+                subsetError(DiagnosticCode.E1030, "Arbitrary unions are not supported; only null/undefined may widen a base type", peek(),
                         "nullable-member", "null or undefined",
-                        "DEAL admits null or undefined as a nullable suffix, not arbitrary union members; choose the intended declared type.");
-                break;
+                        "Choose one base type with optional null/undefined members, or an intentional unknown contract with checked extraction.");
+                int last = diagnostics.size() - 1;
+                diagnostics.set(last, diagnostics.get(last).withFacts(diagnostics.get(last).facts()
+                        .withLanguageDifference(deal.diagnostics.LanguageDifference.syntax("arbitrary-union"))));
+                parseArrayType();
             }
         }
         return inner;
@@ -909,6 +919,24 @@ public final class Parser {
 
     private TypeNode parsePrimaryType() {
         TokenType tt = peek().type();
+        if (tt == TokenType.LBRACKET || tt == TokenType.LBRACE) {
+            Token opener = advance();
+            String feature = tt == TokenType.LBRACKET ? "tuple-type" : "inline-object-type";
+            rejectedSyntax(opener, feature, tt == TokenType.LBRACKET
+                            ? "Tuple types are not supported; choose an array or nominal class"
+                            : "Inline object types are not supported; declare a nominal class with fields",
+                    "Use an array for one element type or a declared class for named typed fields; Record<string, unknown> requires checked extraction on reads.");
+            skipBalancedType(opener.type(), tt == TokenType.LBRACKET ? TokenType.RBRACKET : TokenType.RBRACE);
+            return new NamedType(spanOf(opener), "unknown");
+        }
+        if (tt == TokenType.STRING_LITERAL || tt == TokenType.NUMBER_LITERAL || tt == TokenType.TRUE
+                || tt == TokenType.FALSE || tt == TokenType.MINUS) {
+            Token literal = advance();
+            rejectedSyntax(literal, "literal-type", "Literal types are not supported; use string, number or boolean",
+                    "Choose the primitive type and validate any value-specific constraint explicitly; a primitive annotation is not a literal-value constraint.");
+            if (tt == TokenType.MINUS && peek().type() == TokenType.NUMBER_LITERAL) advance();
+            return new NamedType(spanOf(literal), "unknown");
+        }
 
         // Parenthesized type: the v1.2 surface admits a parenthesized
         // nullable array element type, e.g. (int | null)[] (the spec's
@@ -935,6 +963,16 @@ public final class Parser {
         // Also a single-qualifier type like ModuleAlias.ClassName
         if (isIdentifier(tt)) {
             Token first = advance();
+            if ((first.lexeme().equals("Array") || first.lexeme().equals("Promise")) && peek().type() == TokenType.LT) {
+                rejectedSyntax(first, first.lexeme().equals("Array") ? "array-generic-type" : "promise-data-type",
+                        first.lexeme().equals("Array") ? "Array<T> is not supported; spell array types T[]"
+                                : "Promise<T> is not a data type; use it only as an async result annotation",
+                        first.lexeme().equals("Array") ? "Use T[] or readonly T[] for the intended element type."
+                                : "Async operations require immediate await in async bodies; they cannot be stored, passed or inspected as data.");
+                advance();
+                skipAngleType();
+                return new NamedType(spanOf(first), "unknown");
+            }
             if (first.lexeme().equals("Record")) {
                 expect(TokenType.LT, DiagnosticCode.E1032, "Expected '<' after Record");
                 Token key = expect(TokenType.IDENTIFIER, DiagnosticCode.E1032, "Expected string key type");
@@ -942,7 +980,8 @@ public final class Parser {
                 Token value = expect(TokenType.IDENTIFIER, DiagnosticCode.E1032, "Expected unknown value type");
                 expect(TokenType.GT, DiagnosticCode.E1032, "Expected '>' after Record type");
                 if (key == null || !key.lexeme().equals("string") || value == null || !value.lexeme().equals("unknown")) {
-                    error(DiagnosticCode.E1032, "Only Record<string, unknown> is supported", first);
+                    rejectedSyntax(first, "record-type-parameters", "Only Record<string, unknown> is supported; use a class for typed fields",
+                            "Record keys are strings and reads are unknown; choose a nominal class when field names/types form a fixed contract.");
                 }
                 return new NamedType(spanBetween(first, previous()), "Record<string, unknown>");
             }
@@ -2200,6 +2239,17 @@ public final class Parser {
         return new deal.diagnostics.DiagnosticFacts.SyntaxContext(context, expectedKinds, found.type().name(),
                 lexeme.substring(0, end), lexeme.length(), end < lexeme.length());
     }
+
+    private void skipBalancedType(TokenType open, TokenType close) {
+        int depth = 1;
+        while (!isAtEnd() && depth > 0) {
+            TokenType kind = advance().type();
+            if (kind == open) depth++;
+            else if (kind == close) depth--;
+        }
+    }
+
+    private void skipAngleType() { skipBalancedType(TokenType.LT, TokenType.GT); }
 
     private void rejectGenericDeclaration(String declaration) {
         if (peek().type() != TokenType.LT) return;

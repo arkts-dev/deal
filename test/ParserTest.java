@@ -37,6 +37,14 @@ public class ParserTest {
     private static void testDiagnosticActionability() {
         testCoercingEqualityDiagnostics();
         testConservativeTerminatorOffers();
+        for (String type : List.of("[number,string]", "{value:number}", "A&B", "\"text\"", "42", "true", "number|string",
+                "Array<number>", "Record<number, string>", "Promise<number>")) {
+            var annotation = parse("function f(value:" + type + "):void{}");
+            check(annotation.diagnostics().size() == 1 && annotation.diagnostics().getFirst().facts().languageDifference() != null,
+                    "unsupported type gets a targeted local rejection: " + type + ": " + annotation.diagnostics());
+        }
+        assertNoParseErrors(parse("function f(x:readonly number[],y:number|null|undefined):void{}async function g():Promise<void>{}"),
+                "array, nullish and async-result type forms remain admitted");
         for (String source : List.of("interface Shape{value:number;}", "type Shape=number;", "enum Color{Red,Blue}",
                 "namespace Space{let value=1;}", "class Box<T>{value:T;}", "function identity<T>(value:T):T{return value;}",
                 "async function identity<T>(value:T):Promise<T>{return value;}")) {
@@ -3021,7 +3029,7 @@ public class ParserTest {
             + union.diagnostics());
         if (e1030 != null) {
             check(e1030.message().equals(
-                    "Expected 'null' after '|' in nullable type"),
+                    "Arbitrary unions are not supported; only null/undefined may widen a base type"),
                 "E1030 keeps its exact message, got: " + e1030.message());
         }
         ParseResult bracket = parse("let xs: null[ = null;");
