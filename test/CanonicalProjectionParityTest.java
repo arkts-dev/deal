@@ -7535,10 +7535,18 @@ public class CanonicalProjectionParityTest {
             new HostDeclarationSurface(Map.of()));
     }
 
+    private static void stageLuaRuntime(Path workspace) throws Exception {
+        Path runtime = workspace.resolve("deal/runtime.lua");
+        Files.createDirectories(runtime.getParent());
+        Files.copy(Path.of("deal/runtime.lua"), runtime);
+        Files.copy(Path.of("deal/json.lua"), workspace.resolve("deal/json.lua"));
+    }
+
     /** The two inner-only carrier arms' renderers under real {@code luajit}. */
     private static Map<String, String> luaInnerArmRows() throws Exception {
         Path workspace = Files.createTempDirectory("projection-inner-arms");
         try {
+            stageLuaRuntime(workspace);
             Path artifact = workspace.resolve("arms.lua");
             Files.writeString(artifact, armOnlyChunk(), StandardCharsets.UTF_8);
             Path probe = workspace.resolve("probe.lua");
@@ -8843,6 +8851,7 @@ public class CanonicalProjectionParityTest {
         }
         Path workspace = Files.createTempDirectory("projection-table-carrier");
         try {
+            stageLuaRuntime(workspace);
             String chunk = LuaSemanticEmitter.emitProductionModule(seed.unit(),
                 seed.table(), true);
             String tail = "return __exportSurfaces[\"main\"]";
