@@ -695,6 +695,13 @@ public class CheckerTest {
             check(!mismatch.facts().guidance().isEmpty() && mismatch.facts().languageDifference() == null,
                     "assignment/return mismatch gets intent-safe guidance without tagging a generic mismatch: " + source);
         }
+        for (String source : List.of("let values=[1,\"x\"];", "let values=[1];values.reverse();", "for(let value of 1){}")) {
+            var collection = checkProgram(source).result().diagnostics().stream()
+                    .filter(d -> !d.facts().guidance().isEmpty()).findFirst().orElseThrow();
+            check(collection.facts().languageDifference() != null, "collection difference has producer-owned guidance: " + source);
+        }
+        assertNoErrors(checkProgram("let values:unknown[]=[1,\"x\"];for(let value of values){}"),
+                "intentional contextual unknown array and supported iteration remain admitted");
         String missingTypes = "function f(value:Missing):Missing{return value;} function g(value:Missing):void{}";
         var unknownTypes = checkProgram(missingTypes).result().diagnostics().stream()
                 .filter(d -> d.code().equals("E3004") && d.message().contains("Missing")).toList();

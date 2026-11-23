@@ -1186,9 +1186,12 @@ public final class TypeChecker {
                     + typeName(varType), fos.span());
             }
         } else {
-            error(DiagnosticCode.E3015,
+            diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E3015,
                 "For-of iterable must be an array or string, got "
-                + typeName(iterableType), fos.iterable().span());
+                + typeName(iterableType), fos.iterable().span()).withFacts(new deal.diagnostics.DiagnosticFacts(
+                        "iteration.receiver", "for-of", "array or string", typeName(iterableType),
+                        List.of("Iterate a checked array/string; for class/Record keys use Object.keys(value). DEAL has no general iterable protocol."))
+                        .withLanguageDifference(deal.diagnostics.LanguageDifference.semantics("for-of-iterables"))));
         }
 
         NullNarrowing savedNarrowing = narrowing;
@@ -2573,6 +2576,19 @@ public final class TypeChecker {
             return Type.Unknown.INSTANCE;
         }
 
+        if (objType instanceof Type.Array || objType instanceof Type.String || objType instanceof Type.Number) {
+            String supported = objType instanceof Type.Array
+                    ? "length, push, pop, splice, map, filter, includes, indexOf, find, findIndex, some, every, concat, toSorted, slice; join only for string arrays"
+                    : objType instanceof Type.String
+                        ? "length, substring, slice, includes, indexOf, lastIndexOf, startsWith, endsWith, replace, split, trim, toLowerCase, toUpperCase"
+                        : "toFixed";
+            diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E3003,
+                    "Member '" + field + "' is unavailable on " + typeName(objType) + "; choose a supported member", mae.span())
+                    .withFacts(new deal.diagnostics.DiagnosticFacts("access.unsupported-member", "field.read", supported, field,
+                            List.of("Supported members: " + supported + ". Receiver methods are direct-call-only; readonly arrays exclude push/pop/splice."))
+                            .withLanguageDifference(deal.diagnostics.LanguageDifference.api("receiver-member"))));
+            return Type.Error.INSTANCE;
+        }
         diagnostics.add(withReadEvidence(CompilerDiagnostic.error(DiagnosticCode.E3003,
             "Cannot access field '" + field + "' on type " + typeName(objType), mae.span())
                 .withFacts(new deal.diagnostics.DiagnosticFacts("access.field-receiver",
@@ -2739,10 +2755,11 @@ public final class TypeChecker {
             if (firstType == null) firstType = elemType;
             else if (!Types.equals(firstType, elemType)) {
                 mixed = true;
-                error(DiagnosticCode.E3011,
-                    "Mixed types in array literal: " + typeName(firstType)
-                    + " and " + typeName(elemType),
-                    elem.span());
+                diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E3011,
+                    "Mixed types in array literal: " + typeName(firstType) + " and " + typeName(elemType), elem.span())
+                        .withFacts(new deal.diagnostics.DiagnosticFacts("array.mixed-inference", "array.inference", typeName(firstType), typeName(elemType),
+                                List.of("Without an array target, every element must have the same type. Supply an intentional compatible array annotation (for example a nullish element type or unknown[]) or separate the values."))
+                                .withLanguageDifference(deal.diagnostics.LanguageDifference.semantics("homogeneous-array-inference"))));
             }
         }
         if (mixed || firstType == null) return Type.Error.INSTANCE;
