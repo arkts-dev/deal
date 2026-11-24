@@ -66,12 +66,23 @@ public final class RepairWorkspaceTest {
         String snapshot = CompilerProtocolJson.encode(workspace);
         var offer = RepairWorkspaceProtocol.inspectRepair(workspace);
         check(offer.disposition() == RepairWorkspaceProtocol.Disposition.EXPANSION_REQUIRED, "missing type needs expansion: " + CompilerProtocolJson.encode(offer));
+        var offerJson = (deal.semantic.ir.CanonicalJson.Obj) CompilerProtocolJson.decode(CompilerProtocolJson.encode(offer));
+        check(CompilerProtocolJson.intField(offerJson, "version") == 3, "offer uses the sole diagnostic protocol version");
+        check(CompilerProtocolJson.field(offerJson, "files") instanceof deal.semantic.ir.CanonicalJson.Arr,
+                "offer has one shared snapshot table");
+        var offeredDiagnostics = (deal.semantic.ir.CanonicalJson.Arr) CompilerProtocolJson.field(offerJson, "diagnostics");
+        var offeredDiagnostic = (deal.semantic.ir.CanonicalJson.Obj) offeredDiagnostics.items().getFirst();
+        check(CompilerProtocolJson.stringField(offeredDiagnostic, "code").equals("E3004")
+                        && offeredDiagnostic.entries().stream().noneMatch(e -> e.key().equals("diagnostics")),
+                "offer contains diagnostic entries rather than nested response envelopes");
         check(offer.obligations().getFirst().missing().name().equals("Leaf"), "AST-owned type name survives diagnostics");
         var grant = RepairWorkspaceProtocol.expandRepairScope(workspace, workspace.workspaceDigest(), List.of("add:D1"));
+        var grantJson = (deal.semantic.ir.CanonicalJson.Obj) CompilerProtocolJson.decode(CompilerProtocolJson.encode(grant));
+        check(CompilerProtocolJson.intField(grantJson, "version") == 3, "grant uses numeric v3 with no legacy tag");
         check(snapshot.equals(CompilerProtocolJson.encode(workspace)), "expansion cannot change candidate");
         check(grant.equals(RepairWorkspaceProtocol.expandRepairScope(workspace, workspace.workspaceDigest(), List.of("add:D1"))),
                 "grant is deterministic");
-        var forged = new RepairWorkspaceProtocol.Grant(grant.version(), grant.workspaceDigest(), List.of("R1", "R2"),
+        var forged = new RepairWorkspaceProtocol.Grant(grant.workspaceDigest(), List.of("R1", "R2"),
                 grant.obligations(), grant.expansions(), grant.digest());
         check(!apply(workspace, forged, List.of(), "export class Leaf { value: number; }").accepted(),
                 "tampered grant cannot widen write access");
@@ -158,9 +169,9 @@ public final class RepairWorkspaceTest {
         var grant = RepairWorkspaceProtocol.expandRepairScope(workspace, workspace.workspaceDigest(), List.of("add:D1"));
         String declaration = "export function helper(value:number):number{return value;}";
         var dependency = new RepairWorkspaceProtocol.Dependency("D1", declaration);
-        var forged = new RepairWorkspaceProtocol.Grant(grant.version(), grant.workspaceDigest(), List.of("invented"),
+        var forged = new RepairWorkspaceProtocol.Grant(grant.workspaceDigest(), List.of("invented"),
                 grant.obligations(), grant.expansions(), grant.digest());
-        var stale = new RepairWorkspaceProtocol.Grant(grant.version(), "stale", grant.slots(),
+        var stale = new RepairWorkspaceProtocol.Grant("stale", grant.slots(),
                 grant.obligations(), grant.expansions(), grant.digest());
         record Case(String reason, String expected, String actual, RepairWorkspaceResult result) {}
         var cases = List.of(

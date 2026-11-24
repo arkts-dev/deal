@@ -92,6 +92,19 @@ public final class CompilerProtocolJson {
 
     private static Object diagnosticResponse(Object value) {
         var projection = new deal.diagnostics.DiagnosticJson(null, null);
+        if (value instanceof RepairWorkspaceProtocol.Offer offer) {
+            var response = projection.amendment(offer.diagnostics(), offer.disposition() != RepairWorkspaceProtocol.Disposition.UNSUPPORTED);
+            response.put("workspaceDigest", offer.workspaceDigest());
+            response.put("disposition", offer.disposition());
+            response.put("slots", offer.slots());
+            response.put("obligations", offer.obligations());
+            response.put("expansions", offer.expansions());
+            if (!offer.reason().isEmpty()) response.put("reason", offer.reason());
+            return response;
+        }
+        if (value instanceof RepairWorkspaceProtocol.Grant grant)
+            return deal.diagnostics.DiagnosticJson.object("version", 3, "workspaceDigest", grant.workspaceDigest(),
+                    "slots", grant.slots(), "obligations", grant.obligations(), "expansions", grant.expansions(), "digest", grant.digest());
         if (value instanceof CompilerProtocol.RepairWorkspaceResult result) {
             var diagnostics = new ArrayList<>(result.diagnostics());
             if (result.workspace() != null) for (var slot : result.workspace().slots())

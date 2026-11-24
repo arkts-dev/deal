@@ -6,7 +6,6 @@ import java.util.*;
 
 /** Deterministic grants over an ephemeral workspace; never interprets diagnostic prose. */
 public final class RepairWorkspaceProtocol {
-    public static final String VERSION = "repair-workspace-v2";
     private RepairWorkspaceProtocol() {}
     public enum Disposition { LOCAL, DEPENDENCY_GROUP, EXPANSION_REQUIRED, UNSUPPORTED }
     public record Obligation(String id, MissingSymbol missing, List<String> ownerSlots) {
@@ -15,7 +14,7 @@ public final class RepairWorkspaceProtocol {
     public record Expansion(String id, List<String> slots, List<String> obligations) {
         public Expansion { slots = List.copyOf(slots); obligations = List.copyOf(obligations); }
     }
-    public record Offer(String version, String workspaceDigest, Disposition disposition,
+    public record Offer(String workspaceDigest, Disposition disposition,
                         List<String> slots, List<Obligation> obligations, List<Expansion> expansions,
                         List<StructuredDiagnostic> diagnostics, String reason) {
         public Offer {
@@ -23,7 +22,7 @@ public final class RepairWorkspaceProtocol {
             expansions = List.copyOf(expansions); diagnostics = List.copyOf(diagnostics);
         }
     }
-    public record Grant(String version, String workspaceDigest, List<String> slots,
+    public record Grant(String workspaceDigest, List<String> slots,
                         List<String> obligations, List<String> expansions, String digest) {
         public Grant {
             slots = List.copyOf(slots); obligations = List.copyOf(obligations); expansions = List.copyOf(expansions);
@@ -109,7 +108,7 @@ public final class RepairWorkspaceProtocol {
         var diagnostics = active.stream().flatMap(slot -> slot.diagnostics().stream()).distinct().toList();
         Disposition disposition = !obligations.isEmpty() ? Disposition.EXPANSION_REQUIRED
                 : writable.size() > 1 ? Disposition.DEPENDENCY_GROUP : Disposition.LOCAL;
-        return new Offer(VERSION, workspace.workspaceDigest(), disposition, writable, obligations, expansions, diagnostics, "");
+        return new Offer(workspace.workspaceDigest(), disposition, writable, obligations, expansions, diagnostics, "");
     }
 
     public static Grant expandRepairScope(RepairWorkspaceSnapshot workspace, String expectedDigest, List<String> selections) {
@@ -135,8 +134,8 @@ public final class RepairWorkspaceProtocol {
             slots.addAll(expansion.slots()); obligations.addAll(expansion.obligations());
         }
         String digest = AmendWorkspace.digest(CompilerProtocolJson.encode(List.of(
-                VERSION, expectedDigest, List.copyOf(slots), List.copyOf(obligations), List.copyOf(chosen))));
-        return new Grant(VERSION, expectedDigest, List.copyOf(slots), List.copyOf(obligations), List.copyOf(chosen), digest);
+                3, expectedDigest, List.copyOf(slots), List.copyOf(obligations), List.copyOf(chosen))));
+        return new Grant(expectedDigest, List.copyOf(slots), List.copyOf(obligations), List.copyOf(chosen), digest);
     }
 
     public static void validateGrant(RepairWorkspaceSnapshot workspace, Grant grant) {
@@ -180,7 +179,7 @@ public final class RepairWorkspaceProtocol {
                 "repair.invalid-workspace-digest", "", workspace.workspaceDigest());
     }
     private static Offer unsupported(RepairWorkspaceSnapshot workspace, String reason) {
-        return new Offer(VERSION, workspace.workspaceDigest(), Disposition.UNSUPPORTED,
+        return new Offer(workspace.workspaceDigest(), Disposition.UNSUPPORTED,
                 List.of(), List.of(), List.of(), List.of(), reason);
     }
 }
