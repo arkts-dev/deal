@@ -18,17 +18,6 @@ public final class CompilerProtocolJson {
         return CanonicalJson.serializeText(toValue(value));
     }
 
-    /** JSON request/response seam over the retained diagnostics of one response, never a source query. */
-    public static String queryDiagnosticDetails(List<CompilerProtocol.StructuredDiagnostic> diagnostics, String requestJson) {
-        var request = requireObject(decode(requestJson), "Diagnostic detail request");
-        if (request.entries().size() != 3 || request.entries().stream().anyMatch(entry ->
-                !List.of("inventoryId", "offset", "limit").contains(entry.key())))
-            throw new IllegalArgumentException("Diagnostic detail request requires inventoryId, offset and limit only");
-        return encode(AmendWorkspace.queryDiagnosticDetails(diagnostics,
-                new deal.diagnostics.DiagnosticDetails.Request(stringField(request, "inventoryId"),
-                        intField(request, "offset"), intField(request, "limit"))));
-    }
-
     public static CanonicalJson.Value decode(String value) {
         return CanonicalJson.parse(value);
     }
@@ -48,7 +37,9 @@ public final class CompilerProtocolJson {
         if (value instanceof Double number) return CanonicalJson.number(number);
         if (value instanceof Float number) return CanonicalJson.number(number.doubleValue());
         if (value instanceof Enum<?> item) return CanonicalJson.str(item.name());
-        if (value instanceof deal.diagnostics.DiagnosticDetails<?> details) return toValue(details.descriptor());
+        if (value instanceof CompilerProtocol.SemanticId id) return CanonicalJson.str(id.value());
+        Object response = diagnosticResponse(value);
+        if (response != value) return toValue(response);
         if (value instanceof List<?> items) {
             return CanonicalJson.arr(items.stream().map(CompilerProtocolJson::toValue).toList());
         }
@@ -63,9 +54,9 @@ public final class CompilerProtocolJson {
             entries.sort(Comparator.comparing(CanonicalJson.Entry::key));
             return CanonicalJson.obj(entries);
         }
-        if (value.getClass().isRecord()) return withClassification(value, recordValue(value));
+        if (value.getClass().isRecord()) return recordValue(value);
         CanonicalJson.Obj desugaredRecord = desugaredRecordValue(value);
-        if (desugaredRecord != null) return withClassification(value, desugaredRecord);
+        if (desugaredRecord != null) return desugaredRecord;
         throw new IllegalArgumentException("Unsupported protocol JSON value: " + value.getClass().getName());
     }
 
@@ -99,13 +90,68 @@ public final class CompilerProtocolJson {
         throw new IllegalArgumentException("Protocol field '" + name + "' must be an integer");
     }
 
-    private static CanonicalJson.Obj withClassification(Object value, CanonicalJson.Obj object) {
-        if (!(value instanceof CompilerProtocol.StructuredDiagnostic diagnostic)) return object;
-        var entries = new ArrayList<>(object.entries());
-        entries.add(CanonicalJson.e("classification", toValue(diagnostic.classification())));
-        entries.add(CanonicalJson.e("languageDifference", toValue(diagnostic.facts().languageDifference())));
-        entries.add(CanonicalJson.e("editOffer", toValue(diagnostic.editOffer())));
-        return CanonicalJson.obj(entries);
+    private static Object diagnosticResponse(Object value) {
+        var projection = new deal.diagnostics.DiagnosticJson(null, null);
+        if (value instanceof CompilerProtocol.RepairWorkspaceResult result) {
+            var diagnostics = new ArrayList<>(result.diagnostics());
+            if (result.workspace() != null) for (var slot : result.workspace().slots())
+                for (var diagnostic : slot.diagnostics()) if (!diagnostics.contains(diagnostic)) diagnostics.add(diagnostic);
+            var response = projection.amendment(diagnostics, result.accepted());
+            response.put("source", result.source());
+            response.put("sourceDigest", result.sourceDigest());
+            response.put("workspace", workspace(result.workspace(), diagnostics));
+            return response;
+        }
+        if (value instanceof CompilerProtocol.StructuredDiagnostic diagnostic)
+            return projection.amendment(List.of(diagnostic), !diagnostic.severity().equals("error"));
+        if (value instanceof CompilerProtocol.Inspection inspection) {
+            var response = projection.amendment(inspection.diagnostics(), inspection.diagnostics().stream().noneMatch(d -> d.severity().equals("error")));
+            response.put("sourceDigest", inspection.sourceDigest());
+            response.put("moduleId", inspection.moduleId());
+            response.put("symbols", inspection.symbols()); response.put("nodes", inspection.nodes());
+            response.put("appInterface", inspection.appInterface()); response.put("allowedOperations", inspection.allowedOperations());
+            return response;
+        }
+        if (value instanceof CompilerProtocol.ChangeInspection inspection) {
+            var response = projection.amendment(inspection.diagnostics(), inspection.diagnostics().isEmpty());
+            response.put("revision", inspection.revision()); response.put("inspectionDigest", inspection.inspectionDigest());
+            response.put("allowedOperations", inspection.allowedOperations()); return response;
+        }
+        if (value instanceof CompilerProtocol.ChangeResult result) {
+            var response = projection.amendment(result.diagnostics(), result.accepted());
+            response.put("source", result.source()); response.put("sourceDigest", result.sourceDigest());
+            if (result.inspection() != null) {
+                response.put("moduleId", result.inspection().moduleId());
+                response.put("symbols", result.inspection().symbols()); response.put("nodes", result.inspection().nodes());
+                response.put("appInterface", result.inspection().appInterface()); response.put("allowedOperations", result.inspection().allowedOperations());
+            }
+            return response;
+        }
+        if (value instanceof CompilerProtocol.ContextResult result) {
+            var response = projection.amendment(result.diagnostics(), result.accepted());
+            response.put("revision", result.revision()); if (result.slice() != null) response.put("slice", result.slice()); return response;
+        }
+        return value;
+    }
+
+    private static Map<String, Object> workspace(CompilerProtocol.RepairWorkspaceSnapshot workspace,
+                                                List<CompilerProtocol.StructuredDiagnostic> diagnostics) {
+        if (workspace == null) throw new IllegalArgumentException("Repair response requires a workspace");
+        var slots = new ArrayList<Map<String, Object>>();
+        for (var slot : workspace.slots()) {
+            var indexes = new ArrayList<Integer>();
+            for (var diagnostic : slot.diagnostics()) {
+                int index = diagnostics.indexOf(diagnostic);
+                if (index < 0) throw new IllegalArgumentException("Slot diagnostic missing from response");
+                indexes.add(index);
+            }
+            slots.add(deal.diagnostics.DiagnosticJson.object("slotId", slot.slotId(), "operation", slot.operation(),
+                    "targetId", slot.targetId().value(), "targetFingerprint", slot.targetFingerprint(), "payload", slot.payload(),
+                    "payloadFingerprint", slot.payloadFingerprint(), "status", slot.status(), "dependencyGroupId", slot.dependencyGroupId(), "diagnostics", indexes));
+        }
+        return deal.diagnostics.DiagnosticJson.object("workspaceId", workspace.workspaceId(), "workspaceDigest", workspace.workspaceDigest(),
+                "baseRevision", workspace.baseRevision(), "inspectionDigest", workspace.inspectionDigest(), "precondition", workspace.precondition(),
+                "slots", slots, "groups", workspace.groups(), "repairRound", workspace.repairRound());
     }
 
     private static CanonicalJson.Obj recordValue(Object record) {

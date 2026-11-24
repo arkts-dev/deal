@@ -217,7 +217,7 @@ public final class AmendWorkspaceTest {
         var copied = diagnostic.withFacts(diagnostic.facts()).withMissingSymbols(List.of()).withOperationIndex(0);
         check(copied.contextRequest().equals(request), "diagnostic copies preserve typed request");
         String json = CompilerProtocolJson.encode(diagnostic);
-        check(json.contains("\"contextRequest\"") && json.contains("\"revision\"") && !json.contains("contextQuery")
+        check(!json.contains("\"contextRequest\"") && json.contains("\"revision\"") && !json.contains("contextQuery")
                         && !json.contains("queryDealSymbol("), "one current protocol exposes no executable-looking context query");
         var node = inspection.nodes().stream().filter(n -> n.kind().equals("function-body")).findFirst().orElseThrow();
         var nodeRequest = new CompilerProtocol.ContextRequest(request.revision(), CompilerProtocol.ContextKind.NODE, node.id(), node.fingerprint());
@@ -298,11 +298,11 @@ public final class AmendWorkspaceTest {
             check(rawSyntax.editOffer() == null, "no offer without an exact producer-owned snapshot revision");
             var pinnedSyntax = rawSyntax.withOccurrence(deal.diagnostics.DiagnosticOccurrence.fromSource("semicolon.deal", syntaxSource, rawSyntax));
             check(pinnedSyntax.editOffer().equals(offer)
-                && deal.diagnostics.DiagnosticStructuredOutput.toJson(List.of(pinnedSyntax)).contains("\"replacement\": \";\""),
+                && deal.diagnostics.DiagnosticStructuredOutput.toJson(List.of(pinnedSyntax)).contains("\"text\":\";\""),
                 "same exact offer on CLI and amendment transports");
             String repairedSyntax = offer.applyChosen("semicolon.deal", syntaxSource);
             check(AmendWorkspace.inspect(repairedSyntax, "semicolon.deal").diagnostics().isEmpty(), "chosen syntax insertion rechecks");
-            check(CompilerProtocolJson.encode(syntaxDiagnostic).contains("\"editOffer\":{")
+            check(CompilerProtocolJson.encode(syntaxDiagnostic).contains("\"edit\":{")
                 && CompilerProtocolJson.encode(syntaxDiagnostic).contains(offer.sourceRevision()), "offer is attached and revision pinned in amendment JSON");
             boolean staleOffer = false;
             try { offer.applyChosen("semicolon.deal", " " + syntaxSource); }
@@ -407,7 +407,7 @@ public final class AmendWorkspaceTest {
         check(mismatch.facts().expected().equals("number") && mismatch.facts().actual().equals("string"),
                 "amendment forwards producer types rather than parsing prose");
         String json = CompilerProtocolJson.encode(mismatch);
-        check(json.contains("\"facts\"") && json.contains("\"startScalarOffset\""), "current protocol exports facts and ranges");
+        check(json.contains("\"evidence\"") && json.contains("\"offset\""), "current protocol exports facts and ranges");
         String operatorBase = "// 😀\r\nexport function run():number{return 1+2;}";
         var operatorInspection = AmendWorkspace.inspect(operatorBase, "probe.deal");
         var operatorBody = operatorInspection.nodes().stream().filter(n -> n.kind().equals("function-body"))

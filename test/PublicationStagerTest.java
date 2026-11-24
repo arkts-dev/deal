@@ -908,14 +908,12 @@ public class PublicationStagerTest {
                 PublicationStager.clearPublishFault();
             }
             String json = Files.readString(report);
-            check(json.contains("\"reason\": \"publication.replace-failed\"")
-                            && json.contains("\"phase\": \"publication\"") && json.contains("\"diagnostics\": []")
+            check(json.contains("\"reason\":\"publication.replace-failed\"")
+                            && json.contains("\"status\":\"failed\"") && json.contains("\"diagnostics\":[]")
+                            && json.contains("\"responsibility\":\"CONFIGURATION_CONTRACT\"")
                             && json.contains("injected move failure"),
                     "failed atomic replacement has a nonempty operational report, not an empty language success");
-            check(json.contains("\"published\": false")
-                            && json.contains("\"phase\": \"EMISSION\", \"status\": \"SUCCEEDED\"")
-                            && json.contains("\"phase\": \"PUBLICATION\", \"status\": \"FAILED\""),
-                    "successful emission is distinguished from failed atomic replacement");
+            check(!json.contains("phase") && !json.contains("published"), "v3 excludes publication phase traces");
             check(!json.contains(PublicationStager.STAGE_TREE_MARKER)
                             && !json.contains(PublicationStager.RETIRED_TREE_MARKER),
                     "operational report invents no final staging artifact");
@@ -1022,14 +1020,11 @@ public class PublicationStagerTest {
                 PublicationStager.clearPublishFault();
             }
             String json = Files.readString(base.resolve("diagnostics.json"));
-            check(json.contains("\"reason\": \"publication.stage-failed\"")
-                            && json.contains("\"operation\": \"publication.stage\"")
+            check(json.contains("\"reason\":\"publication.stage-failed\"")
+                            && json.contains("\"status\":\"failed\"")
                             && json.contains("injected staging failure"),
-                    "staging failure classified at actual producer without invented tool execution");
-            check(json.contains("\"published\": false")
-                            && json.contains("\"phase\": \"EMISSION\", \"status\": \"FAILED\"")
-                            && json.contains("\"phase\": \"PUBLICATION\", \"status\": \"SKIPPED\""),
-                    "staging failure does not claim publication was attempted");
+                    "staging failure retains its producer reason and operational outcome");
+            check(!json.contains("phase") && !json.contains("published"), "v3 excludes publication phase traces");
             check(!second, "the injected staging failure fails the "
                 + "compile");
             check(capturedErr.toString().contains(
@@ -1044,7 +1039,7 @@ public class PublicationStagerTest {
                 "no stage/retired residue after the staging failure");
             check(compileProject(src, out, Backend.LUAJIT, false, false, null, base.resolve("diagnostics.json")),
                     "removing the actual filesystem fault allows a full recompile");
-            check(Files.readString(base.resolve("diagnostics.json")).contains("\"operations\": []"),
+            check(Files.readString(base.resolve("diagnostics.json")).contains("\"status\":\"accepted\""),
                     "successful recompilation clears previous publication failure");
         } finally {
             deleteTree(base);

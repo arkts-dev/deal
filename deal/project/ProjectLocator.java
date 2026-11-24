@@ -98,6 +98,18 @@ public final class ProjectLocator {
      *
      */
     public static LocateResult locate(String entryFile, CliOverrides cliOverrides) {
+        var sources = new java.util.LinkedHashMap<String, String>();
+        LocateResult result = locate(entryFile, cliOverrides, sources);
+        if (result.e2010() == null) return result;
+        var diagnostic = result.e2010();
+        String source = sources.get(diagnostic.file());
+        if (source == null) return result;
+        var retained = diagnostic.withExcerpt(deal.diagnostics.DiagnosticExcerpt.fromSource(diagnostic.file(), source, diagnostic.range()));
+        retained = retained.withOccurrence(deal.diagnostics.DiagnosticOccurrence.fromSource(diagnostic.file(), source, retained));
+        return new LocateResult(result.context(), retained, result.cliDiagnostic());
+    }
+
+    private static LocateResult locate(String entryFile, CliOverrides cliOverrides, Map<String, String> sources) {
         CliOverrides overrides = cliOverrides == null
             ? new CliOverrides(null, null)
             : cliOverrides;
@@ -159,6 +171,7 @@ public final class ProjectLocator {
             if (decode.malformedOffset() >= 0) {
                 return decodeFailure(manifestPathText, decode);
             }
+            sources.put(manifestPathText, decode.text());
             StrictManifestParser.StrictManifestParseResult parsed =
                 StrictManifestParser.parse(manifestPathText, decode.text());
             if (parsed.failure() != null) {

@@ -7,7 +7,7 @@ facts into validated semantic IR; backends never fall back to ASTs.
 - Diagnostics retain producer-owned facts, source snapshot identities and exact
   ranges without reconstructing evidence from prose or changing validation order.
   Share repeated rule guidance; keep evidence producer-owned and advice consistent with the specification.
-  JSON v2 and amendment protocol v3 are the sole current transports. Runtime
+  Compiler diagnostic transport follows `docs/diagnostics-protocol-v3.md`. Runtime
   export is opt-in, bounded and must not invoke user hooks or change Error identity.
 - Private metadata owns identities/descriptors/presence/order, never user string
   keys. Normalize documented host shapes at ingress and validate complete live

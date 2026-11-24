@@ -109,7 +109,7 @@ public final class StrictManifestParser {
             var diagnostic = e2010(file, first.message(), first.range()).withFacts(first.facts());
             if (first.relatedRange() != null)
                 diagnostic = diagnostic.withNote("First member with this decoded key", sourceRange(file, first.relatedRange()));
-            return new BatchManifestParseResult(null, List.of(diagnostic));
+            return new BatchManifestParseResult(null, List.of(withSource(file, source, diagnostic)));
         }
 
         var document = new StrictJsonDocument(rootHolder[0], valueRanges);
@@ -121,7 +121,12 @@ public final class StrictManifestParser {
                 single.failure() == null ? List.of() : List.of(single.failure()));
         }
         return new BatchManifestParseResult(outcome.manifest(), outcome.failures().stream().map(failure ->
-            e2010(file, failure.message(), failure.anchorRange()).withFacts(failure.facts())).toList());
+            withSource(file, source, e2010(file, failure.message(), failure.anchorRange()).withFacts(failure.facts()))).toList());
+    }
+
+    private static CompilerDiagnostic withSource(String file, String source, CompilerDiagnostic diagnostic) {
+        var retained = diagnostic.withExcerpt(deal.diagnostics.DiagnosticExcerpt.fromSource(file, source, diagnostic.range()));
+        return retained.withOccurrence(deal.diagnostics.DiagnosticOccurrence.fromSource(file, source, retained));
     }
 
     // =========================================================================

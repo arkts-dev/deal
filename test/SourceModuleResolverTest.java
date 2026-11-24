@@ -158,9 +158,11 @@ public final class SourceModuleResolverTest {
                 deal.diagnostics.DiagnosticStructuredOutput.toJson(List.of(relative))), "document");
         var entries = deal.amend.CompilerProtocolJson.requireArray(deal.amend.CompilerProtocolJson.field(document, "diagnostics"), "diagnostics");
         var item = deal.amend.CompilerProtocolJson.requireObject(entries.items().getFirst(), "diagnostic");
-        check(deal.amend.CompilerProtocolJson.encode(relative.facts()).equals(deal.semantic.ir.CanonicalJson.serializeText(
-                deal.amend.CompilerProtocolJson.field(item, "facts"))),
-            "resolution facts have one canonical standalone/protocol transport");
+        var evidence = (deal.semantic.ir.CanonicalJson.Obj) deal.amend.CompilerProtocolJson.field(item, "evidence");
+        var resolution = (deal.semantic.ir.CanonicalJson.Obj) deal.amend.CompilerProtocolJson.field(evidence, "resolution");
+        check(deal.amend.CompilerProtocolJson.stringField(resolution, "specifier").equals(relative.facts().resolution().specifier()),
+            "resolution projection retains producer specifier");
+
     }
 
     // =========================================================================

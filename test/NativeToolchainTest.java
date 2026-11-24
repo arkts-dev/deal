@@ -491,8 +491,8 @@ public final class NativeToolchainTest {
             var decoded = deal.amend.CompilerProtocolJson.requireObject(deal.amend.CompilerProtocolJson.decode(json), "document");
             var diagnostics = deal.amend.CompilerProtocolJson.requireArray(deal.amend.CompilerProtocolJson.field(decoded, "diagnostics"), "diagnostics");
             var item = deal.amend.CompilerProtocolJson.requireObject(diagnostics.items().getFirst(), "diagnostic");
-            checkEq(deal.amend.CompilerProtocolJson.encode(copies), deal.semantic.ir.CanonicalJson.serializeText(
-                    deal.amend.CompilerProtocolJson.field(item, "facts")), "CLI/amendment tool evidence parity");
+            check(json.contains("native.toolchain-unversioned") && !json.contains("stdout") && !json.contains("deadlineSeconds"),
+                    "v3 retains failure reason and excludes process diagnostics");
         }
         // A selected executable that cannot be started has no invented exit or stream output.
         Files.writeString(compiler, "#!/nonexistent-deal-interpreter\n", StandardCharsets.UTF_8);
@@ -537,13 +537,9 @@ public final class NativeToolchainTest {
         check(resolution.attempted().equals(actualOrder.subList(0, 32)) && resolution.attemptedCount() == 40 && resolution.truncated()
                         && boundedMissing.tool() == null && resolution.mode().equals("native.compiler-path"),
                 "bounded compiler search retains exact observed total and no invented child status/output");
-        var retained = resolution.details();
-        var tail = retained.page(new deal.diagnostics.DiagnosticDetails.Request(retained.descriptor().inventoryId(), 32, 32));
-        check(tail.items().equals(actualOrder.subList(32, 40)) && tail.total() == 40 && tail.nextOffset() == null,
-            "compiler probe tail is retrieved from the actual failed search, not a repeated PATH probe");
         String report = deal.diagnostics.DiagnosticStructuredOutput.toJson(List.of(), List.of(boundedMissing.structuredDiagnostic()));
-        check(report.contains("native.compiler-path") && report.contains("\"attemptedCount\": 40")
-                        && report.contains("\"truncated\": true"), "sole JSON report preserves missing compiler search evidence");
+        check(report.contains("\"status\":\"failed\"") && report.contains(boundedMissing.structuredDiagnostic().reason())
+                && !report.contains("attempted"), "operational failure exposes concise reason without process/search details");
 
         // (b) A major outside the accepted 14-16 window, on both sides.
         for (int major : List.of(13, 17)) {
@@ -1235,27 +1231,23 @@ public final class NativeToolchainTest {
         checkEq(1, rejected.exitCode(), "structured native failure retains exit");
         String json = Files.readString(report);
         var document = deal.amend.CompilerProtocolJson.requireObject(deal.amend.CompilerProtocolJson.decode(json), "report");
-        var operations = deal.amend.CompilerProtocolJson.requireArray(deal.amend.CompilerProtocolJson.field(document, "operations"), "operations");
+        var operations = deal.amend.CompilerProtocolJson.requireArray(deal.amend.CompilerProtocolJson.field(document, "failures"), "failures");
         checkEq(1, operations.items().size(), "native failure is not an empty success report");
-        check(json.contains("\"reason\": \"native.host-unit-unmatched\"")
-                        && json.contains("\"phase\": \"native.preflight\"")
-                        && json.contains("\"category\": \"build-input\"")
-                        && json.contains("\"tool\": null"),
-                "native input failure retains classification without invented child");
-        check(json.contains("\"published\": true") && json.contains("\"phase\": \"PUBLICATION\", \"status\": \"SUCCEEDED\""),
-                "native preflight failure preserves successful compiler artifact publication outcome");
+        check(json.contains("\"reason\":\"native.host-unit-unmatched\"") && json.contains("\"status\":\"failed\""),
+                "native input failure exposes concise reason and failed outcome");
+        check(!json.contains("published") && !json.contains("phase"), "publication trace excluded from v3");
         check(!json.contains(".partial") && rejected.stderr().contains("deal: native host unit unmatched:"),
                 "structured export leaves terminal failure unchanged and hides staging");
         var repaired = capture(() -> Main.run(new String[] {"native", "build", entry.toString(),
                 "--diagnostics-json", report.toString()}));
         checkEq(0, repaired.exitCode(), "selected repair removes unmatched host and rebuilds");
         check(Files.isExecutable(root.resolve("build/native/native/main")), "successful recheck publishes real executable");
-        check(Files.readString(report).contains("\"operations\": []"), "successful recheck clears prior operational failures");
+        check(!Files.readString(report).contains("\"failures\""), "successful recheck clears prior operational failures");
         writeFile(entry, "export function main():number{return 1;}");
         var frontend = capture(() -> Main.run(new String[] {"native", "build", entry.toString(),
                 "--diagnostics-json", report.toString()}));
         checkEq(1, frontend.exitCode(), "frontend still blocks native workflow");
-        check(Files.readString(report).contains("E2011") && Files.readString(report).contains("\"operations\": []"),
+        check(Files.readString(report).contains("E2011") && !Files.readString(report).contains("\"failures\""),
                 "blocked native phase is not an invented tool failure");
         writeFile(root.resolve("deal.json"), "{\"languageVersion\":\"invalid\"}");
         var manifest = capture(() -> Main.run(new String[] {"native", "build", entry.toString(),
@@ -1323,10 +1315,10 @@ public final class NativeToolchainTest {
         check(Files.notExists(root.resolve("build/native/native/main")),
             "no product exists after the unsupported-compiler failure");
         String json = Files.readString(report);
-        check(json.contains("\"reason\": \"native.toolchain-unsupported\"")
-                        && json.contains("\"operation\": \"native.version\"")
-                        && json.contains("\"exitCode\": 0") && json.contains("clang version 13"),
-                "CLI carries native producer evidence instead of empty diagnostics success");
+        check(json.contains("\"reason\":\"native.toolchain-unsupported\"")
+                        && json.contains("\"status\":\"failed\"") && json.contains("\"responsibility\":\"CONFIGURATION_CONTRACT\"")
+                        && !json.contains("exitCode") && !json.contains("stdout"),
+                "CLI distinguishes operational failure without a process dump");
     }
 
     // =========================================================================

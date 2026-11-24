@@ -146,7 +146,7 @@ public final class NativeBuildException extends Exception {
             default -> "build-input";
         };
         return new deal.diagnostics.OperationalDiagnostic(facts().reason(), phase, category,
-                category.equals("toolchain") ? "toolchain" : "build-environment", diagnostic(), facts());
+                "CONFIGURATION_CONTRACT", diagnostic(), facts());
     }
 
     /** The one rendered diagnostic line of this failure. */

@@ -9,6 +9,7 @@ public final class RepairWorkspaceTest {
     private static final String BASE = "export function main(): number { return 0; }\n";
     public static void main(String[] args) {
         var baseline = AmendWorkspace.inspect(BASE, MODULE);
+        compactRepairResponse(baseline);
         missingTypeHasExactGrant(baseline);
         missingFunctionHasArity(baseline);
         unsupportedPreconditionDoesNotOfferPatch(baseline);
@@ -19,6 +20,33 @@ public final class RepairWorkspaceTest {
         slotRejectionsRetainObservedContracts(baseline);
         System.out.println("RepairWorkspaceTest: all tests passed");
     }
+    private static void compactRepairResponse(Inspection baseline) {
+        var inspection = AmendWorkspace.inspectChange(BASE, MODULE, AmendWorkspace.digest(BASE), List.of(baseline.moduleId()),
+                List.of(AmendWorkspace.ADD_DECLARATION));
+        var precondition = new ChangeSetPrecondition(AmendWorkspace.digest(BASE),
+                Map.of(baseline.moduleId().value(), inspection.allowedOperations().getFirst().targetFingerprint()));
+        var staged = AmendWorkspace.stageChange(BASE, MODULE, precondition, inspection,
+                List.of(new AmendWorkspace.AddDeclaration(baseline.moduleId(), "function count():number{return \"x\";}")));
+        var stale = AmendWorkspace.patchRepairWorkspace(BASE + " ", MODULE, staged.workspace(), List.of());
+        for (var result : List.of(staged, stale)) {
+            String json = CompilerProtocolJson.encode(result);
+            var root = (deal.semantic.ir.CanonicalJson.Obj) CompilerProtocolJson.decode(json);
+            var diagnostics = (deal.semantic.ir.CanonicalJson.Arr) CompilerProtocolJson.field(root, "diagnostics");
+            var workspace = (deal.semantic.ir.CanonicalJson.Obj) CompilerProtocolJson.field(root, "workspace");
+            var slots = (deal.semantic.ir.CanonicalJson.Arr) CompilerProtocolJson.field(workspace, "slots");
+            var indexes = (deal.semantic.ir.CanonicalJson.Arr) CompilerProtocolJson.field(
+                    (deal.semantic.ir.CanonicalJson.Obj) slots.items().getFirst(), "diagnostics");
+            int index = ((deal.semantic.ir.CanonicalJson.Int) indexes.items().getFirst()).value();
+            var diagnostic = (deal.semantic.ir.CanonicalJson.Obj) diagnostics.items().get(index);
+            check(CompilerProtocolJson.stringField(diagnostic, "code").equals("E5003"), "slot indexes resolve even after stale-base rejection");
+            check(CompilerProtocolJson.stringField(root, "source").equals(result.source()), "repair source remains committed text");
+            check(json.contains("\"snapshot\":\"candidate\"") && !json.contains("\"change\":") && !json.contains("\"facts\":"),
+                    "candidate geometry retained with no duplicated change/slot diagnostics");
+            check(CompilerProtocolJson.intField(root, "version") == 3 && !json.contains("\"accepted\":"), "sole current repair envelope");
+            check(indexes.items().size() == 1 && diagnostics.items().size() == (result == staged ? 1 : 2), "one occurrence per retained event");
+        }
+    }
+
     private static RepairWorkspaceSnapshot stage(String source, List<AmendWorkspace.Operation> operations) {
         var inspection = AmendWorkspace.inspectChange(source, MODULE, AmendWorkspace.digest(source),
                 operations.stream().map(AmendWorkspace.Operation::targetId).distinct().toList(),

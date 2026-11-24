@@ -22,8 +22,7 @@ final class MissingExportDiagnostic {
                         "exported member of " + module.name(), requested, List.of(
                                 "Inspect the imported module and choose the intended existing export or revise its declaration; listed names do not establish type, call or construction compatibility."))
                         .withExports(new DiagnosticFacts.ExportContext(module.name(), requested, available,
-                                module.exports().size(), module.exports().size() > available.size(), importRange,
-                                deal.diagnostics.DiagnosticDetails.strings(all))));
+                                module.exports().size(), module.exports().size() > available.size(), importRange)));
         return importRange == null ? diagnostic : diagnostic.withNote("Module imported here", importRange);
     }
 }

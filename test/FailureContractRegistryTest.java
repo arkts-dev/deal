@@ -109,9 +109,8 @@ public class FailureContractRegistryTest {
         var root = deal.amend.CompilerProtocolJson.requireObject(deal.amend.CompilerProtocolJson.decode(report), "report");
         var items = (deal.semantic.ir.CanonicalJson.Arr) deal.amend.CompilerProtocolJson.field(root, "diagnostics");
         var projected = deal.amend.CompilerProtocolJson.requireObject(items.items().getFirst(), "diagnostic");
-        checkEq(deal.amend.CompilerProtocolJson.encode(diagnostic.facts()),
-            deal.semantic.ir.CanonicalJson.serializeText(deal.amend.CompilerProtocolJson.field(projected, "facts")),
-            "CLI and amendment retain identical typed lowering facts");
+        checkEq(diagnostic.facts().reason(), deal.amend.CompilerProtocolJson.stringField(projected, "reason"), "lowering reason retained");
+        check(!report.contains("lowering\":"), "lowering debug metadata omitted from wire");
         checkEq(context, diagnostic.withNote("copy", null).withMissingSymbol("VALUE", "x", "", java.util.List.of())
             .facts().lowering(), "diagnostic copies preserve lowering evidence");
         check(deal.diagnostics.DiagnosticFacts.EMPTY.lowering() == null,

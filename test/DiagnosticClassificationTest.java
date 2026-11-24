@@ -106,9 +106,10 @@ public class DiagnosticClassificationTest {
                     deal.diagnostics.DiagnosticStructuredOutput.toJson(List.of(diagnostic))), "report");
             var exported = deal.amend.CompilerProtocolJson.requireObject(deal.amend.CompilerProtocolJson.requireArray(
                     deal.amend.CompilerProtocolJson.field(report, "diagnostics"), "diagnostics").items().getFirst(), "diagnostic");
-            var amendment = deal.amend.CompilerProtocolJson.requireObject(deal.amend.CompilerProtocolJson.toValue(protocol), "amendment");
-            check(deal.amend.CompilerProtocolJson.field(exported, "classification").equals(
-                            deal.amend.CompilerProtocolJson.field(amendment, "classification")),
+            var amendment = deal.amend.CompilerProtocolJson.requireObject(((deal.semantic.ir.CanonicalJson.Arr) deal.amend.CompilerProtocolJson.field(
+                    (deal.semantic.ir.CanonicalJson.Obj) deal.amend.CompilerProtocolJson.toValue(protocol), "diagnostics")).items().getFirst(), "amendment");
+            check(deal.amend.CompilerProtocolJson.field(exported, "responsibility").equals(
+                            deal.amend.CompilerProtocolJson.field(amendment, "responsibility")),
                     code + " uses identical classifications in the only CLI/amendment schemas");
             check(protocol.withFacts(protocol.facts()).classification().equals(code.classification()),
                     code + " fact copies cannot erase classification");
@@ -138,7 +139,7 @@ public class DiagnosticClassificationTest {
             "unregistered protocol-looking extension remains unclassified");
         var extension = new deal.amend.CompilerProtocol.StructuredDiagnostic("CUSTOM", "error", "opaque", range,
                 new deal.amend.CompilerProtocol.SemanticId("owner"), "", "", List.of(), List.of(), null);
-        check(deal.amend.CompilerProtocolJson.encode(extension).contains("\"classification\":null"),
+        check(deal.amend.CompilerProtocolJson.encode(extension).contains("\"responsibility\":\"COMPILER_CONTRACT\""),
                 "unavailable extension classification is explicitly null");
     }
 

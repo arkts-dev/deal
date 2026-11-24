@@ -6860,8 +6860,8 @@ public class JsBackendTest {
                     + " document");
             if (Files.isRegularFile(diagnosticsJson)) {
                 String diag = Files.readString(diagnosticsJson);
-                check(diag.contains("\"version\": 2")
-                        && diag.contains("\"diagnostics\": []"),
+                check(diag.contains("\"version\":3")
+                        && diag.contains("\"diagnostics\":[]"),
                     "the public compile succeeds with zero diagnostics: "
                         + diag);
             }

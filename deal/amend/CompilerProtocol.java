@@ -9,8 +9,6 @@ import java.util.Objects;
 
 /** Transport-neutral records shared by DEAL compiler frontends. */
 public final class CompilerProtocol {
-    public static final String VERSION = "compiler-protocol-v3";
-
     private CompilerProtocol() {}
 
     public record SemanticId(String value) {

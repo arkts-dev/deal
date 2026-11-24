@@ -432,7 +432,7 @@ public final class NativeToolchain {
             "none of " + String.join(", ", COMPILER_CANDIDATES)
                 + " resolves on PATH", null, "executable clang on effective PATH", "no accepted executable found",
             new DiagnosticFacts.ResolutionContext("clang", "native.compiler-path", attempted.subList(0, Math.min(32, attemptedCount)), attemptedCount,
-                    attemptedCount > 32, deal.diagnostics.DiagnosticDetails.strings(attempted)));
+                    attemptedCount > 32));
     }
 
     /** Requires a compiler whose major is inside the accepted window. */

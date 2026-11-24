@@ -8,7 +8,15 @@ import java.util.Objects;
 
 /** A diagnostic occurrence in an exact producer-owned source snapshot, not a semantic/edit identity. */
 public record DiagnosticOccurrence(String sourceRevision, String occurrenceId, String rootCauseId,
-                                   SnapshotKind snapshotKind) {
+                                   SnapshotKind snapshotKind, java.util.Map<String, String> sourceRevisions) {
+    public DiagnosticOccurrence(String sourceRevision, String occurrenceId, String rootCauseId, SnapshotKind snapshotKind) {
+        this(sourceRevision, occurrenceId, rootCauseId, snapshotKind, java.util.Map.of());
+    }
+
+    public DiagnosticOccurrence withSourceRevisions(java.util.Map<String, String> revisions) {
+        return new DiagnosticOccurrence(sourceRevision, occurrenceId, rootCauseId, snapshotKind, revisions);
+    }
+
     public enum SnapshotKind { CURRENT_SOURCE, REJECTED_CANDIDATE, REJECTED_PAYLOAD }
 
     public DiagnosticOccurrence(String sourceRevision, String occurrenceId, String rootCauseId) {
@@ -16,10 +24,11 @@ public record DiagnosticOccurrence(String sourceRevision, String occurrenceId, S
     }
 
     public DiagnosticOccurrence withSnapshotKind(SnapshotKind kind) {
-        return new DiagnosticOccurrence(sourceRevision, occurrenceId, rootCauseId, kind);
+        return new DiagnosticOccurrence(sourceRevision, occurrenceId, rootCauseId, kind, sourceRevisions);
     }
 
     public DiagnosticOccurrence {
+        sourceRevisions = java.util.Map.copyOf(sourceRevisions);
         Objects.requireNonNull(sourceRevision, "sourceRevision");
         Objects.requireNonNull(occurrenceId, "occurrenceId");
         Objects.requireNonNull(snapshotKind, "snapshotKind");
@@ -32,7 +41,8 @@ public record DiagnosticOccurrence(String sourceRevision, String occurrenceId, S
         Objects.requireNonNull(diagnostic, "diagnostic");
         if (!file.equals(diagnostic.file())) return null;
         String revision = sourceRevision(file, source);
-        String carrier = DiagnosticStructuredOutput.toJson(List.of(diagnostic.withOccurrence(null)));
+        String carrier = deal.amend.CompilerProtocolJson.encode(List.of(diagnostic.code(), diagnostic.severity(),
+                diagnostic.message(), diagnostic.range(), diagnostic.notes(), diagnostic.facts(), diagnostic.missingSymbols()));
         var cause = diagnostic.facts().cause();
         String root = null;
         if (cause != null && file.equals(cause.range().file()) && cause.range().origin() == RangeOrigin.SOURCE) {

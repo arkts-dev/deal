@@ -4152,8 +4152,7 @@ public final class TypeChecker {
         candidates.sort(rank);
         List<deal.diagnostics.DiagnosticFacts.NameObservation> observations = lookupObservations(missing);
         return new deal.diagnostics.DiagnosticFacts.NameContext(candidates.subList(0, Math.min(5, count)), count, count > 5,
-            observations.subList(0, Math.min(32, observations.size())), observations.size(),
-            deal.diagnostics.DiagnosticDetails.names(candidates), deal.diagnostics.DiagnosticDetails.lookups(observations));
+            observations.subList(0, Math.min(32, observations.size())), observations.size());
     }
 
     /** Existing resolver surfaces only; no dependency discovery or inferred import choice. */

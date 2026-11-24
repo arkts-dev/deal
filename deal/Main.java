@@ -48,23 +48,6 @@ public final class Main {
         }
 
         String command = args[0];
-        if (command.equals("diagnostic-details")) {
-            if (args.length != 5) {
-                System.err.println("Usage: deal diagnostic-details <report.json> <inventoryId> <offset> <limit>");
-                return 1;
-            }
-            try {
-                var request = new deal.diagnostics.DiagnosticDetails.Request(args[2],
-                        Integer.parseInt(args[3]), Integer.parseInt(args[4]));
-                var page = deal.diagnostics.DiagnosticDetailArchive.page(
-                        Files.readString(Path.of(args[1] + ".details.json")), request);
-                System.out.println(deal.amend.CompilerProtocolJson.encode(page));
-                return 0;
-            } catch (IllegalArgumentException | IOException failure) {
-                System.err.println("deal: cannot read diagnostic details: " + failure.getMessage());
-                return 1;
-            }
-        }
         if (command.equals("native")) {
             return runNative(Arrays.copyOfRange(args, 1, args.length));
         }
@@ -400,7 +383,7 @@ public final class Main {
                 try {
                     DiagnosticStructuredOutput.write(diagnosticsJsonPath,
                             deal.diagnostics.DiagnosticOrder.canonical(orchestrator.diagnostics()),
-                            List.of(failure.structuredDiagnostic()), orchestrator.outcome());
+                            List.of(failure.structuredDiagnostic()), orchestrator.outcome(), Path.of(context.manifestDirectory()));
                 } catch (IOException e) {
                     System.err.println("deal: cannot write diagnostics JSON to '"
                             + diagnosticsJsonPath + "': " + e.getMessage());
@@ -491,7 +474,6 @@ public final class Main {
 
     private static void printUsage() {
         System.err.println("Usage: deal compile <entry.deal> [--output <dir>] [--backend <lua|luajit|jvm|js|llvm>] [--verbose] [--dump-ir] [--source-map] [--diagnostics-json <path>]");
-        System.err.println("       deal diagnostic-details <report.json> <inventoryId> <offset> <limit>");
         System.err.println("       deal native <build|run> <entry.deal> [--output <artifactsDir>] [--product <productDir>] [--opt-level 0|2] [--host <file.c>]... [--verbose] [--diagnostics-json <path>]");
         System.err.println();
         System.err.println("Options:");
@@ -500,7 +482,7 @@ public final class Main {
         System.err.println("  --verbose, -v        Verbose output with per-module timing");
         System.err.println("  --dump-ir            Produce IR dump files at <outputDir>/<module-path>.ir.txt");
         System.err.println("  --source-map         Accepted (source comments and .deal.map.json sidecars are the default)");
-        System.err.println("  --diagnostics-json <path>  Write the structured diagnostics document (version 2)");
+        System.err.println("  --diagnostics-json <path>  Write the structured diagnostics document (version 3)");
         System.err.println();
         System.err.println("The native verb compiles with the llvm backend and links the published set");
         System.err.println("through the pinned clang window (LLVM 14-16); `deal native run` executes the");

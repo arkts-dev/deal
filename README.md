@@ -92,30 +92,10 @@ Minima: **85% lines**, **75% branches**. Reports: `build/coverage.csv`,
 
 ## Diagnostics
 
-`compile` and `native build|run` accept `--diagnostics-json <path>` for JSON v2:
-source diagnostics include full UTF-16 ranges, notes, producer-owned facts,
-classification and available snapshot excerpts/occurrence IDs. Terminal output
-uses messages and concise producer notes; structured `facts.guidance` retains
-additional rule explanations and intent-dependent examples. Operational
-failures and actual compilation/publication outcomes are separate fields.
-`compilation.sourceBatch` identifies the exact consumed source revisions even
-when diagnostics are empty; it covers observed files, not undiscovered inputs
-or a claim that every analysis phase ran.
-Bounded name/export/search/cycle summaries advertise retained detail inventories.
-Embedded callers page `facts.<context>.details().page(new DiagnosticDetails.Request(inventoryId, offset, limit))`
-(up to 32 observations per page); lookup observations use `observationDetails`.
-Inventory IDs pin immutable producer observations; stale IDs reject, unavailable
-inventories are null, and retrieval never repeats checks, searches or tool runs.
-CLI reports retain inventories in `<report>.details.json`; retrieve an omitted page
-with `deal diagnostic-details <report> <inventoryId> <offset> <limit>` (limit 1–32).
-Keep the report and its detail file together; stale/unavailable inventory IDs reject.
-Amendment JSON consumers call `CompilerProtocolJson.queryDiagnosticDetails` with
-the retained response diagnostics and `{inventoryId, offset, limit}`; reads grant
-no edit authority and require no source reanalysis.
-Amendment uses `compiler-protocol-v3` with revision-pinned context requests;
-context reads do not grant edits. Missing-semicolon diagnostics can carry exact,
-source-revision-pinned insertion offers; explicitly chosen offers still require
-rechecking and do not expand amendment authority. Embedded callers can use
+`compile` and `native build|run` accept `--diagnostics-json <path>`.
+The compiler and amendment serializers follow
+[Compiler diagnostic protocol v3](docs/diagnostics-protocol-v3.md).
+Terminal output uses messages and concise producer notes. Embedded callers can use
 `StrictManifestParser.parseBatch` for independent manifest schema failures in
 canonical order; strict syntax/duplicate/unknown-member faults and the default
 `parse` entry remain fail-fast. Failed validation never publishes a manifest.

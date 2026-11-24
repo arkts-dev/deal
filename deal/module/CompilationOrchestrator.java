@@ -666,7 +666,7 @@ public final class CompilationOrchestrator {
                 // the canonical report-ordered list; the internal
                 // emission-order collection is unchanged.
                 DiagnosticStructuredOutput.write(diagnosticsJsonPath,
-                        DiagnosticOrder.canonical(diagnostics()), operations, outcome());
+                        DiagnosticOrder.canonical(diagnostics()), operations, outcome(), Path.of(context.manifestDirectory()));
             } catch (IOException e) {
                 System.err.println("deal: cannot write diagnostics JSON to '"
                     + diagnosticsJsonPath + "': " + e.getMessage());
@@ -830,7 +830,7 @@ public final class CompilationOrchestrator {
 
     private deal.diagnostics.OperationalDiagnostic publicationFailure(String operation, String message) {
         return new deal.diagnostics.OperationalDiagnostic(operation + "-failed", "publication", "filesystem",
-                "build-environment", message, new deal.diagnostics.DiagnosticFacts(operation + "-failed", operation,
+                "CONFIGURATION_CONTRACT", message, new deal.diagnostics.DiagnosticFacts(operation + "-failed", operation,
                         "atomic whole-project artifact publication", "", List.of(
                                 "No artifact set from this failed compilation was published. "
                                         + "Inspect the output directory and filesystem condition before recompiling.")));
@@ -1354,8 +1354,7 @@ public final class CompilationOrchestrator {
         return diagnostic.withFacts(new deal.diagnostics.DiagnosticFacts("module.import-cycle", "module.graph",
                 "acyclic import graph", "closed import cycle", List.of(
                         "Inspect the witnessed imports and choose an intended dependency restructuring; no edge removal is authorized."))
-                .withCycle(new deal.diagnostics.DiagnosticFacts.CycleContext(witness.subList(0, Math.min(edgeCount, 32)), edgeCount, edgeCount > 32,
-                    deal.diagnostics.DiagnosticDetails.edges(witness))));
+                .withCycle(new deal.diagnostics.DiagnosticFacts.CycleContext(witness.subList(0, Math.min(edgeCount, 32)), edgeCount, edgeCount > 32)));
     }
 
     /**
@@ -2368,6 +2367,10 @@ public final class CompilationOrchestrator {
     // =========================================================================
 
     final class ModuleResolverImpl implements ModuleResolver {
+        @Override public Map<String, String> diagnosticSources() {
+            return Map.copyOf(CompilationOrchestrator.this.diagnosticSources);
+        }
+
 
         private final Map<String, ModuleInfo> modules;
 

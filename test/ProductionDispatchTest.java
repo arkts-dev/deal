@@ -2850,7 +2850,7 @@ public class ProductionDispatchTest {
             checkStructuredOrigin(context, structured, expectedCode, expectedMessage, offending,
                 startLine, startColumn, endLine, endColumn, startOffset,
                 endOffset, scalarLength);
-            checkEq(DiagnosticStructuredOutput.toJson(errors, arm.orchestrator().operations(), arm.orchestrator().outcome()), structured,
+            checkEq(DiagnosticStructuredOutput.toJson(errors, arm.orchestrator().operations(), arm.orchestrator().outcome(), project), structured,
                 context + ": the structured document retains exact diagnostics and actual compiler execution");
             checkTreeIdentical(before, out,
                 context + ": the CLI failure preserves the previous set");
@@ -2871,7 +2871,7 @@ public class ProductionDispatchTest {
     }
 
     /**
-     * The structured-document pins: version 2, one error diagnostic with
+     * The structured-document pins: version 3, one error diagnostic with
      * the complete message and the exact SOURCE range, and no notes.
      */
     private static void checkStructuredOrigin(String context, String structured,
@@ -2880,7 +2880,7 @@ public class ProductionDispatchTest {
             int scalarLength) {
         CanonicalJson.Value root = CanonicalJson.parse(structured);
         CanonicalJson.Obj rootObj = (CanonicalJson.Obj) root;
-        checkEq(2, jsonInt(jsonField(rootObj, "version")),
+        checkEq(3, jsonInt(jsonField(rootObj, "version")),
             context + ": the structured document version");
         CanonicalJson.Arr diagnostics =
             (CanonicalJson.Arr) jsonField(rootObj, "diagnostics");
@@ -2897,27 +2897,16 @@ public class ProductionDispatchTest {
         checkEq(expectedMessage, jsonString(jsonField(diagnostic, "message")),
             context + ": the structured complete message");
         CanonicalJson.Obj range = (CanonicalJson.Obj) jsonField(diagnostic, "range");
-        checkEq(offending.toString(), jsonString(jsonField(range, "file")),
-            context + ": the structured range file");
-        checkEq(startLine, jsonInt(jsonField(range, "startLine")),
-            context + ": the structured range start line");
-        checkEq(startColumn, jsonInt(jsonField(range, "startColumn")),
-            context + ": the structured range start column");
-        checkEq(endLine, jsonInt(jsonField(range, "endLine")),
-            context + ": the structured range end line");
-        checkEq(endColumn, jsonInt(jsonField(range, "endColumn")),
-            context + ": the structured range end column");
-        checkEq(startOffset, jsonInt(jsonField(range, "startScalarOffset")),
-            context + ": the structured range start offset");
-        checkEq(endOffset, jsonInt(jsonField(range, "endScalarOffset")),
-            context + ": the structured range end offset");
-        checkEq(scalarLength, jsonInt(jsonField(range, "scalarLength")),
-            context + ": the structured range scalar length");
-        checkEq("SOURCE", jsonString(jsonField(range, "origin")),
-            context + ": the structured range origin");
-        CanonicalJson.Arr notes = (CanonicalJson.Arr) jsonField(diagnostic, "notes");
-        checkEq(0, notes.items().size(),
-            context + ": the structured diagnostic carries no note");
+        var files = (CanonicalJson.Arr) jsonField(rootObj, "files");
+        var file = (CanonicalJson.Obj) files.items().get(jsonInt(jsonField(range, "file")));
+        check(offending.toString().replace('\\', '/').endsWith(jsonString(jsonField(file, "file"))), context + ": range resolves source file");
+        var at = (CanonicalJson.Arr) jsonField(range, "at");
+        checkEq(List.of(startLine, startColumn, endLine, endColumn), at.items().stream().map(ProductionDispatchTest::jsonInt).toList(), context + ": exact positions");
+        var offset = (CanonicalJson.Arr) jsonField(range, "offset");
+        checkEq(List.of(startOffset, endOffset), offset.items().stream().map(ProductionDispatchTest::jsonInt).toList(), context + ": exact UTF-16 offsets");
+        checkEq(scalarLength, endOffset - startOffset, context + ": derived span");
+        check(diagnostic.entries().stream().noneMatch(e -> e.key().equals("notes")), context + ": empty notes omitted");
+
     }
 
     private static CanonicalJson.Value jsonField(CanonicalJson.Obj obj, String key) {
@@ -7386,8 +7375,8 @@ public class ProductionDispatchTest {
         }
     }
 
-    private static void testRetainedDetailCli() throws Exception {
-        Path project = Files.createTempDirectory("diagnostic-detail-cli-");
+    private static void testCompactDiagnosticCli() throws Exception {
+        Path project = Files.createTempDirectory("diagnostic-v3-cli-");
         try {
             write(project, "deal.json", DEAL_JSON_LUA);
             write(project, "src/main.deal", "import * as lib from \"./lib\";export function main():void{lib.absent;}");
@@ -7395,37 +7384,24 @@ public class ProductionDispatchTest {
             for (int i = 0; i < 40; i++) exports.append("export function field").append(i).append("():void{}\n");
             write(project, "src/lib.deal", exports.toString());
             Path report = project.resolve("report.json");
-            var result = runProductionCli("compile", project.resolve("src/main.deal").toString(),
-                    "--diagnostics-json", report.toString());
-            check(result.exitCode() != 0, "detail producer retains ordinary compilation rejection");
+            var result = runProductionCli("compile", project.resolve("src/main.deal").toString(), "--diagnostics-json", report.toString());
+            check(result.exitCode() != 0, "v3 preserves compilation rejection");
             var root = (CanonicalJson.Obj) CanonicalJson.parse(Files.readString(report));
+            checkEq(3, jsonInt(jsonField(root, "version")), "CLI emits v3");
             var diagnostics = (CanonicalJson.Arr) jsonField(root, "diagnostics");
             var diagnostic = diagnostics.items().stream().map(value -> (CanonicalJson.Obj) value)
                     .filter(value -> jsonString(jsonField(value, "code")).equals("E2004")).findFirst().orElseThrow();
-            var facts = (CanonicalJson.Obj) jsonField(diagnostic, "facts");
-            var surface = (CanonicalJson.Obj) jsonField(facts, "exports");
-            var descriptor = (CanonicalJson.Obj) jsonField(surface, "details");
-            String id = jsonString(jsonField(descriptor, "inventoryId"));
-            String archiveBefore = Files.readString(Path.of(report + ".details.json"));
-            Files.delete(project.resolve("src/lib.deal"));
-            Files.delete(project.resolve("src/main.deal"));
-            var page = runProductionCli("diagnostic-details", report.toString(), id, "32", "32");
-            check(page.exitCode() == 0 && page.stderr().isEmpty(), "CLI retrieves retained facts after sources disappear");
-            var value = (CanonicalJson.Obj) CanonicalJson.parse(page.stdout().strip());
-            checkEq(40, jsonInt(jsonField(value, "total")), "CLI detail page retains exact total");
-            checkEq(8, ((CanonicalJson.Arr) jsonField(value, "items")).items().size(), "CLI retrieves omitted export tail");
-            checkEq(CanonicalJson.nullValue(), jsonField(value, "nextOffset"), "CLI detail end is explicit");
-            var stale = runProductionCli("diagnostic-details", report.toString(), "stale", "0", "1");
-            check(stale.exitCode() == 1 && stale.stdout().isEmpty() && stale.stderr().contains("inventory unavailable"),
-                    "CLI stale detail identity fails without invented observations");
-            var geometry = runProductionCli("diagnostic-details", report.toString(), id, "0", "33");
-            check(geometry.exitCode() == 1 && geometry.stdout().isEmpty(), "CLI rejects over-limit detail request");
-            checkEq(archiveBefore, Files.readString(Path.of(report + ".details.json")), "detail reads never mutate retained observations");
+            var evidence = (CanonicalJson.Obj) jsonField(diagnostic, "evidence");
+            var surface = (CanonicalJson.Obj) jsonField(evidence, "exports");
+            var available = (CanonicalJson.Obj) jsonField(surface, "available");
+            checkEq(8, jsonInt(jsonField(available, "omitted")), "bounded export observations carry omitted count");
+            checkEq(32, ((CanonicalJson.Arr) jsonField(available, "items")).items().size(), "retained export prefix preserved");
+            check(!Files.exists(Path.of(report + ".details.json")), "v3 writes only the report");
         } finally { deleteRecursively(project); }
     }
 
     public static void main(String[] args) throws Exception {
-        testRetainedDetailCli();
+        testCompactDiagnosticCli();
         System.out.println("=== Production Dispatch and Cutover Acceptance "
             + "Tests (ISSUE-0643) ===\n");
 

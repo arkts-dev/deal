@@ -212,14 +212,6 @@ public final class AmendWorkspace {
                 target.kind().equals("module") ? sourceDigest : digest(source.substring(target.start(), target.end())));
     }
 
-    /** Read retained response facts without reanalysis or additional edit authority. */
-    public static deal.diagnostics.DiagnosticDetails.Page<?> queryDiagnosticDetails(
-            List<CompilerProtocol.StructuredDiagnostic> diagnostics,
-            deal.diagnostics.DiagnosticDetails.Request request) {
-        return deal.diagnostics.DiagnosticDetailArchive.page(
-                diagnostics.stream().map(CompilerProtocol.StructuredDiagnostic::facts).toList(), request);
-    }
-
     public static CompilerProtocol.ContextResult queryContext(String source, String modulePath,
             CompilerProtocol.ContextRequest request) {
         return queryContext(source, modulePath, request, rejectingResolver(), SourceAdapter.IDENTITY);
@@ -1493,10 +1485,14 @@ public final class AmendWorkspace {
                 functionsByName,
                 classesByName,
                 index);
+        var sourceRevisions = new LinkedHashMap<String, String>();
+        resolver.diagnosticSources().forEach((file, text) -> sourceRevisions.put(file,
+                deal.diagnostics.DiagnosticOccurrence.sourceRevision(file, text)));
         List<StructuredDiagnostic> diagnostics = deal.diagnostics.DiagnosticOrder.exactDistinct(rawDiagnostics).stream()
                 .map(value -> {
                     var withSource = value.withExcerpt(deal.diagnostics.DiagnosticExcerpt.fromSource(modulePath, source, value.range()));
-                    return withSource.withOccurrence(deal.diagnostics.DiagnosticOccurrence.fromSource(modulePath, source, withSource));
+                    var occurrence = deal.diagnostics.DiagnosticOccurrence.fromSource(modulePath, source, withSource);
+                    return withSource.withOccurrence(occurrence == null ? null : occurrence.withSourceRevisions(sourceRevisions));
                 })
                 .map(value -> diagnostic(value, moduleId, functionsByName.values(), classesByName.values(), targets.values())
                         .withMissingSymbols(value.missingSymbols())

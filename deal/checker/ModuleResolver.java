@@ -15,6 +15,11 @@ import deal.types.Type;
  */
 public interface ModuleResolver {
 
+    /** Exact source texts retained by this resolver's analysis. */
+    default Map<String, String> diagnosticSources() {
+        return Map.of();
+    }
+
     /**
      * Resolve a module path and return its exported symbols.
      *

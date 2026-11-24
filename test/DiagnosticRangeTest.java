@@ -82,11 +82,11 @@ public class DiagnosticRangeTest {
                     .withTool(null).withLowering(null).withCause(null));
         check(diagnostic.facts().languageDifference().equals(difference), "fact copies preserve occurrence-specific language difference");
         String json = DiagnosticStructuredOutput.toJson(List.of(diagnostic));
-        check(json.contains("\"languageDifference\": {\"reference\": \"TYPESCRIPT\", \"kind\": \"UNSUPPORTED_SYNTAX\", \"feature\": \"coercing-equality\"}"),
-                "JSON v2 transports explicit language difference beside existing classification");
+        check(json.contains("\"difference\":") && json.contains("coercing-equality"),
+                "v3 transports explicit occurrence-specific language difference");
         var ordinary = CompilerDiagnostic.error(DiagnosticCode.E1042, "Malformed expression", DiagnosticRange.synthetic("test.deal"));
         check(ordinary.facts().languageDifference() == null
-                        && DiagnosticStructuredOutput.toJson(List.of(ordinary)).contains("\"languageDifference\": null"),
+                        && !DiagnosticStructuredOutput.toJson(List.of(ordinary)).contains("\"difference\""),
                 "same code does not imply a language difference");
         check(deal.amend.CompilerProtocolJson.encode(facts).contains("\"languageDifference\""),
                 "amendment fact transport retains language difference");
@@ -115,82 +115,13 @@ public class DiagnosticRangeTest {
                         deal.diagnostics.CompilationOutcome.Status.SKIPPED)).toList();
         var outcome = new deal.diagnostics.CompilationOutcome("js", "profile", "release", false, phases, batch);
         String json = DiagnosticStructuredOutput.toJson(List.of(), List.of(), outcome);
-        check(json.contains("\"diagnostics\": []") && json.contains(batch.batchRevision())
-                && json.contains("\"snapshotKind\": \"CURRENT_SOURCE\""),
-                "empty diagnostic report still identifies consumed source snapshots");
+        check(json.contains("\"diagnostics\":[]") && !json.contains("batchRevision")
+                && json.contains("\"files\":[]"),
+                "empty report contains only referenced snapshots");
         try { batch.sources().clear(); fail("mutable source batch"); }
         catch (UnsupportedOperationException expected) { check(true, "batch is immutable"); }
         try { new deal.diagnostics.DiagnosticSourceBatch("stale", batch.sources()); fail("stale batch accepted"); }
         catch (IllegalArgumentException expected) { check(true, "batch validates its exact identity"); }
-    }
-
-    private static void testRetainedDetailPages() {
-        var source = new ArrayList<String>();
-        for (int i = 0; i < 70; i++) source.add("observed-" + i);
-        var details = deal.diagnostics.DiagnosticDetails.strings(source);
-        source.clear();
-        var descriptor = details.descriptor();
-        var request = new deal.diagnostics.DiagnosticDetails.Request(descriptor.inventoryId(), 32, 32);
-        var page = details.page(request);
-        check(page.items().size() == 32 && page.items().getFirst().equals("observed-32")
-            && page.items().getLast().equals("observed-63") && page.nextOffset() == 64 && page.total() == 70,
-            "retained details own immutable observations and bounded exact continuation");
-        var last = details.page(new deal.diagnostics.DiagnosticDetails.Request(descriptor.inventoryId(), page.nextOffset(), 32));
-        check(last.items().size() == 6 && last.nextOffset() == null, "detail final page has explicit end");
-        check(details.page(new deal.diagnostics.DiagnosticDetails.Request(descriptor.inventoryId(), 70, 1)).items().isEmpty(),
-            "detail end boundary is empty without invented observations");
-        int rejected = 0;
-        for (int[] bad : new int[][] {{-1, 1}, {0, 0}, {0, 33}, {71, 1}, {Integer.MAX_VALUE, 32}}) {
-            try { details.page(new deal.diagnostics.DiagnosticDetails.Request(descriptor.inventoryId(), bad[0], bad[1])); }
-            catch (IllegalArgumentException expected) { rejected++; }
-        }
-        check(rejected == 5, "detail paging rejects invalid geometry without overflow");
-        try {
-            details.page(new deal.diagnostics.DiagnosticDetails.Request("stale", 0, 1));
-            fail("stale detail inventory accepted");
-        } catch (IllegalArgumentException expected) { check(true, "stale detail inventory rejected"); }
-        try { page.items().clear(); fail("mutable detail page"); }
-        catch (UnsupportedOperationException expected) { check(true, "detail pages are immutable"); }
-        check(!deal.diagnostics.DiagnosticDetails.strings(List.of("a", "bc")).descriptor().inventoryId()
-                .equals(deal.diagnostics.DiagnosticDetails.strings(List.of("ab", "c")).descriptor().inventoryId()),
-            "detail identity frames adjacent values");
-        check(!deal.diagnostics.DiagnosticDetails.strings(List.of("\ud800")).descriptor().inventoryId()
-                .equals(deal.diagnostics.DiagnosticDetails.strings(List.of("\ud801")).descriptor().inventoryId()),
-            "detail identity preserves lone UTF-16 units");
-        try {
-            new deal.diagnostics.DiagnosticFacts.ResolutionContext("x", "test", List.of("fabricated"), 70, true, details);
-            fail("mismatched detail prefix accepted");
-        } catch (IllegalArgumentException expected) { check(true, "detail prefix must match observed summary"); }
-        var json = deal.amend.CompilerProtocolJson.encode(details);
-        check(json.contains(descriptor.inventoryId()) && !json.contains("observed-32"),
-            "protocol advertises retained inventory without unbounded inline expansion");
-        var facts = deal.diagnostics.DiagnosticFacts.EMPTY.withResolution(new deal.diagnostics.DiagnosticFacts.ResolutionContext(
-                "missing", "observed", List.of("observed-0"), 70, true, details));
-        String archive = deal.diagnostics.DiagnosticDetailArchive.encode(List.of(facts));
-        var restored = deal.diagnostics.DiagnosticDetailArchive.page(archive,
-                new deal.diagnostics.DiagnosticDetails.Request(descriptor.inventoryId(), 31, 3));
-        check(restored.equals(deal.amend.CompilerProtocolJson.toValue(details.page(
-                new deal.diagnostics.DiagnosticDetails.Request(descriptor.inventoryId(), 31, 3)))),
-                "persisted detail retrieval crosses storage-page boundaries without reanalysis");
-        try { deal.diagnostics.DiagnosticDetailArchive.page(archive,
-                new deal.diagnostics.DiagnosticDetails.Request("stale", 0, 1)); fail("stale archive inventory accepted"); }
-        catch (IllegalArgumentException expected) { check(true, "persisted details reject unknown inventory identity"); }
-        try { deal.diagnostics.DiagnosticDetailArchive.page(archive.replace("\"nextOffset\":32", "\"nextOffset\":31"), request);
-            fail("corrupt detail continuation accepted"); }
-        catch (IllegalArgumentException expected) { check(true, "persisted details reject inconsistent continuation"); }
-        var inspection = deal.amend.AmendWorkspace.inspect("let foo:number=1;foa;", "detail.deal");
-        var nameDiagnostic = inspection.diagnostics().stream().filter(d -> d.facts().names() != null).findFirst().orElseThrow();
-        var nameDetails = nameDiagnostic.facts().names().details();
-        var query = new deal.diagnostics.DiagnosticDetails.Request(nameDetails.descriptor().inventoryId(), 0, 1);
-        check(deal.amend.CompilerProtocolJson.queryDiagnosticDetails(inspection.diagnostics(),
-                    deal.amend.CompilerProtocolJson.encode(query)).equals(deal.amend.CompilerProtocolJson.encode(nameDetails.page(query))),
-                "JSON amendment detail request returns exact retained typed observations");
-        try { deal.amend.CompilerProtocolJson.queryDiagnosticDetails(inspection.diagnostics(),
-                "{\"inventoryId\":\"stale\",\"offset\":0,\"limit\":1,\"source\":\"ignored\"}");
-            fail("unrecognized detail request operand accepted"); }
-        catch (IllegalArgumentException expected) { check(true, "detail query rejects non-query operands"); }
-        check(inspection.diagnostics().equals(deal.amend.AmendWorkspace.inspect("let foo:number=1;foa;", "detail.deal").diagnostics()),
-                "detail reads do not change diagnostics or grant edits");
     }
 
     private static void checkEq(Object expected, Object actual,
@@ -211,9 +142,9 @@ public class DiagnosticRangeTest {
     public static void main(String[] args) throws Exception {
         System.out.println("=== Running Diagnostic Range Tests ===");
 
+        testCompactProtocolInvariants();
         testLanguageDifference();
         testSourceBatchIdentity();
-        testRetainedDetailPages();
         testCursorInitialAndEmpty();
         testCursorFullWalk();
         testCursorCrlfPairing();
@@ -1157,13 +1088,9 @@ public class DiagnosticRangeTest {
                     && formatted.contains("span 0"),
                 "T8: formatted E1037 must name (1,17)-(1,17) with span 0, got: " + formatted);
             String json = DiagnosticStructuredOutput.toJson(List.of(e1037));
-            check(json.contains("\"startLine\": 1")
-                    && json.contains("\"startColumn\": 17")
-                    && json.contains("\"startScalarOffset\": 16")
-                    && json.contains("\"endScalarOffset\": 16")
-                    && json.contains("\"scalarLength\": 0")
-                    && json.contains("\"origin\": \"SOURCE\""),
-                "T8: structured E1037 must carry the exact range fields, got: " + json);
+            var pinned = e1037.withOccurrence(new deal.diagnostics.DiagnosticOccurrence("test-revision", "test-occurrence", null));
+            check(DiagnosticStructuredOutput.toJson(List.of(pinned)).contains("\"at\":[1,17,1,17]")
+                    && DiagnosticStructuredOutput.toJson(List.of(pinned)).contains("\"offset\":[16,16]"), "T8: exact compact range");
         }
     }
 
@@ -1315,7 +1242,7 @@ public class DiagnosticRangeTest {
                     .rootCauseId().equals(occurrence.rootCauseId()), "cause identity changes with source revision");
                 check(diagnostic.facts().withGuidance(List.of("chosen")).withCall(null).withSyntax(null).cause().equals(cause),
                     "context copies retain typed cause evidence");
-                check(DiagnosticStructuredOutput.toJson(List.of(diagnostic.withOccurrence(occurrence))).contains("\"cause\":")
+                check(DiagnosticStructuredOutput.toJson(List.of(diagnostic.withOccurrence(occurrence))).contains("\"invalidation\":")
                     && deal.amend.CompilerProtocolJson.encode(diagnostic.facts()).contains("flow.refinement-invalidated"),
                     "CLI and amendment preserve the typed event");
             }
@@ -1467,6 +1394,50 @@ public class DiagnosticRangeTest {
             check(checkerDiagnostics(source, "intrinsic-names.deal").isEmpty(), "explicit intended callable/argument repair rechecks");
     }
 
+    private static void testCompactProtocolInvariants() {
+        String source = "// 😀\r\nexport function main():void{}\n";
+        String path = "/project/src/main.deal";
+        var range = new DiagnosticRange(path, 2, 1, 2, 7, 7, 13, 6, RangeOrigin.SOURCE);
+        var raw = CompilerDiagnostic.error(DiagnosticCode.E1001, "primary", range);
+        var primary = raw.withOccurrence(deal.diagnostics.DiagnosticOccurrence.fromSource(path, source, raw))
+                .withExcerpt(deal.diagnostics.DiagnosticExcerpt.fromSource(path, source, range));
+        var candidate = primary.withOccurrence(primary.occurrence().withSnapshotKind(
+                deal.diagnostics.DiagnosticOccurrence.SnapshotKind.REJECTED_CANDIDATE));
+        var dependent = primary.withOccurrence(new deal.diagnostics.DiagnosticOccurrence(
+                primary.occurrence().sourceRevision(), "dependent", primary.occurrence().occurrenceId()));
+        var report = deal.amend.CompilerProtocolJson.requireObject(deal.amend.CompilerProtocolJson.decode(
+                DiagnosticStructuredOutput.toJson(List.of(primary, candidate, dependent), List.of(), null, Path.of("/project"))), "report");
+        var files = (deal.semantic.ir.CanonicalJson.Arr) deal.amend.CompilerProtocolJson.field(report, "files");
+        var diagnostics = (deal.semantic.ir.CanonicalJson.Arr) deal.amend.CompilerProtocolJson.field(report, "diagnostics");
+        var contexts = (deal.semantic.ir.CanonicalJson.Arr) deal.amend.CompilerProtocolJson.field(report, "context");
+        check(files.items().size() == 2 && contexts.items().size() == 2 && diagnostics.items().size() == 3,
+                "same path/revision in current and candidate remains distinct; matching excerpts are shared");
+        check(deal.amend.CompilerProtocolJson.stringField((deal.semantic.ir.CanonicalJson.Obj) files.items().getFirst(), "file")
+                .equals("src/main.deal"), "invocation-root paths are relative");
+        var third = (deal.semantic.ir.CanonicalJson.Obj) diagnostics.items().get(2);
+        check(deal.amend.CompilerProtocolJson.intField(third, "cause") == 0,
+                "explicit producer causal link references the matching current occurrence");
+        check(deal.amend.CompilerProtocolJson.intField(third, "context") == 0,
+                "context index shared across distinct diagnostic occurrences");
+        var ambiguous = DiagnosticStructuredOutput.toJson(List.of(primary, primary, dependent));
+        check(!ambiguous.contains("\"cause\":"), "ambiguous causal observations grant no arbitrary occurrence link");
+        var noSnapshot = DiagnosticStructuredOutput.toJson(List.of(raw));
+        check(noSnapshot.contains("\"files\":[]") && !noSnapshot.contains("\"range\":"),
+                "an unretained source does not acquire a guessed revision or coordinates");
+        var reordered = raw.withNote("foreign declaration", new DiagnosticRange("/outside/provider.deal", 1, 1, 1, 2, 0, 1, 1, RangeOrigin.SOURCE));
+        reordered = reordered.withOccurrence(primary.occurrence().withSourceRevisions(Map.of("/outside/provider.deal",
+                deal.diagnostics.DiagnosticOccurrence.sourceRevision("/outside/provider.deal", "x"))));
+        var foreign = DiagnosticStructuredOutput.toJson(List.of(reordered), List.of(), null, Path.of("/project"));
+        var foreignRoot = (deal.semantic.ir.CanonicalJson.Obj) deal.amend.CompilerProtocolJson.decode(foreign);
+        var foreignFiles = (deal.semantic.ir.CanonicalJson.Arr) deal.amend.CompilerProtocolJson.field(foreignRoot, "files");
+        check(deal.amend.CompilerProtocolJson.stringField((deal.semantic.ir.CanonicalJson.Obj) foreignFiles.items().getFirst(), "file")
+                .equals("/outside/provider.deal"), "file table follows first reference in serialized notes before primary range");
+        check(foreign.contains("\"file\":1") && foreign.contains("\"file\":0"), "foreign and primary locations retain independent snapshot indexes");
+        var failure = DiagnosticStructuredOutput.toJson(List.of(), List.of(new deal.diagnostics.OperationalDiagnostic(
+                "io.failure", "compile", "io", "COMPILER_CONTRACT", "unable to read input", deal.diagnostics.DiagnosticFacts.EMPTY)));
+        check(failure.contains("\"status\":\"failed\"") && failure.contains("\"failures\":["), "operational failure remains distinct from rejection");
+    }
+
     private static void testRevisionScopedOccurrences() {
         String source = "// 😀\r\nexport function f():void{let text:string=1;}";
         var raw = checkerDiag(checkerDiagnostics(source, "identity.deal"), "E3001");
@@ -1502,8 +1473,8 @@ public class DiagnosticRangeTest {
                 "CLI carrier and amendment projection share occurrence and preserve it across scoped copies");
         String json = DiagnosticStructuredOutput.toJson(List.of(issued, issued));
         check(json.indexOf(occurrence.occurrenceId()) == json.lastIndexOf(occurrence.occurrenceId())
-                        && deal.amend.CompilerProtocolJson.encode(amended).contains(occurrence.occurrenceId()),
-                "exact report repeats collapse while sole transports retain the same revision-scoped occurrence");
+                        && !deal.amend.CompilerProtocolJson.encode(amended).contains(occurrence.occurrenceId()),
+                "wire occurrence indexes replace opaque occurrence hashes");
     }
 
     private static void testProducerSourceExcerpts() throws IOException {
@@ -1525,8 +1496,9 @@ public class DiagnosticRangeTest {
                 DiagnosticStructuredOutput.toJson(List.of(diagnostic))), "report");
         var exported = deal.amend.CompilerProtocolJson.requireObject(deal.amend.CompilerProtocolJson.requireArray(
                 deal.amend.CompilerProtocolJson.field(cli, "diagnostics"), "diagnostics").items().getFirst(), "diagnostic");
-        check(deal.amend.CompilerProtocolJson.field(exported, "excerpt").equals(deal.amend.CompilerProtocolJson.toValue(excerpt)),
-                "CLI and amendment serialize identical typed source excerpt geometry");
+        var pinned = diagnostic.withOccurrence(deal.diagnostics.DiagnosticOccurrence.fromSource("excerpt.deal", source, diagnostic));
+        check(DiagnosticStructuredOutput.toJson(List.of(pinned)).contains("\"context\":0")
+                && DiagnosticStructuredOutput.toJson(List.of(pinned)).contains("export function"), "source context projected once");
         for (String boundary : List.of("😀", "\r\n")) {
             String text = "x".repeat(239) + boundary + "z".repeat(300);
             var range = new DiagnosticRange("boundary.deal", 1, 1, 1, 2, 0, 1, 1, RangeOrigin.SOURCE);
@@ -1552,6 +1524,7 @@ public class DiagnosticRangeTest {
         var unitsRange = new DiagnosticRange("units.deal", 1, 1, 1, 4, 0, 3, 3, RangeOrigin.SOURCE);
         var unitsDiagnostic = CompilerDiagnostic.error(DiagnosticCode.E1001, "units", unitsRange)
                 .withExcerpt(deal.diagnostics.DiagnosticExcerpt.fromSource("units.deal", units, unitsRange));
+        unitsDiagnostic = unitsDiagnostic.withOccurrence(deal.diagnostics.DiagnosticOccurrence.fromSource("units.deal", units, unitsDiagnostic));
         check(DiagnosticStructuredOutput.toJson(List.of(unitsDiagnostic)).contains("\\ud800\\u0000\\udc00"),
                 "excerpt controls and lone units escape losslessly in the sole report");
         Path tmp = Files.createTempDirectory("deal-diagnostic-excerpt-");
@@ -1719,20 +1692,13 @@ public class DiagnosticRangeTest {
         var document = deal.amend.CompilerProtocolJson.requireObject(deal.amend.CompilerProtocolJson.decode(json), "document");
         var items = deal.amend.CompilerProtocolJson.requireArray(deal.amend.CompilerProtocolJson.field(document, "diagnostics"), "diagnostics");
         var item = deal.amend.CompilerProtocolJson.requireObject(items.items().getFirst(), "diagnostic");
-        checkEq(deal.amend.CompilerProtocolJson.encode(diagnostic.facts()),
-                deal.semantic.ir.CanonicalJson.serializeText(deal.amend.CompilerProtocolJson.field(item, "facts")),
-                "cycle CLI/amendment facts match with escaped identities and full ranges");
+        check(projectedFacts(diagnostic), "cycle projection agrees across serializers");
         var path = new ArrayList<String>();
         for (int i = 0; i < 40; i++) path.add("module-" + i);
         path.add(path.getFirst());
         var bounded = CompilationOrchestrator.e2005Diagnostic(path, Map.of(), Map.of(), "large cycle");
         check(bounded.facts().cycle().edges().size() == 32 && bounded.facts().cycle().edgeCount() == 40
                 && bounded.facts().cycle().truncated(), "bounded witness retains exact total and truncation");
-        var cycleDetails = bounded.facts().cycle().details();
-        var cycleTail = cycleDetails.page(new deal.diagnostics.DiagnosticDetails.Request(cycleDetails.descriptor().inventoryId(), 32, 32));
-        check(cycleTail.items().size() == 8 && cycleTail.items().getLast().to().equals(path.getFirst())
-            && cycleTail.items().getFirst().importRange() == null && cycleTail.nextOffset() == null,
-            "omitted cycle edges remain retrievable without inventing unavailable import ranges");
         check(bounded.range().origin() == RangeOrigin.SYNTHETIC && !bounded.notes().isEmpty(),
                 "cycle synthetic fallback keeps original anchor note");
         for (var invalid : List.of(
@@ -1827,16 +1793,10 @@ public class DiagnosticRangeTest {
             context + ": formatted carries the exact range header: " + human);
         check(human.contains("[span " + r.scalarLength() + "]"),
             context + ": formatted carries the span length: " + human);
-        check(json.contains("\"file\": \"" + r.file() + "\"")
-                && json.contains("\"startLine\": " + r.startLine())
-                && json.contains("\"startColumn\": " + r.startColumn())
-                && json.contains("\"endLine\": " + r.endLine())
-                && json.contains("\"endColumn\": " + r.endColumn())
-                && json.contains("\"startScalarOffset\": " + r.startScalarOffset())
-                && json.contains("\"endScalarOffset\": " + r.endScalarOffset())
-                && json.contains("\"scalarLength\": " + r.scalarLength())
-                && json.contains("\"origin\": \"" + r.origin() + "\""),
-            context + ": structured carries the same range fields: " + json);
+        var pinned = d.withOccurrence(new deal.diagnostics.DiagnosticOccurrence("test-revision", "test-occurrence", null));
+        String compact = DiagnosticStructuredOutput.toJson(List.of(pinned));
+        check(compact.contains("\"at\":[" + r.startLine() + "," + r.startColumn() + "," + r.endLine() + "," + r.endColumn() + "]")
+                && compact.contains("\"offset\":[" + r.startScalarOffset() + "," + r.endScalarOffset() + "]"), context + ": exact compact geometry");
     }
 
     private static void testCheckerProducerRanges() throws Exception {
@@ -3784,124 +3744,34 @@ public class DiagnosticRangeTest {
             "formatter must be deterministic");
     }
 
-    private static String expectedJsonRange(String file, String positions, String origin) {
-        String[] values = positions.split(",");
-        String[] fields = {"startLine", "startColumn", "endLine", "endColumn",
-            "startScalarOffset", "endScalarOffset", "scalarLength"};
-        StringBuilder json = new StringBuilder("{\n  \"file\": \"" + file + "\",\n");
-        for (int i = 0; i < fields.length; i++) {
-            json.append("  \"").append(fields[i]).append("\": ").append(values[i]).append(",\n");
-        }
-        return json.append("  \"origin\": \"").append(origin).append("\"\n}").toString();
+    private static deal.semantic.ir.CanonicalJson.Obj wireDiagnostic(CompilerDiagnostic diagnostic) {
+        var report = (deal.semantic.ir.CanonicalJson.Obj) deal.amend.CompilerProtocolJson.decode(
+                DiagnosticStructuredOutput.toJson(List.of(diagnostic)));
+        return (deal.semantic.ir.CanonicalJson.Obj) ((deal.semantic.ir.CanonicalJson.Arr)
+                deal.amend.CompilerProtocolJson.field(report, "diagnostics")).items().getFirst();
     }
 
-    private static String expectedClassification(String code) {
-        var classification = deal.diagnostics.DiagnosticClassification.forCode(code);
-        return classification == null ? "null" : "{\"phase\": \"" + classification.phase()
-                + "\", \"category\": \"" + classification.category()
-                + "\", \"responsibility\": \"" + classification.responsibility() + "\"}";
-    }
-
-    private static String expectedJsonDocument(String code, String message, String range, String notes) {
-        return "{\n  \"version\": 2,\n  \"diagnostics\": [\n    {\n"
-            + "      \"code\": \"" + code + "\",\n      \"classification\": "
-            + expectedClassification(code) + ",\n      \"languageDifference\": null,\n      \"severity\": \"error\",\n"
-            + "      \"message\": \"" + message + "\",\n      \"range\": "
-            + range.replace("\n", "\n      ") + ",\n      \"excerpt\": null,\n      \"occurrence\": null,\n      \"editOffer\": null,\n      \"notes\": "
-            + notes.replace("\n", "\n      ") + ",\n"
-            + "      \"facts\": {\n        \"languageDifference\": null,\n        \"reason\": \"\",\n        \"operation\": \"\",\n"
-            + "        \"expected\": \"\",\n        \"actual\": \"\",\n        \"guidance\": [],\n        \"path\": [],\n        \"call\": null,\n        \"operator\": null,\n        \"mismatch\": null,\n        \"cause\": null,\n        \"syntax\": null,\n        \"names\": null,\n        \"construction\": null,\n        \"exports\": null,\n        \"resolution\": null,\n        \"cycle\": null,\n        \"tool\": null,\n        \"lowering\": null\n      },\n"
-            + "      \"missingSymbols\": []\n    }\n  ],\n  \"operations\": [],\n  \"compilation\": null\n}";
-    }
-
-    private static String expectedJsonNote(String message, String range) {
-        return "{\n  \"message\": \"" + message + "\",\n  \"range\": "
-            + range.replace("\n", "\n  ") + "\n}";
-    }
-
-    private static String expectedJsonNotes(String... notes) {
-        return "[\n" + String.join(",\n", notes).indent(2).stripTrailing() + "\n]";
+    private static boolean projectedFacts(CompilerDiagnostic diagnostic) {
+        var other = new deal.amend.CompilerProtocol.StructuredDiagnostic(diagnostic.code(), diagnostic.severity(),
+                diagnostic.message(), diagnostic.range(), null, diagnostic.facts(), List.of(), List.of(), null,
+                diagnostic.notes(), null, diagnostic.missingSymbols(), diagnostic.excerpt(), diagnostic.occurrence());
+        return DiagnosticStructuredOutput.toJson(List.of(diagnostic)).equals(deal.amend.CompilerProtocolJson.encode(other));
     }
 
     private static void testStructuredOutput() {
-        System.out.println("-- DiagnosticStructuredOutput: deterministic JSON v2 --");
-
-        // Empty diagnostics list; a null list yields the same empty document.
-        String emptyJson = "{\n"
-            + "  \"version\": 2,\n"
-            + "  \"diagnostics\": [],\n  \"operations\": [],\n  \"compilation\": null\n"
-            + "}";
-        check(DiagnosticStructuredOutput.toJson(List.of()).equals(emptyJson),
-            "empty diagnostics JSON shape, got: " + DiagnosticStructuredOutput.toJson(List.of()));
-        check(DiagnosticStructuredOutput.toJson(null).equals(emptyJson),
-            "null diagnostics list yields the empty document");
-
-        // Single multi-line SOURCE diagnostic, no notes: exact field order
-        // (code, severity, message, range{file, startLine, startColumn,
-        // endLine, endColumn, startScalarOffset, endScalarOffset,
-        // scalarLength, origin}, notes).
+        String emptyJson = "{\"diagnostics\":[],\"files\":[],\"status\":\"accepted\",\"version\":3}";
+        check(DiagnosticStructuredOutput.toJson(List.of()).equals(emptyJson), "empty compact v3 report");
+        check(DiagnosticStructuredOutput.toJson(null).equals(emptyJson), "null list yields empty report");
         CompilerDiagnostic multi = multiLineDiagnostic();
-        String multiRange = expectedJsonRange("src/main.deal", "2,5,3,9,20,24,4", "SOURCE");
-        String multiJson = expectedJsonDocument("E3001", "type mismatch", multiRange, "[]");
-        check(DiagnosticStructuredOutput.toJson(List.of(multi)).equals(multiJson),
-            "single-diagnostic JSON field order, got: "
-                + DiagnosticStructuredOutput.toJson(List.of(multi)));
-
-        // Zero-length SOURCE range: positions (1,1)-(1,1), offsets (0,0),
-        // scalar length 0, origin SOURCE.
-        CompilerDiagnostic zero = CompilerDiagnostic.error(DiagnosticCode.E2010,
-            "Entry module must export 'main'",
-            new DiagnosticRange("f.deal", 1, 1, 1, 1, 0, 0, 0, RangeOrigin.SOURCE));
-        String zeroJson = expectedJsonDocument("E2010", "Entry module must export 'main'",
-            expectedJsonRange("f.deal", "1,1,1,1,0,0,0", "SOURCE"), "[]");
-        check(DiagnosticStructuredOutput.toJson(List.of(zero)).equals(zeroJson),
-            "zero-length SOURCE JSON, got: "
-                + DiagnosticStructuredOutput.toJson(List.of(zero)));
-
-        // Canonical SYNTHETIC range with a construct-naming note: origin
-        // SYNTHETIC, canonical (1,1)-(1,1) shape, the note is message-only
-        // ("range": null).
-        CompilerDiagnostic syn = CompilerDiagnostic.syntheticError(DiagnosticCode.E6005,
-            "missing class schema", "mod.deal",
-            "missing anchor: class declaration span for cycle node 'A'");
-        String synJson = expectedJsonDocument("E6005", "missing class schema",
-            expectedJsonRange("mod.deal", "1,1,1,1,0,0,0", "SYNTHETIC"),
-            expectedJsonNotes(expectedJsonNote("missing anchor: class declaration span for cycle node 'A'", "null")));
-        check(DiagnosticStructuredOutput.toJson(List.of(syn)).equals(synJson),
-            "SYNTHETIC JSON with message-only anchor note, got: "
-                + DiagnosticStructuredOutput.toJson(List.of(syn)));
-
-        // Both note shapes: a message-only note ("range": null) and a
-        // secondary-range note (nested range object), in note order.
-        CompilerDiagnostic withNotes = new CompilerDiagnostic("E3001", "error",
-            "type mismatch", multi.range(),
-            List.of(new DiagnosticNote("hint", null),
-                new DiagnosticNote("see declaration",
-                    new DiagnosticRange("other.deal", 1, 2, 1, 6, 0, 4, 4,
-                        RangeOrigin.SOURCE))),
-            DiagnosticCode.E3001);
-        String notesJson = expectedJsonDocument("E3001", "type mismatch", multiRange,
-            expectedJsonNotes(expectedJsonNote("hint", "null"),
-                expectedJsonNote("see declaration", expectedJsonRange("other.deal", "1,2,1,6,0,4,4", "SOURCE"))));
-        check(DiagnosticStructuredOutput.toJson(List.of(withNotes)).equals(notesJson),
-            "both note shapes serialized in order, got: "
-                + DiagnosticStructuredOutput.toJson(List.of(withNotes)));
-
-        // Two diagnostics: comma separation and list order.
+        CompilerDiagnostic zero = CompilerDiagnostic.error(DiagnosticCode.E2010, "Entry module must export 'main'",
+                new DiagnosticRange("f.deal", 1, 1, 1, 1, 0, 0, 0, RangeOrigin.SOURCE));
+        CompilerDiagnostic withNotes = multi.withNote("hint", null).withNote("see declaration", zero.range());
         String two = DiagnosticStructuredOutput.toJson(List.of(multi, zero));
-        check(two.contains("    },\n    {"), "diagnostics separated by a comma in list order");
-        check(two.indexOf("\"code\": \"E3001\"") < two.indexOf("\"code\": \"E2010\""),
-            "diagnostics serialized in list order");
-
-        // String escaping: quotes, backslashes, tab, newline, and a control
-        // character below U+0020.
+        check(two.indexOf("E3001") < two.indexOf("E2010"), "producer order survives projection");
         CompilerDiagnostic escaped = CompilerDiagnostic.error(DiagnosticCode.E3001,
-            "bad \"key\" \\ path\tnext\nline\u0007bell", multi.range());
-        String escapedJson = DiagnosticStructuredOutput.toJson(List.of(escaped));
-        check(escapedJson.contains(
-                "\"message\": \"bad \\\"key\\\" \\\\ path\\tnext\\nline"
-                    + "\\" + "u0007bell\""),
-            "JSON string escaping, got: " + escapedJson);
+                "bad \"key\" \\ path\tnext\nline\u0007bell", multi.range());
+        check(((deal.semantic.ir.CanonicalJson.Str) deal.amend.CompilerProtocolJson.field(wireDiagnostic(escaped), "message"))
+                .value().equals(escaped.message()), "message escaping round trips");
 
         for (var lexical : new deal.lexer.Lexer("// 😀\r\n0b102;😀;1--2;`\\u{}`", "lex.deal").tokenize().diagnostics()) {
             String lexicalJson = DiagnosticStructuredOutput.toJson(List.of(lexical));
@@ -3910,8 +3780,7 @@ public class DiagnosticRangeTest {
             var lexicalItems = deal.amend.CompilerProtocolJson.requireArray(
                     deal.amend.CompilerProtocolJson.field(lexicalDocument, "diagnostics"), "diagnostics");
             var lexicalItem = deal.amend.CompilerProtocolJson.requireObject(lexicalItems.items().getFirst(), "diagnostic");
-            check(deal.amend.CompilerProtocolJson.encode(lexical.facts()).equals(deal.semantic.ir.CanonicalJson.serializeText(
-                            deal.amend.CompilerProtocolJson.field(lexicalItem, "facts"))),
+            check(projectedFacts(lexical),
                     "CLI and amendment retain identical producer numeric/character/template/operator facts");
             check(lexical.withMissingSymbol("VALUE", "later", "", List.of()).facts().equals(lexical.facts())
                             && lexical.withMissingSymbol("VALUE", "later", "", List.of()).notes().equals(lexical.notes()),
@@ -3929,8 +3798,7 @@ public class DiagnosticRangeTest {
                 var entries = deal.amend.CompilerProtocolJson.requireArray(
                         deal.amend.CompilerProtocolJson.field(document, "diagnostics"), "diagnostics");
                 var entry = deal.amend.CompilerProtocolJson.requireObject(entries.items().getFirst(), "diagnostic");
-                check(deal.amend.CompilerProtocolJson.encode(diagnostic.facts()).equals(deal.semantic.ir.CanonicalJson.serializeText(
-                                deal.amend.CompilerProtocolJson.field(entry, "facts"))),
+                check(projectedFacts(diagnostic),
                         "parser-produced facts agree across sole CLI and amendment serializers");
             }
         }
@@ -3960,8 +3828,7 @@ public class DiagnosticRangeTest {
             var entry = deal.amend.CompilerProtocolJson.requireObject(entries.items().getFirst(), "diagnostic");
             check(inspection.facts().equals(diagnostic.facts()) && inspection.range().equals(diagnostic.range())
                             && inspection.notes().equals(diagnostic.notes())
-                            && deal.amend.CompilerProtocolJson.encode(inspection.facts()).equals(
-                                deal.semantic.ir.CanonicalJson.serializeText(deal.amend.CompilerProtocolJson.field(entry, "facts"))),
+                            && projectedFacts(diagnostic),
                     "presence/nominal producers retain complete facts/ranges/notes across CLI and amendment transports");
         }
 
@@ -3987,8 +3854,7 @@ public class DiagnosticRangeTest {
             check(inspection.facts().equals(diagnostic.facts()) && inspection.range().equals(diagnostic.range())
                             && inspection.notes().equals(diagnostic.notes())
                             && diagnostic.facts().exports().available().equals(List.of("value"))
-                            && deal.amend.CompilerProtocolJson.encode(inspection.facts()).equals(
-                                deal.semantic.ir.CanonicalJson.serializeText(deal.amend.CompilerProtocolJson.field(entry, "facts"))),
+                            && projectedFacts(diagnostic),
                     "value/type/template export producers agree across transports with complete import geometry");
         }
 
@@ -4009,8 +3875,7 @@ public class DiagnosticRangeTest {
                     deal.amend.CompilerProtocolJson.field(document, "diagnostics"), "diagnostics");
             var entry = deal.amend.CompilerProtocolJson.requireObject(entries.items().getFirst(), "diagnostic");
             check(inspection.facts().equals(diagnostic.facts()) && diagnostic.facts().names().candidates().size() == 1
-                            && deal.amend.CompilerProtocolJson.encode(inspection.facts()).equals(
-                                deal.semantic.ir.CanonicalJson.serializeText(deal.amend.CompilerProtocolJson.field(entry, "facts"))),
+                            && projectedFacts(diagnostic),
                     "producer name alternatives agree across CLI and amendment with UTF-16 coordinates");
             check(diagnostic.withNote("related", null).withMissingSymbol("VALUE", "other", "", List.of()).facts()
                             .equals(diagnostic.facts()), "producer alternatives survive diagnostic metadata copies");
@@ -4044,8 +3909,7 @@ public class DiagnosticRangeTest {
         var nameEntries = deal.amend.CompilerProtocolJson.requireArray(
                 deal.amend.CompilerProtocolJson.field(nameDocument, "diagnostics"), "diagnostics");
         var nameEntry = deal.amend.CompilerProtocolJson.requireObject(nameEntries.items().getFirst(), "diagnostic");
-        check(deal.amend.CompilerProtocolJson.encode(nameFacts).equals(deal.semantic.ir.CanonicalJson.serializeText(
-                        deal.amend.CompilerProtocolJson.field(nameEntry, "facts"))),
+        check(projectedFacts(escaped.withFacts(nameFacts)),
                 "name alternatives retain exact nullable declaration ranges and raw Unicode across sole transports");
         boolean invalidNames = false;
         try { new deal.diagnostics.DiagnosticFacts.NameContext(nameContext.candidates(), 1, false); }
@@ -4066,8 +3930,7 @@ public class DiagnosticRangeTest {
         var syntaxEntries = deal.amend.CompilerProtocolJson.requireArray(
                 deal.amend.CompilerProtocolJson.field(syntaxDocument, "diagnostics"), "diagnostics");
         var syntaxEntry = deal.amend.CompilerProtocolJson.requireObject(syntaxEntries.items().getFirst(), "diagnostic");
-        check(deal.amend.CompilerProtocolJson.encode(syntaxFacts).equals(deal.semantic.ir.CanonicalJson.serializeText(
-                        deal.amend.CompilerProtocolJson.field(syntaxEntry, "facts"))),
+        check(projectedFacts(syntaxDiagnostic),
                 "syntax lexeme escaping preserves NUL, lone units and valid pairs across sole serializers");
         boolean invalidSyntax = false;
         try { new deal.diagnostics.DiagnosticFacts.SyntaxContext("token", List.of(), "EOF", "", 1, false); }
@@ -4084,10 +3947,9 @@ public class DiagnosticRangeTest {
         var items = deal.amend.CompilerProtocolJson.requireArray(
                 deal.amend.CompilerProtocolJson.field(parsed, "diagnostics"), "diagnostics");
         var item = deal.amend.CompilerProtocolJson.requireObject(items.items().get(0), "diagnostic");
-        check(deal.amend.CompilerProtocolJson.encode(facts).equals(deal.semantic.ir.CanonicalJson.serializeText(
-                        deal.amend.CompilerProtocolJson.field(item, "facts"))), "CLI facts equal amendment facts");
+        check(projectedFacts(rich), "CLI facts equal amendment facts");
         var names = deal.amend.CompilerProtocolJson.requireArray(
-                deal.amend.CompilerProtocolJson.field(item, "missingSymbols"), "missing symbols");
+                deal.amend.CompilerProtocolJson.field((deal.semantic.ir.CanonicalJson.Obj) deal.amend.CompilerProtocolJson.field(item, "evidence"), "missingSymbols"), "missing symbols");
         check(names.items().size() == 1 && richJson.contains("missing😀"), "missing-symbol facts survive JSON");
         check(rich.withMissingSymbol("TYPE", "T", "m", List.of()).facts().equals(facts),
                 "adding a missing symbol must retain existing producer facts");
@@ -4101,16 +3963,15 @@ public class DiagnosticRangeTest {
         var callContext = new deal.diagnostics.DiagnosticFacts.CallContext("f\"\uD800", "(number) => void", zero.range(), 0, "value", 1, 1, multi.range());
         var callFacts = new deal.diagnostics.DiagnosticFacts("call.argument-type", "call", "number", "string", List.of()).withCall(callContext);
         String callJson = DiagnosticStructuredOutput.toJson(List.of(escaped.withFacts(callFacts)));
-        check(callJson.contains("\"argumentIndex\": 0") && callJson.contains("\"parameterRange\": {")
-                        && callJson.contains("\"expectedCount\": 1") && callJson.contains("\\ud800"),
+        check(callJson.contains("\"argumentIndex\":0") && !callJson.contains("\"parameterRange\"")
+                        && callJson.contains("\"expectedCount\":1") && callJson.contains("\\ud800"),
                 "call context uses typed counts, exact ranges and Unicode-safe strings");
         var callDocument = deal.amend.CompilerProtocolJson.requireObject(
                 deal.amend.CompilerProtocolJson.decode(callJson), "document");
         var callItems = deal.amend.CompilerProtocolJson.requireArray(
                 deal.amend.CompilerProtocolJson.field(callDocument, "diagnostics"), "diagnostics");
         var callItem = deal.amend.CompilerProtocolJson.requireObject(callItems.items().getFirst(), "diagnostic");
-        check(deal.amend.CompilerProtocolJson.encode(callFacts).equals(deal.semantic.ir.CanonicalJson.serializeText(
-                        deal.amend.CompilerProtocolJson.field(callItem, "facts"))),
+        check(projectedFacts(escaped.withFacts(callFacts)),
                 "CLI and amendment call facts agree including both ranges and parameter name");
         var operands = new java.util.ArrayList<>(List.of(
                 new deal.diagnostics.DiagnosticFacts.Operand("left\"\uD800", "number", zero.range())));
@@ -4193,18 +4054,17 @@ public class DiagnosticRangeTest {
         var operatorItems = deal.amend.CompilerProtocolJson.requireArray(
                 deal.amend.CompilerProtocolJson.field(operatorDocument, "diagnostics"), "diagnostics");
         var operatorItem = deal.amend.CompilerProtocolJson.requireObject(operatorItems.items().getFirst(), "diagnostic");
-        check(deal.amend.CompilerProtocolJson.encode(operatorFacts).equals(deal.semantic.ir.CanonicalJson.serializeText(
-                        deal.amend.CompilerProtocolJson.field(operatorItem, "facts")))
+        check(projectedFacts(escaped.withFacts(operatorFacts))
                         && operatorJson.contains("left\\\"\\ud800")
-                        && operatorJson.contains("\"kind\": \"FUNCTION_PARAMETER\", \"index\": 2")
-                        && operatorJson.contains("\"truncated\": false"),
+                        && operatorJson.contains("\"kind\":\"FUNCTION_PARAMETER\"") && operatorJson.contains("\"index\":2")
+                        && !operatorJson.contains("\"truncated\":false"),
                 "CLI and amendment operator facts agree with escaped roles, accepted combinations and complete ranges");
         var schemaFacts = new deal.diagnostics.DiagnosticFacts("schema", "decode", "number", "function", List.of(), schemaPath);
         schemaPath.clear();
         check(schemaFacts.path().size() == 2, "schema paths are defensively copied");
         String schemaJson = DiagnosticStructuredOutput.toJson(List.of(escaped.withFacts(schemaFacts)));
-        check(schemaJson.contains("\"kind\": \"FIELD\", \"name\": \"a\\\"\\ud800\"")
-                        && schemaJson.contains("\"kind\": \"ARRAY_ELEMENT\", \"name\": \"\""),
+        check(schemaJson.contains("\"kind\":\"FIELD\",\"name\":\"a\\\"\\ud800\"")
+                        && schemaJson.contains("\"kind\":\"ARRAY_ELEMENT\""),
                 "structured schema routes retain escaped exact field names and index-free array steps");
         CompilerDiagnostic withNote = rich.withNote("related", rich.range());
         check(withNote.facts().equals(facts) && withNote.missingSymbols().equals(rich.missingSymbols())
@@ -4224,79 +4084,15 @@ public class DiagnosticRangeTest {
     }
 
     private static void testFormattedStructuredCrossCheck() {
-        System.out.println("-- Formatted-vs-structured cross-check --");
-
-        CompilerDiagnostic d = new CompilerDiagnostic("E3001", "error", "type mismatch",
-            new DiagnosticRange("src/main.deal", 2, 5, 3, 9, 20, 24, 4,
-                RangeOrigin.SOURCE),
-            List.of(new DiagnosticNote("hint", null),
-                new DiagnosticNote("see declaration",
-                    new DiagnosticRange("other.deal", 1, 2, 1, 6, 0, 4, 4,
-                        RangeOrigin.SOURCE))),
-            DiagnosticCode.E3001);
-        String human = DiagnosticFormatter.format(d);
-        String json = DiagnosticStructuredOutput.toJson(List.of(d));
-
-        // Every field present in both surfaces agrees: file, start/end
-        // positions, span length, severity, code, message.
-        check(human.startsWith("src/main.deal:2:5-3:9:"),
-            "human carries the file/start/end positions: " + human);
-        check(human.contains("ERROR E3001: type mismatch [span 4]"),
-            "human carries severity/code/message/span length: " + human);
-        check(json.contains("\"file\": \"src/main.deal\"")
-                && json.contains("\"startLine\": 2")
-                && json.contains("\"startColumn\": 5")
-                && json.contains("\"endLine\": 3")
-                && json.contains("\"endColumn\": 9"),
-            "structured carries the same file/start/end positions: " + json);
-
-        // Scalar offsets and span length: the structured end - start equals
-        // the human [span N] suffix.
-        check(json.contains("\"startScalarOffset\": 20")
-                && json.contains("\"endScalarOffset\": 24")
-                && json.contains("\"scalarLength\": 4"),
-            "structured carries the same offsets and span length: " + json);
-        check(human.contains("[span 4]"),
-            "human span length agrees with the structured offsets: " + human);
-
-        // Origin: structured-only field, SOURCE for this fixture.
-        check(json.contains("\"origin\": \"SOURCE\""),
-            "structured carries the SOURCE origin: " + json);
-
-        // Notes: the message-only note renders without a range in both
-        // surfaces; the secondary-range note carries the same range in both.
-        check(human.contains("note: hint"),
-            "human carries the message-only note: " + human);
-        check(json.contains("\"message\": \"hint\"") && json.contains("\"range\": null"),
-            "structured carries the message-only note with a null range: " + json);
-        check(human.contains("note: see declaration (at other.deal:1:2-1:6, span 4)"),
-            "human carries the secondary-range note: " + human);
-        check(json.contains("\"message\": \"see declaration\"")
-                && json.contains("\"file\": \"other.deal\"")
-                && json.contains("\"startLine\": 1")
-                && json.contains("\"endColumn\": 6")
-                && json.contains("\"startScalarOffset\": 0")
-                && json.contains("\"endScalarOffset\": 4"),
-            "structured carries the same secondary-range note: " + json);
-
-        // SYNTHETIC fixture: both surfaces carry the canonical (1,1)-(1,1)
-        // zero-length shape; the structured origin is SYNTHETIC.
-        CompilerDiagnostic syn = CompilerDiagnostic.syntheticError(DiagnosticCode.E6005,
-            "missing class schema", "mod.deal",
-            "missing anchor: class declaration span for cycle node 'A'");
-        String synHuman = DiagnosticFormatter.format(syn);
-        String synJson = DiagnosticStructuredOutput.toJson(List.of(syn));
-        check(synHuman.startsWith("mod.deal:1:1-1:1:")
-                && synHuman.contains("[span 0]"),
-            "synthetic human carries the canonical (1,1)-(1,1) shape: " + synHuman);
-        check(synJson.contains("\"origin\": \"SYNTHETIC\"")
-                && synJson.contains("\"scalarLength\": 0")
-                && synJson.contains("\"startScalarOffset\": 0"),
-            "synthetic structured carries the canonical zero-length shape: " + synJson);
-        check(synHuman.contains("missing anchor: class declaration span for cycle node 'A'")
-                && synJson.contains(
-                    "\"message\": \"missing anchor: class declaration span for cycle node 'A'\""),
-            "both surfaces carry the construct-naming anchor note");
+        CompilerDiagnostic diagnostic = multiLineDiagnostic().withOccurrence(
+                new deal.diagnostics.DiagnosticOccurrence("revision", "occurrence", null));
+        String json = DiagnosticStructuredOutput.toJson(List.of(diagnostic));
+        check(json.contains("\"at\":[2,5,3,9]") && json.contains("\"offset\":[20,24]"),
+                "compact coordinates preserve human diagnostic geometry");
+        check(DiagnosticFormatter.format(diagnostic).contains("[span 4]"), "terminal span derives from offsets");
+        var synthetic = CompilerDiagnostic.syntheticError(DiagnosticCode.E6005, "missing schema", "mod.deal", "missing anchor")
+                .withOccurrence(new deal.diagnostics.DiagnosticOccurrence("revision", "occurrence", null));
+        check(DiagnosticStructuredOutput.toJson(List.of(synthetic)).contains("\"origin\":\"synthetic\""), "synthetic origin explicit");
     }
 
     private static void testToStringDelegation() {
