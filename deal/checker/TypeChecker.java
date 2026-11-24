@@ -2398,7 +2398,9 @@ public final class TypeChecker {
         for (int i = 0; i < paramCount; i++) {
             Type paramType = funcType.paramTypes().get(i);
             Type argType = argTypes.get(i);
-            if (argType == Type.Error.INSTANCE) continue;
+            // An unresolved imported parameter already has a declaration diagnostic.
+            // Suppress only this dependent comparison; other arguments still check.
+            if (paramType == Type.Error.INSTANCE || argType == Type.Error.INSTANCE) continue;
             if (!isAssignable(paramType, argType)) {
                 if (!reportClassProviderCrossing(paramType, argType,
                         call.args().get(i).span())) {

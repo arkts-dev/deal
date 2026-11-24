@@ -170,6 +170,7 @@ public class DiagnosticRangeTest {
         testProducerSourceExcerpts();
         testRevisionScopedOccurrences();
         testSelectedIntrinsicCallNames();
+        testUnresolvedImportedParameterCascades();
         testCatchVariableIdentifierRange();
         testProgramSpanAnchorsCombined();
         testV12CornerCaseScalarCoordinatePins();
@@ -1475,6 +1476,83 @@ public class DiagnosticRangeTest {
         check(json.indexOf(occurrence.occurrenceId()) == json.lastIndexOf(occurrence.occurrenceId())
                         && !deal.amend.CompilerProtocolJson.encode(amended).contains(occurrence.occurrenceId()),
                 "wire occurrence indexes replace opaque occurrence hashes");
+    }
+
+    private static void testUnresolvedImportedParameterCascades() throws Exception {
+        Path tmp = Files.createTempDirectory("deal-call-cascade-");
+        try {
+            Path provider = tmp.resolve("provider.deal");
+            Path entry = tmp.resolve("main.deal");
+            String declaration = "export function consume(value: Missing, count: number): void { return; }\n";
+            String source = """
+                import * as p from "./provider";
+                class Present { value: number; }
+                export function main(): void {
+                  let value: Present = {value: 1};
+                  p.consume(value, 1);
+                  p.consume(value, 2);
+                  p.consume(value, "bad");
+                  p.consume(value);
+                  p.consume(1 - "bad", 3);
+                }
+                """;
+            Files.writeString(provider, declaration);
+            Files.writeString(entry, source);
+            var broken = compileCascadeFixture(entry, tmp.resolve("broken"), false);
+            check(broken.size() == 4,
+                "one unresolved annotation plus independent argument, arity and expression errors only: " + broken);
+            var unknown = firstCode(broken, "E3004");
+            check(unknown != null && unknown.message().contains("Missing")
+                    && unknown.range().file().equals(provider.toString()),
+                "the unresolved provider annotation retains its own diagnostic and origin");
+            check(broken.stream().noneMatch(d -> d.message().contains("<error>")),
+                "unresolved imported parameters produce no error-sentinel mismatches");
+            var mismatch = broken.stream().filter(d -> d.message().contains("expected number, got string"))
+                .findFirst().orElse(null);
+            check(mismatch != null && mismatch.code().equals("E5001")
+                    && mismatch.range().startLine() == 7
+                    && mismatch.facts().call().argumentIndex() == 1,
+                "a later resolved parameter retains its independent argument diagnostic and call facts");
+            check(broken.stream().anyMatch(d -> d.code().equals("E5001")
+                    && d.message().contains("argument count mismatch") && d.range().startLine() == 8),
+                "an unresolved parameter does not suppress independent arity checking");
+            check(broken.stream().filter(d -> d.code().equals("E3007")
+                    && d.range().startLine() == 9).count() == 1,
+                "the unresolved parameter's argument expression is still checked exactly once");
+            check(!Files.exists(tmp.resolve("broken/main.js")),
+                "an unresolved imported signature publishes no executable");
+
+            Files.writeString(provider, declaration.replace("Missing", "unknown"));
+            var repaired = compileCascadeFixture(entry, tmp.resolve("partial"), false);
+            check(repaired.size() == 3 && repaired.stream().noneMatch(d -> d.code().equals("E3004")),
+                "repairing the annotation removes only its root error, not independent call errors");
+            Files.writeString(entry, source.replace("\"bad\"", "3").replace("p.consume(value);", "p.consume(value, 4);"));
+            check(compileCascadeFixture(entry, tmp.resolve("accepted"), true).isEmpty(),
+                "repairing the independent arguments admits the same project");
+            check(Files.exists(tmp.resolve("accepted/main.js")),
+                "the repaired project publishes its executable");
+        } finally {
+            try (var paths = Files.walk(tmp)) {
+                for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) Files.deleteIfExists(path);
+            }
+        }
+    }
+
+    private static List<CompilerDiagnostic> compileCascadeFixture(Path entry, Path output,
+            boolean accepted) throws Exception {
+        var compiler = new CompilationOrchestrator(entry.toAbsolutePath(), output, false,
+            false, false, deal.codegen.Backend.JS, null,
+            List.of(entry.getParent().toAbsolutePath()), null);
+        PrintStream previousErr = System.err, previousOut = System.out;
+        try (var captured = new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8)) {
+            System.setErr(captured);
+            System.setOut(captured);
+            check(compiler.compile() == accepted, "cascade fixture retains expected compilation status");
+        } finally {
+            System.setErr(previousErr);
+            System.setOut(previousOut);
+        }
+        return compiler.diagnostics();
     }
 
     private static void testProducerSourceExcerpts() throws IOException {
