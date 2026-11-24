@@ -665,6 +665,70 @@ public class ClassConstructionValidatorTest {
             ClassConstructionValidator.CONSTRUCTION_COHERENCE);
     }
 
+    /** Indexing must retain every child in unit order, not payload or OpId order. */
+    private static void testBoundaryChildIndex() {
+        LoweredSlice lowered = lowerModule("""
+            class Point { x: number; y: number; }
+            let a: Point = {x: 1, y: 2};
+            let b: Point = {x: 3, y: 4};
+            let x: number = a.x;
+            b.y = x;
+            """);
+        var result = lowered == null ? null : lowered.result();
+        check(result != null && !result.lowering().hasErrors(),
+            "the multi-owner boundary slice lowers");
+        if (result == null || result.lowering().hasErrors()) return;
+        LoweredModuleUnit unit = result.lowering().unit();
+        List<SemanticOp> constructions = ofKind(unit, SemanticOpKind.CLASS_NEW);
+        check(constructions.size() == 2, "two constructions have separate boundary owners");
+        if (constructions.size() != 2) return;
+        SemanticOp owner = constructions.get(0);
+        List<SemanticOp> children = childrenOf(unit, owner);
+        check(children.size() == 2, "the first construction has two ordered children");
+        if (children.size() != 2) return;
+
+        // Interleave other parents' boundaries while retaining each parent's order.
+        List<SemanticOp> interleaved = new ArrayList<>();
+        for (SemanticOp op : unit.ops())
+            if (op.kind() != SemanticOpKind.BOUNDARY) interleaved.add(op);
+        Map<OpId, List<SemanticOp>> groups = new LinkedHashMap<>();
+        for (SemanticOp op : unit.ops())
+            if (op.kind() == SemanticOpKind.BOUNDARY)
+                groups.computeIfAbsent(op.origin().parentOpId(), key -> new ArrayList<>()).add(op);
+        for (int i = 0; ; i++) {
+            boolean added = false;
+            for (List<SemanticOp> group : groups.values()) if (i < group.size()) {
+                interleaved.add(group.get(i));
+                added = true;
+            }
+            if (!added) break;
+        }
+        check(ClassConstructionValidator.validate(unitWithOps(unit, interleaved),
+            result.lowering().table(), result.registry(), lowered.ownInterface(), Map.of()).isEmpty(),
+            "interleaved owners and unparented boundaries do not contaminate child lists");
+
+        List<SemanticOp> reversed = new ArrayList<>(interleaved);
+        java.util.Collections.swap(reversed, reversed.indexOf(children.get(0)),
+            reversed.indexOf(children.get(1)));
+        expectE6005(ClassConstructionValidator.validate(unitWithOps(unit, reversed),
+            result.lowering().table(), result.registry(), lowered.ownInterface(), Map.of()),
+            ClassConstructionValidator.CONSTRUCTION_COHERENCE);
+
+        List<SemanticOp> duplicated = new ArrayList<>(interleaved);
+        duplicated.add(children.get(0));
+        expectE6005(ClassConstructionValidator.validate(unitWithOps(unit, duplicated),
+            result.lowering().table(), result.registry(), lowered.ownInterface(), Map.of()),
+            ClassConstructionValidator.CONSTRUCTION_COHERENCE);
+
+        expectE6005(ClassConstructionValidator.validate(unitWithOps(unit,
+            replaceOp(unit, withParent(children.get(0), null))), result.lowering().table(),
+            result.registry(), lowered.ownInterface(), Map.of()),
+            ClassConstructionValidator.CONSTRUCTION_COHERENCE);
+        check(ClassConstructionValidator.validate(unit, result.lowering().table(),
+            result.registry(), lowered.ownInterface(), Map.of()).isEmpty(),
+            "a later validation rebuilds its index from the original unit");
+    }
+
     // =========================================================================
     // 4. FIELD_OPERATION_SHAPE negatives
     // =========================================================================
@@ -2080,6 +2144,7 @@ public class ClassConstructionValidatorTest {
             """);
         testFactoryNegatives(shared);
         testConstructionNegatives(shared);
+        testBoundaryChildIndex();
         testFieldOperationNegatives();
         testOptionalNullFieldReadArm();
         testFieldLayoutLinkOrigins();

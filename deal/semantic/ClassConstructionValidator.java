@@ -819,6 +819,9 @@ public final class ClassConstructionValidator {
         /** The unit's produced ops by {@link OpId} (pinned lookup). */
         private final Map<OpId, SemanticOp> opsById = new LinkedHashMap<>();
 
+        /** Boundary children in unit op order, indexed once rather than rescanned per owner. */
+        private final Map<OpId, List<SemanticOp>> boundariesByParent = new LinkedHashMap<>();
+
         private final Map<ClassId, ClassLayout> layoutContext = new LinkedHashMap<>();
 
         /**
@@ -843,6 +846,11 @@ public final class ClassConstructionValidator {
             this.ambiguousJsonPlanClassIds = Set.copyOf(ambiguousJsonPlanClassIds);
             for (SemanticOp op : unit.ops()) {
                 opsById.put(op.opId(), op);
+                if (op.kind() == SemanticOpKind.BOUNDARY
+                        && op.origin().parentOpId() != null) {
+                    boundariesByParent.computeIfAbsent(op.origin().parentOpId(),
+                        ignored -> new ArrayList<>()).add(op);
+                }
             }
             layoutContext.putAll(unit.classLayouts());
 
@@ -948,14 +956,7 @@ public final class ClassConstructionValidator {
 
         /** The boundary ops parented to one op, in unit op order. */
         private List<SemanticOp> boundaryChildren(SemanticOp owner) {
-            List<SemanticOp> children = new ArrayList<>();
-            for (SemanticOp op : unit.ops()) {
-                if (op.kind() == SemanticOpKind.BOUNDARY
-                        && owner.opId().equals(op.origin().parentOpId())) {
-                    children.add(op);
-                }
-            }
-            return children;
+            return boundariesByParent.getOrDefault(owner.opId(), List.of());
         }
 
         /** The shared factory facts of one imported class, or {@code null}. */
