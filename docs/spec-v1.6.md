@@ -327,13 +327,13 @@ export function main(): void {
 
 ```txt
 Type := null | undefined | boolean | number | string | unknown
-      | RecordValue | Error | ClassName | Array<Type> | ReadonlyArray<Type>
+      | UnknownRecord | StringRecord | Error | ClassName | Array<Type> | ReadonlyArray<Type>
       | Nullish<Base, flags> | Function(sync, params, result)
       | Function(async, params, result)
 Result := Type | void | never
 ```
 
-`RecordValue` spells `Record<string, unknown>`. Nullish flags add null/undefined to a base. Unknown accepts all data but authorizes no unchecked operations.
+`UnknownRecord` spells `Record<string, unknown>`; `StringRecord` spells `Record<string, string>`. Nullish flags add null/undefined to a base. Unknown accepts all data but authorizes no unchecked operations.
 
 ### Type grammar (normative)
 
@@ -346,7 +346,7 @@ NullishMember ::= 'null' | 'undefined'
 ArrayType ::= PrimaryType ('[' ']')* | 'readonly' PrimaryType ('[' ']')+
 
 PrimaryType ::= BuiltinType | Identifier | Identifier '.' Identifier | '(' Type ')'
- | 'Record' '<' 'string' ',' 'unknown' '>'
+ | 'Record' '<' 'string' ',' ('unknown' | 'string') '>'
 
 BuiltinType ::= 'null' | 'undefined' | 'boolean' | 'number' | 'string' | 'unknown' | 'Error'
 
@@ -493,7 +493,7 @@ Strings compare lexicographically by UTF-16 code-unit value; a proper prefix sor
 | `-a` where `a: number` | `number` |
 | any other unary `-` | error |
 | array literal `[e1, ..., eN]` | see [Array literals](#array-literals) |
-| record literal `{ p: e, ... }` | `Record<string, unknown>` with target context |
+| record literal `{ p: e, ... }` | contextual Record type |
 | class body `{ ... }` with target `ClassName` | `ClassName` (contextual) |
 | index `a[b]` where `a: T[]` or `readonly T[]`, `b: number` | `T` |
 | record member/index read | see [Records](#reading-and-writing-fields) |
@@ -638,7 +638,7 @@ Nested object literals receive their field's class target type; array elements f
 
 ### Class vs record
 
-Class types and `Record<string, unknown>` are distinct; no implicit conversion.
+Class and Record types are distinct; no implicit conversion.
 
 ```ts
 let u: User = { name: "Ada", address: { city: "A", zip: 1 }, tags: [], friends: [] };
@@ -819,7 +819,7 @@ const z = 1.0; // number inferred
 
 ### Inference rules
 
-Infer complete initializer types, including unknown from record reads; unresolved external signatures remain errors:
+Infer complete initializer types; unresolved external signatures remain errors:
 
 ```ts
 let a = null; // null
@@ -891,22 +891,19 @@ Other statements do not definitely return.
 
 ### Record type and semantics
 
-`Record<string, unknown>` is a string-keyed container with observable reference identity and absent/present-undefined/present-null states.
+Records have string keys, reference identity and persistent value descriptors. Literals and JSON reconstruction establish the target descriptor; literals assignment-check values and infer the target type. Existing value descriptors must equal the checked type's value descriptor. Descriptorless host Records acquire the target value descriptor (unknown under unknown admission) only after full validation.
 
 ```ts
-let data: Record<string, unknown> = { name: "Ada" };
-let value = data.name;             // unknown
-let name = value as string;        // checked, no coercion
-let missing = data.missing;        // unknown holding undefined
+let data: Record<string, string> = { name: "Ada" };
+let name = data.name; // string | undefined
 ```
 
 ### Reading and writing fields
 
-Member/string-index reads infer unknown regardless of context. Reject `let name: string = data.name;`; assert or narrow first. Calls require a checked function signature, preserving identity.
-
-Writes accept all data, including undefined/unknown, without a field schema or retagging stored values.
+Member/string-index reads infer unknown for `Record<string, unknown>`, `string | undefined` for `Record<string, string>`, regardless of context; absence yields undefined. Reads validate only the reached value. Writes assignment-check against the static value type and runtime-check against the stored descriptor before mutation.
 
 ```ts
+let data: Record<string, unknown> = {};
 data.name = undefined;             // present-undefined
 Object.hasOwn(data, "name");       // true
 delete data.name;
@@ -1402,11 +1399,11 @@ JSON.stringify(value: unknown): string | undefined
 
 A contextual target determines the call's result type and decoding schema. It comes from an annotated initializer, assignment destination, class field type, array element type, parameter type for an argument, or [function return type](#return-type-requirements). Parentheses preserve the target; literals and [conditional branches](#conditional) propagate their contextual types. An `as T` assertion does not supply a decoding target.
 
-Without a target, or with target `unknown`, the result has type `unknown` and contains ordinary parsed data: Records, arrays with unknown element descriptors, primitives or null.
+Without a target, or with target `unknown`, the result has type `unknown` and contains ordinary parsed data: `Record<string, unknown>`, arrays with unknown element descriptors, primitives or null.
 
 A decoding target containing function types is a compile-time error, including within optional fields; `unknown` stops schema traversal. Recursive class schemas are allowed; encoding follows [runtime cycle rejection](#json-encoding).
 
-Decode recursively without coercion. Records require objects; arrays require arrays and receive fresh storage with validated element descriptors. Classes require objects and follow [construction](#construction) field validation, decoding fields in declaration order into fresh nominal instances.
+Decode recursively without coercion. Records require objects; `Record<string, string>` additionally requires string values. Arrays require arrays and receive fresh storage with validated element descriptors. Classes require objects and follow [construction](#construction) field validation, decoding fields in declaration order into fresh nominal instances.
 
 ```ts
 class OpaqueRef { payload: unknown; }
@@ -1522,7 +1519,8 @@ Typed boundaries are:
 - class object literal construction
 - class value received from an untyped boundary
 - optional field read adding undefined for absence
-- checked `as T` extraction; raw record reads retain unknown
+- Record literal values, present-value reads and writes
+- checked `as T` extraction
 - value read from imported module member
 - value exposed through module export table
 - value crossing from host into DEAL through `.d.deal`
@@ -1537,7 +1535,7 @@ RuntimeTypeDescriptor := PrimitiveDescriptor | ClassDescriptor
                        | ArrayDescriptor | NullishDescriptor | FunctionDescriptor
 
 PrimitiveDescriptor :=
- "null" | "undefined" | "boolean" | "number" | "string" | "record" | "unknown" | "Error"
+ "null" | "undefined" | "boolean" | "number" | "string" | "record" | "record[string]" | "unknown" | "Error"
 
 ClassDescriptor :=
   "@" ModuleRoot "/" ModuleRelativePath "/" ClassName
@@ -1587,6 +1585,8 @@ async(number)->string // (x:number)=>Promise<string>
 async()->void // () => Promise<void>
 ```
 
+`record` and `record[string]` encode `Record<string, unknown>` and `Record<string, string>`, respectively.
+
 Nullish prefixes require a non-nullish/non-unknown base. Descriptors encode canonical types from [Type grammar](#type-grammar-normative). They are internal ABI text, not source syntax.
 
 ## Backend contracts
@@ -1604,7 +1604,7 @@ These representation mappings preserve, and cannot override, source semantics an
 | `boolean` | Lua boolean |
 | `number` | Lua number |
 | `string` | Lua string |
-| `Record<string, unknown>` | Lua table |
+| Records | Lua table |
 | `ClassName` | Lua table tagged with class symbol |
 | `T[]` / `readonly T[]` | Lua table with 1-based contiguous storage |
 | nullish / unknown | base value or applicable sentinel / validated tagged data |
@@ -1638,7 +1638,7 @@ Missing fields use nil/metadata; translate missing reads and void completion to 
 | `boolean` | primitive `boolean` |
 | `number` | primitive `double` |
 | `string` | non-null `java.lang.String` |
-| `Record<string, unknown>` | `DealTable` runtime object |
+| Records | `DealTable` runtime object |
 | `ClassName` | generated record class or `TClassObject` runtime shape |
 | `T[]` / `readonly T[]` | `DealArray<T>` runtime object or specialized primitive array |
 | nullish / unknown | nullable/tagged payload with distinct undefined / boxed validated data |
