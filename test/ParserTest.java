@@ -200,6 +200,19 @@ public class ParserTest {
     }
 
     private static void testConservativeTerminatorOffers() {
+        for (String expression : List.of("~1", "<number>1", "1n", "/pattern/u", "import(\"./module\")", "&1", "|1")) {
+            String source = "// 😀\r\nfunction f():void{return " + expression + ";} let after=1;";
+            var result = parse(source);
+            check(result.diagnostics().size() == 1 && result.diagnostics().getFirst().code().equals("E1042")
+                            && result.diagnostics().getFirst().facts().reason().startsWith("syntax.subset.")
+                            && result.diagnostics().getFirst().range().startScalarOffset() == source.indexOf(expression)
+                            && result.diagnostics().getFirst().facts().syntax().insertion() == null,
+                    "rejected return operand owns the diagnostic without a false terminator repair: " + result.diagnostics());
+            check(result.program().statements().size() == 2,
+                    "rejected return operand preserves following declaration: " + expression);
+        }
+        assertNoParseErrors(parse("function f(x:number):number{return ++x;}function g(x:number):number{return --x;}"),
+                "prefix updates are return operands, not invented statement boundaries");
         for (String source : List.of("let value=1 & 2;", "let value=1 | 2;", "let value=1!;",
                 "let value=1 satisfies number;", "let value=tag`text`;", "let value=new Model();")) {
             var result = parse(source);

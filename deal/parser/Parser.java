@@ -2837,11 +2837,13 @@ public final class Parser {
         };
     }
 
+    /** Include recognized rejected operands so their diagnostic owns return recovery. */
     private boolean canStartExpression(TokenType type) {
         return switch (type) {
             case NULL, TRUE, FALSE, NUMBER_LITERAL, STRING_LITERAL, TEMPLATE_LITERAL,
-                 IDENTIFIER, BANG, MINUS, LPAREN, LBRACKET, LBRACE,
-                 FUNCTION, AWAIT, ASYNC, AS, FROM, OF, TYPEOF -> true;
+                 IDENTIFIER, BANG, MINUS, INCREMENT, DECREMENT, LPAREN, LBRACKET, LBRACE,
+                 FUNCTION, AWAIT, ASYNC, AS, FROM, OF, TYPEOF,
+                 REJECTED_OPERATOR, AMPERSAND, PIPE, LT, REJECTED_BIGINT, SLASH, IMPORT -> true;
             default -> false;
         };
     }
