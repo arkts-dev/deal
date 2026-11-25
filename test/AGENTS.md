@@ -62,6 +62,8 @@ mutation hooks or let an assertion mask a later parameter/element failure.
   live traversal, growth/shrink/rewrites, sparse holes versus stored undefined,
   fresh shallow results, reached-only checks and source-index failures. Preserve
   mutation atomicity, malformed callable controls and same-carrier repair.
+  Array.isArray covers readonly/parsed/host carriers, nonarray kinds, unchanged
+  descriptors, no narrowing, once-only effects and ordinary admission before classification.
 - Scalars: binary64 specials/signed zero; executed Node references for numeric
   spelling and string conversion, including radix rounding/ties/subnormals.
   Whole-string grammar, direct-only signatures, UTF-16/NUL/lone units, pinned

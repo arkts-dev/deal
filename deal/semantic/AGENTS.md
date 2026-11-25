@@ -82,6 +82,10 @@ rules. String/Number conversions are checked number/string-only; intrinsic calle
 converts numbers before later fragment effects. Shared scalar rules live in
 NumberSemantics/StringSemantics; preserve binary64 specials and every UTF-16 unit.
 
+Array.isArray uses a direct-only STDLIB_CALL selector: ordinary unknown-parameter
+admission precedes array-kind classification; the algorithm never traverses elements,
+retags storage or narrows types. Every backend recognizes its admitted array carriers.
+
 Array lowering retains exact descriptors and ordinary boundary ownership:
 
 | Operation | Lowering contract |

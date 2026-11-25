@@ -3126,6 +3126,8 @@ private void emitBindingLoad(SemanticOp op) {
             } else if (payload.function() == StdlibFunctionId.NUMBER_TO_FIXED) {
                 emit(slotOf(op) + " = $rt.numberToFixed(" + callArguments.getFirst() + ", "
                     + callArguments.get(1) + ", " + spanArgs(op) + ");");
+            } else if (payload.function() == StdlibFunctionId.ARRAY_IS_ARRAY) {
+                emit(slotOf(op) + " = $rt.isArray(" + callArguments.getFirst() + ");");
             } else if (payload.function() == StdlibFunctionId.STRING_TO_NUMBER) {
                 emit(slotOf(op) + " = Number(" + callArguments.getFirst() + ");");
             } else if (payload.function() == StdlibFunctionId.STRING_SLICE) {

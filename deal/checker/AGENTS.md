@@ -103,7 +103,8 @@ or implicit extraction from unknown. Follow the specification/catalog for aritie
 
 - String(number) and Number(string) lower to NUMBER_TO_STRING/STRING_TO_NUMBER;
   neither performs general coercion. Numeric predicates accept unknown without
-  narrowing/coercion. Template interpolation admits checked string/number only.
+  narrowing/coercion. Array.isArray accepts unknown and returns boolean without
+  narrowing or supplying an array element context. Template interpolation admits checked string/number only.
 - String length is read-only. Omitted numeric positions/bounds differ from explicit
   undefined; preserve each selector's result type and exact argument checks.
 - Array push checks/adapts one element; pop returns optional element; splice takes

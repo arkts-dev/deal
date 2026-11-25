@@ -1,0 +1,56 @@
+// @spec: Standard library builtins — Array
+// @description: Array.isArray classifies admitted array identity without narrowing, retagging or coercion.
+// @expected: runtime-ok
+// @features: array, readonly, unknown, builtin, json
+
+class Box { value: number; }
+
+function check(ok: boolean): void {
+  if (!ok) { throw {name: "TEST", message: "Array.isArray"}; }
+}
+
+export function run(): void {
+  let xs: number[] = [1, 2];
+  let view: readonly unknown[] = xs;
+  check(Array.isArray(xs) && Array.isArray(view));
+  let empty: number[] = [];
+  check(Array.isArray(empty) && Array.isArray([[1]]));
+  let readonlyEmpty: readonly string[] = [];
+  check(Array.isArray(readonlyEmpty));
+  let hide = (v: unknown): unknown => v;
+  let boxed = hide(xs);
+  check(Array.isArray(boxed));
+  let recovered = boxed as number[];
+  recovered[0] = 3;
+  check(xs[0] === 3 && recovered === xs);
+  let failed = false;
+  try { let wrong = boxed as string[]; } catch (e) { failed = true; }
+  check(failed && xs[0] === 3);
+  check(Array.isArray(JSON.parse("[]")) && Array.isArray(JSON.parse("[1,null,{}]")));
+  check(!Array.isArray(JSON.parse("{}")) && !Array.isArray(JSON.parse("null")));
+  let parsed: number[] = JSON.parse("[4]");
+  let parsedView: readonly unknown[] = parsed;
+  check(Array.isArray(parsedView) && parsed[0] === 4);
+  let unknownParsed = hide(JSON.parse("[]"));
+  check(Array.isArray(unknownParsed));
+  failed = false;
+  try { let wrong = unknownParsed as number[]; } catch (e) { failed = true; }
+  check(failed);
+  let record: Record<string, unknown> = {length: 0};
+  let strings: Record<string, string> = {a: "b"};
+  let object: Box = {value: 1};
+  let error: Error = {name: "TEST", message: "value"};
+  let fn = (): number => 1;
+  let others: unknown[] = [null, undefined, false, true, 0, -0, 0/0, 1/0, "", "[]", record, strings, object, error, fn];
+  for (let value of others) { check(!Array.isArray(value)); }
+  let count = 0;
+  let once = (): unknown => { count = count + 1; return xs; };
+  check(Array.isArray(once()) && count === 1);
+  let destination = false;
+  let stop: Error = {name: "STOP", message: "argument"};
+  let abrupt = (): unknown => { count = count + 1; throw stop; };
+  try { destination = Array.isArray(abrupt()); } catch (e) { check((e as Error) === stop); }
+  check(!destination && count === 2);
+}
+
+export function main(): void { run(); }

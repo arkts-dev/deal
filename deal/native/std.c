@@ -101,7 +101,8 @@ static const deal_std_operation deal_std_operations[DEAL_STDLIB_OPERATION_COUNT]
     { deal_std_parameters_string, 1u, "string" },            /* STRING_TO_UPPER_CASE */
     { deal_std_parameters_string, 1u, "number" },            /* STRING_TO_NUMBER */
     { deal_std_parameters_numbers, 2u, "number" },           /* MATH_POW */
-    { deal_std_parameters_numbers, 2u, "string" }            /* NUMBER_TO_FIXED */
+    { deal_std_parameters_numbers, 2u, "string" },           /* NUMBER_TO_FIXED */
+    { deal_std_parameters_unknown, 1u, "boolean" }           /* ARRAY_IS_ARRAY */
 };
 
 /* Exact decimal integer expansion, rounded once at the requested decimal place.
@@ -839,6 +840,8 @@ static deal_data deal_std_evaluate(uint32_t operation_id,
         double rounded = value - base < 0.5 ? base : base + 1.0;
         return deal_data_of_number(rounded == 0.0 && value < 0.0 ? -0.0 : rounded);
     }
+    case DEAL_STDLIB_ARRAY_IS_ARRAY:
+        return deal_data_of_boolean(arguments[0].datum.tag == DEAL_DATA_ARRAY);
     case DEAL_STDLIB_NUMBER_IS_FINITE:
         return deal_data_of_boolean(arguments[0].datum.tag == DEAL_DATA_NUMBER
             && isfinite(arguments[0].datum.number));
@@ -888,7 +891,7 @@ deal_outcome_data deal_std_call(uint32_t operation_id,
     for (uint32_t index = 0; index < argument_count; index += 1u) {
         deal_descriptor *expected =
             deal_descriptor_intern(operation->parameters[index]);
-        deal_outcome checked = deal_check_value(expected, arguments[index],
+        deal_outcome checked = deal_check_live_value(expected, arguments[index],
             DEAL_BOUNDARY_TYPE_DESCRIPTOR, &context);
         if (checked.error != NULL) {
             outcome.error = checked.error;

@@ -330,8 +330,8 @@ public class StdlibCallLoweringTest {
     static void testPolicyTableSingleSource() {
         System.out.println("-- Single source: SemanticIrValidator.stdlibPolicy --");
 
-        check(StdlibFunctionId.values().length == 34,
-            "the closed StdlibFunctionId enum has exactly 34 values");
+        check(StdlibFunctionId.values().length == 35,
+            "the closed StdlibFunctionId enum has exactly 35 values");
         for (StdlibFunctionId function : StdlibFunctionId.values()) {
             check(SemanticIrValidator.stdlibPolicy(function) == expectedPolicy(function),
                 "stdlibPolicy(" + function + ") = "
@@ -424,6 +424,7 @@ public class StdlibCallLoweringTest {
                       let max: number = Math.max(1,2);
                       let power: number = Math.pow(2,3);
                       let round: number = Math.round(-0.5);
+                      let array: boolean = Array.isArray(t);
                       let finite: boolean = Number.isFinite(t);
                       let nan: boolean = Number.isNaN(0/0);
                       let tail: string = "abc".slice(-2,3);

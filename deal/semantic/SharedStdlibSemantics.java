@@ -507,6 +507,7 @@ public final class SharedStdlibSemantics {
                 yield new Outcome.Success<>(new Value.Number(!Double.isFinite(value) || value == floor ? value
                     : rounded == 0 ? Math.copySign(0.0, value) : rounded));
             }
+            case ARRAY_IS_ARRAY -> new Outcome.Success<>(new Value.Bool(argv.get(0) instanceof Value.Array));
             case NUMBER_IS_FINITE -> new Outcome.Success<>(new Value.Bool(argv.get(0) instanceof Value.Number n && Double.isFinite(n.value())));
             case NUMBER_IS_NAN -> new Outcome.Success<>(new Value.Bool(argv.get(0) instanceof Value.Number n && Double.isNaN(n.value())));
             case TIME_NOW_MILLIS -> timeNowMillis(origin, clock);
@@ -520,7 +521,7 @@ public final class SharedStdlibSemantics {
     private static int declaredArity(StdlibFunctionId function) {
         return switch (function) {
             case TIME_NOW_MILLIS -> 0;
-            case STRING_TO_NUMBER, CONSOLE_LOG, CONSOLE_ERROR, STRING_TO_LOWER_CASE, STRING_TO_UPPER_CASE, STRING_LENGTH, STRING_TRIM, TABLE_KEYS, JSON_PARSE, JSON_STRINGIFY, MATH_FLOOR, MATH_CEIL, MATH_SQRT, MATH_ABS_NUMBER, MATH_ROUND, NUMBER_IS_FINITE, NUMBER_IS_NAN -> 1;
+            case ARRAY_IS_ARRAY, STRING_TO_NUMBER, CONSOLE_LOG, CONSOLE_ERROR, STRING_TO_LOWER_CASE, STRING_TO_UPPER_CASE, STRING_LENGTH, STRING_TRIM, TABLE_KEYS, JSON_PARSE, JSON_STRINGIFY, MATH_FLOOR, MATH_CEIL, MATH_SQRT, MATH_ABS_NUMBER, MATH_ROUND, NUMBER_IS_FINITE, NUMBER_IS_NAN -> 1;
             case STRING_CONTAINS, STRING_STARTS_WITH, STRING_ENDS_WITH, STRING_SPLIT, MATH_MIN, MATH_MAX, MATH_POW, NUMBER_TO_FIXED -> 2;
             case STRING_SUBSTRING, STRING_SLICE, STRING_REPLACE, STRING_INCLUDES_POSITION,
                  STRING_STARTS_WITH_POSITION, STRING_ENDS_WITH_POSITION, STRING_INDEX_OF, STRING_LAST_INDEX_OF -> 3;

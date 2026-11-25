@@ -73,6 +73,57 @@ public final class Language16RuntimeTest {
             .filter(e -> e.key().equals("payload")).findFirst().orElseThrow().value();
     }
 
+    private static void arrayIsArray() throws Exception {
+        Path root = Files.createTempDirectory("deal-array-is-array-");
+        String source = Files.readString(Path.of("test/conformance/backend-runtime/arrays/is-array.deal"));
+        CompositionProductionTest.execute(source, "", "", root, null,
+            List.of(deal.codegen.Backend.JS, deal.codegen.Backend.LUAJIT, deal.codegen.Backend.JVM, deal.codegen.Backend.LLVM), Map.of(), true);
+        Path entry = root.resolve("JS/src/main.deal");
+        var invocation = deal.semantic.CompilerProfileProvider.resolve(deal.semantic.ReleaseConfiguration.CURRENT_RELEASE_STATE,
+            deal.semantic.ReleaseConfiguration.releaseCapabilityRegistry());
+        var compiler = new deal.module.CompilationOrchestrator(entry, root.resolve("oracle"), false, false, false, false,
+            deal.codegen.Backend.JS, null, List.of(entry.getParent()), Path.of("").toAbsolutePath(), null, invocation);
+        if (!compiler.compile()) throw new AssertionError(compiler.diagnostics());
+        var project = compiler.producedProject();
+        var tables = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.StructuredBodyTable>();
+        var factories = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.ClassFactoryRegistry>();
+        project.modules().forEach((id, unit) -> { tables.put(id, unit.bodyTable()); factories.put(id, unit.classFactories()); });
+        var result = deal.semantic.SemanticOracle.invokeSyncEntry(project, tables, factories,
+            new deal.semantic.SemanticOracle.HostResponder() {}, project.entryModule(), "run", List.of());
+        if (!(result.terminal() instanceof deal.semantic.SemanticRuntimeModel.Terminal.Success))
+            throw new AssertionError("Array.isArray Oracle: " + result.comparisonReport());
+
+        Path host = Files.createTempDirectory("deal-is-array-host-");
+        for (String extension : List.of("d.deal", "js", "lua", "java", "c"))
+            Files.copy(Path.of("test/conformance/host-fixtures/array_pop." + extension), host.resolve("probe." + extension));
+        CompositionProductionTest.execute("""
+            import * as host from "host/probe";
+            function check(ok:boolean,label:string):void {if(!ok){throw {name:"FAIL",message:label};}}
+            export function main():void {
+              let xs=host.make();
+              let alias:readonly unknown[]=xs;
+              check(Array.isArray(xs) && Array.isArray(host.echo(xs)) && Array.isArray(alias),"host array kinds");
+              let callbacks:(()=>number)[]=[():number=>7];
+              host.poison(callbacks[0]);
+              let destination=false;
+              let failed=false;
+              try {destination=Array.isArray(callbacks);}catch(e){failed=true;}
+              check(failed && !destination,"unknown admission rejects corrupt callable");
+              host.restoreFunction();
+              check(Array.isArray(callbacks) && callbacks[0]()===7,"repair");
+              check(Array.isArray(xs) && Array.isArray(alias) && xs[1]===9,"array aliases");
+              let boxed=host.echo(xs);
+              check(Array.isArray(boxed),"unknown host result");
+              let recovered=boxed as number[];
+              check(recovered===xs,"identity");
+              failed=false;
+              try {let wrong=boxed as string[];}catch(e){failed=true;}
+              check(failed,"descriptor preservation");
+            }
+            """, "", "", Files.createTempDirectory("deal-is-array-hosts-"), host,
+            List.of(deal.codegen.Backend.JS, deal.codegen.Backend.LUAJIT, deal.codegen.Backend.JVM, deal.codegen.Backend.LLVM), Map.of(), true);
+    }
+
     private static void stringRecords() throws Exception {
         Path root=Files.createTempDirectory("deal-string-records-");
         String source="""
@@ -429,6 +480,7 @@ public final class Language16RuntimeTest {
                 if (!expected.code.equals("E8001")) throw new AssertionError(expected);
             }
         }
+        arrayIsArray();
         stringRecords();
         stringRecordRuntimeAdmission();
         stringRecordHosts();

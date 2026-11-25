@@ -1970,6 +1970,10 @@ const $rt = {
 
   // The is-members are total: WeakSet.has never throws and returns false
   // for primitives and non-members (js-backend-runtime-artifact D2).
+  isArray: function $isArray(v) {
+    return $Array.isArray(v) || $jsonArrayTables.has(v);
+  },
+
   isJsonArrayTable: function $isJsonArrayTable(v) {
     return $jsonArrayTables.has(v);
   },

@@ -2830,6 +2830,7 @@ case "NUMBER_ADD" -> {
                     double rounded = value - floor < 0.5 ? floor : floor + 1.0;
                     return rounded == 0 ? Math.copySign(0.0, value) : rounded;
                 }
+                case "ARRAY_IS_ARRAY" -> { return args[0] instanceof Array; }
                 case "NUMBER_IS_FINITE" -> { return args[0] instanceof Number n && Double.isFinite(n.doubleValue()); }
                 case "NUMBER_IS_NAN" -> { return args[0] instanceof Number n && Double.isNaN(n.doubleValue()); }
                 case "TIME_NOW_MILLIS" -> {

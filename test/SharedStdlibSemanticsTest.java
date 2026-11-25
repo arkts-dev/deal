@@ -1463,6 +1463,7 @@ public class SharedStdlibSemanticsTest {
             new Seed(StdlibFunctionId.MATH_MAX, List.of(new Value.Number(1), new Value.Number(2)), new Value.Number(2)),
             new Seed(StdlibFunctionId.MATH_POW, List.of(new Value.Number(-2), new Value.Number(3)), new Value.Number(-8)),
             seed(StdlibFunctionId.MATH_ROUND, new Value.Number(-0.5), new Value.Number(-0.0)),
+            seed(StdlibFunctionId.ARRAY_IS_ARRAY, Value.array(new Value.Number(1)), new Value.Bool(true)),
             seed(StdlibFunctionId.NUMBER_IS_FINITE, new Value.Table(table), new Value.Bool(false)),
             seed(StdlibFunctionId.NUMBER_IS_NAN, new Value.Number(Double.NaN), new Value.Bool(true)),
             new Seed(StdlibFunctionId.STRING_INCLUDES_POSITION,
@@ -1527,6 +1528,7 @@ public class SharedStdlibSemanticsTest {
                       let max: number = Math.max(1,2);
                       let power: number = Math.pow(-2,3);
                       let round: number = Math.round(-0.5);
+                      let array: boolean = Array.isArray([1]);
                       let finite: boolean = Number.isFinite(t);
                       let nan: boolean = Number.isNaN(0/0);
                       let tail: string = "abc".slice(-2,3);
@@ -1926,6 +1928,20 @@ public class SharedStdlibSemanticsTest {
     }
 
     private static void testNumericBuiltins(LoweredModuleUnit unit) {
+        var arrayOp = stdlibOpBy(unit, StdlibFunctionId.ARRAY_IS_ARRAY);
+        for (Value value : List.<Value>of(Value.Null.INSTANCE, Value.Undefined.INSTANCE,
+                new Value.Bool(false), new Value.Number(0), Value.string("[]"),
+                new Value.Table(new SemanticTable<>())))
+            expectSuccess(SharedStdlibSemantics.execute(arrayOp, List.of(value), null),
+                new Value.Bool(false), "isArray nonarray " + value.actualKind());
+        var unobserved = deal.semantic.ir.SemanticArray.<Value>live(
+            () -> { throw new AssertionError("isArray read length"); },
+            i -> { throw new AssertionError("isArray read element"); });
+        var array = new Value.Array(unobserved, RuntimeDescriptor.Number.INSTANCE);
+        expectSuccess(SharedStdlibSemantics.execute(arrayOp, List.of(array), null),
+            new Value.Bool(true), "isArray classifies admitted storage without traversal");
+        check(array.elementDescriptor() == RuntimeDescriptor.Number.INSTANCE,
+            "isArray leaves the persistent descriptor unchanged");
         double[] numbers = {Double.NaN, Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY,
             -0.0, 0.0, -Double.MIN_VALUE, Double.MIN_VALUE, -2.5, -1.5, -0.5,
             -0.5000000000000001, 0.49999999999999994, 0.5, 1.5, 2.5,

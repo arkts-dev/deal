@@ -157,6 +157,14 @@ public final class Language16FrontendTest {
         check("function f():number{return Math.floor(1.5)+Math.ceil(1.5)+Math.abs(-2)+Math.sqrt(4)+Date.now();}", true);
         check("function f():void{console.log(\"x\");console.error(\"y\");}", true);
         check("function f(x:unknown):boolean{return Number.isFinite(x)&&Number.isNaN(x);}", true);
+        check("function f(x:unknown):boolean{return Array.isArray(x);}", true);
+        check("function f(xs:readonly number[]):boolean{return Array.isArray(xs)&&Array.isArray(JSON.parse(\"[]\"));}", true);
+        for (String expression : List.of("Array.isArray", "Array.isArray()", "Array.isArray(1,2)", "Array.isArray(console.log(\"x\"))"))
+            check("function f():void{" + expression + ";}", false);
+        check("function f(x:unknown):number{if(Array.isArray(x)){return x.length;}return 0;}", false);
+        check("function f(x:unknown):unknown[]{if(Array.isArray(x)){return x;}return [];}", false);
+        check("function f():number{return Array.isArray([1]);}", false);
+        check("function f():boolean{return Array.isArray({x:1});}", true);
         check("function f():string{return (1.25).toFixed(2);}", true);
         for (String expression : List.of("(1).toFixed()", "(1).toFixed(1,2)", "(1).toFixed(true)", "(1).toFixed", "\"1\".toFixed(2)"))
             check("function f():void{" + expression + ";}", false);

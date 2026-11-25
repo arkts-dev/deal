@@ -11739,6 +11739,9 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
     if v - base >= 0.5 then result = base + 1 end
     if result == 0 and v < 0 then return -0.0 end
     return result
+  elseif fn == "ARRAY_IS_ARRAY" then
+    local v = __args[1]
+    return type(v) == "table" and rawget(v, __dealCarrierKeys.a) == true
   elseif fn == "NUMBER_IS_FINITE" then
     local v = __args[1]
     return type(v) == "number" and v == v and v ~= math.huge and v ~= -math.huge
