@@ -141,6 +141,10 @@ size_t deal_container_array_trace(const deal_array *array, size_t position,
 /* An empty insertion-ordered record. */
 deal_table *deal_container_table_new(void);
 
+/* Persistent value descriptor atom reference; zero denotes descriptorless host storage. */
+uint32_t deal_container_table_value_descriptor(const deal_table *table);
+void deal_container_table_set_descriptor(deal_table *table, uint32_t descriptor);
+
 /* The number of present keys (null- and undefined-valued keys included). */
 size_t deal_container_table_count(const deal_table *table);
 

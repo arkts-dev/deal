@@ -24,7 +24,11 @@ Optional absence becomes undefined, never null. Typed/raw/text surfaces consume
 identical complete facts; supplied companion views must match owned records.
 Carry active profiles through admission/comparisons/context hashes; update digests
 and serialization together. Canonical record, diagnostic table and JSON-plan tokens
-remain distinct dialects.
+remain distinct dialects. Closed Record variants carry persistent unknown/string
+value descriptors through construction, JSON, views and host crossings. Existing
+storage cannot upgrade or erase its descriptor; descriptorless admission stages
+metadata until the complete check succeeds. Present reads check only the reached
+value; writes validate the stored descriptor before mutation.
 
 ## Bindings and control
 

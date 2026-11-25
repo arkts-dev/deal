@@ -158,7 +158,7 @@ local __CARRIER_KEYS = rawget(_G, "__dealCarrierKeys")
 if __CARRIER_KEYS == nil then
   __CARRIER_KEYS = {
     kind = {}, classname = {}, c = {}, id = {}, p = {}, f = {}, d = {},
-    elementDescriptor = {}, a = {}, n = {}, nK = {}, da = {}, t = {}, keys = {}, order = {},
+    recordDescriptor = {}, elementDescriptor = {}, a = {}, n = {}, nK = {}, da = {}, t = {}, keys = {}, order = {},
     fn = {}, csig = {}, sig = {}, fid = {}, it = {}, sid = {}, val = {},
     mode = {}, jn = {}, jo = {}, ja = {}, jkeys = {}, jnum = {}, jseen = {},
     ptr = {},
@@ -649,7 +649,9 @@ function __rt.typed_kind(v)
 end
 
 local validation_child, validation_failure
-function __rt.validate_data(root, file, line, column, path)
+function __rt.validate_data(root, file, line, column, path, recordPlan)
+  local ownsPlan=recordPlan==nil
+  recordPlan=recordPlan or {}
   local pending, seen = {{value=root,path=path}}, {}
   local function reject(v)
     error(__rt._armErr("TYPED_BOUNDARY_KIND", {kind = "unknown"}, "E8001", "unsupported unknown ingress",
@@ -659,6 +661,7 @@ function __rt.validate_data(root, file, line, column, path)
     local frame = table.remove(pending)
     local v = frame.value
     local ok, failure = pcall(function()
+    if frame.string then __rt.check_string(v,file,line,column) end
     if v == __rt.__NULL or v == __rt.__UNDEFINED or v == __rt.__MISSING then
     elseif type(v) == "string" then __rt.check_string(v, file, line, column)
     elseif type(v) == "number" or type(v) == "boolean" then
@@ -669,6 +672,7 @@ function __rt.validate_data(root, file, line, column, path)
           and rawget(v, __K.c) == nil and rawget(v, __K.d) == nil
           and rawget(v, __K.fn) == nil and rawget(v, __K.f) == nil then reject(v) end
       local kind = __rt.typed_kind(v)
+      if kind == "table" and rawget(v,__K.recordDescriptor) == nil and recordPlan[v]==nil then recordPlan[v]="unknown" end
       if kind == "async-operation" then reject(v) end
       if kind == "function" and not __rt.valid_function(v) then reject(v) end
       if rawget(v, __K.d) or v[__K.classname] == "Error" then
@@ -680,10 +684,32 @@ function __rt.validate_data(root, file, line, column, path)
         if not messageOk then validation_failure(messageFailure,validation_child(frame.path,"message"),false);error(messageFailure,0) end
       end
       if kind ~= "function" and not rawget(v, __K.jn) then
+        if (rawget(v,__K.recordDescriptor) or recordPlan[v])=="string" then
+          local keys, included = {}, {}
+          for _,key in ipairs(rawget(v,__K.order) or {}) do
+            if rawget(v,key)~=nil or rawget(v,__K.keys) and rawget(v,__K.keys)[key] then
+              keys[#keys+1]=key;included[key]=true
+            end
+          end
+          for key in next,v do
+            if type(key)=="string" then
+              if not included[key] then keys[#keys+1]=key end
+            else
+              local private=false
+              for _,carrierKey in pairs(__K) do if key==carrierKey then private=true;break end end
+              if not private then reject(v) end
+            end
+          end
+          for i=#keys,1,-1 do
+            local key=keys[i];local child=validation_child(frame.path,key)
+            pending[#pending+1]={value=rawget(v,key),path=child,string=true}
+            pending[#pending+1]={value=key,path=child,string=true}
+          end
+        else
         for key, member in next, v do
           if type(key) == "string" then
             __rt.check_string(key, file, line, column)
-            pending[#pending + 1] = {value=member,path=validation_child(frame.path,key)}
+            pending[#pending + 1] = {value=member,path=validation_child(frame.path,key),string=(rawget(v,__K.recordDescriptor) or recordPlan[v])=="string"}
           elseif type(key) == "number" then
             if not rawget(v, __K.a) and not rawget(v, __K.ja) then reject(v) end
             pending[#pending + 1] = {value=member,path=validation_child(frame.path,tostring(key-1))}
@@ -693,15 +719,17 @@ function __rt.validate_data(root, file, line, column, path)
             if not private then reject(v) end
           end
         end
+        end
       end
     end
     end)
     if not ok then validation_failure(failure,frame.path,false);error(failure,0) end
   end
+  if ownsPlan then for v,descriptor in pairs(recordPlan) do rawset(v,__K.recordDescriptor,descriptor) end end
   return root
 end
 
-function __rt.check_table(v, file, line, column, path)
+function __rt.check_table(v, file, line, column, path, recordPlan)
   -- The strict table split: the language-null sentinel is not a table, the
   -- internal absent marker is not a table, and a produced carrier of
   -- another kind (a class instance, a function wrapper,
@@ -726,7 +754,7 @@ function __rt.check_table(v, file, line, column, path)
     error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "table" }, "E8001",
       "expected table", file, line, column, "table", projected))
   end
-  return __rt.validate_data(v, file, line, column, path)
+  return __rt.validate_data(v, file, line, column, path, recordPlan)
 end
 
 -- ===== Composite type checks (canonical boundary) =====
@@ -803,7 +831,7 @@ end
 -- the canonical parser accepts no legacy spelling at any point.
 
 local CANONICAL_PRIMITIVES = {
-  "null", "undefined", "unknown", "void", "never", "boolean", "number", "string", "record",
+  "null", "undefined", "unknown", "void", "never", "boolean", "number", "string", "record[string]", "record",
 }
 
 --- Strict canonical recursive-descent parser (total; never throws).
@@ -1173,8 +1201,18 @@ local function check_canonical_ast_inner(ast, v, file, line, column, seen, path)
       return __rt.check_number(v, file, line, column)
     elseif name == "string" then
       return __rt.check_string(v, file, line, column)
-    elseif name == "record" then
-      return __rt.check_table(v, file, line, column, path)
+    elseif name == "record" or name == "record[string]" then
+      local descriptor = name == "record[string]" and "string" or "unknown"
+      local stored = type(v) == "table" and (rawget(v,__K.recordDescriptor) or seen.recordPlan[v])
+      if stored ~= nil and stored ~= descriptor then
+        error(__rt._armErr("TYPED_BOUNDARY_KIND", {kind="table"}, "E8001", "expected table",
+          file,line,column,"table",__rt.typed_kind(v)),0)
+      end
+      if type(v)=="table" and __rt.typed_kind(v)=="table" and rawget(v,__K.recordDescriptor)==nil then
+        seen.recordPlan[v]=descriptor
+      end
+      __rt.check_table(v, file, line, column, path, seen.recordPlan)
+      return v
     elseif name == "never" then
       error(__rt._armErr("TYPED_BOUNDARY_KIND", {kind="never"}, "E8001", "expected never",
         file, line, column, "never", __rt.typed_kind(v)), 0)
@@ -1183,12 +1221,12 @@ local function check_canonical_ast_inner(ast, v, file, line, column, seen, path)
       error(__rt._armErr("TYPED_BOUNDARY_KIND", {kind = "undefined"}, "E8001", "expected undefined",
         file, line, column, "undefined", __rt.typed_kind(v)))
     elseif name == "unknown" then
-      __rt.validate_data(v, file, line, column, path)
+      __rt.validate_data(v, file, line, column, path, seen.recordPlan)
       if type(v) == "string" then return __rt.check_string(v, file, line, column) end
       local actual = __rt.typed_kind(v)
       if actual ~= "async-operation" and type(v) ~= "function" and type(v) ~= "thread" and type(v) ~= "userdata" and type(v) ~= "cdata" then
         if v == __rt.__MISSING then return __rt.__UNDEFINED end
-        return __rt.validate_data(v, file, line, column, path)
+        return __rt.validate_data(v, file, line, column, path, seen.recordPlan)
       end
       error(__rt._armErr("TYPED_BOUNDARY_KIND", {kind = "unknown"}, "E8001", "unsupported unknown ingress",
         file, line, column, "unknown", actual))
@@ -1341,11 +1379,15 @@ local function check_canonical_ast_inner(ast, v, file, line, column, seen, path)
 end
 
 check_canonical_ast = function(ast, v, file, line, column, seen, path)
+  local ownsPlan=seen==nil
+  seen=seen or {recordPlan={}}
+  seen.recordPlan=seen.recordPlan or {}
   local ok, result = pcall(check_canonical_ast_inner, ast, v, file, line, column, seen, path)
   if not ok then
     if type(result) == "table" and result.validationPath == nil then validation_failure(result,path,false) end
     error(result,0)
   end
+  if ownsPlan then for record,descriptor in pairs(seen.recordPlan) do rawset(record,__K.recordDescriptor,descriptor) end end
   return result
 end
 

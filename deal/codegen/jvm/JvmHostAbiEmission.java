@@ -1429,7 +1429,9 @@ final class JvmHostAbiEmission {
             + " java.lang.Object v, java.lang.String oFile, int oLine, int oCol) {\n");
         out.append("    java.util.ArrayList<java.lang.Object[]> __pending = new java.util.ArrayList<>();\n");
         out.append("    java.util.IdentityHashMap<java.lang.Object, java.lang.Object> __memo = new java.util.IdentityHashMap<>();\n");
+        out.append("    __memo.put(__pending, new JvmRuntime.RecordAdmission());\n");
         out.append("    java.lang.Object __checked = __hostCheckPlan(d, v, oFile, oLine, oCol, __pending, __memo);\n");
+        out.append("    ((JvmRuntime.RecordAdmission)__memo.get(__pending)).commit();\n");
         out.append("    for (int __u = 0; __u < __pending.size(); __u++) {\n");
         out.append("      java.lang.Object[] __update = __pending.get(__u);\n");
         out.append("      if (__update.length == 2) { __hostArraysIn.put(__update[0], (JvmRuntime.Array) __update[1]); __hostArraysOut.put(__update[1], __update[0]); }\n");
@@ -1442,7 +1444,8 @@ final class JvmHostAbiEmission {
             + " java.util.ArrayList<java.lang.Object[]> __pending,"
             + " java.util.IdentityHashMap<java.lang.Object, java.lang.Object> __memo) {\n");
         out.append("    if (v == JvmRuntime.MISSING) v = JvmRuntime.UNDEFINED;\n");
-        out.append("    if (d.equals(\"unknown\") || d.equals(\"undefined\") || d.equals(\"void\")) return JvmRuntime.bcheck(d, \"ref\", v);\n");
+        out.append("    if (d.equals(\"unknown\")) return ((JvmRuntime.RecordAdmission)__memo.get(__pending)).check(d, v);\n");
+        out.append("    if (d.equals(\"undefined\") || d.equals(\"void\")) return JvmRuntime.bcheck(d, \"ref\", v);\n");
         out.append("    if (d.equals(\"null|undefined\")) { if (v == null || v == JvmRuntime.UNDEFINED) return v; throw __hostFail(JvmRuntime.kindReason(\"null\"), d, v, oFile, oLine, oCol); }\n");
         out.append("    if (d.startsWith(\"?\") || d.startsWith(\"!\")) {\n");
         out.append("      int __prefix = 0; boolean __null = false, __undefined = false;\n");
@@ -1459,7 +1462,7 @@ final class JvmHostAbiEmission {
         // then settles the admitted value as the production Double.
         out.append("    if (d.equals(\"number\")) { if (v instanceof java.lang.Double || v instanceof java.lang.Long || v instanceof java.lang.Integer) return v; throw __hostFail(JvmRuntime.kindReason(\"number\"), d, v, oFile, oLine, oCol); }\n");
         out.append("    if (d.equals(\"string\")) { if (v instanceof java.lang.String) return v; if (v instanceof byte[] __b) { JvmRuntime.DealError __r = JvmRuntime.checkHostStringBytes(__b, oFile + \":\" + oLine + \":\" + oCol); if (__r != null) throw __r; return new java.lang.String(__b, java.nio.charset.StandardCharsets.UTF_8); } throw __hostFail(JvmRuntime.kindReason(\"string\"), d, v, oFile, oLine, oCol); }\n");
-        out.append("    if (d.equals(\"record\")) { if (v instanceof JvmRuntime.Table) return JvmRuntime.validateData(v, false); throw __hostFail(JvmRuntime.kindReason(\"record\"), d, v, oFile, oLine, oCol); }\n");
+        out.append("    if (d.equals(\"record\") || d.equals(\"record[string]\")) return ((JvmRuntime.RecordAdmission)__memo.get(__pending)).check(d, v);\n");
         out.append("    if (d.startsWith(\"[\") || d.startsWith(\"readonly[\")) { return __hostCheckArrayPlan(d, v, oFile, oLine, oCol, __pending, __memo); }\n");
         out.append("    if (d.startsWith(\"(\") || d.startsWith(\"async(\")) {\n");
         out.append("      java.lang.String __carried = null;\n");

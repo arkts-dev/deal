@@ -217,7 +217,8 @@ public final class JsonDecodingSemantics {
             for (String key : table.table().keys()) {
                 frame.keys.add(key);
                 var found = (SemanticTable.Lookup.Present<SharedStdlibSemantics.Value>) table.table().get(key);
-                frame.children.add(new Child(found.value(), RuntimeDescriptor.Unknown.INSTANCE));
+                frame.children.add(new Child(found.value(), target instanceof RuntimeDescriptor.Table record
+                    ? record.valueDescriptor() : RuntimeDescriptor.Unknown.INSTANCE));
             }
             return null;
         }
@@ -257,7 +258,9 @@ public final class JsonDecodingSemantics {
             case SharedStdlibSemantics.Value.Number number -> new ClassOpsExecutor.Value.Number(number.value());
             case SharedStdlibSemantics.Value.String string -> new ClassOpsExecutor.Value.String(string.scalar());
             case SharedStdlibSemantics.Value.Table ignored -> {
-                SemanticTable<ClassOpsExecutor.Value> table = new SemanticTable<>();
+                SemanticTable<ClassOpsExecutor.Value> table = new SemanticTable<>(
+                    base(frame.target) instanceof RuntimeDescriptor.Table record
+                        ? record.valueDescriptor() : RuntimeDescriptor.Unknown.INSTANCE);
                 for (int i = 0; i < frame.keys.size(); ++i) table.put(frame.keys.get(i), frame.values.get(i));
                 yield new ClassOpsExecutor.Value.Table(table);
             }

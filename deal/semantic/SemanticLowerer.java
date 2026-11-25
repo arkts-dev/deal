@@ -4522,6 +4522,7 @@ public final class SemanticLowerer {
                 case "number" -> Type.Number.INSTANCE;
                 case "string" -> Type.String.INSTANCE;
                 case "Record<string, unknown>" -> Type.Table.INSTANCE;
+                case "Record<string, string>" -> Type.Table.STRING;
                 case "undefined" -> Type.Undefined.INSTANCE;
                 case "unknown" -> Type.Unknown.INSTANCE;
                 case "void" -> Type.Void.INSTANCE;
@@ -12748,14 +12749,14 @@ public final class SemanticLowerer {
             }
             return emitValueOp(SemanticOpKind.TABLE_NEW,
                 new KindPayload.TableNewPayload(entries), literal.span(),
-                ContainerPayloadDescriptors.resultDescriptorOf(Type.Table.INSTANCE),
+                ContainerPayloadDescriptors.resultDescriptorOf(type),
                 FailurePolicyId.NO_DEAL_FAILURE, slot);
         }
 
         /** Computed literals build private storage and publish only after every entry succeeds. */
         private ValueId lowerComputedRecord(ObjectLiteralExpr literal, ValueId slot) {
             Span span = literal.span();
-            RuntimeDescriptor table = RuntimeDescriptor.Table.INSTANCE;
+            RuntimeDescriptor table = valueDescriptorOf(checkedType(literal));
             BindingId storage = ids.nextBindingId(module, nextOrdinal++, 0);
             emitUserNullOp(SemanticOpKind.BINDING_ALLOC,
                 new KindPayload.BindingAllocPayload(storage, currentBlock(), true, BindingCellKind.DIRECT, 0),
@@ -13178,7 +13179,7 @@ public final class SemanticLowerer {
             RuntimeDescriptor resultType =
                 ContainerPayloadDescriptors.resultDescriptorOf(contextualType);
             RuntimeDescriptor tableDescriptor =
-                ContainerPayloadDescriptors.resultDescriptorOf(Type.Table.INSTANCE);
+                ContainerPayloadDescriptors.resultDescriptorOf(checkedType(index.array()));
             RuntimeDescriptor stringDescriptor =
                 ContainerPayloadDescriptors.resultDescriptorOf(Type.String.INSTANCE);
             // Receiver before key (the spec's evaluation order).

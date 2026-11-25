@@ -256,6 +256,7 @@ public final class ExportExtractor {
             case "number" -> Type.Number.INSTANCE;
             case "string" -> Type.String.INSTANCE;
             case "Record<string, unknown>" -> Type.Table.INSTANCE;
+            case "Record<string, string>" -> Type.Table.STRING;
             case "unknown" -> Type.Unknown.INSTANCE;
             case "undefined" -> Type.Undefined.INSTANCE;
             case "void" -> Type.Void.INSTANCE;

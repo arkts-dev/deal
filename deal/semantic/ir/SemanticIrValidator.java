@@ -1833,6 +1833,41 @@ public final class SemanticIrValidator {
         CanonicalJson.Obj payload = op.payload();
         Optional<CompilerDiagnostic> failure;
         switch (op.kind()) {
+            case "TABLE_NEW" -> {
+                RuntimeDescriptor descriptor = parseDescriptorQuiet(op.resultType());
+                if (!(descriptor instanceof RuntimeDescriptor.Table table))
+                    return fail(op, unit, facts, R_ENUM, SemanticCapability.CONTAINERS_AND_STRINGS,
+                        origin(R_ENUM, "TABLE_NEW requires a Record result descriptor"));
+                if (table == RuntimeDescriptor.Table.STRING
+                        && payloadValue(payload, "entries") instanceof CanonicalJson.Arr entries) {
+                    for (var row : entries.items()) {
+                        if (!(row instanceof CanonicalJson.Obj entry)) continue;
+                        ValueId value = parseValueIdQuiet(payloadValue(entry, "value") instanceof CanonicalJson.Obj id ? id : null);
+                        RawOp producer = null;
+                        for (RawOp candidate : unit.ops()) {
+                            if (candidate.opId().equals(op.opId())) break;
+                            if (value != null && value.equals(candidate.resultValue())) producer = candidate;
+                        }
+                        if (producer == null || !"string".equals(producer.resultType()))
+                            return fail(op, unit, facts, R_ENUM, SemanticCapability.CONTAINERS_AND_STRINGS,
+                                origin(R_ENUM, "String Record literal values require preceding string producers"));
+                    }
+                }
+            }
+            case "MEMBER_WRITE", "INDEX_WRITE" -> {
+                String receiverKey = op.kind().equals("MEMBER_WRITE") ? "table" : "container";
+                ValueId receiver = parseValueIdQuiet(payloadValue(payload, receiverKey) instanceof CanonicalJson.Obj id ? id : null);
+                ValueId value = parseValueIdQuiet(payloadValue(payload, "value") instanceof CanonicalJson.Obj id ? id : null);
+                String receiverType = null, valueType = null;
+                for (RawOp producer : unit.ops()) {
+                    if (producer.opId().equals(op.opId())) break;
+                    if (receiver != null && receiver.equals(producer.resultValue())) receiverType = producer.resultType();
+                    if (value != null && value.equals(producer.resultValue())) valueType = producer.resultType();
+                }
+                if ("record[string]".equals(receiverType) && !"string".equals(valueType))
+                    return fail(op, unit, facts, R_ENUM, SemanticCapability.CONTAINERS_AND_STRINGS,
+                        origin(R_ENUM, "String Record writes require string values"));
+            }
             case "UNARY" -> {
                 failure = checkSlotEnum(op, unit, facts, "selector", optionalString(payload, "selector"),
                     UnarySelector.class);

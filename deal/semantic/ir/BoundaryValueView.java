@@ -18,8 +18,25 @@ public record BoundaryValueView(
     List<ClassField> classFields,
     boolean callableValid,
     Integer unicodeByteOffset,
-    List<String> dataChildSegments
+    List<String> dataChildSegments,
+    RuntimeDescriptor recordValueDescriptor
 ) {
+    public BoundaryValueView(ActualKind kind, String classId, Double numberValue,
+            RuntimeDescriptor.Func functionSignature, List<BoundaryValueView> elements,
+            boolean decodedArrayMark, UnicodeScalars.Defect unicodeDefect,
+            RuntimeDescriptor arrayElementDescriptor, List<BoundaryValueView> dataChildren,
+            List<ClassField> classFields, boolean callableValid, Integer unicodeByteOffset,
+            List<String> dataChildSegments) {
+        this(kind, classId, numberValue, functionSignature, elements, decodedArrayMark, unicodeDefect,
+            arrayElementDescriptor, dataChildren, classFields, callableValid, unicodeByteOffset, dataChildSegments, null);
+    }
+
+    public BoundaryValueView withRecordValueDescriptor(RuntimeDescriptor descriptor) {
+        if (kind != ActualKind.TABLE) throw new IllegalArgumentException("Only Records carry value descriptors");
+        return new BoundaryValueView(kind, classId, numberValue, functionSignature, elements,
+            decodedArrayMark, unicodeDefect, arrayElementDescriptor, dataChildren, classFields,
+            callableValid, unicodeByteOffset, dataChildSegments, descriptor);
+    }
     public BoundaryValueView(ActualKind kind, String classId, Double numberValue,
                              RuntimeDescriptor.Func functionSignature,
                              List<BoundaryValueView> elements, boolean decodedArrayMark,
@@ -88,14 +105,14 @@ public record BoundaryValueView(
     /** Lazy own data children for whole-graph ingress validation, including keys. */
     public BoundaryValueView withDataChildren(int count, IntFunction<BoundaryValueView> producer) {
         return new BoundaryValueView(kind, classId, numberValue, functionSignature, elements,
-            decodedArrayMark, unicodeDefect, arrayElementDescriptor, new LazyElementViews(count, producer), classFields, callableValid, unicodeByteOffset);
+            decodedArrayMark, unicodeDefect, arrayElementDescriptor, new LazyElementViews(count, producer), classFields, callableValid, unicodeByteOffset, List.of(), recordValueDescriptor);
     }
 
     /** Names come from the producer's existing traversal, not a second rejected-value walk. */
     public BoundaryValueView withNamedDataChildren(List<String> segments, IntFunction<BoundaryValueView> producer) {
         return new BoundaryValueView(kind, classId, numberValue, functionSignature, elements,
                 decodedArrayMark, unicodeDefect, arrayElementDescriptor,
-                new LazyElementViews(segments.size(), producer), classFields, callableValid, unicodeByteOffset, segments);
+                new LazyElementViews(segments.size(), producer), classFields, callableValid, unicodeByteOffset, segments, recordValueDescriptor);
     }
 
     public BoundaryValueView(ActualKind kind, String classId, Double numberValue,
@@ -128,6 +145,10 @@ public record BoundaryValueView(
 
     public BoundaryValueView {
         Objects.requireNonNull(kind, "kind must not be null");
+        if (recordValueDescriptor != null && (kind != ActualKind.TABLE
+                || recordValueDescriptor != RuntimeDescriptor.Unknown.INSTANCE
+                    && recordValueDescriptor != RuntimeDescriptor.String.INSTANCE))
+            throw new IllegalArgumentException("Record metadata requires a Record and a closed value descriptor");
         if (unicodeByteOffset != null && (kind != ActualKind.INVALID_UNICODE || unicodeByteOffset < 1))
             throw new IllegalArgumentException("Unicode position requires an invalid byte presentation");
         classFields = List.copyOf(classFields);

@@ -171,11 +171,18 @@ public final class RuntimeTypeMatcher {
                         || model.functionDescriptorText(value) != null) return value;
                 return failure("E8001", "expected unknown, got " + actualKind(value, range), range);
             }
-            case "record" -> {
-                if (model.isTable(value)) {
-                    return value;
+            case "record", "record[string]" -> {
+                if (!model.isTable(value))
+                    return failure("E8001", "expected table, got " + actualKind(value, range), range);
+                String expected = name.equals("record[string]") ? "string" : "unknown";
+                String stored = model.recordValueDescriptor(value);
+                if (stored != null && !stored.equals(expected))
+                    return failure("E8001", "expected table, got table", range);
+                if (expected.equals("string")) for (Object member : model.recordValues(value)) {
+                    Object checked = checkPrimitive("string", member, range);
+                    if (checked instanceof RuntimeCheckFailure) return checked;
                 }
-                return failure("E8001", "expected table, got " + actualKind(value, range), range);
+                return value;
             }
             default -> {
                 // Unreachable through the strict parser, which yields only the

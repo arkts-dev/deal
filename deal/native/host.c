@@ -258,7 +258,7 @@ static int deal_host_grammar_data(const deal_host_grammar *grammar,
                                   size_t *position) {
     static const char *const primitives[] = {
         "null|undefined", "null", "undefined", "boolean", "number", "string",
-        "record", "unknown", "Error"
+        "record[string]", "record", "unknown", "Error"
     };
     size_t cursor = *position;
     for (size_t index = 0; index < sizeof primitives / sizeof primitives[0];
@@ -2440,7 +2440,7 @@ static deal_outcome_data deal_host_function_thunk(void *function,
     deal_check_context context;
     context.origin = crossing_origin;
     context.parameter_index = 0;
-    deal_outcome admitted = deal_check_value(declared_result, checked,
+    deal_outcome admitted = deal_check_live_value(declared_result, checked,
         DEAL_BOUNDARY_HOST_SYNC_RETURN, &context);
     if (admitted.error != NULL) {
         deal_host_rejection_context(admitted.error, wrapped->exported, deal_fn_signature(function), "return", 0);
@@ -2696,7 +2696,7 @@ deal_outcome_data deal_host_invoke_sync(const deal_host_export *exported,
     deal_check_context context;
     context.origin = origin;
     context.parameter_index = 0;
-    deal_outcome admitted = deal_check_value(declared, checked,
+    deal_outcome admitted = deal_check_live_value(declared, checked,
         DEAL_BOUNDARY_HOST_SYNC_RETURN, &context);
     if (admitted.error != NULL) {
         deal_host_rejection_context(admitted.error, exported, signature_descriptor, "return", 0);
@@ -3648,8 +3648,11 @@ deal_status deal_table_get(deal_value table, const void *key, size_t keyLength,
     if (!deal_container_table_has(managed, name)) {
         return DEAL_STATUS_ABSENT;
     }
-    return deal_host_datum_carrier(deal_container_table_read(managed, name),
-        out);
+    deal_data value = deal_container_table_read(managed, name);
+    uint32_t stored = deal_container_table_value_descriptor(managed);
+    if (stored != 0u && strcmp(deal_descriptor_text(deal_descriptor_of_reference(stored)), "string") == 0
+            && value.tag != DEAL_DATA_STRING) return DEAL_STATUS_KIND;
+    return deal_host_datum_carrier(value, out);
 }
 
 deal_status deal_table_set(deal_value table, const void *key, size_t keyLength,
@@ -3726,7 +3729,10 @@ deal_status deal_table_set(deal_value table, const void *key, size_t keyLength,
     deal_check_context context;
     context.origin = &crossing->origin;
     context.parameter_index = 0;
-    if (deal_check_value(deal_descriptor_intern("unknown"), checked,
+    uint32_t stored = deal_container_table_value_descriptor(referent);
+    deal_descriptor *element = stored == 0u ? deal_descriptor_intern("unknown")
+        : deal_descriptor_of_reference(stored);
+    if (deal_check_live_value(element, checked,
             DEAL_BOUNDARY_TYPE_DESCRIPTOR, &context).error != NULL) {
         deal_host_memo_release(&memo);
         return DEAL_STATUS_KIND;
@@ -4061,7 +4067,7 @@ deal_status deal_field_set(deal_value object, const char *field,
     deal_check_context context;
     context.origin = &crossing->origin;
     context.parameter_index = 0;
-    if (deal_check_value(declared, checked, deal_host_boundary_of(declared),
+    if (deal_check_live_value(declared, checked, deal_host_boundary_of(declared),
             &context).error != NULL) {
         deal_host_memo_release(&memo);
         return DEAL_STATUS_KIND;
@@ -4284,7 +4290,7 @@ deal_status deal_handle_value(deal_handle handle, const char *descriptorText,
         deal_check_context context;
         context.origin = &crossing->origin;
         context.parameter_index = 0;
-        if (deal_check_value(declared, checked, deal_host_boundary_of(declared),
+        if (deal_check_live_value(declared, checked, deal_host_boundary_of(declared),
                 &context).error != NULL) {
             return DEAL_STATUS_KIND;
         }

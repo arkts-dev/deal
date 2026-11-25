@@ -1396,6 +1396,15 @@ public class AsyncExportInvokerProductionTest {
                 deleteRecursively(table.root());
             }
 
+            assertEncodedCompletion(backend, "string-record-completion", """
+                export async function run():Promise<Record<string,string>> {return {a:"ok"};}
+                export function main():void {}
+                """, "record[string]", "{\"a\":\"ok\"}");
+            assertEncodedCompletion(backend, "string-record-array-completion", """
+                export async function run():Promise<Record<string,string>[]> {return [{a:"ok"},{}];}
+                export function main():void {}
+                """, "[record[string]]", "[{\"a\":\"ok\"},{}]");
+
             Project nested = compile("nested-completion-" + backend, backend,
                 String.format(PLAIN_MANIFEST, backend), NESTED_COMPLETION_SOURCE,
                 null, null);

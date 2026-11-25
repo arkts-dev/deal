@@ -1963,7 +1963,33 @@ public class SharedStdlibSemanticsTest {
             && Double.doubleToLongBits(number.value()) == Double.doubleToLongBits(expected), message + ": " + outcome);
     }
 
+    private static void testStringRecordPositions() {
+        for (boolean strings : List.of(false, true)) {
+            var stored = new SemanticTable<Value>(strings ? RuntimeDescriptor.String.INSTANCE : RuntimeDescriptor.Unknown.INSTANCE);
+            stored.put("a", text("ok"));
+            var parent = new SemanticTable<Value>();
+            parent.put("data", new Value.Table(stored));
+            var fieldDescriptor = strings ? RuntimeDescriptor.Table.INSTANCE : RuntimeDescriptor.Table.STRING;
+            var layout = new deal.semantic.ir.ClassLayout(new deal.semantic.ir.ClassId("records", "Box"), List.of(
+                new deal.semantic.ir.ClassLayout.FieldLayout("data", fieldDescriptor, true,
+                    deal.semantic.ir.ConstructionProvider.BUILTIN_ERROR)));
+            var result = SharedStdlibSemantics.jsonStringify(origin(), new Value.Table(parent, layout));
+            check(result instanceof Outcome.Failure<Value>, "nested Record descriptor cannot upgrade or erase: " + strings);
+            var matching = new deal.semantic.ir.ClassLayout(layout.classId(), List.of(
+                new deal.semantic.ir.ClassLayout.FieldLayout("data", strings ? RuntimeDescriptor.Table.STRING : RuntimeDescriptor.Table.INSTANCE,
+                    true, deal.semantic.ir.ConstructionProvider.BUILTIN_ERROR)));
+            expectSuccess(SharedStdlibSemantics.jsonStringify(origin(), new Value.Table(parent, matching)),
+                text("{\"data\":{\"a\":\"ok\"}}"), "matching nested Record descriptor: " + strings);
+            if (strings) {
+                stored.put("a", Value.Undefined.INSTANCE);
+                check(SharedStdlibSemantics.jsonStringify(origin(), new Value.Table(parent, matching)) instanceof Outcome.Failure<Value>,
+                    "nested string Record rejects present undefined before omission");
+            }
+        }
+    }
+
     public static void main(String[] args) throws Exception {
+        testStringRecordPositions();
         System.out.println("=== Shared Stdlib Semantics Tests (ISSUE-0495) ===\n");
 
         testStringLength();

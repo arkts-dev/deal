@@ -208,7 +208,11 @@ public final class IrDumper implements Visitor<String> {
     private String typeNodeToSpecDescriptor(TypeNode tn) {
         if (tn == null) return "null";
         return switch (tn) {
-            case NamedType nt -> nt.name().equals("Record<string, unknown>") ? "record" : nt.name();
+            case NamedType nt -> switch (nt.name()) {
+                case "Record<string, unknown>" -> "record";
+                case "Record<string, string>" -> "record[string]";
+                default -> nt.name();
+            };
             case ArrayType at -> "[" + typeNodeToSpecDescriptor(at.elementType()) + "]";
             case NullableType nlt -> {
                 String inner = typeNodeToSpecDescriptor(nlt.innerType());

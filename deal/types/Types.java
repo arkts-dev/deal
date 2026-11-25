@@ -87,7 +87,7 @@ public final class Types {
 
             case Type.Number ignored -> true;
             case Type.String ignored -> true;
-            case Type.Table ignored -> true;
+            case Type.Table table -> table == b;
             case Type.Error ignored -> true;
 
             case Type.Array aa -> {

@@ -617,7 +617,10 @@ record NumValue(double value) implements Value {
         }
 
         /** An insertion-ordered table over string keys. */
-        record TableValue(LinkedHashMap<String, Value> entries) implements Value {
+        record TableValue(LinkedHashMap<String, Value> entries, RuntimeDescriptor valueDescriptor) implements Value {
+            public TableValue(LinkedHashMap<String, Value> entries) {
+                this(entries, RuntimeDescriptor.Unknown.INSTANCE);
+            }
         }
 
         /**
@@ -2139,7 +2142,8 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
             for (KindPayload.TableEntry entry : payload.entries()) {
                 entries.put(entry.key(), valueOf(entry.value()));
             }
-            return publish(op, new Value.TableValue(entries));
+            return publish(op, new Value.TableValue(entries,
+                ((RuntimeDescriptor.Table) op.resultType()).valueDescriptor()));
         }
 
         private String executeArrayHas(SemanticOp op) {
@@ -2343,6 +2347,7 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
             } else {
                 keyNamespaceSurfaceEntry(table, payload.key(), read, descriptor);
             }
+            if (!(read instanceof Value.MissingValue)) checkRecordStorage(op, table, read);
             if (boundary == null) {
                 return publish(op, read);
             }
@@ -2811,7 +2816,7 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
             Value result;
             java.util.Iterator<?> children;
             if (source instanceof ClassOpsExecutor.Value.Table table) {
-                result = new Value.TableValue(new LinkedHashMap<>());
+                result = new Value.TableValue(new LinkedHashMap<>(), table.table().valueDescriptor());
                 children = table.table().keys().iterator();
             } else if (source instanceof ClassOpsExecutor.Value.Array array) {
                 result = new Value.ArrayValue(new ArrayList<>(),
@@ -2850,7 +2855,7 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                     // later commit is observed by every alias. The view is
                     // created without descending (a self-reference cannot
                     // recurse), and registration happens before any read.
-                    yield new ClassOpsExecutor.Value.Table(SemanticTable.live(
+                    yield new ClassOpsExecutor.Value.Table(SemanticTable.live(table.valueDescriptor(),
                         () -> List.copyOf(table.entries().keySet()),
                         key -> {
                             Value child = table.entries().get(key);
@@ -3005,11 +3010,20 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
          * reference to the instance observes the commit exactly like the
          * target carriers.
          */
+        private void checkRecordStorage(SemanticOp op, Value.TableValue table, Value value) {
+            BoundaryOutcome outcome = BoundaryExecutor.check(FailurePolicyId.TYPE_DESCRIPTOR,
+                table.valueDescriptor(), viewOfValue(value), BoundaryContext.none());
+            if (outcome instanceof BoundaryOutcome.Fail fail)
+                throw DealFailure.of(fail.failure(), op.origin(), List.copyOf(frames));
+        }
+
         private String executeCommit(SemanticOp op) {
             switch (op.payload()) {
                 case KindPayload.MemberWritePayload payload -> {
                     Value.TableValue table = (Value.TableValue) valueOf(payload.table());
-                    table.entries().put(payload.key(), valueOf(payload.value()));
+                    Value value = valueOf(payload.value());
+                    checkRecordStorage(op, table, value);
+                    table.entries().put(payload.key(), value);
                 }
                 case KindPayload.MemberDeletePayload payload -> {
                     Value.TableValue table = (Value.TableValue) valueOf(payload.table());
@@ -3298,8 +3312,11 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                         target.elements().set((int) array.index(), value);
                     }
                 }
-                case NormalizedSlot.TableSlot table ->
-                    ((Value.TableValue) container).entries().put(table.key(), value);
+                case NormalizedSlot.TableSlot table -> {
+                    Value.TableValue target = (Value.TableValue) container;
+                    checkRecordStorage(commit, target, value);
+                    target.entries().put(table.key(), value);
+                }
             }
         }
 
@@ -3383,6 +3400,7 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                         read = Value.MissingValue.INSTANCE;
                     } else {
                         keyNamespaceSurfaceEntry(target, table.key(), read, descriptor);
+                        checkRecordStorage(op, target, read);
                     }
                     if (defersContextualCheck(descriptor)) {
                         return publish(op, runDeferredBoundaryChild(boundary, read));
@@ -3594,7 +3612,8 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                     children.add(entry.getValue());
                     segments.add(entry.getKey()); segments.add(entry.getKey());
                 }
-                view = view.withNamedDataChildren(segments, i -> viewOfValue(children.get(i), memo));
+                view = view.withNamedDataChildren(segments, i -> viewOfValue(children.get(i), memo))
+                    .withRecordValueDescriptor(table.valueDescriptor());
             } else if (value instanceof Value.ErrorValue error) {
                 List<Value> children = List.of(new Value.StrValue(error.name()), new Value.StrValue(error.message()));
                 view = view.withNamedDataChildren(List.of("name", "message"), i -> viewOfValue(children.get(i), memo))
@@ -5954,7 +5973,7 @@ private static IllegalStateException dynamicFunctionValueDefect(
                     if (mapped != null) {
                         yield mapped;
                     }
-                    SemanticTable<SharedStdlibSemantics.Value> carrier = SemanticTable.live(
+                    SemanticTable<SharedStdlibSemantics.Value> carrier = SemanticTable.live(table.valueDescriptor(),
                         () -> List.copyOf(table.entries().keySet()), key -> {
                             Value member = table.entries().get(key);
                             return member == null ? new SemanticTable.Lookup.Missing<>()
@@ -6080,7 +6099,7 @@ private static IllegalStateException dynamicFunctionValueDefect(
                 }
                 entries.put(key, stdlibResultOf(present.value(), decodedArrays));
             }
-            return new Value.TableValue(entries);
+            return new Value.TableValue(entries, table.valueDescriptor());
         }
 
         /** One closed stdlib array → the oracle array value (index order). */

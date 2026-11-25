@@ -73,6 +73,264 @@ public final class Language16RuntimeTest {
             .filter(e -> e.key().equals("payload")).findFirst().orElseThrow().value();
     }
 
+    private static void stringRecords() throws Exception {
+        Path root=Files.createTempDirectory("deal-string-records-");
+        String source="""
+            export function run():void {
+              let hide:(v:unknown)=>unknown=function(v:unknown):unknown{return v;};
+              let r:Record<string,string>={name:"Ada"};
+              let alias:Record<string,string>=r;
+              let boxed:unknown=r;
+              let recovered:Record<string,string>=boxed as Record<string,string>;
+              if(recovered!==r){throw {name:"FAIL",message:"identity"};}
+              let key="dynamic";
+              r[key]="value";
+              if((alias[key]??"")!=="value" || r.absent!==undefined){throw {name:"FAIL",message:"reads"};}
+              delete r.name;
+              if(Object.hasOwn(alias,"name") || alias.name!==undefined){throw {name:"FAIL",message:"delete"};}
+              let parsed:Record<string,string>=JSON.parse(`{"a":"one","b":"two"}`);
+              if((parsed.a??"")!=="one" || (JSON.stringify(parsed)??"")!==`{"a":"one","b":"two"}`){throw {name:"FAIL",message:"json"};}
+              let caught=false;
+              try {let bad:Record<string,string>=JSON.parse(`{"a":1}`);} catch(e){caught=true;}
+              if(!caught){throw {name:"FAIL",message:"json rejection"};}
+              caught=false;
+              try {let bad:Record<string,string>=JSON.parse(`[]`);} catch(e){caught=true;}
+              if(!caught){throw {name:"FAIL",message:"json object required"};}
+              let nested:Record<string,string>[]=JSON.parse(`[{"a":"nested"},{}]`);
+              if((nested[0].a??"")!=="nested" || Object.keys(nested[1]).length!==0){throw {name:"FAIL",message:"nested json"};}
+              let unknownRecord:Record<string,unknown>={a:"one"};
+              let old:unknown=hide(unknownRecord);
+              caught=false;
+              try {let bad:Record<string,string>=old as Record<string,string>;} catch(e){caught=true;}
+              if(!caught){throw {name:"FAIL",message:"descriptor upgrade"};}
+              let empty:Record<string,string>={};
+              let emptyBox:unknown=hide(empty);
+              caught=false;
+              try {let bad:Record<string,unknown>=emptyBox as Record<string,unknown>;} catch(e){caught=true;}
+              if(!caught){throw {name:"FAIL",message:"descriptor erasure"};}
+              let computed:Record<string,string>={[key]:"ok"};
+              if((computed[key]??"")!=="ok"){throw {name:"FAIL",message:"computed"};}
+              console.log("string-records-ok");
+            }
+            export function main():void {run();}
+            """;
+        CompositionProductionTest.execute(source, "string-records-ok\n", "", root, null,
+            List.of(deal.codegen.Backend.JS,deal.codegen.Backend.LUAJIT,deal.codegen.Backend.JVM,deal.codegen.Backend.LLVM), Map.of(), true);
+        Path entry=root.resolve("JS/src/main.deal");
+        var invocation=deal.semantic.CompilerProfileProvider.resolve(deal.semantic.ReleaseConfiguration.CURRENT_RELEASE_STATE,
+            deal.semantic.ReleaseConfiguration.releaseCapabilityRegistry());
+        var compiler=new deal.module.CompilationOrchestrator(entry,root.resolve("oracle"),false,false,false,false,
+            deal.codegen.Backend.JS,null,List.of(entry.getParent()),Path.of("").toAbsolutePath(),null,invocation);
+        if(!compiler.compile())throw new AssertionError(compiler.diagnostics());
+        var project=compiler.producedProject();
+        var tables=new LinkedHashMap<deal.semantic.ir.ModuleId,deal.semantic.ir.StructuredBodyTable>();
+        var factories=new LinkedHashMap<deal.semantic.ir.ModuleId,deal.semantic.ir.ClassFactoryRegistry>();
+        project.modules().forEach((id,unit)->{tables.put(id,unit.bodyTable());factories.put(id,unit.classFactories());});
+        var result=deal.semantic.SemanticOracle.invokeSyncEntry(project,tables,factories,
+            new deal.semantic.SemanticOracle.HostResponder(){},project.entryModule(),"run",List.of());
+        if(!(result.terminal() instanceof deal.semantic.SemanticRuntimeModel.Terminal.Success))
+            throw new AssertionError("String Record Oracle: "+result.comparisonReport());
+    }
+
+    private static void stringRecordHosts() throws Exception {
+        Path host = Files.createTempDirectory("deal-string-record-host-");
+        Files.writeString(host.resolve("probe.d.deal"), """
+            export function fresh():Record<string,string>;
+            export function bad():Record<string,string>;
+            export function freshUnknown():unknown;
+            export function shared():Record<string,string>[];
+            export function retry():Record<string,unknown>;
+            export function keep(v:unknown):void;
+            export function damage():void;
+            export function repair():void;
+            """);
+        Files.writeString(host.resolve("probe.js"), """
+            let saved, retry;
+            exports.shared=()=>{retry=new Map([["a","ok"]]); return [retry,new Map([["a",1]])];};
+            exports.retry=()=>retry;
+            exports.fresh=()=>new Map([["a","ok"]]);
+            exports.bad=()=>new Map([["a",1]]);
+            exports.freshUnknown=exports.fresh;
+            exports.keep=v=>{saved=v;};
+            exports.damage=()=>{saved.set("bad",undefined);};
+            exports.repair=()=>{saved.delete("bad");};
+            """);
+        Files.writeString(host.resolve("probe.lua"), """
+            local saved,retry
+            return {shared=function() retry={a="ok"};return {retry,{a=1}} end,
+              retry=function() return retry end, fresh=function() return {a="ok"} end,
+              bad=function() return {a=1} end,
+              freshUnknown=function() return {a="ok"} end,
+              keep=function(v) saved=v end,
+              damage=function() saved.bad=require("deal.runtime").__UNDEFINED end,
+              repair=function() saved.bad=nil end}
+            """);
+        Files.writeString(host.resolve("probe.java"), """
+            final class HostProbe {
+              static deal.codegen.jvm.JvmRuntime.Table saved,retry;
+              public static Object shared(){retry=(deal.codegen.jvm.JvmRuntime.Table)fresh();var a=new deal.codegen.jvm.JvmRuntime.Array(2);a.elements.add(retry);a.elements.add(bad());return a;}
+              public static Object retry(){return retry;}
+              public static Object fresh(){var t=new deal.codegen.jvm.JvmRuntime.Table();t.write("a","ok");return t;}
+              public static Object bad(){var t=new deal.codegen.jvm.JvmRuntime.Table();t.write("a",1.0);return t;}
+              public static Object freshUnknown(){return fresh();}
+              public static void keep(Object v){saved=(deal.codegen.jvm.JvmRuntime.Table)v;}
+              public static void damage(){saved.entries.put("bad",deal.codegen.jvm.JvmRuntime.UNDEFINED);saved.keys.add("bad");}
+              public static void repair(){saved.remove("bad");}
+            }
+            """);
+        Files.writeString(host.resolve("probe.c"), """
+            #include "host/probe.h"
+            #include "native_helpers.h"
+            static deal_handle saved,retry_handle;
+            static deal_host_result fresh(const deal_value *a,size_t n){
+              (void)a;(void)n;deal_value t;checked(deal_table_new(&t));set(t,"a",text("ok"));return result(t);}
+            static deal_host_result bad(const deal_value *a,size_t n){
+              (void)a;(void)n;deal_value t;checked(deal_table_new(&t));set(t,"a",number(1));return result(t);}
+            static deal_host_result shared(const deal_value *a,size_t n){
+              deal_value first=fresh(a,n).value;checked(deal_retain(first,&retry_handle));
+              deal_value values=array("record[string]",2);checked(deal_array_set(values,0,first));
+              checked(deal_array_set(values,1,bad(a,n).value));return result(values);}
+            static deal_host_result retry(const deal_value *a,size_t n){(void)a;(void)n;return result(retained(retry_handle,NULL));}
+            static deal_host_result keep(const deal_value *a,size_t n){
+              (void)n;checked(deal_retain(a[0],&saved));return result(undefined_value());}
+            static deal_host_result damage(const deal_value *a,size_t n){
+              (void)a;(void)n;deal_check_input input;deal_error *cause=NULL;
+              checked(deal_host_value_presentation(retained(saved,NULL),&input,&cause));if(cause)abort();
+              deal_string *key=deal_text_new("bad",3);deal_data value=deal_data_of_undefined();
+              deal_container_table_write(input.datum.reference,key,&value);return result(undefined_value());}
+            static deal_host_result repair(const deal_value *a,size_t n){
+              (void)a;(void)n;deal_check_input input;deal_error *cause=NULL;
+              checked(deal_host_value_presentation(retained(saved,NULL),&input,&cause));if(cause)abort();
+              deal_container_table_delete(input.datum.reference,deal_text_new("bad",3));return result(undefined_value());}
+            const deal_host_export deal_host_exports_probe[]={
+              {"fresh","()->record[string]",DEAL_HOST_EXPORT_FUNCTION,0,fresh,NULL,NULL},
+              {"bad","()->record[string]",DEAL_HOST_EXPORT_FUNCTION,0,bad,NULL,NULL},
+              {"freshUnknown","()->unknown",DEAL_HOST_EXPORT_FUNCTION,0,fresh,NULL,NULL},
+              {"shared","()->[record[string]]",DEAL_HOST_EXPORT_FUNCTION,0,shared,NULL,NULL},
+              {"retry","()->record",DEAL_HOST_EXPORT_FUNCTION,0,retry,NULL,NULL},
+              {"keep","(unknown)->void",DEAL_HOST_EXPORT_FUNCTION,0,keep,NULL,NULL},
+              {"damage","()->void",DEAL_HOST_EXPORT_FUNCTION,0,damage,NULL,NULL},
+              {"repair","()->void",DEAL_HOST_EXPORT_FUNCTION,0,repair,NULL,NULL}};
+            const deal_host_module deal_host_module_probe={DEAL_HOST_SPECIFIER_PROBE,deal_host_exports_probe,8u,NULL,0u,NULL};
+            """);
+        CompositionProductionTest.execute("""
+            import * as host from "host/probe";
+            export function main():void {
+              let failed=false;
+              try {host.shared();}catch(e){failed=true;}
+              if(!failed){throw {name:"FAIL",message:"nested invalid host"};}
+              let retried=host.retry();
+              if((retried.a as string)!=="ok"){throw {name:"FAIL",message:"nested retry"};}
+              let r:Record<string,string>=host.fresh();
+              if((r.a??"")!=="ok"){throw {name:"FAIL",message:"host admission"};}
+              let alias=r;
+              host.keep(r);
+              host.damage();
+              if((r.a??"")!=="ok" || !Object.hasOwn(r,"bad")){throw {name:"FAIL",message:"reached read"};}
+              let caught=false;
+              try {let bad=r.bad;}catch(e){caught=true;}
+              if(!caught){throw {name:"FAIL",message:"present undefined"};}
+              caught=false;
+              let key="bad";
+              try {let bad=r[key];}catch(e){caught=true;}
+              if(!caught){throw {name:"FAIL",message:"dynamic present undefined"};}
+              caught=false;
+              try {JSON.stringify(r);}catch(e){caught=true;}
+              if(!caught){throw {name:"FAIL",message:"stringify stored descriptor"};}
+              host.repair();
+              if((JSON.stringify(r)??"")!=="{\\"a\\":\\"ok\\"}"){throw {name:"FAIL",message:"stringify repair"};}
+              if(alias!==r || Object.hasOwn(r,"bad")){throw {name:"FAIL",message:"repair"};}
+              caught=false;
+              try {let bad=host.bad();}catch(e){caught=true;}
+              if(!caught){throw {name:"FAIL",message:"host wrong value"};}
+              let old=host.freshUnknown();
+              caught=false;
+              try {let bad=old as Record<string,string>;}catch(e){caught=true;}
+              if(!caught){throw {name:"FAIL",message:"unknown host upgrade"};}
+              console.log("string-record-hosts-ok");
+            }
+            """, "string-record-hosts-ok\n", "", Files.createTempDirectory("deal-string-record-hosts-"), host,
+            List.of(deal.codegen.Backend.JS,deal.codegen.Backend.LUAJIT,deal.codegen.Backend.JVM,deal.codegen.Backend.LLVM), Map.of());
+    }
+
+    private static void stringRecordRuntimeAdmission() throws Exception {
+        Path repository=Path.of("").toAbsolutePath();
+        run(repository,"node","-e","""
+            const rt=require('./deal/runtime');
+            const r=rt.jsonDecode('{"a":"ok"}','record[string]','record.deal',3,4);
+            if(rt.checkType('record[string]',r)!==r || rt.tableGet(r,'missing')!==undefined) throw Error('storage/absence');
+            r.set('bad',undefined);
+            if(rt.tableGet(r,'a')!=='ok') throw Error('read locality');
+            for(const action of [()=>rt.tableGet(r,'bad'),()=>rt.tableSet(r,'a',1),()=>rt.jsonStringifyText(r,[])]) {
+              let rejected=false;try{action()}catch(e){rejected=e.code==='E8001'}
+              if(!rejected)throw Error('stored descriptor bypass');
+            }
+            if(r.get('a')!=='ok')throw Error('write rollback');
+            r.delete('bad');
+            if(rt.jsonStringifyText(r,[])!=='{"a":"ok"}')throw Error('repair');
+            for(const text of ['[]','{"a":1}']) {
+              let rejected=false;try{rt.jsonDecode(text,'record[string]')}catch(e){rejected=e.code==='E8001'}
+              if(!rejected)throw Error('JSON shape/value');
+            }
+            """);
+        run(repository,"luajit","-e","""
+            local rt=require('deal.runtime');local json=require('deal.json')
+            local r=json.decode('{"a":"ok"}','record[string]',{},'record.deal',3,4)
+            assert(rt.check_canonical_type('record[string]',r)==r)
+            r.bad=rt.__UNDEFINED
+            local ok,e=pcall(json.encode,r);assert(not ok and e.code=='E8001')
+            r.bad=nil;assert(json.encode(r)=='{"a":"ok"}')
+            assert(not pcall(rt.check_canonical_type,'record',r))
+            local ordered=json.decode('{"b":"ok","a":"ok"}','record[string]',{})
+            ordered.b=true;ordered.a=1
+            local admitted,failure=pcall(rt.check_canonical_type,'record[string]',ordered)
+            assert(not admitted and failure.actual=='boolean')
+            for _,text in ipairs({'[]','{"a":1}'}) do
+              local accepted,err=pcall(json.decode,text,'record[string]',{})
+              assert(not accepted and err.code=='E8001')
+            end
+            """);
+        var table = new deal.codegen.jvm.JvmRuntime.Table("string");
+        table.write("a", "ok");
+        try {table.write("a", 1.0); throw new AssertionError("invalid write accepted");}
+        catch (deal.codegen.jvm.JvmRuntime.DealError expected) {
+            if (!table.read("a").equals("ok")) throw new AssertionError("write was not atomic");
+        }
+        table.entries.put("bad", deal.codegen.jvm.JvmRuntime.UNDEFINED);
+        table.keys.add("bad");
+        try {table.read("bad"); throw new AssertionError("present undefined accepted");}
+        catch (deal.codegen.jvm.JvmRuntime.DealError expected) {}
+        if (!table.read("a").equals("ok")) throw new AssertionError("read rescanned unrelated fields");
+        table.remove("bad");
+        if (deal.codegen.jvm.JvmRuntime.bcheck("record[string]", "ref", table) != table)
+            throw new AssertionError("Record identity changed");
+        var host = new deal.codegen.jvm.JvmRuntime.Table();
+        host.write("a", 1.0);
+        try {deal.codegen.jvm.JvmRuntime.bcheck("record[string]", "ref", host);
+            throw new AssertionError("bad host admitted");}
+        catch (deal.codegen.jvm.JvmRuntime.DealError expected) {}
+        host.write("a", "fixed");
+        deal.codegen.jvm.JvmRuntime.bcheck("record[string]", "ref", host);
+        try {deal.codegen.jvm.JvmRuntime.bcheck("record", "ref", host);
+            throw new AssertionError("host descriptor erased");}
+        catch (deal.codegen.jvm.JvmRuntime.DealError expected) {}
+        var pendingHost = new deal.codegen.jvm.JvmRuntime.Table();
+        pendingHost.write("a", "ok");
+        var transaction = new deal.codegen.jvm.JvmRuntime.RecordAdmission();
+        transaction.check("unknown", pendingHost);
+        try {transaction.check("record[string]", pendingHost);
+            throw new AssertionError("staged unknown descriptor upgraded");}
+        catch (deal.codegen.jvm.JvmRuntime.DealError expected) {}
+        // Rejection never commits the earlier unknown admission to live storage.
+        deal.codegen.jvm.JvmRuntime.bcheck("record[string]", "ref", pendingHost);
+        var unknown = new deal.codegen.jvm.JvmRuntime.Table();
+        unknown.write("a", "ok");
+        deal.codegen.jvm.JvmRuntime.bcheck("unknown", "ref", unknown);
+        try {deal.codegen.jvm.JvmRuntime.bcheck("record[string]", "ref", unknown);
+            throw new AssertionError("unknown admission upgraded");}
+        catch (deal.codegen.jvm.JvmRuntime.DealError expected) {}
+    }
+
     private static void computedRecordKeys() throws Exception {
         String source = """
             export function main():void {
@@ -171,6 +429,9 @@ public final class Language16RuntimeTest {
                 if (!expected.code.equals("E8001")) throw new AssertionError(expected);
             }
         }
+        stringRecords();
+        stringRecordRuntimeAdmission();
+        stringRecordHosts();
         computedRecordKeys();
         arraySliceMissingPositions();
         arraySearchMissingPositions();

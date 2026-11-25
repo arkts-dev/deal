@@ -5016,7 +5016,11 @@ final class LlvmFunctionEmitter {
             + " @deal_container_table_new()");
         storeResult(op, LlvmTypeMapper.TABLE, table);
         session.referenceRuntimeEntry("deal_container_table_write");
+        session.referenceRuntimeEntry("deal_container_table_set_descriptor");
         String rooted = loadValue((ValueId) op.result(), LlvmTypeMapper.TABLE, op);
+        String descriptor = elementDescriptorReference(((RuntimeDescriptor.Table) op.resultType()).valueDescriptor(), op);
+        emit("call void @deal_container_table_set_descriptor(" + LlvmTypeMapper.TABLE
+            + " " + rooted + ", i32 " + descriptor + ")");
         for (KindPayload.TableEntry entry : payload.entries()) {
             String key = rootedOperand(RuntimeDescriptor.String.INSTANCE,
                 LlvmTypeMapper.STRING, literalString(entry.key(), op), op);
@@ -5236,10 +5240,7 @@ final class LlvmFunctionEmitter {
         String table = loadValue(payload.table(), LlvmTypeMapper.TABLE, op);
         String key = rootedOperand(RuntimeDescriptor.String.INSTANCE,
             LlvmTypeMapper.STRING, literalString(payload.key(), op), op);
-        String datum = callRecordReturn(op, "deal_container_table_read",
-            LlvmTypeMapper.DATA, List.of(
-                LlvmTypeMapper.TABLE + " " + table,
-                LlvmTypeMapper.STRING + " " + key));
+        String datum = checkedRecordRead(op, table, key);
         if (op.resultType() == deal.semantic.ir.InternalResultType.INTERNAL_MISSING) {
             String slot = valueSlot((ValueId) op.result(), LlvmTypeMapper.DATA);
             emit("store " + LlvmTypeMapper.DATA + " " + datum + ", " + LlvmTypeMapper.DATA + "* " + slot);
@@ -5247,6 +5248,16 @@ final class LlvmFunctionEmitter {
         } else {
             storeResultOf(op, RuntimeDescriptor.Unknown.INSTANCE, datum);
         }
+    }
+
+    private String checkedRecordRead(SemanticOp op, String table, String key) {
+        session.referenceRuntimeEntry("deal_record_read");
+        String outcome = callRecord(op, "%struct.deal_outcome_data", "deal_record_read",
+            LlvmTypeMapper.TABLE + " " + table + ", " + LlvmTypeMapper.STRING + " " + key
+                + ", %struct.deal_origin* " + originValue(op));
+        String error = emitTemporary(op, "extractvalue %struct.deal_outcome_data " + outcome + ", 0");
+        branchOnFailure(op, error, "recordread");
+        return emitTemporary(op, "extractvalue %struct.deal_outcome_data " + outcome + ", 1");
     }
 
     /** Raw absent slots are already undefined datums; preserve present data
@@ -5274,10 +5285,16 @@ final class LlvmFunctionEmitter {
         String key = rootedOperand(RuntimeDescriptor.String.INSTANCE,
             LlvmTypeMapper.STRING, literalString(payload.key(), op), op);
         String value = boxedOperandSlot(payload.value(), op);
-        session.referenceRuntimeEntry("deal_container_table_write");
-        emit("call void @deal_container_table_write(" + LlvmTypeMapper.TABLE
-            + " " + table + ", " + LlvmTypeMapper.STRING + " " + key + ", "
-            + LlvmTypeMapper.DATA + "* " + value + ")" + debugAttachment(op));
+        checkedRecordWrite(op, table, key, value);
+    }
+
+    private void checkedRecordWrite(SemanticOp op, String table, String key, String value) {
+        session.referenceRuntimeEntry("deal_record_write");
+        String outcome = emitTemporary(op, "call %struct.deal_outcome @deal_record_write("
+            + LlvmTypeMapper.TABLE + " " + table + ", " + LlvmTypeMapper.STRING + " " + key + ", "
+                + LlvmTypeMapper.DATA + "* " + value + ", %struct.deal_origin* " + originValue(op) + ")");
+        String error = emitTemporary(op, "extractvalue %struct.deal_outcome " + outcome + ", 0");
+        branchOnFailure(op, error, "recordwrite");
     }
 
     /** One record-member delete: removes an own key (R2). */
@@ -5409,11 +5426,13 @@ final class LlvmFunctionEmitter {
             String key = rootedOperand(RuntimeDescriptor.String.INSTANCE,
                 LlvmTypeMapper.STRING, loadValue(payload.slot(),
                     LlvmTypeMapper.STRING, op), op);
-            String datum = callRecordReturn(op, "deal_container_table_read",
-                LlvmTypeMapper.DATA, List.of(
-                    LlvmTypeMapper.TABLE + " " + table,
-                    LlvmTypeMapper.STRING + " " + key));
-            storeResultOf(op, RuntimeDescriptor.Unknown.INSTANCE, datum);
+            String datum = checkedRecordRead(op, table, key);
+            String input = newAlloca("%struct.deal_check_input", "recordinput");
+            emit("store %struct.deal_check_input " + checkInputRecordOf(op, RuntimeDescriptor.Unknown.INSTANCE, datum)
+                + ", %struct.deal_check_input* " + input);
+            emitCheckCall(boundary, (RuntimeDescriptor) op.resultType(), input);
+            storeResult(op, stagedRepresentation((RuntimeDescriptor) op.resultType()),
+                datumToRepresentation((RuntimeDescriptor) op.resultType(), datum, op));
             return;
         }
         throw new IllegalStateException("the index read " + op.opId()
@@ -5467,11 +5486,7 @@ final class LlvmFunctionEmitter {
                 LlvmTypeMapper.STRING, loadValue(payload.slot(),
                     LlvmTypeMapper.STRING, op), op);
             String value = boxedOperandSlot(payload.value(), op);
-            session.referenceRuntimeEntry("deal_container_table_write");
-            emit("call void @deal_container_table_write("
-                + LlvmTypeMapper.TABLE + " " + table + ", "
-                + LlvmTypeMapper.STRING + " " + key + ", " + LlvmTypeMapper.DATA
-                + "* " + value + ")" + debugAttachment(op));
+            checkedRecordWrite(op, table, key, value);
             return;
         }
         throw new IllegalStateException("the index write " + op.opId()

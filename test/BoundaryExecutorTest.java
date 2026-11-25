@@ -1454,6 +1454,23 @@ public class BoundaryExecutorTest {
     }
 
     public static void main(String[] args) {
+        var strings = BoundaryValueView.of(ActualKind.TABLE)
+            .withNamedDataChildren(List.of("key", "key"), i -> BoundaryValueView.of(ActualKind.STRING))
+            .withRecordValueDescriptor(RuntimeDescriptor.String.INSTANCE);
+        check(BoundaryExecutor.check(FailurePolicyId.TYPE_DESCRIPTOR, RuntimeDescriptor.Table.STRING,
+            strings, BoundaryContext.none()) instanceof BoundaryOutcome.Pass, "String Record admission");
+        check(BoundaryExecutor.check(FailurePolicyId.TYPE_DESCRIPTOR, RuntimeDescriptor.Table.INSTANCE,
+            strings, BoundaryContext.none()) instanceof BoundaryOutcome.Fail, "String descriptor cannot be erased");
+        var unknownRecord = strings.withRecordValueDescriptor(RuntimeDescriptor.Unknown.INSTANCE);
+        check(BoundaryExecutor.check(FailurePolicyId.TYPE_DESCRIPTOR, RuntimeDescriptor.Table.STRING,
+            unknownRecord, BoundaryContext.none()) instanceof BoundaryOutcome.Fail, "Contents cannot upgrade descriptor");
+        var invalidRecord = BoundaryValueView.of(ActualKind.TABLE)
+            .withNamedDataChildren(List.of("key", "key"), i -> BoundaryValueView.of(i == 0 ? ActualKind.STRING : ActualKind.UNDEFINED))
+            .withRecordValueDescriptor(RuntimeDescriptor.String.INSTANCE);
+        check(BoundaryExecutor.check(FailurePolicyId.TYPE_DESCRIPTOR, RuntimeDescriptor.Table.STRING,
+            invalidRecord, BoundaryContext.none()) instanceof BoundaryOutcome.Fail, "Present undefined is not a string");
+        check(RuntimeDescriptor.parseCanonicalText("[record[string]]").canonicalSpecText().equals("[record[string]]"),
+            "Nested string Record descriptor round trip");
         System.out.println("=== Boundary Executor Test (ISSUE-0364, ISSUE-0233 D3) ===\n");
 
         testRecursiveIngress();

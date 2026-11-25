@@ -42,7 +42,12 @@ public class RuntimeTypeMatcherTest {
     }
 
     /** A table double. */
-    static final class TableValue { }
+    static final class TableValue {
+        final String descriptor;
+        final java.util.List<?> values;
+        TableValue() { this("unknown", java.util.List.of()); }
+        TableValue(String descriptor, java.util.List<?> values) { this.descriptor=descriptor; this.values=values; }
+    }
 
     /**
      * The conformant full-corpus seam double: every accessor is exactly
@@ -60,6 +65,8 @@ public class RuntimeTypeMatcherTest {
         @Override public boolean isNumber(Object value) { return value instanceof Double; }
         @Override public double numberPayload(Object value) { return (Double) value; }
         @Override public boolean isTable(Object value) { return value instanceof TableValue; }
+        @Override public String recordValueDescriptor(Object value) { return ((TableValue)value).descriptor; }
+        @Override public Iterable<?> recordValues(Object value) { return ((TableValue)value).values; }
         @Override public boolean isArray(Object value) { return value instanceof ArrayValue; }
         @Override public int arrayLength(Object value) { return ((ArrayValue) value).elements.length; }
         @Override public Object arrayElementAt(Object value, int index) {
@@ -172,6 +179,12 @@ public class RuntimeTypeMatcherTest {
     // =========================================================================
 
     public static void main(String[] args) {
+        var strings = new TableValue("string", java.util.List.of("ok"));
+        assertPass("record[string]", strings, "string Record descriptor and members");
+        check(failure(MATCHER.check("record", strings, null)) != null, "string Record descriptor cannot erase");
+        check(failure(MATCHER.check("record[string]", new TableValue(), null)) != null, "unknown Record cannot upgrade");
+        check(failure(MATCHER.check("record[string]", new TableValue("string", java.util.List.of(1.0)), null)) != null,
+            "string Record rejects current nonstring member");
         System.out.println("=== Running Runtime Type Matcher Tests (ISSUE-0312) ===");
 
         testNullRow();

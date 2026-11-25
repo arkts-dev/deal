@@ -48,6 +48,14 @@ public interface RuntimeValueModel {
      */
     boolean isTable(Object value);
 
+    /** Persistent Record value descriptor; null denotes descriptorless host storage. */
+    default String recordValueDescriptor(Object value) { return null; }
+
+    /** Present values in insertion order. Models admitting string Records must expose these. */
+    default Iterable<?> recordValues(Object value) {
+        throw new IllegalStateException("Record value inspection is unavailable");
+    }
+
     /**
      * The tagged class identity text of the {@code @...} row: the
      * runtime tag the value carries, or {@code null} when the value is

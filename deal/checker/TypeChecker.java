@@ -2611,11 +2611,8 @@ public final class TypeChecker {
 
         // Raw Record reads retain unknown; an enclosing expected type does not
         // extract a concrete type. Storage targets retain their write handling.
-        if (objType instanceof Type.Table) {
-            if (assignmentTargetMode) {
-                return Type.Table.INSTANCE;
-            }
-            return Type.Unknown.INSTANCE;
+        if (objType instanceof Type.Table table) {
+            return assignmentTargetMode ? table.valueType() : Types.optionalRead(table.valueType());
         }
 
         if (objType instanceof Type.Array || objType instanceof Type.String || objType instanceof Type.Number) {
@@ -2690,10 +2687,10 @@ public final class TypeChecker {
         // write/delete keys must have static type string (docs/spec-v1.6.md
         // §Writing table fields and §Deletion). The F5 "allow any index
         // type and skip further checks" skip is superseded by the static string-key gate.
-        if (arrayType instanceof Type.Table) {
+        if (arrayType instanceof Type.Table table) {
             if (assignmentTargetMode) {
                 if (indexType instanceof Type.String) {
-                    return Type.Table.INSTANCE;
+                    return table.valueType();
                 }
                 diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E3018,
                     "Table index key must have static type string, got "
@@ -2710,7 +2707,7 @@ public final class TypeChecker {
                             "index.record-key", "record.index.read", "string", typeName(indexType), List.of(RuleGuidance.recordKey()))));
                 return Type.Error.INSTANCE;
             }
-            return Type.Unknown.INSTANCE;
+            return Types.optionalRead(table.valueType());
         }
 
         // Integrality and bounds are runtime checks; static indexes are numbers.
@@ -2832,6 +2829,8 @@ public final class TypeChecker {
             return constructed;
         }
         Type savedExpected = expectedType;
+        Type base = expectedType instanceof Type.Nullable n ? n.inner() : expectedType;
+        Type.Table table = base instanceof Type.Table t ? t : Type.Table.INSTANCE;
         expectedType = null;
         for (Property prop : obj.properties()) {
             if (prop.key() != null) {
@@ -2839,9 +2838,14 @@ public final class TypeChecker {
                 if (!(key instanceof Type.String) && key != Type.Error.INSTANCE)
                     error(DiagnosticCode.E3018, "Record key must be string", prop.key().span());
             }
-            if (Types.resultOnly(checkExpression(prop.value())))
+            expectedType = table == Type.Table.STRING ? table.valueType() : null;
+            Type value = checkExpression(prop.value());
+            expectedType = null;
+            if (Types.resultOnly(value))
                 voidDataError(DiagnosticCode.E3001, "Void results cannot be stored in records",
                         prop.value().span(), prop.value(), "record.field");
+            else if (value != Type.Error.INSTANCE && !isAssignable(table.valueType(), value))
+                reportAssignabilityError(table.valueType(), value, prop.value().span(), null);
         }
         expectedType = savedExpected;
         if (expectedType == null) {
@@ -2850,7 +2854,7 @@ public final class TypeChecker {
                 : "Object literal requires contextual type", obj.span());
             return Type.Error.INSTANCE;
         }
-        return Type.Table.INSTANCE;
+        return table;
     }
 
     /**
@@ -3633,7 +3637,7 @@ public final class TypeChecker {
         // Only a property inside a Record is schema-free. A class field or
         // array element whose value type is Record remains ordinary typed storage.
         boolean uncheckedTableFieldWrite = receiver != null
-            && typeOf(receiver) instanceof Type.Table;
+            && typeOf(receiver) == Type.Table.INSTANCE;
         if (Types.resultOnly(valueType)) {
             voidDataError(DiagnosticCode.E3001, "Result-only values cannot be assigned to storage",
                     assign.value().span(), assign.value(), "assignment.value");
@@ -4283,7 +4287,7 @@ public final class TypeChecker {
 
             case Type.Number ignored -> "number";
             case Type.String ignored -> "string";
-            case Type.Table ignored -> "Record<string, unknown>";
+            case Type.Table table -> table == Type.Table.STRING ? "Record<string, string>" : "Record<string, unknown>";
             case Type.Error ignored -> "<error>";
             case Type.Array a -> (a.readonly() ? "readonly " : "") + (a.element() instanceof Type.Nullable || a.element() instanceof Type.Func
                     ? "(" + typeName(a.element(), depth + 1) + ")"

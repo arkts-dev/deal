@@ -39,7 +39,7 @@ public final class CompositionProductionTest {
         execute(source, expected, expectedStderr, root, host, backends, modules, host != null);
     }
 
-    private static void execute(String source, String expected, String expectedStderr,
+    static void execute(String source, String expected, String expectedStderr,
                         Path root, Path host, List<Backend> backends, Map<String, String> modules,
                         boolean nativeSanitizers) throws Exception {
         execute(source, expected, expectedStderr, root, host, backends, modules, nativeSanitizers, null);

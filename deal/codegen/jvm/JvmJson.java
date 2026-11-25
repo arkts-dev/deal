@@ -158,7 +158,8 @@ public final class JvmJson {
             case deal.semantic.ir.ClassOpsExecutor.Value.Bool b -> b.value();
             case deal.semantic.ir.ClassOpsExecutor.Value.Number n -> n.value();
             case deal.semantic.ir.ClassOpsExecutor.Value.String s -> ((deal.semantic.ir.UnicodeScalars.Valid) s.scalar()).carrier();
-            case deal.semantic.ir.ClassOpsExecutor.Value.Table ignored -> new JvmRuntime.Table();
+            case deal.semantic.ir.ClassOpsExecutor.Value.Table source -> new JvmRuntime.Table(
+                runtimeDescriptorText(source.table().valueDescriptor()));
             case deal.semantic.ir.ClassOpsExecutor.Value.Array source -> {
                 var array = new JvmRuntime.Array(0);
                 array.elementDescriptor = runtimeDescriptorText(source.elementDescriptor());
@@ -174,7 +175,7 @@ public final class JvmJson {
         if (descriptor instanceof deal.semantic.ir.RuntimeDescriptor.Array array) return (array.readonly() ? "readonlyarray(" : "array(") + runtimeDescriptorText(array.element()) + ")";
         if (descriptor instanceof deal.semantic.ir.RuntimeDescriptor.Nullable n)
             return (n.admitsNull() ? (n.admitsUndefined() ? "nullableundefinedable" : "nullable") : "undefinedable") + "(" + runtimeDescriptorText(n.inner()) + ")";
-        return descriptor instanceof deal.semantic.ir.RuntimeDescriptor.Table ? "record" : descriptor.canonicalSpecText();
+        return descriptor.canonicalSpecText();
     }
 
 }

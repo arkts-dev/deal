@@ -119,7 +119,7 @@ public final class CanonicalRuntimeTypeDescriptor {
 
     /** The canonical primitive keywords, in grammar order. */
     private static final List<String> PRIMITIVE_KEYWORDS =
-        List.of("null", "undefined", "unknown", "void", "never", "boolean", "number", "string", "record");
+        List.of("null", "undefined", "unknown", "void", "never", "boolean", "number", "string", "record[string]", "record");
 
     // =========================================================================
     // Per-compilation encode service
@@ -170,7 +170,7 @@ public final class CanonicalRuntimeTypeDescriptor {
 
             case Type.Number ignored -> "number";
             case Type.String ignored -> "string";
-            case Type.Table ignored -> "record";
+            case Type.Table table -> table == Type.Table.STRING ? "record[string]" : "record";
             case Type.Error ignored -> throw new IllegalStateException(
                 "Type.Error reached a descriptor production site: the internal "
                     + "checker sentinel has no canonical descriptor and must never "

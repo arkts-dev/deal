@@ -1957,7 +1957,9 @@ public final class JvmSemanticEmitter {
             KindPayload.TableNewPayload payload = (KindPayload.TableNewPayload) op.payload();
             emitStart(op, indent);
             String target = slot((ValueId) op.result());
-            out.append(indent(indent)).append(target).append(" = new JvmRuntime.Table();\n");
+            out.append(indent(indent)).append(target).append(" = new JvmRuntime.Table(")
+                .append(javaString(((RuntimeDescriptor.Table) op.resultType()).valueDescriptor().canonicalSpecText()))
+                .append(");\n");
             for (KindPayload.TableEntry entry : payload.entries()) {
                 out.append(indent(indent)).append("((").append(
                         "JvmRuntime.Table) ").append(target).append(").write(")
@@ -2144,7 +2146,7 @@ public final class JvmSemanticEmitter {
             String target = slot((ValueId) op.result());
             out.append(indent(indent)).append(target).append(" = ((")
                 .append("JvmRuntime.Table) ").append(slot(payload.table())).append(").read(")
-                .append(javaString(payload.key())).append(");\n");
+                .append(javaString(payload.key())).append(", ").append(javaString(originOf(op))).append(");\n");
             SemanticOp boundary = boundaryChildOf(op);
             if (boundary != null) {
                 emitContextualTableReadBoundaryTail(op, boundary, target, indent);
@@ -2393,7 +2395,7 @@ public final class JvmSemanticEmitter {
             out.append(indent(indent)).append("((").append("JvmRuntime.Table) ")
                 .append(slot(payload.table())).append(").write(")
                 .append(javaString(payload.key())).append(", ")
-                .append(slot(payload.value())).append(");\n");
+                .append(slot(payload.value())).append(", ").append(javaString(originOf(op))).append(");\n");
             emitPlainSuccess(op, indent);
         }
 
@@ -2475,7 +2477,7 @@ public final class JvmSemanticEmitter {
                 out.append(indent(indent)).append(target).append(" = ((")
                     .append("JvmRuntime.Table) ").append(slot(payload.container()))
                     .append(").read((String) ((Object[]) ")
-                    .append(slot(payload.slot())).append(")[1]);\n");
+                    .append(slot(payload.slot())).append(")[1], ").append(javaString(originOf(op))).append(");\n");
                 emitContextualTableReadBoundaryTail(op, boundary, target, indent);
                 return;
             }
@@ -2523,7 +2525,7 @@ public final class JvmSemanticEmitter {
                 .append(";\n");
             out.append(indent(indent)).append("  ((").append("JvmRuntime.Table) ")
                 .append(container).append(").write((String) __s[1], ").append(value)
-                .append(");\n");
+                .append(", ").append(javaString(originOf(op))).append(");\n");
             out.append(indent(indent)).append("}\n");
             emitPlainSuccess(op, indent);
         }

@@ -420,6 +420,7 @@ typedef struct deal_table_entry {
 
 /* One insertion-ordered record: the present count and both ends of the order. */
 struct deal_table {
+    uint32_t value_descriptor;
     size_t count;
     deal_table_entry *head;
     deal_table_entry *tail;
@@ -473,10 +474,22 @@ deal_table *deal_container_table_new(void) {
     deal_layout_define(&deal_table_entry_layout);
     struct deal_table *table =
         deal_alloc(DEAL_LAYOUT_TABLE, sizeof(*table));
+    table->value_descriptor = 0u;
     table->count = 0u;
     table->head = NULL;
     table->tail = NULL;
     return table;
+}
+
+uint32_t deal_container_table_value_descriptor(const deal_table *table) {
+    return deal_container_table_of(table)->value_descriptor;
+}
+
+void deal_container_table_set_descriptor(deal_table *table, uint32_t descriptor) {
+    deal_table *storage = deal_container_table_of(table);
+    if (descriptor == 0u || (storage->value_descriptor != 0u && storage->value_descriptor != descriptor))
+        deal_platform_fault("container: cannot replace a Record value descriptor");
+    storage->value_descriptor = descriptor;
 }
 
 size_t deal_container_table_count(const deal_table *table) {

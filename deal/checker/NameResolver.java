@@ -941,6 +941,7 @@ public final class NameResolver {
             case "number"    -> Type.Number.INSTANCE;
             case "string"    -> Type.String.INSTANCE;
             case "Record<string, unknown>" -> Type.Table.INSTANCE;
+            case "Record<string, string>" -> Type.Table.STRING;
             case "undefined" -> Type.Undefined.INSTANCE;
             case "unknown"   -> Type.Unknown.INSTANCE;
             case "void"      -> Type.Void.INSTANCE;

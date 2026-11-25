@@ -3126,7 +3126,48 @@ public class SemanticIrValidatorTest {
         assertE6005(SemanticIrValidator.validateText(SemanticIrValidator.toUnitText(storage), FACTS), "R-ENUM", "void");
     }
 
+    private static void testStringRecordConstruction() {
+        for (boolean valid : List.of(true, false)) {
+            SemanticOp table = op(SemanticOpKind.TABLE_NEW, new KindPayload.TableNewPayload(List.of()),
+                nextValue(), RuntimeDescriptor.Table.STRING, FailurePolicyId.NO_DEAL_FAILURE, null);
+            SemanticOp value = op(SemanticOpKind.CONST,
+                new KindPayload.ConstPayload(valid ? new ScalarValue.String("v") : new ScalarValue.Number(1)),
+                nextValue(), valid ? STR : INT, FailurePolicyId.NO_DEAL_FAILURE, null);
+            SemanticOp write = op(SemanticOpKind.MEMBER_WRITE,
+                new KindPayload.MemberWritePayload((ValueId)table.result(), "k", (ValueId)value.result()),
+                null, null, FailurePolicyId.NO_DEAL_FAILURE, null);
+            var fixture = unit(List.of(table, value, write));
+            var typed = SemanticIrValidator.validate(fixture, FACTS);
+            if (valid) assertUnitPass(fixture, FACTS, "String Record write producer");
+            else assertE6005(typed, "R-ENUM", "String Record writes require string values");
+            check(typed.equals(SemanticIrValidator.validate(deal.semantic.ir.RawUnitMaterializer.materialize(RawUnit.fromTyped(fixture)), FACTS))
+                && typed.equals(SemanticIrValidator.validateText(SemanticIrValidator.toUnitText(fixture), FACTS)),
+                "String Record write typed/raw/text: " + valid);
+        }
+        for (String defect : List.of("none", "value", "result", "forward")) {
+            RuntimeDescriptor valueType = defect.equals("value") ? INT : STR;
+            SemanticOp value = op(SemanticOpKind.CONST,
+                new KindPayload.ConstPayload(defect.equals("value") ? new ScalarValue.Number(1) : new ScalarValue.String("v")),
+                nextValue(), valueType, FailurePolicyId.NO_DEAL_FAILURE, null);
+            SemanticOp table = op(SemanticOpKind.TABLE_NEW,
+                new KindPayload.TableNewPayload(List.of(new KindPayload.TableEntry("k", (ValueId)value.result()))),
+                nextValue(), defect.equals("result") ? INT : RuntimeDescriptor.Table.STRING,
+                FailurePolicyId.NO_DEAL_FAILURE, null);
+            var fixture = unit(defect.equals("forward") ? List.of(table, value) : List.of(value, table));
+            var raw = RawUnit.fromTyped(fixture);
+            var rebuilt = deal.semantic.ir.RawUnitMaterializer.materialize(raw);
+            var typed = SemanticIrValidator.validate(fixture, FACTS);
+            if (defect.equals("none")) assertUnitPass(fixture, FACTS, "String Record literal construction");
+            else assertE6005(typed, "R-ENUM", defect.equals("result")
+                ? "TABLE_NEW requires a Record result descriptor" : "String Record literal values require preceding string producers");
+            check(typed.equals(SemanticIrValidator.validate(rebuilt, FACTS))
+                && typed.equals(SemanticIrValidator.validateText(SemanticIrValidator.toUnitText(fixture), FACTS)),
+                "String Record construction typed/raw/text: " + defect);
+        }
+    }
+
     public static void main(String[] args) {
+        testStringRecordConstruction();
         testDescriptorPositions();
         try (var scope = RuntimeDescriptor.retainParses()) {
             var descriptor = RuntimeDescriptor.parseCanonicalText("[(number)->never]");

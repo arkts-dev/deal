@@ -1457,7 +1457,8 @@ public class JsSemanticEmitterTest {
             StandardCharsets.UTF_8);
         check(artifact.contains("$rt.makeTable({[\"a\"]:"),
             "a table literal constructs the insertion-ordered Map carrier");
-        check(artifact.contains(".set(\"c\",") && artifact.contains(".get(\"c\")"),
+        check(artifact.contains("$rt.tableSet(") && artifact.contains("\"c\",")
+                && artifact.contains("$rt.tableGet("),
             "table writes and reads go through the Map carrier members");
         check(artifact.contains(".delete(\"b\")"),
             "a table delete removes the field (absence is not null)");
@@ -2835,7 +2836,7 @@ public class JsSemanticEmitterTest {
                 runtime.tableSet(value.data, "f", String.fromCharCode(0xD800));
                 const legal = originalEncode(value, ...origin);
                 if (!legal.includes('\\\\ud800')) throw new Error("lone unit was not escaped");
-                runtime.tableSet(value.data, "f", Symbol("invalid-json-value"));
+                value.data.set("f", Symbol("invalid-json-value"));
               }
               return originalEncode(value, ...origin);
             };

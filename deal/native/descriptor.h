@@ -9,7 +9,7 @@
  *
  *     descriptor := primitive | error | class | array | nullish | function
  *     primitive  := "null" | "undefined" | "boolean" | "number" | "string"
- *                 | "record" | "unknown"
+ *                 | "record" | "record[string]" | "unknown"
  *     error      := "Error"
  *     class      := "@" modulePath "/" ClassName
  *     array      := "[" descriptor "]"
@@ -69,6 +69,10 @@
 
 /* An interned canonical descriptor atom; the layout is private to the group. */
 typedef struct deal_descriptor deal_descriptor;
+
+/* Reached Record access checks the persistent value descriptor before publication/mutation. */
+deal_outcome_data deal_record_read(deal_table *table, deal_string *key, const deal_origin *origin);
+deal_outcome deal_record_write(deal_table *table, deal_string *key, const deal_data *value, const deal_origin *origin);
 
 /* The closed descriptor kinds of the canonical grammar (R4). `void` and
  * `never` are result-only: void admits undefined; never admits no completion.

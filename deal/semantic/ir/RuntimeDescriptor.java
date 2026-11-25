@@ -168,9 +168,9 @@ public sealed interface RuntimeDescriptor extends OpResultType
             return parseFunc(text, pos, false);
         }
         // Fixed scalar spellings.
-        java.lang.String[] fixed = {"null", "undefined", "unknown", "void", "never", "boolean", "number", "string", "record"};
+        java.lang.String[] fixed = {"null", "undefined", "unknown", "void", "never", "boolean", "number", "string", "record[string]", "record"};
         RuntimeDescriptor[] mapped = {Null.INSTANCE, Undefined.INSTANCE, Unknown.INSTANCE, Void.INSTANCE, Never.INSTANCE, Boolean.INSTANCE,
-            Number.INSTANCE, String.INSTANCE, Table.INSTANCE};
+            Number.INSTANCE, String.INSTANCE, Table.STRING, Table.INSTANCE};
         for (int i = 0; i < fixed.length; i++) {
             if (text.startsWith(fixed[i], pos[0])) {
                 int end = pos[0] + fixed[i].length();
@@ -364,13 +364,17 @@ public sealed interface RuntimeDescriptor extends OpResultType
         }
     }
 
-    /** The {@code table} descriptor; canonical text {@code "table"}. */
+    /** Closed Record variants sharing physical storage, with distinct canonical descriptors. */
     enum Table implements RuntimeDescriptor {
-        INSTANCE;
+        INSTANCE, STRING;
+
+        public RuntimeDescriptor valueDescriptor() {
+            return this == STRING ? String.INSTANCE : Unknown.INSTANCE;
+        }
 
         @Override
         public java.lang.String canonicalSpecText() {
-            return "record";
+            return this == STRING ? "record[string]" : "record";
         }
     }
 

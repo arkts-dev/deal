@@ -77,7 +77,7 @@ public final class CanonicalTypeText {
 
             case Type.Number ignored -> "number";
             case Type.String ignored -> "string";
-            case Type.Table ignored -> "Record<string, unknown>";
+            case Type.Table table -> table == Type.Table.STRING ? "Record<string, string>" : "Record<string, unknown>";
             case Type.Error ignored -> throw new Defect(
                 "Type.Error reached a declared-type position: the internal checker "
                     + "sentinel has no canonical rendering and is excluded from the index");
@@ -226,7 +226,7 @@ public final class CanonicalTypeText {
 
     private static String renderNamed(String name, Context context) {
         return switch (name) {
-            case "null", "undefined", "unknown", "void", "never", "boolean", "number", "string", "Record<string, unknown>" -> name;
+            case "null", "undefined", "unknown", "void", "never", "boolean", "number", "string", "Record<string, unknown>", "Record<string, string>" -> name;
             case "Error" -> "Error";
             default -> {
                 if (!context.declaredClasses().contains(name)) {

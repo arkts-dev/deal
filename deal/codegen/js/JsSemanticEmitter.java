@@ -1319,7 +1319,8 @@ case NUMBER_ADD -> "(" + numeric(left) + " + "
                 expression.append("[").append(jsString(entry.key()))
                     .append("]: ").append(slot(entry.value()));
             }
-            expression.append("})");
+            expression.append("}, ").append(jsString(((RuntimeDescriptor.Table) op.resultType())
+                .valueDescriptor().canonicalSpecText())).append(")");
             emit(slotOf(op) + " = " + expression + ";");
         }
 
@@ -1386,8 +1387,8 @@ case NUMBER_ADD -> "(" + numeric(left) + " + "
             KindPayload.MemberReadPayload payload =
                 (KindPayload.MemberReadPayload) op.payload();
             String target = slotOf(op);
-            emit(target + " = " + slot(payload.table()) + ".get("
-                + jsString(payload.key()) + ");");
+            emit(target + " = $rt.tableGet(" + slot(payload.table()) + ", "
+                + jsString(payload.key()) + ", " + spanArgs(op) + ");");
             SemanticOp boundary = boundaryChildOf(op);
             if (boundary != null && !defersContextualRead(boundary)) {
                 emitBoundaryCheck(boundary, target,
@@ -1398,8 +1399,8 @@ case NUMBER_ADD -> "(" + numeric(left) + " + "
         private void emitMemberWrite(SemanticOp op) {
             KindPayload.MemberWritePayload payload =
                 (KindPayload.MemberWritePayload) op.payload();
-            emit(slot(payload.table()) + ".set(" + jsString(payload.key())
-                + ", " + slot(payload.value()) + ");");
+            emit("$rt.tableSet(" + slot(payload.table()) + ", " + jsString(payload.key())
+                + ", " + slot(payload.value()) + ", " + spanArgs(op) + ");");
         }
 
         private void emitMemberDelete(SemanticOp op) {
@@ -1427,7 +1428,7 @@ case NUMBER_ADD -> "(" + numeric(left) + " + "
             IndexMode mode = normalizeMode(payload.slot());
             if (mode == IndexMode.TABLE_READ) {
                 emit(target + " = $rt.tableGet(" + container + ", " + index
-                    + ");");
+                    + ", " + spanArgs(op) + ");");
             } else {
                 String length = normalizeLengthSlot(payload.slot());
                 emit("if (!Number.isInteger(" + index + ") || " + index + " < 0 || " + index + " >= " + length
@@ -1499,7 +1500,7 @@ case NUMBER_ADD -> "(" + numeric(left) + " + "
             IndexMode mode = normalizeMode(payload.slot());
             if (mode == IndexMode.TABLE_WRITE) {
                 emit("$rt.tableSet(" + container + ", " + index + ", " + value
-                    + ");");
+                    + ", " + spanArgs(op) + ");");
             } else {
                 // The carrier split is $rt.arraySet's own (a native Array
                 // assigns the slot, the JSON array-marked Map sets its

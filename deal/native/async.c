@@ -406,7 +406,7 @@ deal_outcome_data deal_async_await(void *operation,
     deal_check_context context;
     context.origin = origin;
     context.parameter_index = 0;
-    deal_outcome admitted = deal_check_value(declared, checked,
+    deal_outcome admitted = deal_check_live_value(declared, checked,
         DEAL_BOUNDARY_ASYNC_COMPLETION, &context);
     if (admitted.error != NULL) {
         if (record->host_callee != NULL)

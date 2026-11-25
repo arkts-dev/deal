@@ -1077,6 +1077,7 @@ public final class SharedStdlibSemantics {
         deal.semantic.ir.BoundaryValueView view = switch (value) {
             case Value.Table table -> table.layout() == null
                 ? deal.semantic.ir.BoundaryValueView.of(ActualKind.TABLE)
+                    .withRecordValueDescriptor(table.table().valueDescriptor())
                 : deal.semantic.ir.BoundaryValueView.ofClass(table.layout().classId().text());
             case Value.Array array -> deal.semantic.ir.BoundaryValueView.ofArray(List.of())
                 .withArrayElementDescriptor(array.elementDescriptor());
@@ -1173,7 +1174,8 @@ public final class SharedStdlibSemantics {
                         + " is not — a producer defect, never a projection");
                 }
                 SemanticTable.Lookup<Value> lookup = frame.table.get(key);
-                deal.semantic.ir.RuntimeDescriptor descriptor = null;
+                deal.semantic.ir.RuntimeDescriptor descriptor = frame.table.valueDescriptor()
+                    == deal.semantic.ir.RuntimeDescriptor.String.INSTANCE ? frame.table.valueDescriptor() : null;
                 if (frame.layout != null) {
                     var field = frame.layout.fields().get(i);
                     descriptor = field.descriptor();

@@ -488,6 +488,16 @@ public final class Language16FrontendTest {
         check("import * as from from \"std/math\"; function f():number{return from.floor(1.5);}", true);
         check("import * as as from \"std/math\"; function f():void{let value:unknown=as;}", false);
         check("function f():void {let r:Record<string,unknown>={};}", true);
+        check("function f(k:string):void {let r:Record<string,string>={a:\"x\",[k]:\"y\"};r.a=\"z\";r[k]=\"w\";let s:string|undefined=r.a;delete r[k];}", true);
+        check("function f():void {let r:Record<string,string>={a:1};}", false);
+        check("function f():void {let r:Record<string,string>={a:undefined};}", false);
+        check("function f():void {let r:Record<string,string>={};r.x=1;}", false);
+        check("function f(k:string):void {let r:Record<string,string>={};r[k]=undefined;}", false);
+        check("function f():void {let r:Record<string,string>={};let s:string=r.x;}", false);
+        check("function f():void {let r:Record<string,string>={};let u:Record<string,unknown>=r;}", false);
+        check("function f():void {let r:Record<string,unknown>={};let u:Record<string,string>=r;}", false);
+        check("function f():void {let r:Record<string,number>={};}", false);
+        check("function f():void {let r:Record<number,string>={};}", false);
         check("function f(key:string):void {let r:Record<string,unknown>={\"content-type\":1,[key]:2};r={[key]:3};}", true);
         check("class C{x:number;} function f():void {let c:C={\"x\":1};}", true);
         check("function f():void {let r:Record<string,unknown>={a:1,\"\\u0061\":2};}", false);

@@ -692,7 +692,8 @@ public final class ClassConstructionValidator {
 
             case RuntimeDescriptor.Number ignored -> "number";
             case RuntimeDescriptor.String ignored -> "string";
-            case RuntimeDescriptor.Table ignored -> "Record<string, unknown>";
+            case RuntimeDescriptor.Table table -> table == RuntimeDescriptor.Table.STRING
+                ? "Record<string, string>" : "Record<string, unknown>";
             case RuntimeDescriptor.Class classDescriptor ->
                 classReferenceText(classDescriptor.classId(), index, seeds);
             case RuntimeDescriptor.Array array -> {

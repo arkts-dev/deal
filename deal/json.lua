@@ -266,10 +266,13 @@ local function encode_value(v, file, line, column, path)
         local persistent=rawget(value,__K.elementDescriptor)
         if persistent~=nil and persistent~=d.element.text then kindFailure('array',value) end
         return d.element
-      elseif d.name == 'record' then
+      elseif d.name == 'record' or d.name == 'record[string]' then
         if __rt.typed_kind(value)~='table' or type(value)~='table' or rawget(value,__K.a) then
           kindFailure('table',value)
         end
+        local stored=rawget(value,__K.recordDescriptor)
+        local expected=d.name=='record[string]' and 'string' or 'unknown'
+        if stored~=nil and stored~=expected then kindFailure('table',value) end
       elseif d.name ~= 'unknown' then
         __rt.check_canonical_type(d.text,value,file,line,column)
       end
@@ -482,7 +485,8 @@ local function encode_value(v, file, line, column, path)
       local maxIdx = 0
       local objectKey = false
       for k, _ in pairs(val) do
-        if type(k) == 'number' then
+        if k == __K.recordDescriptor then
+        elseif type(k) == 'number' then
           if k < 1 or k ~= math.floor(k) then
             rejectIngress(val)
           end
@@ -502,7 +506,7 @@ local function encode_value(v, file, line, column, path)
         return
       end
       local keys = {}
-      for k, _ in pairs(val) do keys[#keys + 1] = k end
+      for k, _ in pairs(val) do if type(k)=='string' then keys[#keys + 1] = k end end
       out[#out + 1] = '{'
       frames[#frames + 1] = {kind = 'object', value = val, keys = keys, arrays=arrays, index = 1}
       return
@@ -562,7 +566,13 @@ local function encode_value(v, file, line, column, path)
             if descriptor==nil then error('JSON class field has no canonical descriptor',0) end
             position(descriptor,element)
           end
-        else element = frame.value[k] end
+        else
+          element = frame.value[k]
+          if rawget(frame.value,__K.recordDescriptor)=="string" then
+            descriptor=__rt.parse_canonical_descriptor("string")
+            position(descriptor,element)
+          end
+        end
         shallow(element)
         local presentNull = element == nil and frame.presence ~= nil and frame.presence[k] == true
         if presentNull or not omitted(element) then
@@ -996,7 +1006,7 @@ function json.decode(text, target, plans, file, line, column)
   local function mismatch(d, v, missing)
     if d.kind == "nullable" then d = d.inner end
     local expected = d.kind == "array" and "array" or d.kind == "class" and "class" or d.name
-    if expected == "record" then expected = "table" end
+    if expected == "record" or expected == "record[string]" then expected = "table" end
     local actual = missing and "undefined" or v == __rt.__NULL and "null"
       or type(v)=="table" and rawget(v,__K.a) and "array" or type(v)
     error(__rt._armErr("TYPED_BOUNDARY_KIND", {kind=expected=="class" and "class instance" or expected},
@@ -1044,13 +1054,14 @@ function json.decode(text, target, plans, file, line, column)
           frame.children = {}
           for i=1,value[__K.n] do frame.children[i]={key=i,raw=value[i],descriptor=child} end
         elseif type(value)=="table" and rawget(value,__K.t)
-            and (d.name=="unknown" or d.name=="record") then
-          frame.value = {[__K.t]=true, [__K.keys]={}, [__K.order]={}}
+            and (d.name=="unknown" or d.name=="record" or d.name=="record[string]") then
+          local child = d.name=="record[string]" and __rt.parse_canonical_descriptor("string") or unknown
+          frame.value = {[__K.t]=true, [__K.keys]={}, [__K.order]={}, [__K.recordDescriptor]=child.text}
           frame.children = {}
           for _,key in ipairs(value[__K.order]) do
             frame.value[__K.keys][key]=true
             frame.value[__K.order][#frame.value[__K.order]+1]=key
-            frame.children[#frame.children+1]={key=key,raw=value[key],descriptor=unknown}
+            frame.children[#frame.children+1]={key=key,raw=value[key],descriptor=child}
           end
         elseif d.name=="unknown" or (d.name=="null" and value==__rt.__NULL)
             or ((d.name=="number" or d.name=="string" or d.name=="boolean") and type(value)==d.name) then

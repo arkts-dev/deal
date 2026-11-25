@@ -316,7 +316,7 @@ public class CanonicalRuntimeTypeDescriptorTest {
         System.out.println("-- primitive round trips --");
 
         String[] primitives = {
-            "null", "undefined", "unknown", "boolean", "number", "string", "record"
+            "null", "undefined", "unknown", "boolean", "number", "string", "record", "record[string]"
         };
         check(CanonicalRuntimeTypeDescriptor.parse("void") instanceof DescriptorSyntaxError,
             "void is not a data descriptor");
@@ -342,6 +342,8 @@ public class CanonicalRuntimeTypeDescriptorTest {
             // Arrays / nullables, nested.
             "[number]", "?number", "[?number]", "?[number]", "[[number]]", "[?[?[?[record]]]]",
             "[record]", "?record", "[?record]", "?[record]",
+            "[record[string]]", "?!record[string]", "(record[string])->record[string]",
+            "async([record[string]])->!record[string]", "readonly[record[string]]",
             "!number", "?!number", "null|undefined", "[!number]", "[?!record]",
             "(!number,?!string)->void", "async()->!record",
             // Spec examples (docs/spec-v1.6.md §Runtime type descriptor format).
@@ -1203,10 +1205,10 @@ public class CanonicalRuntimeTypeDescriptorTest {
 
         Type[] types = {
             Type.Null.INSTANCE, Type.Boolean.INSTANCE, Type.Number.INSTANCE,
-            Type.Number.INSTANCE, Type.String.INSTANCE, Type.Table.INSTANCE,
+            Type.Number.INSTANCE, Type.String.INSTANCE, Type.Table.INSTANCE, Type.Table.STRING,
         };
         String[] texts = {
-            "null", "boolean", "number", "number", "string", "record",
+            "null", "boolean", "number", "number", "string", "record", "record[string]",
         };
         for (int i = 0; i < types.length; i++) {
             DescriptorAst ast = assertEncodeMember(types[i], "primitive " + texts[i]);

@@ -167,6 +167,7 @@ static const deal_descriptor_keyword deal_descriptor_keywords[] = {
     {"boolean", DEAL_DESCRIPTOR_BOOLEAN},
     {"number", DEAL_DESCRIPTOR_NUMBER},
     {"string", DEAL_DESCRIPTOR_STRING},
+    {"record[string]", DEAL_DESCRIPTOR_RECORD},
     {"record", DEAL_DESCRIPTOR_RECORD},
     {"unknown", DEAL_DESCRIPTOR_UNKNOWN}
 };
@@ -883,9 +884,16 @@ static deal_check_case deal_check_core(deal_descriptor *descriptor,
         }
         return value->kind == DEAL_KIND_INVALID_UNICODE
             ? DEAL_CHECK_INVALID_UNICODE : DEAL_CHECK_KIND_MISMATCH;
-    case DEAL_DESCRIPTOR_RECORD:
-        return value->kind == DEAL_KIND_TABLE
-            ? DEAL_CHECK_PASS : DEAL_CHECK_KIND_MISMATCH;
+    case DEAL_DESCRIPTOR_RECORD: {
+        if (value->kind != DEAL_KIND_TABLE) return DEAL_CHECK_KIND_MISMATCH;
+        if (value->referent == NULL) return DEAL_CHECK_PASS;
+        deal_table *table = value->referent;
+        deal_descriptor *element = deal_descriptor_intern(
+            strcmp(descriptor->text, "record[string]") == 0 ? "string" : "unknown");
+        uint32_t stored = deal_container_table_value_descriptor(table);
+        if (stored != 0u && stored != deal_descriptor_reference(element)) return DEAL_CHECK_KIND_MISMATCH;
+        return DEAL_CHECK_PASS;
+    }
     case DEAL_DESCRIPTOR_UNKNOWN:
         if (value->host_function) return DEAL_CHECK_KIND_MISMATCH;
         switch (value->kind) {
@@ -1278,6 +1286,7 @@ typedef struct {
     const void *object;
     deal_descriptor *descriptor;
 } deal_live_identity;
+typedef struct { deal_table *table; deal_descriptor *descriptor; } deal_record_admission;
 typedef struct {
     deal_live_item *items;
     size_t count, capacity;
@@ -1285,6 +1294,8 @@ typedef struct {
     size_t seen_count, seen_capacity;
     deal_live_path *paths;
     size_t path_count, path_capacity;
+    deal_record_admission *records;
+    size_t record_count, record_capacity;
 } deal_live_walk;
 
 static void deal_live_path_child(deal_live_walk *walk, size_t parent,
@@ -1545,12 +1556,52 @@ static deal_outcome deal_check_live_value_core(deal_descriptor *expected, deal_c
         if (deal_live_seen(&walk, datum.reference, descriptor)) continue;
         if (datum.tag == DEAL_DATA_TABLE) {
             deal_table *table = datum.reference;
+            deal_descriptor *declared = descriptor;
+            while (declared->kind == DEAL_DESCRIPTOR_NULLISH) declared = declared->inner;
+            deal_descriptor *element = declared->kind == DEAL_DESCRIPTOR_RECORD
+                && strcmp(declared->text, "record[string]") == 0
+                    ? deal_descriptor_intern("string") : deal_descriptor_intern("unknown");
+            uint32_t stored = deal_container_table_value_descriptor(table);
+            if (declared->kind == DEAL_DESCRIPTOR_RECORD && stored != 0u
+                    && stored != deal_descriptor_reference(element)) {
+                deal_check_failure failure = {DEAL_CHECK_KIND_MISMATCH, declared, declared, "table"};
+                deal_classification value = deal_check_classify(&item.input);
+                outcome.error = deal_check_render(DEAL_BOUNDARY_TYPE_DESCRIPTOR, &failure, &value, context);
+                break;
+            }
+            if (stored == 0u) {
+                size_t planned = 0u;
+                while (planned < walk.record_count && walk.records[planned].table != table) planned++;
+                if (planned < walk.record_count) {
+                    if (declared->kind == DEAL_DESCRIPTOR_RECORD && walk.records[planned].descriptor != element) {
+                        deal_check_failure failure = {DEAL_CHECK_KIND_MISMATCH, declared, declared, "table"};
+                        deal_classification value = deal_check_classify(&item.input);
+                        outcome.error = deal_check_render(DEAL_BOUNDARY_TYPE_DESCRIPTOR, &failure, &value, context);
+                        break;
+                    }
+                    element = walk.records[planned].descriptor;
+                } else {
+                    if (walk.record_count == walk.record_capacity) {
+                        size_t capacity = walk.record_capacity == 0u ? 16u : deal_platform_checked_multiply(walk.record_capacity, 2u);
+                        size_t bytes = deal_platform_checked_multiply(capacity, sizeof(*walk.records));
+                        deal_record_admission *records = deal_platform_allocate(bytes);
+                        if (records == NULL) deal_platform_fault("check: Record admission allocation failed");
+                        if (walk.record_count != 0u) memcpy(records, walk.records,
+                            deal_platform_checked_multiply(walk.record_count, sizeof(*records)));
+                        deal_platform_release(walk.records);
+                        walk.records = records;
+                        walk.record_capacity = capacity;
+                    }
+                    walk.records[walk.record_count++] = (deal_record_admission){table, element};
+                }
+            } else if (declared->kind != DEAL_DESCRIPTOR_RECORD)
+                element = deal_descriptor_of_reference(stored);
             /* Reverse push preserves insertion order during the depth-first walk. */
             size_t count = deal_container_table_count(table);
             for (size_t index = count; index != 0u; index--) {
                 deal_string *key = deal_container_table_key_at(table, index - 1u);
                 deal_live_push(&walk, deal_live_datum(deal_container_table_read(table, key)),
-                    deal_descriptor_intern("unknown"), &item);
+                    element, &item);
                 deal_live_path_child(&walk, item.path, (const char *)deal_text_bytes(key), deal_text_byte_length(key), 0u);
                 deal_live_push(&walk, deal_live_datum(deal_data_of_reference(DEAL_DATA_STRING, key)),
                     deal_descriptor_intern("string"), &item);
@@ -1635,6 +1686,11 @@ static deal_outcome deal_check_live_value_core(deal_descriptor *expected, deal_c
             if (outcome.error != NULL) break;
         }
     }
+    if (outcome.error == NULL) {
+        for (size_t i = 0u; i < walk.record_count; i++)
+            deal_container_table_set_descriptor(walk.records[i].table,
+                deal_descriptor_reference(walk.records[i].descriptor));
+    }
     if (outcome.error != NULL) deal_live_path_failure(&walk, &item, outcome.error);
     if (wrap_elements && outcome.error != NULL && item.element_index != 0u) {
         /* The outer checked array owns its first failing element; nested
@@ -1646,6 +1702,7 @@ static deal_outcome deal_check_live_value_core(deal_descriptor *expected, deal_c
     deal_platform_release(walk.paths);
     deal_platform_release(walk.items);
     deal_platform_release(walk.seen);
+    deal_platform_release(walk.records);
     return outcome;
 }
 
@@ -1653,6 +1710,26 @@ deal_outcome deal_check_live_value(deal_descriptor *expected, deal_check_input i
                                    uint32_t boundary_kind,
                                    const deal_check_context *context) {
     return deal_check_live_value_core(expected, input, boundary_kind, context, 1);
+}
+
+deal_outcome_data deal_record_read(deal_table *table, deal_string *key, const deal_origin *origin) {
+    deal_outcome_data result = {0};
+    result.value = deal_container_table_read(table, key);
+    if (!deal_container_table_has(table, key)) return result;
+    uint32_t stored = deal_container_table_value_descriptor(table);
+    deal_descriptor *element = stored == 0u ? deal_descriptor_intern("unknown") : deal_descriptor_of_reference(stored);
+    deal_check_context context = {origin, 0};
+    result.error = deal_check_live_value(element, deal_live_datum(result.value), DEAL_BOUNDARY_TYPE_DESCRIPTOR, &context).error;
+    return result;
+}
+
+deal_outcome deal_record_write(deal_table *table, deal_string *key, const deal_data *value, const deal_origin *origin) {
+    uint32_t stored = deal_container_table_value_descriptor(table);
+    deal_descriptor *element = stored == 0u ? deal_descriptor_intern("unknown") : deal_descriptor_of_reference(stored);
+    deal_check_context context = {origin, 0};
+    deal_outcome result = deal_check_live_value(element, deal_live_datum(*value), DEAL_BOUNDARY_TYPE_DESCRIPTOR, &context);
+    if (result.error == NULL) deal_container_table_write(table, key, value);
+    return result;
 }
 
 deal_outcome_data deal_array_pop(deal_array *array, deal_descriptor *element,

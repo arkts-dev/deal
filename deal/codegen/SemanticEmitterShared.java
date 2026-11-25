@@ -99,8 +99,8 @@ public final class SemanticEmitterShared {
         if (descriptor instanceof RuntimeDescriptor.String) {
             return "string";
         }
-        if (descriptor instanceof RuntimeDescriptor.Table) {
-            return "record";
+        if (descriptor instanceof RuntimeDescriptor.Table table) {
+            return table.canonicalSpecText();
         }
         if (descriptor instanceof RuntimeDescriptor.Class cls) {
             return cls.classId().text();

@@ -63,7 +63,10 @@ rejects with E8001. Missing is never admitted data.
 
 Graph checks use operation-local identity-and-descriptor guards, not lasting
 certificates. An unknown/Record visit cannot discharge a stronger class/array
-check. Validate current required presence and fields in declaration order; schedule
+check. Records retain private unknown/string value descriptors; descriptorless
+graph admission stages them in traversal order and commits only on full success.
+Reached Record accesses enforce stored descriptors before publication/mutation.
+Validate current required presence and fields in declaration order; schedule
 worklist defects in that order, not reverse push order. Retain source-index E8003
 with the unwrapped leaf cause and owning operation origin. Validate before mutation
 or publication; repair/retry on the same graph must remain possible.

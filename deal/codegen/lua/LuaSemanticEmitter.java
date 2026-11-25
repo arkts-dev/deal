@@ -856,7 +856,7 @@ public final class LuaSemanticEmitter {
             out.append("__dealCarrierKeys = __dealCarrierKeys or {\n");
             out.append("  kind = {}, classname = {}, c = {}, id = {}, p = {}, "
                 + "f = {}, d = {},\n");
-            out.append("  elementDescriptor = {}, a = {}, n = {}, nK = {}, da = {}, t = {}, keys = {}, "
+            out.append("  recordDescriptor = {}, elementDescriptor = {}, a = {}, n = {}, nK = {}, da = {}, t = {}, keys = {}, "
                 + "order = {},\n");
             out.append("  fn = {}, csig = {}, sig = {}, fid = {}, it = {}, "
                 + "sid = {}, val = {},\n");
@@ -1978,7 +1978,9 @@ public final class LuaSemanticEmitter {
             KindPayload.TableNewPayload payload = (KindPayload.TableNewPayload) op.payload();
             emitStart(op);
             String target = slot((ValueId) op.result());
-            out.append(target).append(" = {[__dealCarrierKeys.t] = true, [__dealCarrierKeys.keys] = {}, [__dealCarrierKeys.order] = {}}\n");
+            out.append(target).append(" = {[__dealCarrierKeys.t] = true, [__dealCarrierKeys.keys] = {}, [__dealCarrierKeys.order] = {}, [__dealCarrierKeys.recordDescriptor] = ")
+                .append(luaString(((RuntimeDescriptor.Table) op.resultType()).valueDescriptor().canonicalSpecText()))
+                .append("}\n");
             for (KindPayload.TableEntry entry : payload.entries()) {
                 out.append(target).append("[").append(luaString(entry.key()))
                     .append("] = ").append(slot(entry.value())).append("\n");
@@ -2247,7 +2249,7 @@ public final class LuaSemanticEmitter {
             emitStart(op);
             String target = slot((ValueId) op.result());
             out.append(target).append(" = __member(").append(slot(payload.table()))
-                .append(", ").append(luaString(payload.key())).append(")\n");
+                .append(", ").append(luaString(payload.key())).append(", ").append(luaString(originOf(op))).append(")\n");
             SemanticOp boundary = boundaryChildOf(op);
             // The read-side variant materialization: the raw read's
             // declared descriptor decides whether an int-variant slot
@@ -2590,6 +2592,8 @@ public final class LuaSemanticEmitter {
             KindPayload.MemberWritePayload payload =
                 (KindPayload.MemberWritePayload) op.payload();
             emitStart(op);
+            out.append("if ").append(slot(payload.table())).append("[__dealCarrierKeys.recordDescriptor] == 'string' then __factories.__checkRecordValue(")
+                .append(slot(payload.value())).append(", ").append(luaString(originOf(op))).append(") end\n");
             out.append(slot(payload.table())).append("[")
                 .append(luaString(payload.key())).append("] = ")
                 .append(slot(payload.value())).append("\n");
@@ -2663,7 +2667,7 @@ public final class LuaSemanticEmitter {
                 String tableTarget = slot((ValueId) op.result());
                 out.append(tableTarget).append(" = __member(")
                     .append(slot(payload.container())).append(", ")
-                    .append(slot(payload.slot())).append(".k)\n");
+                    .append(slot(payload.slot())).append(".k, ").append(luaString(originOf(op))).append(")\n");
                 out.append(tableTarget).append(" = __readVar(")
                     .append(slot(payload.container())).append(", ")
                     .append(slot(payload.slot())).append(".k, ")
@@ -2716,6 +2720,8 @@ public final class LuaSemanticEmitter {
                 .append(".i + 1, ").append(value).append(", ").append(numberWriteFlag)
                 .append(")\n");
             out.append("else\n");
+            out.append("  if ").append(container).append("[__dealCarrierKeys.recordDescriptor] == 'string' then __factories.__checkRecordValue(")
+                .append(value).append(", ").append(luaString(originOf(op))).append(") end\n");
             out.append("  ").append(container).append("[").append(slotName)
                 .append(".k] = ").append(value).append("\n");
             out.append("  __orderAdd(").append(container).append(", ").append(slotName)
@@ -6738,7 +6744,8 @@ private void emitStdlib(SemanticOp op) {
             }
             // The JSON plan's object-kind dialect is distinct from the
             // canonical runtime descriptor atom record.
-            if (descriptor instanceof RuntimeDescriptor.Table) return "table";
+            if (descriptor instanceof RuntimeDescriptor.Table table)
+                return table == RuntimeDescriptor.Table.STRING ? "record[string]" : "table";
             return descriptorText(descriptor);
         }
 
@@ -7167,7 +7174,7 @@ __factories.__hostDeclKind = function(desc)
     desc = string.sub(desc, 2)
   end
   if desc == "null|undefined" then return "null" end
-  if desc == "record" then return "table" end
+  if desc == "record" or desc == "record[string]" then return "table" end
   if desc == "Error" then return "class instance" end
   if string.sub(desc, 1, 1) == "@" then return "class instance" end
   if string.sub(desc, 1, 1) == "[" then return "array" end
@@ -8433,7 +8440,7 @@ local function __nsOrder(t, names)
   end
   return t
 end
-local function __member(t, k)
+local function __member(t, k, origin)
   if t[__dealCarrierKeys.c] then
     if t[__dealCarrierKeys.p][k] then
       local v = t[__dealCarrierKeys.f][k]
@@ -8458,11 +8465,19 @@ local function __member(t, k)
     -- Hosts retain the same table and can add a raw member without the
     -- compiler's insertion helper. Such a live value is still present.
     local value = t[k]
-    if value ~= nil or __keys[k] then return value end
+    if value ~= nil or __keys[k] then
+      if t[__dealCarrierKeys.recordDescriptor] == "string" then
+        __factories.__checkRecordValue(value, origin)
+      end
+      return value
+    end
     return __MISSING
   end
   local v = t[k]
   if v == nil then return __MISSING end
+  if t[__dealCarrierKeys.recordDescriptor] == "string" then
+    __factories.__checkRecordValue(v, origin)
+  end
   return v
 end
 local function __esc(s)
@@ -9000,7 +9015,7 @@ local __carrierTokens = {["nil"] = true, ["undefined"] = true, ["table"] = true,
 -- private scope so the chunk's own local-variable budget is untouched.
 local __isClassAtom, __isDescriptorText = (function()
 local __descriptorPrimitives = {"null", "undefined", "unknown", "void", "never", "boolean", "number", "string",
-  "record"}
+  "record[string]", "record"}
 -- One class-atom segment: '@' plus text up to ')' / ']' / ',' (the canonical
 -- decoder's own stop set; the dialect function's ';' separator also
 -- terminates a class atom in a dialect parameter list) or the end of the
@@ -9789,7 +9804,8 @@ function __factories.__validFunction(v)
       or string.sub(signature, 1, 9) == "function(")
 end
 local __bcheck, __validationChild, __validationEvidence
-local function __bcheckLeaf(desc, staticKind, v, csig, completion, path)
+local function __bcheckLeaf(desc, staticKind, v, csig, completion, path, recordPlan)
+  recordPlan = recordPlan or {}
   if v == __MISSING or (__rtMissing ~= nil and v == __rtMissing) then v = __UNDEFINED end
   local actual = completion and __completionBoundaryKind(staticKind, v)
     or __typedBoundaryKind(staticKind, v)
@@ -9834,6 +9850,7 @@ local function __bcheckLeaf(desc, staticKind, v, csig, completion, path)
       local member = frame.value
       local ok, failure = pcall(function()
       local t = type(member)
+      if frame.string then __bcheck("string","ref",member,nil,completion,frame.path) end
       if member == __NULL or member == __UNDEFINED or member == __MISSING then
       elseif t == "string" then
         local valid, position = __jsonValidUtf8(member)
@@ -9846,6 +9863,9 @@ local function __bcheckLeaf(desc, staticKind, v, csig, completion, path)
       elseif t ~= "table" then return fail("unknown")
       elseif not seen[member] then
         seen[member] = true
+        if __typedBoundaryKind("ref",member)=="table" and rawget(member,__dealCarrierKeys.recordDescriptor)==nil
+            and recordPlan[member]==nil then recordPlan[member]="unknown" end
+        local stored=rawget(member,__dealCarrierKeys.recordDescriptor) or recordPlan[member]
         if getmetatable(member) ~= nil and rawget(member, __dealCarrierKeys.c) == nil
             and rawget(member, __dealCarrierKeys.d) == nil
             and rawget(member, __dealCarrierKeys.kind) == nil then return fail("unknown") end
@@ -9859,10 +9879,32 @@ local function __bcheckLeaf(desc, staticKind, v, csig, completion, path)
         if not rawget(member, __dealCarrierKeys.fn)
             and rawget(member, __dealCarrierKeys.kind) ~= "function"
             and not rawget(member, __dealCarrierKeys.jn) then
+          if stored=="string" then
+            local keys,included={},{}
+            for _,key in ipairs(rawget(member,__dealCarrierKeys.order) or {}) do
+              if rawget(member,key)~=nil or rawget(member,__dealCarrierKeys.keys) and rawget(member,__dealCarrierKeys.keys)[key] then
+                keys[#keys+1]=key;included[key]=true
+              end
+            end
+            for key in next,member do
+              if type(key)=="string" then
+                if not included[key] then keys[#keys+1]=key end
+              else
+                local private=false
+                for _,carrierKey in pairs(__dealCarrierKeys) do if key==carrierKey then private=true;break end end
+                if not private then return fail("table") end
+              end
+            end
+            for i=#keys,1,-1 do
+              local key=keys[i];local child=__validationChild(frame.path,key)
+              pending[#pending+1]={value=rawget(member,key),path=child,string=true}
+              pending[#pending+1]={value=key,path=child,string=true}
+            end
+          else
           for k, val in next, member do
             if type(k) == "string" then
               if not __jsonValidUtf8(k) then return fail("unknown") end
-              pending[#pending + 1] = {value=val, path=__validationChild(frame.path,k)}
+              pending[#pending + 1] = {value=val, path=__validationChild(frame.path,k),string=stored=="string"}
             elseif type(k) == "number" then
               if not rawget(member, __dealCarrierKeys.a) and not rawget(member, __dealCarrierKeys.ja) then return fail("table") end
               pending[#pending + 1] = {value=val, path=__validationChild(frame.path,tostring(k-1))}
@@ -9876,6 +9918,7 @@ local function __bcheckLeaf(desc, staticKind, v, csig, completion, path)
               end
               if not private then return fail("table") end
             end
+          end
           end
         end
       end
@@ -9917,7 +9960,10 @@ local function __bcheckLeaf(desc, staticKind, v, csig, completion, path)
       return error(failure, 0)
     end
     return fail("string")
-  elseif desc == "record" then
+  elseif desc == "record" or desc == "record[string]" then
+    local descriptor = desc == "record[string]" and "string" or "unknown"
+    local stored = type(v)=="table" and (rawget(v,__dealCarrierKeys.recordDescriptor) or recordPlan[v])
+    if stored ~= nil and stored ~= false and stored ~= descriptor then return fail("table") end
     -- A shared table carrier (__t) and a module export surface (the K15
     -- namespace value an import alias cell holds: a compiled module's
     -- publication table, a stdlib module's cataloged-callable table, or
@@ -9928,7 +9974,9 @@ local function __bcheckLeaf(desc, staticKind, v, csig, completion, path)
     -- pass a table boundary; the two internal sentinels never do).
     if type(v) == "table" and v ~= __MISSING and v ~= __NULL
         and __typedBoundaryKind(staticKind, v) == "table" then
-      return __bcheck("unknown", staticKind, v, nil, completion, path)
+      if rawget(v,__dealCarrierKeys.recordDescriptor)==nil then recordPlan[v]=descriptor end
+      __bcheckLeaf("unknown", staticKind, v, nil, completion, path, recordPlan)
+      return v
     end
     return fail("table")
   elseif desc == "Error" then
@@ -10026,7 +10074,7 @@ end
 __bcheck = function(desc, staticKind, v, csig, completion, path)
   local root = {desc=desc, kind=staticKind, value=v, sig=csig, completion=completion, path=path}
   local admitted = v
-  local pending, seen = {root}, {}
+  local pending, seen, recordPlan = {root}, {}, {}
   while #pending > 0 do
     local task = table.remove(pending)
     local missing = false
@@ -10064,7 +10112,7 @@ __bcheck = function(desc, staticKind, v, csig, completion, path)
       end
       local isClass, isArray = string.sub(d, 1, 1) == "@", string.sub(d, 1, 6) == "array("
       if not isClass and not isArray then
-        local checked = __bcheckLeaf(d, task.kind, value, sig, task.completion, task.path)
+        local checked = __bcheckLeaf(d, task.kind, value, sig, task.completion, task.path, recordPlan)
         if task == root then admitted = checked end
         return
       end
@@ -10120,9 +10168,15 @@ __bcheck = function(desc, staticKind, v, csig, completion, path)
       error(checked, 0)
     end
   end
+  for record,descriptor in pairs(recordPlan) do rawset(record,__dealCarrierKeys.recordDescriptor,descriptor) end
   if admitted == __NULL or (__rtNull ~= nil and admitted == __rtNull) then return nil end
   if admitted == __MISSING or (__rtMissing ~= nil and admitted == __rtMissing) then return __UNDEFINED end
   return admitted
+end
+__factories.__checkRecordValue = function(value, origin)
+  local ok,result=pcall(__bcheck,"string","ref",value)
+  if not ok then result.o=origin or "-";error(result,0) end
+  return result
 end
 local function __cmp(selector, kindL, l, kindR, r, side)
   local lu = l == __UNDEFINED or l == __MISSING
@@ -11257,7 +11311,11 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
             __bcheckLeaf(desc, "ref", value, canonical, false)
           end
           return inner, canonical and string.sub(canonical, 2, -2) or nil
-        elseif desc == "record" then
+        elseif desc == "record" or desc == "record[string]" then
+          local stored = type(value)=="table" and rawget(value,__dealCarrierKeys.recordDescriptor) or nil
+          if stored ~= nil and stored ~= (desc=="record[string]" and "string" or "unknown") then
+            error(__arm("TYPED_BOUNDARY_KIND", {kind="table"}, "-", "table", "table"), 0)
+          end
           if __typedBoundaryKind("ref", value) ~= "table" then
             error(__arm("TYPED_BOUNDARY_KIND", {kind="table"}, "-", "table", __typedBoundaryKind("ref", value)), 0)
           end
@@ -11462,7 +11520,8 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
         local maxIdx = 0
         local objectKey = false
         for k, _ in pairs(v) do
-          if type(k) == "number" then
+          if k == __dealCarrierKeys.recordDescriptor then
+          elseif type(k) == "number" then
             if k < 1 or k ~= math.floor(k) then
               sfFail(v)
               return
@@ -11622,6 +11681,7 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
             local k = frame.order[i]
             if not __jsonValidUtf8(k) then sfFail(k) end
             local element = frame.value[k]
+            if rawget(frame.value,__dealCarrierKeys.recordDescriptor)=="string" then sfPosition("string",element,"string") end
             if not omitted(element) then
               if (frame.emitted or 0) > 0 then out[#out + 1] = "," end
               frame.emitted = (frame.emitted or 0) + 1
@@ -11778,6 +11838,7 @@ local function __jsonDecodeTarget(raw, descriptor, origin, plans, runtimeDescrip
   local function mismatch(desc, value, missing)
     local expected = desc
     if string.sub(desc,1,6) == "array(" then expected="array"
+    elseif desc == "record[string]" then expected="table"
     elseif string.sub(desc,1,1) == "@" or desc == "Error" then expected="class" end
     local text = expected == "class" and "class instance" or expected
     local actual = missing and "undefined" or __typedBoundaryKind("",value)
@@ -11822,10 +11883,11 @@ local function __jsonDecodeTarget(raw, descriptor, origin, plans, runtimeDescrip
           [__dealCarrierKeys.elementDescriptor]=runtimeDescriptor(element),[__dealCarrierKeys.nK]={}}
         frame.children={}
         for i=1,value[__dealCarrierKeys.n] do frame.children[i]={key=i,raw=value[i],desc=element} end
-      elseif type(value)=="table" and value[__dealCarrierKeys.t] and (desc=="unknown" or desc=="table") then
-        frame.value={[__dealCarrierKeys.t]=true,[__dealCarrierKeys.keys]={},[__dealCarrierKeys.order]={},[__dealCarrierKeys.nK]={}}
+      elseif type(value)=="table" and value[__dealCarrierKeys.t] and (desc=="unknown" or desc=="table" or desc=="record[string]") then
+        local child=desc=="record[string]" and "string" or "unknown"
+        frame.value={[__dealCarrierKeys.t]=true,[__dealCarrierKeys.keys]={},[__dealCarrierKeys.order]={},[__dealCarrierKeys.nK]={},[__dealCarrierKeys.recordDescriptor]=child}
         frame.children={}
-        for _,key in ipairs(value[__dealCarrierKeys.order]) do frame.children[#frame.children+1]={key=key,raw=value[key],desc="unknown"} end
+        for _,key in ipairs(value[__dealCarrierKeys.order]) do frame.children[#frame.children+1]={key=key,raw=value[key],desc=child} end
       elseif desc=="unknown" or ((desc=="string" or desc=="number" or desc=="boolean") and desc==type(value))
           or (desc=="number" and type(value)=="table" and value[__dealCarrierKeys.jn]) then
         frame.value=value

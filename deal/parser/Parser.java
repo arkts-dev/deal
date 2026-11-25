@@ -1046,13 +1046,15 @@ public final class Parser {
                 expect(TokenType.LT, DiagnosticCode.E1032, "Expected '<' after Record");
                 Token key = expect(TokenType.IDENTIFIER, DiagnosticCode.E1032, "Expected string key type");
                 expect(TokenType.COMMA, DiagnosticCode.E1032, "Expected ',' in Record type");
-                Token value = expect(TokenType.IDENTIFIER, DiagnosticCode.E1032, "Expected unknown value type");
+                Token value = expect(TokenType.IDENTIFIER, DiagnosticCode.E1032, "Expected unknown or string value type");
                 expect(TokenType.GT, DiagnosticCode.E1032, "Expected '>' after Record type");
-                if (key == null || !key.lexeme().equals("string") || value == null || !value.lexeme().equals("unknown")) {
-                    rejectedSyntax(first, "record-type-parameters", "Only Record<string, unknown> is supported; use a class for typed fields",
-                            "Record keys are strings and reads are unknown; choose a nominal class when field names/types form a fixed contract.");
+                if (key == null || !key.lexeme().equals("string") || value == null
+                        || !(value.lexeme().equals("unknown") || value.lexeme().equals("string"))) {
+                    rejectedSyntax(first, "record-type-parameters", "Only Record<string, unknown> and Record<string, string> are supported",
+                            "Record applications are closed builtins; choose a nominal class for fixed typed fields.");
                 }
-                return new NamedType(spanBetween(first, previous()), "Record<string, unknown>");
+                return new NamedType(spanBetween(first, previous()), value != null && value.lexeme().equals("string")
+                        ? "Record<string, string>" : "Record<string, unknown>");
             }
 
             // Qualified type: exactly one '.' level (v1.4 Type grammar:

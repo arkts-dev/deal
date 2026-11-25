@@ -29,7 +29,11 @@ public sealed interface Type
     enum Number implements Type { INSTANCE }
     enum String implements Type { INSTANCE }
 
-    enum Table implements Type { INSTANCE }
+    enum Table implements Type {
+        INSTANCE, STRING;
+
+        public Type valueType() { return this == STRING ? String.INSTANCE : Unknown.INSTANCE; }
+    }
 
     /**
      * Internal error sentinel returned when type checking fails on a

@@ -1824,6 +1824,11 @@ static int deal_json_encode_frames(deal_json_encoder *encoder) {
             position.input.presentation = DEAL_PRESENT_DATUM;
             position.input.datum = deal_container_table_read(frame->table, key);
             deal_json_present_private(&position.input);
+            uint32_t stored = deal_container_table_value_descriptor(frame->table);
+            if (stored != 0u && strcmp(deal_descriptor_text(deal_descriptor_of_reference(stored)), "string") == 0) {
+                position.descriptor = deal_descriptor_of_reference(stored);
+                if (deal_json_check_position(encoder, position)) return 1;
+            }
             if (position.input.presentation == DEAL_PRESENT_DATUM
                     && (position.input.datum.tag == DEAL_DATA_UNDEFINED
                         || position.input.datum.tag == DEAL_DATA_FUNCTION)) {
@@ -2378,6 +2383,21 @@ static int deal_json_settle(deal_data raw, deal_descriptor *descriptor,
             *error = deal_json_target_mismatch(raw, descriptor, origin, 0);
             return DEAL_JSON_DECODE_FAIL;
         }
+        if (strcmp(deal_descriptor_text(descriptor), "record[string]") == 0) {
+            deal_table *table = raw.reference;
+            deal_descriptor *string = deal_descriptor_intern("string");
+            deal_check_context check_context = {0};
+            check_context.origin = origin;
+            for (size_t i = 0u; i < deal_container_table_count(table); i++) {
+                deal_check_input input = {0};
+                input.presentation = DEAL_PRESENT_DATUM;
+                input.datum = deal_container_table_read(table, deal_container_table_key_at(table, i));
+                *error = deal_check_value(string, input, DEAL_BOUNDARY_TYPE_DESCRIPTOR, &check_context).error;
+                if (*error != NULL) return DEAL_JSON_DECODE_FAIL;
+            }
+            deal_container_table_set_descriptor(table, deal_descriptor_reference(string));
+        } else deal_container_table_set_descriptor(raw.reference,
+            deal_descriptor_reference(deal_descriptor_intern("unknown")));
         *destination = raw;
         return DEAL_JSON_DECODE_OK;
     }

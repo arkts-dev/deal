@@ -29,7 +29,9 @@ Publish exact checked facts; downstream phases must not rediscover meaning.
   no symbols/exports. Reject namespace/metadata data and array deletion.
 - Null/undefined permissions are independent; reject duplicate union members before
   unknown absorption. Optional reads add undefined; presence never refines values.
-  Record reads remain unknown until checked extraction/supported refinement.
+  Unknown-Record reads remain unknown; string-Record reads infer string|undefined
+  independently of destination context. Record variants are invariant; literal values
+  and writes check the static value type, not the container type.
 
 ## Flow
 

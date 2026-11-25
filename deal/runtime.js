@@ -371,7 +371,7 @@ function $parseOne($d, $cps, $st, $resultPosition = false) {
     return $parseClass($d, $cps, $st);
   }
   // Primitive keywords (disjoint, so order does not matter).
-  const $keywords = ["null", "undefined", "unknown", "void", "never", "boolean", "number", "string", "record"];
+  const $keywords = ["null", "undefined", "unknown", "void", "never", "boolean", "number", "string", "record[string]", "record"];
   for (let $k = 0; $k < $keywords.length; $k++) {
     if ($matchKeyword($cps, $st.$pos, $keywords[$k])) {
       const $name = $keywords[$k];
@@ -634,6 +634,7 @@ function $arrayFormIndex($key) {
 // they never denote a second language numeric type.
 const $jsonNumberMarks = new WeakMap();
 const $arrayDescriptors = new WeakMap();
+const $recordDescriptors = new WeakMap();
 const $arrayDeleted = new WeakMap();
 
 function $markNumberVariant($container, $key) {
@@ -1020,6 +1021,7 @@ function $hostProjectValue($v, $nativeArrays, $memo) {
         return $value;
       }
       const $copy = new $Map();
+      if ($recordDescriptors.has($value)) $recordDescriptors.set($copy, $recordDescriptors.get($value));
       $seen.set($value, $copy);
       $carryMarks($value, $copy, false);
       const $keys = [];
@@ -1506,9 +1508,12 @@ function $encodeJsonText($v, $active, $file, $line, $column, $variant) {
       const $persistent = $arrayDescriptors.get($value);
       if ($persistent !== $undefined && $persistent !== $parsed.$element)
         $rt.fail("E8001", "expected array", $file, $line, $column, "array", "array");
-    } else if ($parsed && $parsed.$t === "primitive" && $parsed.$name === "record") {
+    } else if ($parsed && $parsed.$t === "primitive" && ($parsed.$name === "record" || $parsed.$name === "record[string]")) {
       if (!($value instanceof $Map) || $rt.isJsonArrayTable($value))
         $rt.fail("E8001", "expected table", $file, $line, $column, "table", $kindOf($value));
+      const stored = $recordDescriptors.get($value);
+      if (stored !== $undefined && stored !== ($parsed.$name === "record[string]" ? "string" : "unknown"))
+        $rt.fail("E8001", "expected table", $file, $line, $column, "table", "table");
     } else if (!($parsed && $parsed.$t === "primitive" && $parsed.$name === "unknown")) {
       $rt.checkTypeLeaf($descriptor, $value, $file, $line, $column);
     }
@@ -1693,7 +1698,8 @@ function $encodeJsonText($v, $active, $file, $line, $column, $variant) {
             $file, $line, $column, "string, number, boolean, or table", "string");
         }
         const $element = $frame.map.get($key);
-        let $descriptor = null;
+        let $descriptor = $recordDescriptors.get($frame.map) === "string" ? "string" : null;
+        if ($descriptor !== null) $check($descriptor, $element);
         if ($frame.plan) {
           const $field = $frame.plan[$i];
           if (!$field || $field.name !== $key) throw new Error("JSON class field plan/order mismatch");
@@ -1893,16 +1899,20 @@ const $rt = {
   // __proto__ key creates, reads and removes an own property, never the
   // inherited accessor), a missing key reads the absent marker exactly like
   // Map.get, and a write follows the publishModule setProp write. Pure
-  // carrier dispatch: no checking, no allocation, no shared state.
-  tableGet: function $tableGet(carrier, key) {
+  // carrier dispatch; Record accesses additionally enforce private stored descriptors.
+  tableGet: function $tableGet(carrier, key, file, line, column) {
     if (carrier instanceof $Map) {
-      return carrier.get(key);
+      const value = carrier.get(key);
+      if (carrier.has(key) && $recordDescriptors.get(carrier) === "string") $rt.checkType("string", value, file, line, column);
+      return value;
     }
     return Object.prototype.hasOwnProperty.call(carrier, key)
       ? carrier[key] : $undefined;
   },
-  tableSet: function $tableSet(carrier, key, value) {
+  tableSet: function $tableSet(carrier, key, value, file, line, column) {
     if (carrier instanceof $Map) {
+      const descriptor = $recordDescriptors.get(carrier);
+      if (descriptor) $rt.checkType(descriptor, value, file, line, column);
       carrier.set(key, value);
       return carrier;
     }
@@ -1929,11 +1939,12 @@ const $rt = {
   // argument raises the defensive E8001; only emitter mis-emission
   // reaches it (js-backend-runtime-artifact A3). No mutation of the
   // entries object; the Map is independent; no shared state.
-  makeTable: function $makeTable(entries) {
+  makeTable: function $makeTable(entries, descriptor = "unknown") {
     if (!$isPlainObject(entries)) {
       $rt.fail("E8001", "table entries must be a table");
     }
     const $map = new $Map();
+    $recordDescriptors.set($map, descriptor);
     const $keys = Object.keys(entries);
     for (let $i = 0; $i < $keys.length; $i++) {
       const $key = $keys[$i];
@@ -2231,12 +2242,15 @@ const $rt = {
   // never the plain-Map "table" label). Anything else — Array, plain
   // object, class instance, wrapper, primitives — keeps its own $kindOf
   // actual label.
-  validateData: function $validateData(value, file, line, column, path) {
+  validateData: function $validateData(value, file, line, column, path, recordPlan) {
+    const ownsPlan = !recordPlan;
+    recordPlan = recordPlan || new Map();
     const seen = new WeakSet(), pending = [{value, path}], untaggedArrays = [];
     while (pending.length) {
       const task = pending.pop(), v = task.value;
       let activePath = task.path;
       try {
+      if (task.string) $rt.checkString(v, file, line, column);
       if (v === null || v === $undefined || v === $MISSING) continue;
       if (typeof v === "string") { $rt.checkString(v, file, line, column); continue; }
       if (typeof v === "number" || typeof v === "boolean" || $isNumCarrier(v)) continue;
@@ -2244,9 +2258,10 @@ const $rt = {
       if (seen.has(v)) continue;
       seen.add(v);
       if (v instanceof $Map) {
-        for (const [key, member] of v) {
+        if (!$recordDescriptors.has(v) && !recordPlan.has(v)) recordPlan.set(v, "unknown");
+        for (const [key, member] of [...v].reverse()) {
           activePath = typeof key === "string" ? $validationChild(task.path, key) : task.path;
-          $rt.checkString(key, file, line, column); pending.push({value: member, path: activePath});
+          $rt.checkString(key, file, line, column); pending.push({value: member, path: activePath, string: ($recordDescriptors.get(v) ?? recordPlan.get(v)) === "string"});
         }
       } else if ($Array.isArray(v)) {
         if (!$arrayDescriptors.has(v)) untaggedArrays.push(v);
@@ -2280,10 +2295,13 @@ const $rt = {
     }
     // Publish persistent descriptors only after the whole ingress graph is valid.
     for (const array of untaggedArrays) $arrayDescriptors.set(array, "unknown");
+    if (ownsPlan) for (const [record, descriptor] of recordPlan) $recordDescriptors.set(record, descriptor);
     return value;
   },
 
-  checkTable: function $checkTable(v, file, line, column, path) {
+  checkTable: function $checkTable(v, file, line, column, path, descriptor = "unknown", recordPlan) {
+    const ownsPlan = !recordPlan;
+    recordPlan = recordPlan || new Map();
     if (!(v instanceof $Map)) {
       $rt.fail("E8001", "expected table", file, line, column, "table", $kindOf(v));
     }
@@ -2293,7 +2311,13 @@ const $rt = {
     if ($rt.isJsonArrayTable(v)) {
       $rt.fail("E8001", "expected table", file, line, column, "table", "array");
     }
-    return $rt.validateData(v, file, line, column, path);
+    const stored = $recordDescriptors.get(v) ?? recordPlan.get(v);
+    if (stored !== $undefined && stored !== descriptor)
+      $rt.fail("E8001", "expected table", file, line, column, "table", "table");
+    if (!$recordDescriptors.has(v)) recordPlan.set(v, descriptor);
+    $rt.validateData(v, file, line, column, path, recordPlan);
+    if (ownsPlan) for (const [record, target] of recordPlan) $recordDescriptors.set(record, target);
+    return v;
   },
 
   // ===== Descriptor dispatch (js-backend-runtime-artifact D3/D4) =====
@@ -2342,7 +2366,7 @@ const $rt = {
       let parsed = $parse(descriptor);
       while (parsed.$t === "nullable") parsed = $parse(parsed.$inner);
       let kind = parsed.$t === "primitive" ? parsed.$name : parsed.$t;
-      if (kind === "record") kind = "table";
+      if (kind === "record" || kind === "record[string]") kind = "table";
       const text = kind === "class" ? "class instance" : kind;
       try {
         $rt.fail("E8001", "expected " + text, file, line, column, kind, $kindOf(v));
@@ -2355,7 +2379,7 @@ const $rt = {
   },
 
   checkType: function $checkType(descriptor, v, file, line, column) {
-    const pending = [{descriptor, value: v, arrays: null}], seen = new WeakMap();
+    const pending = [{descriptor, value: v, arrays: null}], seen = new WeakMap(), recordPlan = new Map();
     while (pending.length) {
       const task = pending.pop();
       let value = task.field ? task.owner[task.field.name] : task.value;
@@ -2377,7 +2401,7 @@ const $rt = {
         }
         if (acceptedNullish) continue;
         if (!parsed || parsed.$t !== "class" && parsed.$t !== "array") {
-          $rt.checkTypeLeaf(current, value, file, line, column, task.path);
+          $rt.checkTypeLeaf(current, value, file, line, column, task.path, recordPlan);
           continue;
         }
         if (parsed.$t === "class") {
@@ -2433,12 +2457,13 @@ const $rt = {
         throw error;
       }
     }
+    for (const [record, target] of recordPlan) $recordDescriptors.set(record, target);
     return $jsonNullTables.has(v) ? null : v === $MISSING ? $undefined : v;
   },
 
   // Scalar/data/function leaves of the stack-safe descriptor walk. Composite
   // positions are always consumed by checkType's operation-local work stack.
-  checkTypeLeaf: function $checkTypeLeaf(descriptor, v, file, line, column, path) {
+  checkTypeLeaf: function $checkTypeLeaf(descriptor, v, file, line, column, path, recordPlan) {
     if (v === $MISSING) v = $undefined;
     if (descriptor === null) {
       $rt.fail("E8001", "internal: nil type descriptor", file, line, column);
@@ -2472,11 +2497,11 @@ const $rt = {
         if (typeof v === "string") return $rt.checkString(v, file, line, column);
         if (["null", "undefined", "boolean", "number", "table", "array"].includes(kind)
             || (v !== null && v !== $undefined && (v.$kind === "class"
-                || (kind === "function" && typeof v !== "function")))) return $rt.validateData(v, file, line, column, path);
+                || (kind === "function" && typeof v !== "function")))) return $rt.validateData(v, file, line, column, path, recordPlan);
         $rt.fail("E8001", "unsupported unknown ingress", file, line, column, "unknown", kind);
       }
-      if ($parsed.$name === "record") {
-        return $rt.checkTable(v, file, line, column, path);
+      if ($parsed.$name === "record" || $parsed.$name === "record[string]") {
+        return $rt.checkTable(v, file, line, column, path, $parsed.$name === "record[string]" ? "string" : "unknown", recordPlan);
       }
       $rt.fail("E8001", "unknown primitive type: " + $parsed.$name, file, line, column);
     }
@@ -3010,7 +3035,7 @@ const $rt = {
     };
     const mismatch = (d, value) => {
       const kind = d.$t === "class" ? "class instance" : d.$t === "array" ? "array"
-        : d.$name === "record" ? "table" : d.$name;
+        : (d.$name === "record" || d.$name === "record[string]") ? "table" : d.$name;
       fail("E8001", "expected " + kind, d.$t === "class" ? "class" : kind, $kindOf(value));
     };
     let completed;
@@ -3041,9 +3066,10 @@ const $rt = {
           f.children = f.raw.map((raw, key) => ({raw, key, descriptor: d.$t === "array" ? d.$element : "unknown"}));
           f.output = [];
           $arrayDescriptors.set(f.output, d.$t === "array" ? d.$element : "unknown");
-        } else if ($isPlainObject(f.raw) && (d.$name === "record" || d.$name === "unknown")) {
-          f.children = Object.keys(f.raw).map(key => ({raw: f.raw[key], key, descriptor: "unknown"}));
-          f.output = $rt.makeTable({});
+        } else if ($isPlainObject(f.raw) && (d.$name === "record" || d.$name === "record[string]" || d.$name === "unknown")) {
+          const element = d.$name === "record[string]" ? "string" : "unknown";
+          f.children = Object.keys(f.raw).map(key => ({raw: f.raw[key], key, descriptor: element}));
+          f.output = $rt.makeTable({}, element);
         } else if (d.$name === "unknown" || (d.$name === typeof f.raw && f.raw !== null)) f.output = f.raw;
         else mismatch(d, f.raw);
         f.index = 0;

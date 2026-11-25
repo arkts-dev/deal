@@ -72,6 +72,8 @@ mutation hooks or let an assertion mask a later parameter/element failure.
 - Records/presence/keys: computed key-before-value effects, duplicates, numeric
   key order, declaration order and presence-only enumeration of hostile fields.
   Reflection controls retain same-storage aliases and reject before mutation.
+  Both closed Record variants require descriptor invariance, present string checks,
+  missing-to-undefined reads, failed whole-graph admission rollback and host repair/retry.
 - JSON: contextual targets versus assertions, exact recursive/private providers,
   artifact-local JVM schemas, Lua runtime load orders/own plans, extras-before-
   fields order, required absence, persistent decoded descriptors and deep

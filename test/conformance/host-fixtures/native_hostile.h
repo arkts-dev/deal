@@ -198,7 +198,7 @@ typedef struct fixture_table_entry {
     deal_data value;
     struct fixture_table_entry *next, *previous;
 } fixture_table_entry;
-typedef struct { size_t count; fixture_table_entry *head, *tail; } fixture_table;
+typedef struct { uint32_t value_descriptor; size_t count; fixture_table_entry *head, *tail; } fixture_table;
 static inline void fixture_record_opaque(deal_value table) {
     set(table, "bad", number(0));
     deal_check_input input; deal_error *cause = NULL;

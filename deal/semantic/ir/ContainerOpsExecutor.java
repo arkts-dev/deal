@@ -304,7 +304,7 @@ public final class ContainerOpsExecutor {
                                                        Map<ValueId, Value> priorValues) {
         requireOp(op, SemanticOpKind.TABLE_NEW, FailurePolicyId.NO_DEAL_FAILURE);
         KindPayload.TableNewPayload payload = (KindPayload.TableNewPayload) op.payload();
-        SemanticTable<Value> table = new SemanticTable<>();
+        SemanticTable<Value> table = new SemanticTable<>(((RuntimeDescriptor.Table) op.resultType()).valueDescriptor());
         for (KindPayload.TableEntry entry : payload.entries()) {
             table.put(entry.key(), resolve(priorValues, entry.value()));
         }

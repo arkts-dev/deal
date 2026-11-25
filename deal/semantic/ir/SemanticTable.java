@@ -32,6 +32,22 @@ public final class SemanticTable<V> {
      */
     private final Function<String, Lookup<V>> liveLookup;
 
+    private RuntimeDescriptor valueDescriptor = RuntimeDescriptor.Unknown.INSTANCE;
+
+    public RuntimeDescriptor valueDescriptor() { return valueDescriptor; }
+
+    public static <V> SemanticTable<V> live(RuntimeDescriptor descriptor, Supplier<List<String>> keys,
+            Function<String, Lookup<V>> lookup) {
+        SemanticTable<V> table = live(keys, lookup);
+        table.valueDescriptor = descriptor;
+        return table;
+    }
+
+    public SemanticTable(RuntimeDescriptor valueDescriptor) {
+        this();
+        this.valueDescriptor = Objects.requireNonNull(valueDescriptor);
+    }
+
     /** Allocates a fresh, empty table with a fresh identity. */
     public SemanticTable() {
         liveKeys = null;
