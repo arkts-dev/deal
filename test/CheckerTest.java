@@ -646,6 +646,25 @@ public class CheckerTest {
         check(immutableImport.facts().reason().equals("mutation.import-readonly")
                         && immutableImport.notes().getFirst().range().startScalarOffset() == importMutation.indexOf("import"),
                 "import mutation locates the selected namespace import");
+        for (String target : List.of("P.value")) {
+            String source = "// 😀\r\nimport * as P from \"./lib\";delete " + target + ";";
+            var diagnostics = checkProgramWithModule(source, mutationImports).result().diagnostics();
+            check(diagnostics.size() == 1, "import deletion has one frontend rejection: " + diagnostics);
+            var diagnostic = diagnostics.getFirst();
+            check(diagnostic.code().equals("E3017")
+                            && diagnostic.facts().reason().equals("mutation.import-readonly")
+                            && diagnostic.facts().operation().equals("delete")
+                            && diagnostic.range().startScalarOffset() == source.indexOf(target)
+                            && diagnostic.range().endScalarOffset() == source.indexOf(target) + target.length()
+                            && diagnostic.notes().getFirst().range().startScalarOffset() == source.indexOf("import"),
+                    "import deletion retains target range and selected namespace declaration: " + target + ": " + diagnostic);
+        }
+        check(checkProgramWithModule("import * as P from \"./lib\";delete P?.value;", mutationImports)
+                        .result().diagnostics().size() == 1,
+                "optional import deletion remains rejected as namespace metadata use");
+        assertNoErrors(checkProgram("class C {value?:number;} const c:C={value:1};delete c.value;"
+                + "const r:Record<string,unknown>={value:1};delete r.value;delete r[\"value\"];"),
+                "const aggregates still permit supported field/key deletion");
         assertNoErrors(checkProgram("let value=1;value=2;const xs:number[]=[1];xs[0]=2;"),
                 "explicit mutable binding repair keeps const aggregate contents mutable");
         assertNoErrors(checkProgram(requiredDelete.replace("value:number", "value?:number")),

@@ -1340,6 +1340,16 @@ public final class TypeChecker {
 
         if (targetType instanceof Type.Error) return;
 
+        ExpressionNode receiver = target instanceof MemberAccessExpr member ? member.object()
+            : target instanceof IndexExpr index ? index.array() : null;
+        if (receiver instanceof IdentifierExpr id
+                && resolveVisibleBinding(id.name()) instanceof Symbol.ModuleSymbol module) {
+            mutationError(DiagnosticCode.E3017, "Imported exports are read-only", ds.target().span(),
+                    "mutation.import-readonly", "delete", "locally mutable storage", "imported export",
+                    module.importSpan() == null ? null : module.importSpan().range());
+            return;
+        }
+
         if (target instanceof MemberAccessExpr mae) {
             Type objType = typeOf(mae.object());
             // D3 (typed-boundary-enforcement): array .length is read-only.

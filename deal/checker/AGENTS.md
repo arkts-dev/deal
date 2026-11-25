@@ -20,7 +20,8 @@ Publish exact checked facts; downstream phases must not rediscover meaning.
   only statement/return evaluation, not assignment compatibility or catch paths. TypeChecker alone owns definite
   returns: only void permits fallthrough; catch has no separate return obligation.
 - Preserve const/declaration/import immutability without freezing referenced
-  aggregates. Let-bound functions remain mutable. Resolve signatures in enclosing
+  aggregates. Reject deletion of imported exports at the target, retaining the
+  selected namespace import as declaration evidence. Let-bound functions remain mutable. Resolve signatures in enclosing
   scope, excluding shadowing parameters. Modules hoist; nested declarations follow
   declaration order and reject same-scope collisions.
 - Reject reserved/eval/arguments/$ bindings and builtin rebinding everywhere,

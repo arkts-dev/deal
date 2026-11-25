@@ -171,6 +171,7 @@ public class DiagnosticRangeTest {
         testRevisionScopedOccurrences();
         testSelectedIntrinsicCallNames();
         testUnresolvedImportedParameterCascades();
+        testImportedExportDeletion();
         testCatchVariableIdentifierRange();
         testProgramSpanAnchorsCombined();
         testV12CornerCaseScalarCoordinatePins();
@@ -1476,6 +1477,28 @@ public class DiagnosticRangeTest {
         check(json.indexOf(occurrence.occurrenceId()) == json.lastIndexOf(occurrence.occurrenceId())
                         && !deal.amend.CompilerProtocolJson.encode(amended).contains(occurrence.occurrenceId()),
                 "wire occurrence indexes replace opaque occurrence hashes");
+    }
+
+    private static void testImportedExportDeletion() throws Exception {
+        Path root = Files.createTempDirectory("deal-import-delete-");
+        try {
+            Path entry = root.resolve("main.deal");
+            Files.writeString(root.resolve("provider.deal"), "export function f():void{}\n");
+            String source = "// 😀\r\nimport * as p from \"./provider\";export function main():void{delete p.f;}";
+            Files.writeString(entry, source);
+            var diagnostics = compileCascadeFixture(entry, root.resolve("out"), false);
+            check(diagnostics.size() == 1 && diagnostics.getFirst().code().equals("E3017")
+                            && diagnostics.getFirst().facts().operation().equals("delete")
+                            && diagnostics.getFirst().facts().reason().equals("mutation.import-readonly")
+                            && diagnostics.getFirst().range().startScalarOffset() == source.indexOf("p.f")
+                            && diagnostics.getFirst().notes().getFirst().range().startScalarOffset() == source.indexOf("import")
+                            && projectedFacts(diagnostics.getFirst()),
+                    "import deletion fails at authored target with transported restriction evidence, not E6005");
+            check(!Files.exists(root.resolve("out/main.js")), "import deletion publishes no executable");
+            Files.writeString(entry, source.replace("delete p.f", "p.f()"));
+            check(compileCascadeFixture(entry, root.resolve("accepted"), true).isEmpty(),
+                    "reading and invoking the same imported export remains valid");
+        } finally { deleteTree(root); }
     }
 
     private static void testUnresolvedImportedParameterCascades() throws Exception {
