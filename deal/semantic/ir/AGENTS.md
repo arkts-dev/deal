@@ -58,7 +58,8 @@ FOR_EACH validates iterable mode, body ownership and TYPE_DESCRIPTOR policy.
 Evaluate once and traverse increasing live positions; contiguous appends are visited,
 absence ends traversal and present invalid values fail. Expanded callback algorithms
 use ordinary iteration/branch/call/append operations and dynamic boundaries, never
-opaque backend algorithms.
+opaque backend algorithms. Construct coverage recognizes push's checked INDEX_WRITE
+expansion even in modules without ordinary calls or loops.
 
 IS_NULLISH is a one-data-operand boolean test without coercion/admission.
 NON_NULLISH requires the identical operand/descriptor in its owning same-block guard,

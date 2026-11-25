@@ -73,6 +73,64 @@ public final class Language16RuntimeTest {
             .filter(e -> e.key().equals("payload")).findFirst().orElseThrow().value();
     }
 
+    private static void importedArrayPush() throws Exception {
+        Path root = Files.createTempDirectory("deal-imported-push-");
+        String source = """
+            import * as helper from "./helper";
+            export function run():void {
+              let xs:number[]=[1];
+              helper.discarded(xs);
+              let length:number=helper.consumed(xs);
+              if(length!==3 || xs.length!==3 || xs[0]!==3 || xs[1]!==2 || xs[2]!==3) {
+                throw {name:"FAIL",message:"imported push result and mutation"};
+              }
+            }
+            export function main():void {run();}
+            """;
+        // No ordinary calls/loops in this module may mask push's coverage obligation.
+        String helper = """
+            export function discarded(xs:number[]):void {xs.push(2);}
+            export function consumed(xs:number[]):number {return xs.push(xs[0]=3);}
+            """;
+        CompositionProductionTest.execute(source, "", "", root, null,
+            List.of(deal.codegen.Backend.JS, deal.codegen.Backend.LUAJIT,
+                deal.codegen.Backend.JVM, deal.codegen.Backend.LLVM), Map.of("helper.deal", helper), true);
+        Path entry = root.resolve("JS/src/main.deal");
+        var invocation = deal.semantic.CompilerProfileProvider.resolve(
+            deal.semantic.ReleaseConfiguration.CURRENT_RELEASE_STATE,
+            deal.semantic.ReleaseConfiguration.releaseCapabilityRegistry());
+        var compiler = new deal.module.CompilationOrchestrator(entry, root.resolve("oracle"),
+            false, false, false, false, deal.codegen.Backend.JS, null,
+            List.of(entry.getParent()), Path.of("").toAbsolutePath(), null, invocation);
+        if (!compiler.compile()) throw new AssertionError(compiler.diagnostics());
+        var project = compiler.producedProject();
+        String text = deal.semantic.ir.SemanticIrValidator.toProjectText(project);
+        var parsed = deal.semantic.ir.ContractSnapshotCanonicalizer.parseProject(
+            (deal.semantic.ir.CanonicalJson.Obj) deal.semantic.ir.CanonicalJson.parse(text));
+        var modules = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.LoweredModuleUnit>();
+        parsed.modules().forEach(raw -> {
+            var unit = deal.semantic.ir.RawUnitMaterializer.materialize(raw);
+            modules.put(unit.moduleId(), unit);
+        });
+        var transported = new deal.semantic.ir.ExecutableLoweredProject(project.semanticProfile(),
+            parsed.interfaceIndex(), modules, project.entryModule(), parsed.classSeeds());
+        var facts = new deal.semantic.ir.SemanticIrValidator.ComparisonFacts(
+            project.interfaceIndex().interfaceIndexDigest(), project.semanticProfile(), invocation.capabilityRegistryHash());
+        for (var executable : List.of(project, transported)) {
+            var failure = deal.semantic.ir.SemanticIrValidator.validate(executable, facts);
+            if (failure.isPresent()) throw new AssertionError(failure);
+            var tables = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.StructuredBodyTable>();
+            var registries = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.ClassFactoryRegistry>();
+            executable.modules().forEach((id, unit) -> {
+                tables.put(id, unit.bodyTable()); registries.put(id, unit.classFactories());
+            });
+            var result = deal.semantic.SemanticOracle.invokeSyncEntry(executable, tables, registries,
+                new deal.semantic.SemanticOracle.HostResponder() {}, executable.entryModule(), "run", List.of());
+            if (!(result.terminal() instanceof deal.semantic.SemanticRuntimeModel.Terminal.Success))
+                throw new AssertionError("Imported push Oracle: " + result.comparisonReport());
+        }
+    }
+
     private static void arrayIsArray() throws Exception {
         Path root = Files.createTempDirectory("deal-array-is-array-");
         String source = Files.readString(Path.of("test/conformance/backend-runtime/arrays/is-array.deal"));
@@ -480,6 +538,7 @@ public final class Language16RuntimeTest {
                 if (!expected.code.equals("E8001")) throw new AssertionError(expected);
             }
         }
+        importedArrayPush();
         arrayIsArray();
         stringRecords();
         stringRecordRuntimeAdmission();
