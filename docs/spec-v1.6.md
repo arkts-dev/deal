@@ -1306,6 +1306,7 @@ Both accept Records or class instances. `hasOwn` tests own presence without narr
 #### Array
 
 ```txt
+Array.isArray(value: unknown): boolean
 xs.push(value: E): number
 xs.pop(): E | undefined
 xs.splice(start: number, deleteCount: number): E[]
@@ -1327,6 +1328,8 @@ xs.slice(start: number, end: number): E[]
 ss.join(separator: string): string
 Array.from(xs: readonly E[], mapper: (value: E, index: number) => R): R[]
 ```
+
+After normal boundary checks, [`isArray`](https://262.ecma-international.org/16.0/#sec-array.isarray) returns true iff array-valued, including readonly; no further validation, retagging or narrowing.
 
 A is xs's static type, `E[]` or `readonly E[]`; ss permits both string-array forms. Readonly receivers exclude `push`, `pop` and `splice`. E, R and A are not source generics; R is the synchronous mapper's explicit result type.
 
