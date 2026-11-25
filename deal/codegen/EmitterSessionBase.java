@@ -85,6 +85,7 @@ public abstract class EmitterSessionBase {
     /** Each op id to its single membership block (the transfer-closure source). */
     protected final Map<OpId, BlockId> opBlock = new LinkedHashMap<>();
     protected final Map<OpId, SemanticOp> opsById = new HashMap<>();
+    private final Map<OpId, List<SemanticOp>> boundaryChildren = new HashMap<>();
 
     protected final Map<BindingId, Map<Long, BindingCellKind>> cellKinds =
         new HashMap<>();
@@ -401,6 +402,8 @@ public abstract class EmitterSessionBase {
         for (SemanticOp op : moduleUnit.ops()) {
             opsById.put(op.opId(), op);
             opModule.put(op.opId(), moduleUnit.moduleId());
+            if (op.kind() == SemanticOpKind.BOUNDARY && op.origin().parentOpId() != null)
+                boundaryChildren.computeIfAbsent(op.origin().parentOpId(), ignored -> new ArrayList<>()).add(op);
             if (op.kind() == SemanticOpKind.MODULE_IMPORT) {
                 KindPayload.ModuleImportPayload payload =
                     (KindPayload.ModuleImportPayload) op.payload();
@@ -610,7 +613,8 @@ public abstract class EmitterSessionBase {
 
     /** The STDLIB_PARAMETER children in one-based declared order. */
     protected final List<SemanticOp> stdlibParamBoundaries(SemanticOp op) {
-        return SemanticEmitterShared.stdlibParamBoundaries(op, opsById.values());
+        return SemanticEmitterShared.stdlibParamBoundaries(op,
+            boundaryChildren.getOrDefault(op.opId(), List.of()));
     }
 
     protected final SemanticOp boundaryChildOfKind(SemanticOp op, BoundaryKind kind) {

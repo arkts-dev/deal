@@ -26,7 +26,8 @@ Oracle, emitters and tests together.
 ## Operations
 
 Operands must precede their consumers with exact descriptors, ownership and payload
-agreement. Closed catalog signatures/selectors/policies apply identically on every
+agreement. Index producer candidates once per admission; retain raw operation order,
+repeated value ids and preceding-only visibility rather than rescanning whole units. Closed catalog signatures/selectors/policies apply identically on every
 transport. Direct-only selectors grant no callable namespace exports; append native
 IDs without renumbering existing ones.
 

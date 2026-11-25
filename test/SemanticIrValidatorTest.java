@@ -3166,7 +3166,41 @@ public class SemanticIrValidatorTest {
         }
     }
 
+    private static void testOrderedProducerLookup() {
+        for (boolean invalidBefore : List.of(false, true)) {
+            ValueId reused = nextValue();
+            SemanticOp text = op(SemanticOpKind.CONST,
+                new KindPayload.ConstPayload(new ScalarValue.String("v")), reused, STR,
+                FailurePolicyId.NO_DEAL_FAILURE, null);
+            SemanticOp number = op(SemanticOpKind.CONST,
+                new KindPayload.ConstPayload(new ScalarValue.Number(1)), reused, INT,
+                FailurePolicyId.NO_DEAL_FAILURE, null);
+            SemanticOp table = op(SemanticOpKind.TABLE_NEW, new KindPayload.TableNewPayload(List.of()),
+                nextValue(), RuntimeDescriptor.Table.STRING, FailurePolicyId.NO_DEAL_FAILURE, null);
+            SemanticOp write = op(SemanticOpKind.MEMBER_WRITE,
+                new KindPayload.MemberWritePayload((ValueId)table.result(), "k", reused),
+                null, null, FailurePolicyId.NO_DEAL_FAILURE, null);
+            var operations = new ArrayList<SemanticOp>();
+            for (int i = 0; i < 128; i++) operations.add(constOp());
+            operations.addAll(invalidBefore ? List.of(table, text, number, write)
+                : List.of(table, number, text, write));
+            operations.add(op(SemanticOpKind.CONST,
+                new KindPayload.ConstPayload(invalidBefore ? new ScalarValue.String("later") : new ScalarValue.Number(2)),
+                reused, invalidBefore ? STR : INT, FailurePolicyId.NO_DEAL_FAILURE, null));
+            var fixture = unit(operations);
+            var failure = SemanticIrValidator.validate(fixture, FACTS);
+            if (invalidBefore) assertE6005(failure, "R-ENUM", "String Record writes require string values");
+            else check(failure.isEmpty() || !failure.get().message().contains("String Record writes"),
+                "later producers cannot replace the last preceding producer");
+            check(failure.equals(SemanticIrValidator.validate(
+                    deal.semantic.ir.RawUnitMaterializer.materialize(RawUnit.fromTyped(fixture)), FACTS))
+                && failure.equals(SemanticIrValidator.validateText(SemanticIrValidator.toUnitText(fixture), FACTS)),
+                "ordered repeated producer lookup agrees on typed/raw/text: " + invalidBefore);
+        }
+    }
+
     public static void main(String[] args) {
+        testOrderedProducerLookup();
         testStringRecordConstruction();
         testDescriptorPositions();
         try (var scope = RuntimeDescriptor.retainParses()) {

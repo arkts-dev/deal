@@ -3196,7 +3196,8 @@ private void emitBindingLoad(SemanticOp op) {
 
         /** The STDLIB_PARAMETER children of one call, in one-based order. */
         private List<SemanticOp> stdlibParamBoundaries(SemanticOp op) {
-            return deal.codegen.SemanticEmitterShared.stdlibParamBoundaries(op, opsById.values());
+            return deal.codegen.SemanticEmitterShared.stdlibParamBoundaries(op,
+                boundaryChildren.getOrDefault(op.opId(), List.of()));
         }
 
         /** The single recorded STDLIB_RETURN cell of one call, or null. */

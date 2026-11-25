@@ -7,6 +7,8 @@ import deal.semantic.ClassRegistrationSeeds;
 import deal.semantic.ControlFlowValidator;
 
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -1665,9 +1667,10 @@ public final class SemanticIrValidator {
                         + "\" in a closed descriptor position"));
             }
         }
-        // Per-op closed positions in op order.
+        // Index producers once; preserve raw operation order and repeated value ids.
+        var producers = new EnumProducerIndex(unit);
         for (RawOp op : unit.ops()) {
-            Optional<CompilerDiagnostic> opFailure = checkOpEnum(unit, facts, op);
+            Optional<CompilerDiagnostic> opFailure = checkOpEnum(unit, facts, op, producers);
             if (opFailure.isPresent()) {
                 return opFailure;
             }
@@ -1731,8 +1734,41 @@ public final class SemanticIrValidator {
         return Optional.empty();
     }
 
+    private static final class EnumProducerIndex {
+        private record Producer(RawOp op, int position) {}
+        private final Map<ValueId, List<Producer>> byValue = new HashMap<>();
+        private final Map<OpId, Integer> firstPositions = new HashMap<>();
+
+        EnumProducerIndex(RawUnit unit) {
+            for (int i = 0; i < unit.ops().size(); i++) {
+                RawOp op = unit.ops().get(i);
+                firstPositions.putIfAbsent(op.opId(), i);
+                if (op.resultValue() != null)
+                    byValue.computeIfAbsent(op.resultValue(), ignored -> new ArrayList<>()).add(new Producer(op, i));
+            }
+        }
+
+        List<RawOp> before(RawOp consumer, ValueId... values) {
+            return candidates(firstPositions.get(consumer.opId()), values);
+        }
+
+        List<RawOp> candidates(int limit, ValueId... values) {
+            var result = new ArrayList<Producer>();
+            var seen = new HashSet<ValueId>();
+            for (ValueId value : values) {
+                if (value == null || !seen.add(value)) continue;
+                for (Producer producer : byValue.getOrDefault(value, List.of())) {
+                    if (producer.position() >= limit) break;
+                    result.add(producer);
+                }
+            }
+            result.sort(java.util.Comparator.comparingInt(Producer::position));
+            return result.stream().map(Producer::op).toList();
+        }
+    }
+
     private static Optional<CompilerDiagnostic> checkOpEnum(RawUnit unit, ComparisonFacts facts,
-                                                            RawOp op) {
+                                                            RawOp op, EnumProducerIndex producers) {
         SemanticOpKind kind = enumByName(SemanticOpKind.class, op.kind());
         // Snapshot selector (a closed selector position).
         if (op.selector() != null) {
@@ -1798,7 +1834,7 @@ public final class SemanticIrValidator {
             }
         }
         // Payload closed positions and descriptor texts.
-        return checkPayloadEnum(unit, facts, op);
+        return checkPayloadEnum(unit, facts, op, producers);
     }
 
     /** An out-of-set non-reserved failure-policy name (reserved names dispatch to R-RESERVED-NAME). */
@@ -1829,7 +1865,7 @@ public final class SemanticIrValidator {
      */
     private static Optional<CompilerDiagnostic> checkPayloadEnum(RawUnit unit,
                                                                  ComparisonFacts facts,
-                                                                 RawOp op) {
+                                                                 RawOp op, EnumProducerIndex producers) {
         CanonicalJson.Obj payload = op.payload();
         Optional<CompilerDiagnostic> failure;
         switch (op.kind()) {
@@ -1844,8 +1880,7 @@ public final class SemanticIrValidator {
                         if (!(row instanceof CanonicalJson.Obj entry)) continue;
                         ValueId value = parseValueIdQuiet(payloadValue(entry, "value") instanceof CanonicalJson.Obj id ? id : null);
                         RawOp producer = null;
-                        for (RawOp candidate : unit.ops()) {
-                            if (candidate.opId().equals(op.opId())) break;
+                        for (RawOp candidate : producers.before(op, value)) {
                             if (value != null && value.equals(candidate.resultValue())) producer = candidate;
                         }
                         if (producer == null || !"string".equals(producer.resultType()))
@@ -1859,8 +1894,7 @@ public final class SemanticIrValidator {
                 ValueId receiver = parseValueIdQuiet(payloadValue(payload, receiverKey) instanceof CanonicalJson.Obj id ? id : null);
                 ValueId value = parseValueIdQuiet(payloadValue(payload, "value") instanceof CanonicalJson.Obj id ? id : null);
                 String receiverType = null, valueType = null;
-                for (RawOp producer : unit.ops()) {
-                    if (producer.opId().equals(op.opId())) break;
+                for (RawOp producer : producers.before(op, receiver, value)) {
                     if (receiver != null && receiver.equals(producer.resultValue())) receiverType = producer.resultType();
                     if (value != null && value.equals(producer.resultValue())) valueType = producer.resultType();
                 }
@@ -1880,8 +1914,7 @@ public final class SemanticIrValidator {
                 }
                 boolean operandFound = false;
                 String producedType = null;
-                for (RawOp producer : unit.ops()) {
-                    if (producer.opId().equals(op.opId())) break;
+                for (RawOp producer : producers.before(op, op.operands().getFirst())) {
                     if (op.operands().getFirst().equals(producer.resultValue())) {
                         operandFound = true;
                         producedType = producer.resultType();
@@ -1976,8 +2009,7 @@ public final class SemanticIrValidator {
                 }
                 boolean receiverFound = false;
                 boolean keyFound = !hasDynamic;
-                for (RawOp producer : unit.ops()) {
-                    if (producer.opId().equals(op.opId())) break;
+                for (RawOp producer : producers.before(op, receiver, dynamic)) {
                     receiverFound |= receiver.equals(producer.resultValue());
                     keyFound |= hasDynamic && dynamic.equals(producer.resultValue())
                         && "string".equals(producer.resultType());
@@ -2011,8 +2043,7 @@ public final class SemanticIrValidator {
                 ValueId index = parseValueIdQuiet(payloadValue(payload, "index") instanceof CanonicalJson.Obj obj ? obj : null);
                 RuntimeDescriptor.Array array = null;
                 boolean indexReady = false;
-                for (RawOp producer : unit.ops()) {
-                    if (producer.opId().equals(op.opId())) break;
+                for (RawOp producer : producers.before(op, receiver, index)) {
                     if (receiver != null && receiver.equals(producer.resultValue())
                             && parseDescriptorQuiet(producer.resultType()) instanceof RuntimeDescriptor.Array found) array = found;
                     if (index != null && index.equals(producer.resultValue()) && "number".equals(producer.resultType())) indexReady = true;
@@ -2030,8 +2061,7 @@ public final class SemanticIrValidator {
                 ValueId separator = parseValueIdQuiet(payloadValue(payload, "separator") instanceof CanonicalJson.Obj obj ? obj : null);
                 boolean arrayReady = false, separatorReady = false;
                 String arrayType = new RuntimeDescriptor.Array(RuntimeDescriptor.String.INSTANCE).canonicalSpecText();
-                for (RawOp producer : unit.ops()) {
-                    if (producer.opId().equals(op.opId())) break;
+                for (RawOp producer : producers.before(op, receiver, separator)) {
                     arrayReady |= receiver != null && receiver.equals(producer.resultValue()) && arrayType.equals(producer.resultType());
                     separatorReady |= separator != null && separator.equals(producer.resultValue()) && "string".equals(producer.resultType());
                 }
@@ -2049,8 +2079,7 @@ public final class SemanticIrValidator {
                 RuntimeDescriptor.Array array = null;
                 String valueType = null;
                 boolean fromReady = false;
-                for (RawOp producer : unit.ops()) {
-                    if (producer.opId().equals(op.opId())) break;
+                for (RawOp producer : producers.before(op, receiver, value, from)) {
                     if (receiver != null && receiver.equals(producer.resultValue())
                             && parseDescriptorQuiet(producer.resultType()) instanceof RuntimeDescriptor.Array found) array = found;
                     if (value != null && value.equals(producer.resultValue())) valueType = producer.resultType();
@@ -2068,8 +2097,7 @@ public final class SemanticIrValidator {
                 ValueId receiver = parseValueIdQuiet(payloadValue(payload, "arrayValue") instanceof CanonicalJson.Obj obj ? obj : null);
                 ValueId other = parseValueIdQuiet(payloadValue(payload, "other") instanceof CanonicalJson.Obj obj ? obj : null);
                 String leftType = null, rightType = null;
-                for (RawOp producer : unit.ops()) {
-                    if (producer.opId().equals(op.opId())) break;
+                for (RawOp producer : producers.before(op, receiver, other)) {
                     if (receiver != null && receiver.equals(producer.resultValue())) leftType = producer.resultType();
                     if (other != null && other.equals(producer.resultValue())) rightType = producer.resultType();
                 }
@@ -2087,8 +2115,7 @@ public final class SemanticIrValidator {
                 ValueId count = parseValueIdQuiet(payloadValue(payload, "ARRAY_SLICE".equals(op.kind()) ? "end" : "deleteCount") instanceof CanonicalJson.Obj obj ? obj : null);
                 RuntimeDescriptor.Array array = null;
                 boolean startReady = false, countReady = false;
-                for (RawOp producer : unit.ops()) {
-                    if (producer.opId().equals(op.opId())) break;
+                for (RawOp producer : producers.before(op, receiver, start, count)) {
                     if (receiver != null && receiver.equals(producer.resultValue())
                             && parseDescriptorQuiet(producer.resultType()) instanceof RuntimeDescriptor.Array found) array = found;
                     if (start != null && start.equals(producer.resultValue()) && "number".equals(producer.resultType())) startReady = true;
@@ -2104,8 +2131,7 @@ public final class SemanticIrValidator {
             case "OBJECT_KEYS" -> {
                 ValueId receiver = parseValueIdQuiet(payloadValue(payload, "receiver") instanceof CanonicalJson.Obj obj ? obj : null);
                 String receiverType = null;
-                for (RawOp producer : unit.ops()) {
-                    if (producer.opId().equals(op.opId())) break;
+                for (RawOp producer : producers.before(op, receiver)) {
                     if (receiver != null && receiver.equals(producer.resultValue())) receiverType = producer.resultType();
                 }
                 RuntimeDescriptor descriptor = parseDescriptorQuiet(receiverType);
@@ -2119,8 +2145,7 @@ public final class SemanticIrValidator {
                 ValueId receiver = parseValueIdQuiet(payloadValue(payload, "arrayValue")
                     instanceof CanonicalJson.Obj obj ? obj : null);
                 RuntimeDescriptor.Array array = null;
-                for (RawOp producer : unit.ops()) {
-                    if (producer.opId().equals(op.opId())) break;
+                for (RawOp producer : producers.before(op, receiver)) {
                     if (receiver != null && receiver.equals(producer.resultValue())
                             && parseDescriptorQuiet(producer.resultType()) instanceof RuntimeDescriptor.Array found)
                         array = found;
@@ -2291,13 +2316,12 @@ public final class SemanticIrValidator {
                     ValueId selected = parseValueIdQuiet(payloadValue(payload, "selectedValue") instanceof CanonicalJson.Obj obj ? obj : null);
                     ValueId alternate = parseValueIdQuiet(payloadValue(payload, "alternateValue") instanceof CanonicalJson.Obj obj ? obj : null);
                     RawOp cond = null, left = null, right = null;
-                    boolean before = true;
-                    for (RawOp producer : unit.ops()) {
-                        if (producer.opId().equals(op.opId())) before = false;
-                        if (condition != null && condition.equals(producer.resultValue()) && before
-                                && unit.bodyTable() != null
+                    for (RawOp producer : producers.before(op, condition)) {
+                        if (unit.bodyTable() != null
                                 && java.util.Objects.equals(unit.bodyTable().opBlocks().get(producer.opId()),
                                     unit.bodyTable().opBlocks().get(op.opId()))) cond = producer;
+                    }
+                    for (RawOp producer : producers.candidates(Integer.MAX_VALUE, selected, alternate)) {
                         if (unit.bodyTable() != null && unit.bodyTable().opBlocks().get(producer.opId()) != null) {
                             var block = ContractSnapshotCanonicalizer.semanticIdJson(unit.bodyTable().opBlocks().get(producer.opId()));
                             if (selected != null && selected.equals(producer.resultValue()) && block.equals(payloadValue(payload, "selectedBlock"))) left = producer;
@@ -2323,8 +2347,7 @@ public final class SemanticIrValidator {
                 ValueId completion = payloadValue(payload, "completion") instanceof CanonicalJson.Obj value
                     ? parseValueIdQuiet(value) : null;
                 boolean found = false;
-                for (RawOp producer : unit.ops()) {
-                    if (producer.opId().equals(op.opId())) break;
+                for (RawOp producer : producers.before(op, completion)) {
                     if (completion != null && completion.equals(producer.resultValue()) && "never".equals(producer.resultType())
                             && ("CALL".equals(producer.kind()) || "CALLBACK_INVOKE".equals(producer.kind()) || "AWAIT".equals(producer.kind()) || "BOUNDARY".equals(producer.kind()))
                             && unit.bodyTable() != null) {
@@ -2342,8 +2365,7 @@ public final class SemanticIrValidator {
             case "JSON_PARSE" -> {
                 ValueId text = parseValueIdQuiet(payloadValue(payload, "jsonString") instanceof CanonicalJson.Obj obj ? obj : null);
                 RawOp source = null;
-                for (RawOp producer : unit.ops()) {
-                    if (producer.opId().equals(op.opId())) break;
+                for (RawOp producer : producers.before(op, text)) {
                     if (text != null && text.equals(producer.resultValue()) && unit.bodyTable() != null
                             && unit.bodyTable().opBlocks().get(op.opId()) != null
                             && java.util.Objects.equals(unit.bodyTable().opBlocks().get(producer.opId()),
@@ -2363,8 +2385,7 @@ public final class SemanticIrValidator {
                 if (failure.isPresent()) return failure;
                 ValueId iterable = parseValueIdQuiet(payloadValue(payload, "iterable") instanceof CanonicalJson.Obj obj ? obj : null);
                 RawOp source = null;
-                for (RawOp producer : unit.ops()) {
-                    if (producer.opId().equals(op.opId())) break;
+                for (RawOp producer : producers.before(op, iterable)) {
                     if (iterable != null && iterable.equals(producer.resultValue())
                             && unit.bodyTable() != null
                             && unit.bodyTable().opBlocks().get(op.opId()) != null
