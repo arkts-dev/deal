@@ -9,13 +9,17 @@ import java.util.function.Function;
 
 /** Forward flow facts owned by declaration identity, never identifier spelling. */
 public final class NullNarrowing {
-    /** A binding, or one exact declared field reached through that binding. */
-    public record Subject(Symbol binding, ClassField field) {
+    /** A binding, or one exact field/index reached through it; binding keys use identity. */
+    public record Subject(Symbol binding, Object field) {
         @Override public boolean equals(Object other) {
-            return other instanceof Subject s && binding == s.binding && field == s.field;
+            return other instanceof Subject s && binding == s.binding
+                && (field instanceof Symbol || field instanceof ClassField
+                    ? field == s.field : java.util.Objects.equals(field, s.field));
         }
         @Override public int hashCode() {
-            return 31 * System.identityHashCode(binding) + System.identityHashCode(field);
+            return 31 * System.identityHashCode(binding)
+                + (field instanceof Symbol || field instanceof ClassField
+                    ? System.identityHashCode(field) : java.util.Objects.hashCode(field));
         }
     }
 

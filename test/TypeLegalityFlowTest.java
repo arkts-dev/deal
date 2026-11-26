@@ -46,6 +46,56 @@ public final class TypeLegalityFlowTest {
                 throw new AssertionError("frontend rejection " + backend + ": " + compiler.diagnostics());
         }
     }
+    private static void exactIndexReads() {
+        for (String read : List.of("r.x", "r[\"x\"]", "r[k]")) {
+            check("function f(r:Record<string,unknown>,k:string):void{if(typeof " + read
+                + "===\"string\"){let s:string=" + read + ";}}", null);
+            for (String effect : List.of("k=\"other\";", "r={};", "r.y=1;", "delete r.y;", "ping();"))
+                check("function ping():void{}function f(r:Record<string,unknown>,k:string):void{if(typeof "
+                    + read + "===\"string\"){" + effect + "let s:string=" + read + ";}}", "E3001");
+        }
+        check("function f(r:Record<string,unknown>):void{if(typeof r.x===\"string\"){let s:string=r[\"x\"];}}", null);
+        check("function f(r:Record<string,string>,k:string):void{if(r[k]!==undefined){let s:string=r[k];}}", null);
+        check("function f(a:(number|null)[],i:number):void{if(a[i]!==null){let n:number=a[i];}}", null);
+        check("function f(a:(number|null)[]):void{if(a[0]!==null){let n:number=a[-0];}}", "E3001");
+        check("function f(a:unknown[],i:number):void{if(typeof a[i]===\"number\"){let n:number=a[i];}}", null);
+        for (String suffix : List.of("let k=\"x\";let s:string=r[k];", "let q=r;let s:string=q[k];", "{let k=\"x\";let s:string=r[k];}"))
+            check("function f(r:Record<string,unknown>,k:string):void{if(typeof r[k]===\"string\"){" + suffix + "}}", "E3001");
+        check("function f(r:Record<string,unknown>,k:string):void{if(typeof r[k]===\"string\"){let g=():string=>r[k];}}", "E5003");
+        check("async function tick():Promise<void>{}async function f(r:Record<string,unknown>,k:string):Promise<void>{if(typeof r[k]===\"string\"){await tick();let s:string=r[k];}}", "E3001");
+        check("function f(r:Record<string,unknown>,k:string):void{if(typeof r[(k=\"x\")]===\"string\"){let s:string=r[k];}}", "E3001");
+    }
+
+    private static void exactIndexRuntime(Path root) throws Exception {
+        CompositionProductionTest.execute("""
+            class C{n:number;}
+            function opaque(value:unknown):unknown{return value;}
+            function record(r:Record<string,unknown>,k:string):number{
+              if(typeof r[k]==="string"){return r[k].length;}return 0;
+            }
+            function strings(r:Record<string,string>,k:string):string{
+              if(r[k]!==undefined){return r[k];}return "missing";
+            }
+            function array(a:(number|null)[],i:number):number{
+              if(a[i]!==null){return a[i]+1;}return 0;
+            }
+            function nominal(r:Record<string,unknown>):number{
+              if(r.child instanceof C){return r["child"].n;}return 0;
+            }
+            export function main():void{
+              let c:C={n:7};let r:Record<string,unknown>={x:"abc",child:c};
+              let a:(number|null)[]=[2,null];
+              if(record(r,"x")!==3||record(r,"missing")!==0||strings({x:"yes"},"x")!=="yes"||strings({},"x")!=="missing"||array(a,0)!==3||array(a,1)!==0||nominal(r)!==7){throw {name:"FAIL",message:"exact reads"};}
+              if(typeof r.x==="string"){let s:string=r["x"];if(s!=="abc"){throw {name:"FAIL",message:"key equivalence"};}}
+              let caught=false;try{let wrong:Record<string,string>=opaque(r) as Record<string,string>;}catch(e){caught=true;}
+              if(!caught){throw {name:"FAIL",message:"record descriptor preserved"};}
+              caught=false;try{array(a,3);}catch(e){caught=(e as Error).name==="E8002";}
+              if(!caught){throw {name:"FAIL",message:"bounds retained"};}
+              let xs:unknown[]=["text"];if(typeof xs[0]==="string"){let n=xs[0].length;if(n!==4){throw {name:"FAIL",message:"unknown element"};}}
+            }
+            """, "", "", root, null, List.of(Backend.values()), Map.of(), true);
+    }
+
     private static void primitiveTypeof() {
         for (String type : List.of("boolean", "number", "string")) {
             for (String flags : List.of("|null", "|undefined", "|null|undefined")) {
@@ -474,6 +524,7 @@ public final class TypeLegalityFlowTest {
     }
 
     public static void main(String[] args) throws Exception {
+        exactIndexReads();
         primitiveTypeof();
         bindingOwnership();
         coalescingLiteralContext();
@@ -546,6 +597,7 @@ public final class TypeLegalityFlowTest {
         if (!(CanonicalRuntimeTypeDescriptor.parseResult("void") instanceof DescriptorAst)) throw new AssertionError("void result");
         Path root = Files.createTempDirectory("type-legality-flow-");
         try {
+            exactIndexRuntime(root.resolve("exact-index"));
             primitiveTypeofRuntime(root.resolve("primitive-typeof"));
             stableLoopRefinements();
             unknownLiteralContexts();

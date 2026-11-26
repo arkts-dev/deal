@@ -12855,6 +12855,22 @@ public final class SemanticLowerer {
 
         /** {@code ARRAY_LENGTH}/{@code MEMBER_READ} — the member-access dispatch. */
 
+        private Type storageReadType(ExpressionNode expression) {
+            return checks.declaredReadTypes().getOrDefault(expression, checkedType(expression));
+        }
+
+        private ValueId finishPropertyRead(ExpressionNode expression, ValueId value, ValueId slot) {
+            if (!checks.narrowedReads().contains(expression)) return value;
+            RuntimeDescriptor storage = ContainerPayloadDescriptors.resultDescriptorOf(storageReadType(expression));
+            RuntimeDescriptor refined = ContainerPayloadDescriptors.resultDescriptorOf(checkedType(expression));
+            ValueId admitted = emitOperandOp(SemanticOpKind.BOUNDARY,
+                new KindPayload.BoundaryPayload(BoundaryKind.NARROWED_READ, refined, value,
+                    new BoundaryRealization.RuntimeValidation(CANONICAL_RUNTIME_VALIDATION_ID)),
+                List.of(value), List.of(storage), expression.span(), refined, descriptorKindPolicy(refined), slot);
+            registerDynamicMaterialization(admitted, producerOpId(admitted), refined);
+            return admitted;
+        }
+
         private ValueId lowerIndexRead(IndexExpr index, ValueId slot) {
             Type objectType = checkedType(index.array());
             if (objectType instanceof Type.Table) {
@@ -12866,7 +12882,7 @@ public final class SemanticLowerer {
                     + "are E2's)", index.span());
             }
             RuntimeDescriptor resultType =
-                ContainerPayloadDescriptors.resultDescriptorOf(checkedType(index));
+                ContainerPayloadDescriptors.resultDescriptorOf(storageReadType(index));
             ValueId container = lowerOperand(index.array());
             ValueId key = lowerOperand(index.index());
             ValueId length = emitValueOp(SemanticOpKind.ARRAY_LENGTH,
@@ -12883,7 +12899,8 @@ public final class SemanticLowerer {
                     intDescriptor),
                 index.span(), intDescriptor,
                 FailurePolicyId.NO_DEAL_FAILURE);
-            ValueId result = slot != null ? slot : ids.nextValueId(module, nextOrdinal++, 0);
+            ValueId result = slot != null && !checks.narrowedReads().contains(index)
+                ? slot : ids.nextValueId(module, nextOrdinal++, 0);
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
             OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
             AnchorId boundaryAnchor = ids.nextAnchorId(module, nextOrdinal++, 0);
@@ -12911,7 +12928,7 @@ public final class SemanticLowerer {
             // exactly one dynamic materialization keyed by the read's
             // result identity (the read allocates it).
             registerDynamicMaterialization(result, opId, resultType);
-            return result;
+            return finishPropertyRead(index, result, slot);
         }
 
         private ValueId lowerMemberAccess(MemberAccessExpr access) {
@@ -13135,8 +13152,10 @@ public final class SemanticLowerer {
         }
 
         private ValueId lowerMemberRead(MemberAccessExpr access, ValueId slot) {
-            return lowerTableRead(lowerOperand(access.object()), access.field(),
-                access.span(), checkedType(access), slot, access);
+            boolean refined = checks.narrowedReads().contains(access);
+            ValueId value = lowerTableRead(lowerOperand(access.object()), access.field(),
+                access.span(), storageReadType(access), refined ? null : slot, refined ? null : access);
+            return finishPropertyRead(access, value, slot);
         }
 
         /**
@@ -13159,9 +13178,10 @@ public final class SemanticLowerer {
                         instanceof LiteralValue.StringLiteral stringLiteral) {
                 // The literal-key optimization: the constant key needs no
                 // evaluation step (the static member read's shape).
-                return lowerTableRead(lowerOperand(index.array()),
-                    stringLiteral.value(), index.span(), checkedType(index), slot,
-                    null);
+                ValueId value = lowerTableRead(lowerOperand(index.array()), stringLiteral.value(),
+                    index.span(), storageReadType(index),
+                    checks.narrowedReads().contains(index) ? null : slot, null);
+                return finishPropertyRead(index, value, slot);
             }
             return lowerDynamicTableIndexRead(index, slot);
         }
@@ -13175,7 +13195,7 @@ public final class SemanticLowerer {
          * preserves key identity exactly.
          */
         private ValueId lowerDynamicTableIndexRead(IndexExpr index, ValueId slot) {
-            Type contextualType = checkedType(index);
+            Type contextualType = storageReadType(index);
             RuntimeDescriptor resultType =
                 ContainerPayloadDescriptors.resultDescriptorOf(contextualType);
             RuntimeDescriptor tableDescriptor =
@@ -13189,7 +13209,7 @@ public final class SemanticLowerer {
                 new KindPayload.IndexNormalizePayload(IndexMode.TABLE_READ, key, key),
                 List.of(key, key), List.of(stringDescriptor, stringDescriptor),
                 index.span(), stringDescriptor, FailurePolicyId.NO_DEAL_FAILURE);
-            ValueId result = slot != null ? slot
+            ValueId result = slot != null && !checks.narrowedReads().contains(index) ? slot
                 : ids.nextValueId(module, nextOrdinal++, 0);
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
             OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
@@ -13220,7 +13240,7 @@ public final class SemanticLowerer {
             // The producer rule's index-read arm: a function-typed element
             // read registers exactly one dynamic materialization.
             registerDynamicMaterialization(result, opId, resultType);
-            return result;
+            return finishPropertyRead(index, result, slot);
         }
 
         /**
@@ -13405,7 +13425,7 @@ public final class SemanticLowerer {
 
 
         private ValueId emitNarrowedConditionCheck(ExpressionNode expr, ValueId value) {
-            if (!checks.narrowedReads().contains(expr) || expr instanceof MemberAccessExpr) {
+            if (!checks.narrowedReads().contains(expr) || expr instanceof MemberAccessExpr || expr instanceof IndexExpr) {
                 return value;
             }
             RuntimeDescriptor descriptor =
@@ -13433,7 +13453,7 @@ public final class SemanticLowerer {
 
         private ValueId emitNarrowedReadCheck(ExpressionNode expr, ValueId value,
                                               ValueId slot) {
-            if (!checks.narrowedReads().contains(expr) || expr instanceof MemberAccessExpr) {
+            if (!checks.narrowedReads().contains(expr) || expr instanceof MemberAccessExpr || expr instanceof IndexExpr) {
                 return value;
             }
             RuntimeDescriptor descriptor =

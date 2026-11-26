@@ -49,7 +49,8 @@ value; writes validate the stored descriptor before mutation.
   republish an allocation ValueId, so classify boundary inputs by their preceding
   producer rather than allocation identity alone.
 - NARROWED_READ publishes admitted operands for non-boundary consumers. Direct
-  fields retain declared FIELD_READ types, followed by explicit refined reads.
+  fields and Record/array indexes retain checked storage read types, followed by
+  explicit refined reads. Never substitute refined descriptors for storage checks.
   Preserve ordinary boundary projections and read origins; never narrow null tests
   or rewrite unrefined storage descriptors.
 - Address-chain receiver/key/normalize/commit links use admitted operands in child

@@ -73,8 +73,8 @@ permissions; do not retag storage or introduce implicit adapters. Resolve repeat
 IDs within their blocks. Contextual adapters belong to the corresponding arm/CONDITIONAL_BRANCH cell;
 ordinary read boundaries do not adapt.
 
-NARROWED_READ consumes a binding load or declared field read from a binding receiver,
-with refined descriptor/read origin. Consumers use its admitted identity. ASSERTION
+NARROWED_READ consumes a binding load or direct field/Record/index read from a binding
+receiver (including admitted binding receivers), with refined descriptor/read origin. Consumers use its admitted identity. ASSERTION
 carries explicit target and owns E8001 for every mismatch; CHECKED_ASSERTION is a
 BOUNDARY, not UNARY. INSTANCEOF alone carries a nominal unary target. HAS_FIELD
 requires exactly one key form and valid receiver/key producers.

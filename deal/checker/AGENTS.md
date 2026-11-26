@@ -31,7 +31,7 @@ Publish exact checked facts; downstream phases must not rediscover meaning.
   no symbols/exports. Reject namespace/metadata data and array deletion.
 - Null/undefined permissions are independent; reject duplicate union members before
   unknown absorption. Optional reads add undefined; presence never refines values.
-  Unknown-Record reads remain unknown; string-Record reads infer string|undefined
+  Unrefined unknown-Record reads remain unknown; string-Record reads infer string|undefined
   independently of destination context. Record variants are invariant; literal values
   and writes check the static value type, not the container type.
 
@@ -52,8 +52,9 @@ Catch entry uses saved entry facts with invalidations, not successful exit-type
 equality. Captured reads use declared types; calls preserve binding facts and
 consuming boundaries revalidate stale values.
 
-Direct declared fields use receiver-binding/field identity, not aliases or nested
-paths. Writes/deletions/calls clear property facts in evaluation order, including
+Direct fields and Record/array indexes use receiver-binding and declaration/literal
+key identity, not aliases or nested paths. Publish storage read types separately
+from refined results. Writes/deletions/calls clear property facts in evaluation order, including
 exceptional snapshots. Diagnostic-only invalidation evidence uses the owning operation/range and exact subject; ambiguous joins and superseding effects drop attribution without changing flow. Write/delete context affects only the outer storage target;
 receivers/keys/asserted descendants remain reads. Pre-scan loop conditions/bodies by
 binding identity, excluding nested functions: assignments drop incoming binding facts,

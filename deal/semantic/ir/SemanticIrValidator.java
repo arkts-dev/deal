@@ -2931,7 +2931,7 @@ public final class SemanticIrValidator {
                 // has receiver or a throw operand included): the
                 // descriptor-kind policy of its own
                 // descriptor, and the input is a binding read or a direct
-                // declared-field read from a binding, never an arbitrary value.
+                // field/index read from a binding, never an arbitrary value.
                 if (!matchesDescriptorKind(descriptor, policy)) {
                     return Optional.of(kind.name() + " boundary policy " + policy.name()
                         + " violates the descriptor-kind rule");
@@ -2944,19 +2944,27 @@ public final class SemanticIrValidator {
                         SemanticOpKind producer = enumByName(SemanticOpKind.class, candidate.kind());
                         if (producer == SemanticOpKind.BINDING_LOAD) {
                             readProduced = true;
-                        } else if (producer == SemanticOpKind.FIELD_READ) {
-                            ValueId receiver = parseValueIdQuiet(payloadValue(candidate.payload(), "classValue")
+                        } else if (producer == SemanticOpKind.FIELD_READ
+                                || producer == SemanticOpKind.MEMBER_READ || producer == SemanticOpKind.INDEX_READ) {
+                            String receiverKey = producer == SemanticOpKind.FIELD_READ ? "classValue"
+                                : producer == SemanticOpKind.MEMBER_READ ? "table" : "container";
+                            ValueId receiver = parseValueIdQuiet(payloadValue(candidate.payload(), receiverKey)
                                 instanceof CanonicalJson.Obj obj ? obj : null);
-                            readProduced = unit.ops().stream().anyMatch(op -> receiver != null
-                                && receiver.equals(op.resultValue())
-                                && enumByName(SemanticOpKind.class, op.kind()) == SemanticOpKind.BINDING_LOAD);
+                            readProduced = bindingReadCarrier(receiver, unit);
+                        } else if (producer == SemanticOpKind.OPTIONAL_READ) {
+                            ValueId raw = parseValueIdQuiet(payloadValue(candidate.payload(), "value")
+                                instanceof CanonicalJson.Obj obj ? obj : null);
+                            readProduced = unit.ops().stream().anyMatch(op -> raw != null
+                                && raw.equals(op.resultValue()) && "MEMBER_READ".equals(op.kind())
+                                && bindingReadCarrier(parseValueIdQuiet(payloadValue(op.payload(), "table")
+                                    instanceof CanonicalJson.Obj obj ? obj : null), unit));
                         }
                         if (readProduced) break;
                     }
                 }
                 if (!readProduced) {
                     return Optional.of(kind.name() + " boundary input is not a"
-                        + " binding read (the refinement claim is about a binding)");
+                        + " binding read or direct field/index read");
                 }
                 return Optional.empty();
             }
@@ -2970,6 +2978,20 @@ public final class SemanticIrValidator {
             }
         }
         return Optional.empty();
+    }
+
+    private static boolean bindingReadCarrier(ValueId value, RawUnit unit) {
+        if (value == null) return false;
+        for (RawOp op : unit.ops()) {
+            if (!value.equals(op.resultValue())) continue;
+            if ("BINDING_LOAD".equals(op.kind())) return true;
+            if ("BOUNDARY".equals(op.kind()) && "NARROWED_READ".equals(optionalString(op.payload(), "kind"))) {
+                ValueId input = parseBoundaryInput(op);
+                return unit.ops().stream().anyMatch(load -> input != null && input.equals(load.resultValue())
+                    && "BINDING_LOAD".equals(load.kind()));
+            }
+        }
+        return false;
     }
 
     /** Resolves a boundary's enclosing invocation: its parent, or the RETURN's enclosing invocation. */

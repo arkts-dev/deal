@@ -231,7 +231,8 @@ public final class TypeChecker {
             Map.copyOf(checker.exactClassDecls),
             Set.copyOf(checker.narrowedReads),
             Map.copyOf(checker.instanceofTargets),
-            Map.copyOf(checker.assignmentReads)
+            Map.copyOf(checker.assignmentReads),
+            Map.copyOf(checker.declaredReadTypes)
         );
     }
 
@@ -998,16 +999,43 @@ public final class TypeChecker {
     }
 
     private NullNarrowing.Subject propertySubject(ExpressionNode expression) {
-        if (!(expression instanceof MemberAccessExpr member)
-                || !(member.object() instanceof IdentifierExpr id)
-                || !(typeMap.get(id) instanceof Type.Class cls)) return null;
+        ExpressionNode receiver = expression instanceof MemberAccessExpr member ? member.object()
+            : expression instanceof IndexExpr index ? index.array() : null;
+        if (!(receiver instanceof IdentifierExpr id)) return null;
         Symbol binding = resolveVisibleBinding(id.name());
         if (!(binding instanceof Symbol.VariableSymbol)) return null;
-        Symbol.ClassSymbol declaration = exactReceiverClassSymbol(id, cls);
-        if (declaration == null) declaration = resolveClassSymbol(cls);
-        ClassField field = declaration == null ? null
-            : IntrinsicResolvers.findField(declaration.fields(), member.field());
-        return field == null ? null : new NullNarrowing.Subject(binding, field);
+        Type receiverType = typeMap.get(receiver);
+        if (expression instanceof MemberAccessExpr member) {
+            if (receiverType instanceof Type.Class cls) {
+                Symbol.ClassSymbol declaration = exactReceiverClassSymbol(id, cls);
+                if (declaration == null) declaration = resolveClassSymbol(cls);
+                ClassField field = declaration == null ? null
+                    : IntrinsicResolvers.findField(declaration.fields(), member.field());
+                return field == null ? null : new NullNarrowing.Subject(binding, field);
+            }
+            return receiverType instanceof Type.Table ? new NullNarrowing.Subject(binding, member.field()) : null;
+        }
+        if (!(receiverType instanceof Type.Table || receiverType instanceof Type.Array)) return null;
+        ExpressionNode key = ((IndexExpr) expression).index();
+        Object identity = key instanceof IdentifierExpr identifier ? resolveVisibleBinding(identifier.name())
+            : key instanceof LiteralExpr literal && literal.value() instanceof LiteralValue.StringLiteral text ? text.value()
+            : key instanceof LiteralExpr literal && literal.value() instanceof LiteralValue.NumberLiteral number
+                ? (number.value() == 0 ? 0.0 : number.value()) : null;
+        if (identity instanceof Symbol && !(identity instanceof Symbol.VariableSymbol)) return null;
+        return identity == null ? null : new NullNarrowing.Subject(binding, identity);
+    }
+
+    private Type refinePropertyRead(ExpressionNode expression, Type storageType) {
+        declaredReadTypes.put(expression, storageType);
+        propertyReadEpochs.put(expression, narrowing.propertyEpoch());
+        NullNarrowing.Subject subject = propertySubject(expression);
+        if (!assignmentTargetMode) recordLostRefinement(expression, subject, storageType);
+        Type refined = assignmentTargetMode || subject == null ? null : narrowing.getNarrowedType(subject);
+        if (refined != null && !Types.equals(refined, storageType)) {
+            narrowedReads.add(expression);
+            return refined;
+        }
+        return storageType;
     }
 
     private NullNarrowing.Subject guardSubject(ExpressionNode expression) {
@@ -2642,16 +2670,7 @@ public final class TypeChecker {
                         // Absence never becomes explicit null.
                         fieldType = Types.optionalRead(fieldType);
                     }
-                    declaredReadTypes.put(mae, fieldType);
-                    propertyReadEpochs.put(mae, narrowing.propertyEpoch());
-                    NullNarrowing.Subject subject = propertySubject(mae);
-                    if (!assignmentTargetMode) recordLostRefinement(mae, subject, fieldType);
-                    Type refined = assignmentTargetMode || subject == null ? null : narrowing.getNarrowedType(subject);
-                    if (refined != null && !Types.equals(refined, fieldType)) {
-                        narrowedReads.add(mae);
-                        return refined;
-                    }
-                    return fieldType;
+                    return refinePropertyRead(mae, fieldType);
                 } else {
                     var diagnostic = CompilerDiagnostic.error(DiagnosticCode.E4002,
                             "Field '" + field + "' not declared in class '" + cls.name() + "'", mae.span())
@@ -2673,7 +2692,8 @@ public final class TypeChecker {
         // Raw Record reads retain unknown; an enclosing expected type does not
         // extract a concrete type. Storage targets retain their write handling.
         if (objType instanceof Type.Table table) {
-            return assignmentTargetMode ? table.valueType() : Types.optionalRead(table.valueType());
+            return refinePropertyRead(mae,
+                assignmentTargetMode ? table.valueType() : Types.optionalRead(table.valueType()));
         }
 
         if (objType instanceof Type.Array || objType instanceof Type.String || objType instanceof Type.Number) {
@@ -2768,7 +2788,7 @@ public final class TypeChecker {
                             "index.record-key", "record.index.read", "string", typeName(indexType), List.of(RuleGuidance.recordKey()))));
                 return Type.Error.INSTANCE;
             }
-            return Types.optionalRead(table.valueType());
+            return refinePropertyRead(idx, Types.optionalRead(table.valueType()));
         }
 
         // Integrality and bounds are runtime checks; static indexes are numbers.
@@ -2786,7 +2806,7 @@ public final class TypeChecker {
             // chained class-typed receiver resolves the declaring
             // provider through the binding's own annotation.
             recordExactClassDecl(idx, arr.element(), exactClassDecls.get(idx.array()));
-            return arr.element();
+            return refinePropertyRead(idx, arr.element());
         }
 
         diagnostics.add(withReadEvidence(CompilerDiagnostic.error(DiagnosticCode.E3007,

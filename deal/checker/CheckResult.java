@@ -22,8 +22,22 @@ public record CheckResult(
     Map<ExpressionNode, Symbol.ClassSymbol> exactClassDeclarations,
     Set<ExpressionNode> narrowedReads,
     Map<InstanceofExpr, Type.Class> instanceofTargets,
-    Map<deal.ast.AssignmentExpr, Type> assignmentReads
+    Map<deal.ast.AssignmentExpr, Type> assignmentReads,
+    Map<ExpressionNode, Type> declaredReadTypes
 ) {
+    public CheckResult(Map<ExpressionNode, Type> typeMap, SymbolTable symbolTable,
+                       Map<StatementNode, SymbolTable> scopeMap,
+                       List<CompilerDiagnostic> diagnostics,
+                       Map<ClassDeclaration, SymbolTable> classScopes,
+                       Map<ExpressionNode, ClassDeclaration> constructedClassDecls,
+                       Map<ExpressionNode, Symbol.ClassSymbol> exactClassDeclarations,
+                       Set<ExpressionNode> narrowedReads,
+                       Map<InstanceofExpr, Type.Class> instanceofTargets,
+                       Map<deal.ast.AssignmentExpr, Type> assignmentReads) {
+        this(typeMap, symbolTable, scopeMap, diagnostics, classScopes, constructedClassDecls,
+            exactClassDeclarations, narrowedReads, instanceofTargets, assignmentReads, Map.of());
+    }
+
     public CheckResult(Map<ExpressionNode, Type> typeMap, SymbolTable symbolTable,
                        Map<StatementNode, SymbolTable> scopeMap,
                        List<CompilerDiagnostic> diagnostics,
@@ -118,6 +132,7 @@ public record CheckResult(
             throw new IllegalArgumentException(
                 "exactClassDeclarations must not be null");
         }
+        declaredReadTypes = Map.copyOf(Objects.requireNonNull(declaredReadTypes, "declaredReadTypes"));
         assignmentReads = Map.copyOf(Objects.requireNonNull(assignmentReads, "assignmentReads"));
         instanceofTargets = Map.copyOf(Objects.requireNonNull(instanceofTargets, "instanceofTargets"));
         narrowedReads = Set.copyOf(
