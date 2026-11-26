@@ -46,6 +46,41 @@ public final class TypeLegalityFlowTest {
                 throw new AssertionError("frontend rejection " + backend + ": " + compiler.diagnostics());
         }
     }
+    private static void nullishArrayFlow() {
+        for (String literal : List.of("[1,null]", "[null,1]", "[undefined,1,null]", "[null,undefined,1]", "[1,undefined,null]"))
+            check("function f():void{let a=" + literal + ";let b:(number|null|undefined)[]=a;}", literal.contains("undefined") ? null : "E3001");
+        check("function f():void{let a=[1,null];let b:(number|null)[]=a;}", null);
+        check("function f():void{let a=[null,undefined];let b:(null|undefined)[]=a;}", null);
+        check("function f():void{let a=[null];let b:null[]=a;let c=[undefined];let d:undefined[]=c;}", null);
+        check("function f(x:number|null,y:number|undefined):void{let a=[x,y];let b:(number|null|undefined)[]=a;}", null);
+        check("function f():void{let a=[\"x\",null];let b:(string|null)[]=a;let c=[true,undefined];let d:(boolean|undefined)[]=c;}", null);
+        check("function f(a:readonly number[]):void{let x=[a,null];let y:((readonly number[])|null)[]=x;}", null);
+        for (String literal : List.of("[1,\"x\"]", "[1,null,\"x\"]", "[[1],[null]]", "[true,null,1]"))
+            check("function f():void{let x=" + literal + ";}", "E3011");
+        check("function f():void{let x:unknown=[1,null];let a:(number|null)[]=x;}", null);
+        check("function f():void{let x:unknown=[1,null,\"x\"];let a:unknown[]=x;}", null);
+        check("function f():void{let x:number[]=[1,null];}", "E3011");
+    }
+
+    private static void nullishArrayRuntime(Path root) throws Exception {
+        CompositionProductionTest.execute("""
+            function opaque(x:unknown):unknown{return x;}
+            export function main():void{
+              let a=[null,undefined,1];let b:(number|null|undefined)[]=a;b.push(2);b.push(null);
+              let c=[null,undefined];let d:(null|undefined)[]=c;d.push(undefined);
+              let e=["yes",null];let f:(string|null)[]=e;f.push("next");
+              if(a.length!==5||(a[2] as number)!==1||c.length!==3||(f[2] as string)!=="next"){throw {name:"FAIL",message:"nullish array inference"};}
+              let caught=false;try{let wrong:number[]=opaque(a) as number[];}catch(err){caught=true;}
+              if(!caught||a.length!==5){throw {name:"FAIL",message:"invariant nullish storage"};}
+              caught=false;try{let erased:unknown[]=opaque(a) as unknown[];}catch(err){caught=true;}
+              if(!caught){throw {name:"FAIL",message:"no storage erasure"};}
+              let view:readonly unknown[]=a;if(view.length!==5){throw {name:"FAIL",message:"readonly view"};}
+              let heterogeneous:unknown=[1,null,"x"];let items:unknown[]=heterogeneous;items.push(false);
+              if(items.length!==4){throw {name:"FAIL",message:"unknown fallback"};}
+            }
+            """, "", "", root, null, List.of(Backend.values()), Map.of(), true);
+    }
+
     private static void guardAliasFlow() {
         for (String guard : List.of("x!==null", "!(x===null)", "x!==null&&true", "x!==null||x!==null"))
             check("function f(x:string|null):string{const ok=" + guard + ";const alias=ok;if(!alias){return \"\";}return x;}", null);
@@ -591,6 +626,7 @@ public final class TypeLegalityFlowTest {
     }
 
     public static void main(String[] args) throws Exception {
+        nullishArrayFlow();
         guardAliasFlow();
         loopExitFlow();
         exactIndexReads();
@@ -666,6 +702,7 @@ public final class TypeLegalityFlowTest {
         if (!(CanonicalRuntimeTypeDescriptor.parseResult("void") instanceof DescriptorAst)) throw new AssertionError("void result");
         Path root = Files.createTempDirectory("type-legality-flow-");
         try {
+            nullishArrayRuntime(root.resolve("nullish-arrays"));
             guardAliasRuntime(root.resolve("guard-aliases"));
             loopExitRuntime(root.resolve("loop-exits"));
             exactIndexRuntime(root.resolve("exact-index"));

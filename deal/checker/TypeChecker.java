@@ -2930,6 +2930,7 @@ public final class TypeChecker {
 
         Type firstType = null;
         boolean mixed = false;
+        Type inferredElement = null;
         boolean invalid = false;
         for (ExpressionNode elem : elements) {
             Type savedExpected = expectedType;
@@ -2943,19 +2944,46 @@ public final class TypeChecker {
                 continue;
             }
             if (elemType == Type.Error.INSTANCE) { invalid = true; continue; }
-            if (firstType == null) firstType = elemType;
-            else if (!Types.equals(firstType, elemType)) {
+            if (firstType == null) {
+                firstType = elemType;
+                inferredElement = elemType;
+            } else if (!mixed) {
+                Type combined = nullishArrayElement(inferredElement, elemType);
+                if (combined != null) { inferredElement = combined; continue; }
                 mixed = true;
                 if (unknownContext) continue;
                 diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E3011,
                     "Mixed types in array literal: " + typeName(firstType) + " and " + typeName(elemType), elem.span())
                         .withFacts(new deal.diagnostics.DiagnosticFacts("array.mixed-inference", "array.inference", typeName(firstType), typeName(elemType),
-                                List.of("Without an array target, every element must have the same type. Supply an intentional compatible array annotation (for example a nullish element type or unknown[]) or separate the values."))
+                                List.of("Without an array target, elements must share a non-nullish base, with optional null/undefined members. Supply an intentional compatible array annotation (for example unknown[]) or separate the values."))
                                 .withLanguageDifference(deal.diagnostics.LanguageDifference.semantics("homogeneous-array-inference"))));
             }
         }
         if (invalid || firstType == null || mixed && !unknownContext) return Type.Error.INSTANCE;
-        return Types.array(mixed ? Type.Unknown.INSTANCE : firstType);
+        return Types.array(mixed ? Type.Unknown.INSTANCE : inferredElement);
+    }
+
+    /** Bounded join: singleton nullish members or identical non-nullish bases only. */
+    private Type nullishArrayElement(Type left, Type right) {
+        if (Types.equals(left, right)) return left;
+        if (left instanceof Type.Null) return Types.withNullish(right, false, false);
+        if (right instanceof Type.Null) return Types.withNullish(left, false, false);
+        if (left instanceof Type.Undefined) return Types.withNullish(right, true, false);
+        if (right instanceof Type.Undefined) return Types.withNullish(left, true, false);
+        Type leftBase = left instanceof Type.Nullable n ? n.inner() : left;
+        Type rightBase = right instanceof Type.Nullable n ? n.inner() : right;
+        // null|undefined has an undefined inner base; add its flags to a real base.
+        if (leftBase instanceof Type.Undefined && left instanceof Type.Nullable n && n.admitsNull())
+            return Types.withNullish(Types.withNullish(right, false, false), true, false);
+        if (rightBase instanceof Type.Undefined && right instanceof Type.Nullable n && n.admitsNull())
+            return Types.withNullish(Types.withNullish(left, false, false), true, false);
+        if (!Types.equals(leftBase, rightBase)) return null;
+        Type result = leftBase;
+        if (left instanceof Type.Nullable n && n.admitsNull()
+                || right instanceof Type.Nullable other && other.admitsNull()) result = Types.withNullish(result, false, false);
+        if (left instanceof Type.Nullable n && n.admitsUndefined()
+                || right instanceof Type.Nullable other && other.admitsUndefined()) result = Types.withNullish(result, true, false);
+        return result;
     }
 
     // =======================================================================

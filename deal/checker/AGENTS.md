@@ -83,8 +83,10 @@ adaptation remains. Void expression-bodied arrows require void or terminating ne
 Array literals retain the complete contextual array base, including readonly,
 for empty and nonempty literals; nullish target members do not enter the literal's
 type. Element contexts recurse independently, preserving shallow mutability. Under
-unknown context, preserve homogeneous inference; empty/heterogeneous literals establish
-unknown element storage after checking every element as data.
+unknown context, preserve homogeneous and bounded nullish inference: identical
+non-nullish bases combine null/undefined flags; all-nullish mixtures use null|undefined.
+Never join unrelated bases or adapt functions through elements. Empty/heterogeneous
+literals establish unknown element storage only with unknown context, after checking every element as data.
 Assignment expressions keep the actual RHS type, not the storage envelope.
 Schema-free writes are properties inside a Record, never Record-valued class fields
 or array slots; every storage write requires data, excluding void/never.
