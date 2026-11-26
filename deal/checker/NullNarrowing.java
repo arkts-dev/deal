@@ -29,10 +29,43 @@ public final class NullNarrowing {
     private final Map<Subject, LostRefinement> lostRefinements = new HashMap<>();
     private final Map<Subject, Type> narrowed = new HashMap<>();
     private Object propertyEpoch = new Object();
+    private record GuardAlias(Map<Subject, Type> whenTrue, Map<Subject, Type> whenFalse) {}
+    private final Map<Symbol, GuardAlias> aliases = new java.util.IdentityHashMap<>();
+
+    public java.util.Set<Subject> aliasSubjects(Symbol binding) {
+        GuardAlias alias = aliases.get(binding);
+        var subjects = new java.util.HashSet<Subject>();
+        if (alias != null) { subjects.addAll(alias.whenTrue().keySet()); subjects.addAll(alias.whenFalse().keySet()); }
+        return subjects;
+    }
+
+    public void storeAlias(Symbol binding, NullNarrowing whenTrue, NullNarrowing whenFalse,
+                           java.util.Set<Subject> subjects) {
+        Map<Subject, Type> yes = new HashMap<>(), no = new HashMap<>();
+        for (Subject subject : subjects) {
+            if (whenTrue.narrowed.containsKey(subject)) yes.put(subject, whenTrue.narrowed.get(subject));
+            if (whenFalse.narrowed.containsKey(subject)) no.put(subject, whenFalse.narrowed.get(subject));
+        }
+        aliases.put(binding, new GuardAlias(yes, no));
+    }
+
+    public void applyAlias(Symbol binding, boolean matching) {
+        GuardAlias alias = aliases.get(binding);
+        if (alias != null) narrowed.putAll(matching ? alias.whenTrue() : alias.whenFalse());
+    }
+
+    private void invalidateAliases(java.util.function.Predicate<Subject> affected) {
+        aliases.replaceAll((binding, alias) -> {
+            Map<Subject, Type> yes = new HashMap<>(alias.whenTrue()), no = new HashMap<>(alias.whenFalse());
+            yes.keySet().removeIf(affected); no.keySet().removeIf(affected);
+            return new GuardAlias(yes, no);
+        });
+    }
 
     public NullNarrowing() {}
     private NullNarrowing(NullNarrowing other) {
         narrowed.putAll(other.narrowed);
+        aliases.putAll(other.aliases);
         lostRefinements.putAll(other.lostRefinements);
         propertyEpoch = other.propertyEpoch;
     }
@@ -40,6 +73,7 @@ public final class NullNarrowing {
     public NullNarrowing emptyBranch() {
         NullNarrowing result = branch();
         result.narrowed.clear();
+        result.aliases.clear();
         result.lostRefinements.clear();
         return result;
     }
@@ -148,12 +182,16 @@ public final class NullNarrowing {
     /** Cleanup of a snapshot already invalidated at the owning assignment. */
     public void discardRefinement(Symbol binding) {
         narrowed.keySet().removeIf(key -> key.binding() == binding);
+        invalidateAliases(key -> key.binding() == binding);
     }
     public void invalidate(Symbol binding) {
+        aliases.remove(binding);
+        invalidateAliases(key -> key.binding() == binding);
         narrowed.keySet().removeIf(key -> key.binding() == binding);
         lostRefinements.keySet().removeIf(key -> key.binding() == binding);
     }
     public void invalidateProperties() {
+        invalidateAliases(key -> key.field() != null);
         narrowed.keySet().removeIf(key -> key.field() != null);
         lostRefinements.keySet().removeIf(key -> key.field() != null);
         propertyEpoch = new Object();
@@ -167,6 +205,7 @@ public final class NullNarrowing {
     }
     private void invalidateWithEvidence(java.util.function.Predicate<Subject> affected,
             deal.diagnostics.DiagnosticRange range, Invalidation operation) {
+        invalidateAliases(affected);
         // An intervening invalidation supersedes old evidence even if no refinement remained.
         lostRefinements.keySet().removeIf(affected);
         narrowed.forEach((subject, type) -> {
@@ -175,11 +214,13 @@ public final class NullNarrowing {
         narrowed.keySet().removeIf(affected);
     }
     public void invalidateAll() {
+        aliases.clear();
         narrowed.clear();
         lostRefinements.clear();
         propertyEpoch = new Object();
     }
     public void invalidateAtAwait(deal.diagnostics.DiagnosticRange range) {
+        aliases.clear();
         narrowed.forEach((subject, type) -> lostRefinements.put(subject, new LostRefinement(type, range, Invalidation.AWAIT)));
         narrowed.clear();
         propertyEpoch = new Object();
@@ -188,6 +229,14 @@ public final class NullNarrowing {
 
     /** Facts survive a join only for identical declarations and identical types. */
     public void merge(NullNarrowing other) {
+        aliases.entrySet().removeIf(entry -> !other.aliases.containsKey(entry.getKey()));
+        aliases.replaceAll((binding, alias) -> {
+            GuardAlias incoming = other.aliases.get(binding);
+            Map<Subject, Type> yes = new HashMap<>(alias.whenTrue()), no = new HashMap<>(alias.whenFalse());
+            yes.entrySet().removeIf(e -> !Types.equals(e.getValue(), incoming.whenTrue().get(e.getKey())));
+            no.entrySet().removeIf(e -> !Types.equals(e.getValue(), incoming.whenFalse().get(e.getKey())));
+            return new GuardAlias(yes, no);
+        });
         narrowed.entrySet().removeIf(entry -> !Types.equals(entry.getValue(), other.narrowed.get(entry.getKey())));
         // A single exact cause is advertised only when both incoming paths retain it.
         lostRefinements.entrySet().removeIf(entry -> !entry.getValue().equals(other.lostRefinements.get(entry.getKey())));

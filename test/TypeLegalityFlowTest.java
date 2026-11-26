@@ -46,6 +46,41 @@ public final class TypeLegalityFlowTest {
                 throw new AssertionError("frontend rejection " + backend + ": " + compiler.diagnostics());
         }
     }
+    private static void guardAliasFlow() {
+        for (String guard : List.of("x!==null", "!(x===null)", "x!==null&&true", "x!==null||x!==null"))
+            check("function f(x:string|null):string{const ok=" + guard + ";const alias=ok;if(!alias){return \"\";}return x;}", null);
+        check("function f(x:unknown):string{const text=typeof x===\"string\";if(text){return x;}return \"\";}", null);
+        check("class C{n:number;}function f(x:unknown):number{const yes=x instanceof C;if(yes){return x.n;}return 0;}", null);
+        check("function f(x:string|null):void{let ok=x!==null;if(ok){let s:string=x;}}", "E3001");
+        check("function f(x:string|null):void{const ok=x!==null;x=null;if(ok){let s:string=x;}}", "E3001");
+        check("function f(x:string|null,b:boolean):void{const ok=x!==null;const alias=ok;if(b){x=null;}if(alias){let s:string=x;}}", "E3001");
+        check("function f(x:string|null):void{const ok=x!==null;x=null;const alias=ok;x=\"new\";x=null;if(alias){let s:string=x;}}", "E3001");
+        check("function f(r:Record<string,unknown>,k:string):void{const ok=typeof r[k]===\"string\";const alias=ok;if(alias){let s:string=r[k];}}", null);
+        check("function f(r:Record<string,unknown>,k:string):void{const ok=typeof r[k]===\"string\";k=\"new\";if(ok){let s:string=r[k];}}", "E3001");
+        check("function f(r:Record<string,unknown>,k:string):void{const ok=typeof r[k]===\"string\";const alias=ok;r.x=1;if(alias){let s:string=r[k];}}", "E3001");
+        check("function f(x:string|null):void{const ok=x!==null;let g=():void=>{if(ok){let s:string=x;}};}", "E3001");
+        check("async function tick():Promise<void>{}async function f(x:string|null):Promise<void>{const ok=x!==null;await tick();if(ok){let s:string=x;}}", "E3001");
+        check("function f(x:string|null):void{const ok=x!==null;for(let i of [1]){x=null;}if(ok){let s:string=x;}}", "E3001");
+    }
+
+    private static void guardAliasRuntime(Path root) throws Exception {
+        CompositionProductionTest.execute("""
+            class C{n:number;}
+            function text(x:string|null|undefined):string{
+              const present=x!==null&&x!==undefined;const missing=!present;
+              if(missing){return "missing";}return x;
+            }
+            function nominal(x:unknown):number{const yes=x instanceof C;const again=yes;if(again){return x.n;}return 0;}
+            function record(r:Record<string,unknown>,k:string):number{const text=typeof r[k]==="string";const yes=text&&text;if(yes){return r[k].length;}return 0;}
+            export function main():void{
+              let c:C={n:7};if(text("yes")!=="yes"||text(null)!=="missing"||text(undefined)!=="missing"||nominal(c)!==7||nominal(null)!==0||record({x:"abc"},"x")!==3||record({},"x")!==0){throw {name:"FAIL",message:"aliases"};}
+              let x:string|null="live";const ok=x!==null;let clear=():void=>{x=null;};clear();let caught=false;
+              try{if(ok){let n=x.length;}}catch(e){caught=(e as Error).name==="E8001";}
+              if(!caught){throw {name:"FAIL",message:"alias refined read validation"};}
+            }
+            """, "", "", root, null, List.of(Backend.values()), Map.of(), true);
+    }
+
     private static void loopExitFlow() {
         check("function f(x:string|null):string{while(x===null){x=\"ready\";}return x;}", null);
         check("function f(x:string|null):string{while(true){if(x===null){x=\"ready\";}break;}return x;}", null);
@@ -556,6 +591,7 @@ public final class TypeLegalityFlowTest {
     }
 
     public static void main(String[] args) throws Exception {
+        guardAliasFlow();
         loopExitFlow();
         exactIndexReads();
         primitiveTypeof();
@@ -630,6 +666,7 @@ public final class TypeLegalityFlowTest {
         if (!(CanonicalRuntimeTypeDescriptor.parseResult("void") instanceof DescriptorAst)) throw new AssertionError("void result");
         Path root = Files.createTempDirectory("type-legality-flow-");
         try {
+            guardAliasRuntime(root.resolve("guard-aliases"));
             loopExitRuntime(root.resolve("loop-exits"));
             exactIndexRuntime(root.resolve("exact-index"));
             primitiveTypeofRuntime(root.resolve("primitive-typeof"));

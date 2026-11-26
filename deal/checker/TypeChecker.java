@@ -735,8 +735,46 @@ public final class TypeChecker {
 
         recordDeclaration(vd.name());
         Symbol binding = currentScope.resolveLocal(vd.name());
-        if (targetType != null && exprType != Type.Error.INSTANCE && isAssignable(targetType, exprType))
+        if (targetType != null && exprType != Type.Error.INSTANCE && isAssignable(targetType, exprType)) {
             refineAssignedBinding(binding, targetType, exprType);
+            if (vd.isConst() && exprType instanceof Type.Boolean) {
+                Set<NullNarrowing.Subject> subjects = new HashSet<>();
+                collectGuardSubjects(vd.initializer(), subjects);
+                ConditionFlow flow = conditionFlows.get(vd.initializer());
+                if (flow != null) narrowing.storeAlias(binding, flow.whenTrue(), flow.whenFalse(), subjects);
+            }
+        }
+    }
+
+    private void collectGuardSubjects(ExpressionNode expression, Set<NullNarrowing.Subject> subjects) {
+        if (expression instanceof IdentifierExpr id) {
+            subjects.addAll(narrowing.aliasSubjects(resolveVisibleBinding(id.name())));
+        } else if (expression instanceof UnaryExpr unary && unary.op() == UnaryOp.NOT) {
+            collectGuardSubjects(unary.expr(), subjects);
+        } else if (expression instanceof BinaryExpr binary) {
+            if (binary.op() == BinaryOp.AND || binary.op() == BinaryOp.OR) {
+                collectGuardSubjects(binary.left(), subjects);
+                collectGuardSubjects(binary.right(), subjects);
+            } else if (binary.op() == BinaryOp.EQ || binary.op() == BinaryOp.NEQ) {
+                ExpressionNode left = binary.left(), right = binary.right();
+                if (left instanceof UnaryExpr unary && unary.op() == UnaryOp.TYPEOF)
+                    addGuardSubject(unary.expr(), subjects);
+                else if (right instanceof UnaryExpr unary && unary.op() == UnaryOp.TYPEOF)
+                    addGuardSubject(unary.expr(), subjects);
+                else if (nullishSingleton(left)) addGuardSubject(right, subjects);
+                else if (nullishSingleton(right)) addGuardSubject(left, subjects);
+            }
+        } else if (expression instanceof InstanceofExpr test) addGuardSubject(test.value(), subjects);
+    }
+
+    private static boolean nullishSingleton(ExpressionNode expression) {
+        return expression instanceof LiteralExpr literal && literal.value() instanceof LiteralValue.NullLiteral
+            || expression instanceof IdentifierExpr id && id.name().equals("undefined");
+    }
+
+    private void addGuardSubject(ExpressionNode expression, Set<NullNarrowing.Subject> subjects) {
+        NullNarrowing.Subject subject = guardSubject(expression);
+        if (subject != null) subjects.add(subject);
     }
 
     /**
@@ -1004,6 +1042,8 @@ public final class TypeChecker {
     }
 
     private void refineCondition(ExpressionNode condition, boolean matching) {
+        if (condition instanceof IdentifierExpr id)
+            narrowing.applyAlias(resolveVisibleBinding(id.name()), matching);
         narrowing.onCondition(condition, matching, this::guardSubject, this::guardDeclaredType);
         while (condition instanceof UnaryExpr unary && unary.op() == UnaryOp.NOT) {
             condition = unary.expr();

@@ -45,7 +45,9 @@ retain a separate checked read type from the declared storage envelope; check
 arithmetic without destination context and invalidate facts as ordinary writes.
 
 Build condition states after effects; check &&/|| RHS under the selected outcome
-and reverse polarity for negation. Join only paths reaching continuation.
+and reverse polarity for negation. Local const booleans retain outcome facts from
+eligible guards and aliases; propagate subjects transitively and permanently remove
+invalidated facts from every branch/exceptional snapshot. Join only paths reaching continuation.
 Assignments invalidate binding and exceptional snapshots; await clears enclosing
 function/loop/exceptional facts. Both function-entry paths isolate these states.
 Catch entry uses saved entry facts with invalidations, not successful exit-type
