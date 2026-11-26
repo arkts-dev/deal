@@ -46,6 +46,140 @@ public final class TypeLegalityFlowTest {
                 throw new AssertionError("frontend rejection " + backend + ": " + compiler.diagnostics());
         }
     }
+    private static void stableLoopRefinements() {
+        for (String loop : List.of("while(true)", "for(let item of [1,2])")) {
+            String prefix = "function f(x:string|null):void{if(x!==null){";
+            check(prefix + loop + "{let s:string=x;break;}}}", null);
+            check(prefix + loop + "{let s:string=x;x=null;}}}", "E3001");
+            check(prefix + loop + "{{let x:number=1;x=2;}let s:string=x;break;}}}", null);
+            check(prefix + loop + "{let s:string=x;let x:number=(x=null);}}}", "E3001");
+            check(prefix + loop + "{let clear=():void=>{x=null;};let s:string=x;break;}}}", null);
+            check(prefix + loop + "{let task=async():Promise<void>=>{await tick();};let s:string=x;break;}}}"
+                + "async function tick():Promise<void>{}", null);
+            check("async function tick():Promise<void>{}async function f(x:string|null):Promise<void>{if(x!==null){"
+                + loop + "{let s:string=x;await tick();}}}", "E3001");
+            check(prefix + loop + "{for(let i of [1]){x=null;}let s:string=x;}}}", "E3001");
+            check(prefix + loop + "{for(let x of [1]){x=2;}let s:string=x;break;}}}", null);
+            check(prefix + loop + "{for(let i of (x=null)===null?[1]:[2]){}let s:string=x;}}}", "E3001");
+            check(prefix + loop + "{try{x=null;}catch(e){}let s:string=x;}}}", "E3001");
+        }
+        check("function f(x:boolean|null):void{if(x!==null){while(x){x=null;}}}", "E3007");
+        check("function f(x:string|null):void{if(x!==null){while(true){let s:string=x;let x:string=(x=\"new\");break;}}}", "E3001");
+        check("function f(x:unknown):void{if(typeof x===\"number\"){for(let i of [1]){let n:number=x;x++;}}}", "E3001");
+        check("function f(x:string|null):void{if(x!==null){while(((x=null)===null)){let s:string=x;}}}", "E3001");
+        check("function f(x:string|null):void{while((x=\"new\")===\"new\"){let s:string=x;break;}}", null);
+        check("function f(x:string|null):void{if(x!==null){for(let i of (x=\"new\")===\"new\"?[1]:[2]){let s:string=x;}}}", null);
+        check("async function values():Promise<number[]>{return [1];}"
+            + "async function f(x:string|null):Promise<void>{if(x!==null){for(let i of await values()){let s:string=x;}}}", "E3001");
+        check("async function values():Promise<number[]>{return [1];}"
+            + "async function f():Promise<void>{let x:string|null=null;for(let i of (x=\"new\")===\"new\"?await values():[2]){let s:string=x;}}", "E3001");
+        check("class P{v:string|null;}function f(p:P):void{if(p.v!==null){for(let i of [1]){let s:string=p.v;}}}", "E3001");
+        check("class P{v:string|null;}function f(p:P):void{while(p.v!==null){let s:string=p.v;break;}}", null);
+        check("async function values():Promise<number[]>{return [1];}"
+            + "async function f():Promise<void>{let x:string|null=null;for(let i of await values()){if(x===null){x=\"new\";}let s:string=x;}}", null);
+    }
+
+    private static void unknownLiteralContexts() {
+        for (String expression : List.of("{nested:{x:1},items:[]}", "[]", "[1,\"x\",null]", "[{x:1},{x:2}]", "[[],[1]]"))
+            check("function f():unknown{return " + expression + ";}", null);
+        check("function f():void{let r:Record<string,unknown>={nested:{x:1},items:[]};}", null);
+        check("function f():void{let x:unknown=[1,2];let a:number[]=x;}", null);
+        check("function f():void{let x:unknown=[{x:1}];let a:Record<string,unknown>[]=x;}", null);
+        check("function f():void{let x:unknown=[];let a:unknown[]=x;}", null);
+        check("function f():void{let x:unknown=[1,\"x\"];let a:unknown[]=x;}", null);
+        for (String expression : List.of("[]", "[1,\"x\"]", "{}", "[{x:1}]"))
+            check("function f():void{let x=" + expression + ";}", expression.equals("[1,\"x\"]") ? "E3011" : "E3002");
+        check("function f():void{let a:number[]=[1,\"x\"];}", "E3011");
+        check("function f():void{let r:Record<string,string>={nested:{x:1}};}", "E3001");
+        for (String expression : List.of("{x:v()}", "[1,v()]", "[v(),v()]", "[[],{x:v()}]"))
+            check("function v():void{}function f():unknown{return " + expression + ";}", "E3001");
+        check("function f():unknown{return {[1]:{}};}", "E3018");
+        check("function f():unknown{return {x:1,x:2};}", "E3001");
+    }
+
+    private static void loopAndLiteralRuntime(Path root) throws Exception {
+        String source = """
+            class Payload{raw:unknown;}
+            function take(value:unknown):unknown{return value;}
+            function contains(ids:string[],value:unknown):boolean{
+              if(typeof value!=="string"){return false;}
+              for(let id of ids){if(id===value){return true;}}
+              return false;
+            }
+            function stable(value:string|null):number{
+              if(value===null){return 0;}
+              let n=0;
+              while(n<3){let text:string=value;for(let i of [1,2]){if(text!==value){return -1;}}n++;continue;}
+              return n;
+            }
+            export function run():void{
+              if(!contains(["a","b"],"b")||contains(["a"],3)||stable("yes")!==3){throw {name:"FAIL",message:"stable loops"};}
+              let repeated:unknown=2;
+              while(typeof repeated==="number"){let n:number=repeated;if(n===0){repeated="done";}else{repeated=n - 1;continue;}}
+              if((repeated as string)!=="done"){throw {name:"FAIL",message:"fresh guard"};}
+              let value:string|null=null;
+              for(let i of (value="iterable")==="iterable"?[1,2]:[]){let text:string=value;if(text!=="iterable"){throw {name:"FAIL",message:"iterable effects"};}}
+              let state:string|null="live";
+              let change=():void=>{state=null;};let caught=false;
+              try{for(let i of [1]){change();let stale:string=state;}}catch(e){caught=(e as Error).name==="E8001";}
+              if(!caught){throw {name:"FAIL",message:"captured boundary"};}
+              let trace="";
+              let mark=(text:string):number=>{trace=trace+text;return trace.length;};
+              let data:Record<string,unknown>={nested:{x:mark("a")},items:[],mixed:[mark("b"),"x"],rows:[{x:mark("c")}]};
+              let nested:Record<string,unknown>=data.nested as Record<string,unknown>;
+              let items:unknown[]=data.items as unknown[];items.push("item");
+              let mixed:unknown[]=data.mixed as unknown[];
+              let rows:Record<string,unknown>[]=data.rows as Record<string,unknown>[];
+              if(trace!=="abc"||(nested.x as number)!==1||items.length!==1||(mixed[0] as number)!==2||(rows[0].x as number)!==3){throw {name:"FAIL",message:"recursive literals/order"};}
+              let opaque:unknown=[1,2];let nums:number[]=opaque;nums.push(3);
+              caught=false;try{let erased:unknown[]=take(opaque) as unknown[];}catch(e){caught=true;}
+              if(!caught||nums.length!==3){throw {name:"FAIL",message:"homogeneous descriptor"};}
+              let empty:unknown=[];let same:unknown[]=empty;same.push(nums);
+              let hetero:unknown=[1,"s",null];let values:unknown[]=hetero;values.push(false);
+              caught=false;try{let upgraded:number[]=take(empty) as number[];}catch(e){caught=true;}
+              if(!caught||same.length!==1||values.length!==4){throw {name:"FAIL",message:"unknown descriptor"};}
+              let readonlyNums:readonly unknown[]=[1,"s"];
+              let boxed:Payload={raw:{inner:[[],[1]]}};
+              let passed:unknown=take({items:[],record:{x:1}});
+              let chosen:unknown=true?{x:1,items:[]}:{};
+              let fallback:unknown=null??{items:[]};
+              if(readonlyNums.length!==2||!Object.hasOwn(boxed,"raw")||!Object.hasOwn(passed as Record<string,unknown>,"items")||!Object.hasOwn(chosen as Record<string,unknown>,"x")||!Object.hasOwn(fallback as Record<string,unknown>,"items")){throw {name:"FAIL",message:"contexts"};}
+            }
+            export function main():void{run();}
+            """;
+        CompositionProductionTest.execute(source, "", "", root, null,
+            List.of(Backend.values()), Map.of(), true);
+        Path entry = root.resolve("JS/src/main.deal");
+        var invocation = deal.semantic.CompilerProfileProvider.resolve(
+            deal.semantic.ReleaseConfiguration.CURRENT_RELEASE_STATE,
+            deal.semantic.ReleaseConfiguration.releaseCapabilityRegistry());
+        var compiler = new deal.module.CompilationOrchestrator(entry, root.resolve("oracle"),
+            false, false, false, false, Backend.JS, null, List.of(entry.getParent()),
+            Path.of("").toAbsolutePath(), null, invocation);
+        if (!compiler.compile()) throw new AssertionError(compiler.diagnostics());
+        var project = compiler.producedProject();
+        var parsed = deal.semantic.ir.ContractSnapshotCanonicalizer.parseProject(
+            (deal.semantic.ir.CanonicalJson.Obj) deal.semantic.ir.CanonicalJson.parse(
+                deal.semantic.ir.SemanticIrValidator.toProjectText(project)));
+        var modules = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.LoweredModuleUnit>();
+        parsed.modules().forEach(raw -> {var unit=deal.semantic.ir.RawUnitMaterializer.materialize(raw);modules.put(unit.moduleId(),unit);});
+        var transported = new deal.semantic.ir.ExecutableLoweredProject(project.semanticProfile(),
+            parsed.interfaceIndex(), modules, project.entryModule(), parsed.classSeeds());
+        var facts = new deal.semantic.ir.SemanticIrValidator.ComparisonFacts(
+            project.interfaceIndex().interfaceIndexDigest(), project.semanticProfile(), invocation.capabilityRegistryHash());
+        for (var executable : List.of(project, transported)) {
+            var failure=deal.semantic.ir.SemanticIrValidator.validate(executable,facts);
+            if(failure.isPresent())throw new AssertionError(failure);
+            var tables=new LinkedHashMap<deal.semantic.ir.ModuleId,deal.semantic.ir.StructuredBodyTable>();
+            var registries=new LinkedHashMap<deal.semantic.ir.ModuleId,deal.semantic.ir.ClassFactoryRegistry>();
+            executable.modules().forEach((id,unit)->{tables.put(id,unit.bodyTable());registries.put(id,unit.classFactories());});
+            var result=deal.semantic.SemanticOracle.invokeSyncEntry(executable,tables,registries,
+                new deal.semantic.SemanticOracle.HostResponder(){},executable.entryModule(),"run",List.of());
+            if(!(result.terminal() instanceof deal.semantic.SemanticRuntimeModel.Terminal.Success))
+                throw new AssertionError("Loop/literal Oracle: "+result.comparisonReport());
+        }
+    }
+
     private static void constructionOrder(Path root) throws Exception {
         String prefix = "class C{first:number;second:number;}function f():void{let x:number|null=null;";
         check(prefix + "let c:C={second:(x=1),first:x};}", null);
@@ -341,7 +475,7 @@ public final class TypeLegalityFlowTest {
         check("function f(x:string|null):void{while(x!==null && ((x=null)===null)){let s:string=x;}}", "E3001");
         check("async function tick():Promise<boolean>{return true;}async function f(x:string|null):Promise<void>{while(x!==null && await tick()){let s:string=x;}}", "E3001");
         check("function f(x:string|null):void{if(x!==null){while(true){let x=\"inner\";break;}let s:string=x;}}", null);
-        check("function f(x:string|null):void{if(x!==null){while(true){let s:string=x;break;}}}", "E3001");
+        check("function f(x:string|null):void{if(x!==null){while(true){let s:string=x;break;}}}", null);
         check("function f(x:string|null):string{if(x!==null){while((x=null)===null){break;}return x;}return \"\";}", "E5003");
         check("function f(x:string|null):string{try{if(x===null){throw {name:\"X\",message:\"x\"};}}catch(e){}return x;}", "E5003");
         check("function f(x:string|null):string{try{if(x===null){throw {name:\"X\",message:\"x\"};}}catch(e){return \"\";}return x;}", null);
@@ -368,8 +502,11 @@ public final class TypeLegalityFlowTest {
         if (!(CanonicalRuntimeTypeDescriptor.parseResult("void") instanceof DescriptorAst)) throw new AssertionError("void result");
         Path root = Files.createTempDirectory("type-legality-flow-");
         try {
+            stableLoopRefinements();
+            unknownLiteralContexts();
             contextualInvariants(root.resolve("context"));
             constructionOrder(root.resolve("construction-order"));
+            loopAndLiteralRuntime(root.resolve("loop-literals"));
             for (String statement : List.of("[v()];", "let xs=[[v()]];", "let xs:unknown=[v()];", "let xs=[true?v():v()];"))
                 productionReject(statement, root);
             for (String fixture : List.of("arrays/reference-array-identity-equality", "variables/block-shadowing-no-narrowing", "variables/parameter-shadowing-no-narrowing")) {

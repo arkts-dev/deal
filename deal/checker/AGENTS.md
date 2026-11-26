@@ -5,9 +5,10 @@ Publish exact checked facts; downstream phases must not rediscover meaning.
 
 ## Types and declarations
 
-- Object literals require a real contextual class/Record target; nonempty fields
-  do not authorize structural inference. Resolve exact declarations/providers
-  through annotations, arrays, calls, fields and literals; same-spelled siblings
+- Object literals require a contextual class/Record or unknown target; unknown
+  constructs an unknown Record with recursive value context, never a nominal shape.
+  Resolve exact declarations/providers through annotations, arrays, calls, fields
+  and literals; same-spelled siblings
   never substitute. Reject duplicate decoded keys, nonstring computed Record keys
   and computed class keys. Quoted class keys use ordinary field checks.
 - Resolve unused field annotations and reject duplicate declared fields before
@@ -54,8 +55,11 @@ consuming boundaries revalidate stale values.
 Direct declared fields use receiver-binding/field identity, not aliases or nested
 paths. Writes/deletions/calls clear property facts in evaluation order, including
 exceptional snapshots. Diagnostic-only invalidation evidence uses the owning operation/range and exact subject; ambiguous joins and superseding effects drop attribution without changing flow. Write/delete context affects only the outer storage target;
-receivers/keys/asserted descendants remain reads. While entries reapply fresh guards;
-body facts cannot cross back-edges or force stale first-entry admission.
+receivers/keys/asserted descendants remain reads. Pre-scan loop conditions/bodies by
+binding identity, excluding nested functions: assignments drop incoming binding facts,
+await drops all, and properties never persist across iterations. Retain stable bindings;
+while entries reapply evaluated guards without body-to-guard propagation. For-of iterable
+effects precede the scan and follow ordinary invalidation.
 
 Track exact instanceof targets and nullish/typeof polarity. Never infer object/
 function types from typeof or narrow/convert unknown equality. Catch bindings are
@@ -72,7 +76,9 @@ adaptation remains. Void expression-bodied arrows require void or terminating ne
 
 Array literals retain the complete contextual array base, including readonly,
 for empty and nonempty literals; nullish target members do not enter the literal's
-type. Element contexts recurse independently, preserving shallow mutability.
+type. Element contexts recurse independently, preserving shallow mutability. Under
+unknown context, preserve homogeneous inference; empty/heterogeneous literals establish
+unknown element storage after checking every element as data.
 Assignment expressions keep the actual RHS type, not the storage envelope.
 Schema-free writes are properties inside a Record, never Record-valued class fields
 or array slots; every storage write requires data, excluding void/never.

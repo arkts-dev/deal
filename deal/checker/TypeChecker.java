@@ -154,15 +154,14 @@ public final class TypeChecker {
     // -- Loop depth for break/continue validation (F8) --
     private int loopDepth = 0;
 
-    // -- Variables assigned inside the innermost loop body: the loop
-    //    back-edge invalidates their narrowed types after the loop (v1.2
-    //    "narrowing does not cross loop back-edges"). Entries are the
+    // -- Variables assigned inside the innermost loop: assignments
+    //    invalidate their saved continuation refinements. Entries are the
     //    resolved binding symbols (identity, never value equality: two
     //    same-named declarations are distinct bindings). --
     private Deque<Set<Symbol>> loopAssignments = new ArrayDeque<>();
 
     // -- Saved pre-loop narrowing states of the open loops: a loop body
-    //    is checked under a fresh narrowing state, so an await inside a
+    //    is checked under a filtered narrowing state, so an await inside a
     //    body must invalidate the enclosing function's saved states too
     //    (docs/spec-v1.6.md §Nullable semantics: after an await every
     //    narrowed variable of the enclosing async function reverts to
@@ -1034,12 +1033,10 @@ public final class TypeChecker {
     // =======================================================================
 
     private void checkWhileStatement(WhileStatement ws) {
-        // The first guard consumes incoming refinements (and validates stale
-        // captured values). Only guard-derived facts enter the fresh body;
-        // unrelated incoming facts must not cross the loop back-edge.
+        // Repeated checks cannot consume facts invalidated by any iteration.
         NullNarrowing savedNarrowing = narrowing;
         loopSavedNarrowing.push(savedNarrowing);
-        narrowing = narrowing.branch();
+        narrowing = loopEntryFlow(ws.condition(), ws.body());
         loopAssignments.push(newBindingAssignmentSet());
         // Conditions require boolean. Record reads remain unknown here,
         // just as in all other value positions; use explicit refinement or
@@ -1054,73 +1051,129 @@ public final class TypeChecker {
         }
 
         narrowCondition(ws.condition(), true);
-        NullNarrowing freshGuard = freshGuardFlow(ws.condition(), true, narrowing.emptyBranch());
-        narrowing.retainRefinements(freshGuard);
         loopDepth++;
         walkStatement(ws.body());
-        // The loop back-edge invalidates every binding assigned in the
-        // body (v1.2 narrowing does not cross loop back-edges).
+        // Assignments also invalidate the saved continuation after the loop.
         Set<Symbol> assigned = loopAssignments.pop();
         loopDepth--;
         loopSavedNarrowing.pop();
         closeLoopAssignments(assigned, savedNarrowing);
-        resetRepeatedGuardReads(ws.condition(), assigned);
         narrowing = savedNarrowing;
     }
 
-    /** A repeated guard must test the current value, not its first-entry fact. */
-    private void resetRepeatedGuardReads(ExpressionNode expression, Set<Symbol> assigned) {
-        if (expression instanceof UnaryExpr unary) {
-            if (unary.op() == UnaryOp.TYPEOF) resetGuardSubject(unary.expr(), assigned);
-            else resetRepeatedGuardReads(unary.expr(), assigned);
-        } else if (expression instanceof InstanceofExpr test) {
-            resetGuardSubject(test.value(), assigned);
-        } else if (expression instanceof BinaryExpr binary) {
-            if (binary.op() == BinaryOp.EQ || binary.op() == BinaryOp.NEQ) {
-                if (isNullishGuardLiteral(binary.left())) resetGuardSubject(binary.right(), assigned);
-                if (isNullishGuardLiteral(binary.right())) resetGuardSubject(binary.left(), assigned);
-            }
-            resetRepeatedGuardReads(binary.left(), assigned);
-            resetRepeatedGuardReads(binary.right(), assigned);
-        }
-    }
-
-    private static boolean isNullishGuardLiteral(ExpressionNode expression) {
-        return expression instanceof LiteralExpr literal && literal.value() instanceof LiteralValue.NullLiteral
-            || expression instanceof IdentifierExpr id && id.name().equals("undefined");
-    }
-
-    private void resetGuardSubject(ExpressionNode expression, Set<Symbol> assigned) {
-        NullNarrowing.Subject subject = expression instanceof IdentifierExpr id
-            ? new NullNarrowing.Subject(resolveVisibleBinding(id.name()), null) : propertySubject(expression);
-        if (subject == null || subject.field() == null && !assigned.contains(subject.binding())) return;
-        Type declared = guardDeclaredType(expression);
-        if (declared != null) {
-            typeMap.put(expression, declared);
-            narrowedReads.remove(expression);
-        }
-    }
-
-    /** Guard-only facts, intersected with evaluated outcomes before body entry.
-     * This cannot resurrect assignment/await-invalidated facts, or carry an
-     * unrelated incoming refinement across a back-edge. */
-    private NullNarrowing freshGuardFlow(ExpressionNode condition, boolean matching, NullNarrowing entry) {
-        if (condition instanceof UnaryExpr unary && unary.op() == UnaryOp.NOT)
-            return freshGuardFlow(unary.expr(), !matching, entry);
-        if (condition instanceof BinaryExpr binary
-                && (binary.op() == BinaryOp.AND || binary.op() == BinaryOp.OR)) {
-            boolean and = binary.op() == BinaryOp.AND;
-            NullNarrowing selected = freshGuardFlow(binary.left(), and, entry.branch());
-            if (matching == and) return freshGuardFlow(binary.right(), matching, selected);
-            return mergeFlows(freshGuardFlow(binary.left(), !and, entry.branch()),
-                freshGuardFlow(binary.right(), matching, selected));
-        }
-        entry.onCondition(condition, matching, this::guardSubject, this::guardDeclaredType);
-        if (matching && condition instanceof InstanceofExpr test) {
-            Type.Class target = instanceofTargets.get(test);
-            if (target != null) entry.narrow(guardSubject(test.value()), target);
-        }
+    /** Scan effects without checking expressions or changing published types/symbols. */
+    private NullNarrowing loopEntryFlow(ExpressionNode condition, Block body) {
+        NullNarrowing entry = narrowing.branch();
+        entry.invalidateProperties();
+        if (condition != null) scanLoopExpression(condition, entry);
+        scanLoopStatement(body, entry);
         return entry;
+    }
+
+    private void scanLoopStatement(StatementNode statement, NullNarrowing entry) {
+        if (statement instanceof FunctionDeclaration function) {
+            // The declaration becomes visible here, but its body is not part of this loop.
+            if (!pendingScopes.isEmpty() && pendingScopes.peek().scope == currentScope)
+                pendingScopes.peek().remaining.remove(function.name());
+            return;
+        }
+        SymbolTable savedScope = currentScope;
+        SymbolTable scope = scopeMap.get(statement);
+        if (scope != null) currentScope = scope;
+        boolean block = statement instanceof Block;
+        if (block) pushPendingScope((Block) statement, scope);
+        try {
+            switch (statement) {
+                case Block b -> b.statements().forEach(child -> scanLoopStatement(child, entry));
+                case VariableDeclaration variable -> {
+                    scanLoopExpression(variable.initializer(), entry);
+                    if (!pendingScopes.isEmpty() && pendingScopes.peek().scope == currentScope)
+                        pendingScopes.peek().remaining.remove(variable.name());
+                }
+                case ExpressionStatement expression -> scanLoopExpression(expression.expr(), entry);
+                case ReturnStatement returned -> returned.expr().ifPresent(expr -> scanLoopExpression(expr, entry));
+                case ThrowStatement thrown -> scanLoopExpression(thrown.expr(), entry);
+                case DeleteStatement deleted -> scanLoopExpression(deleted.target(), entry);
+                case IfStatement conditional -> {
+                    scanLoopExpression(conditional.condition(), entry);
+                    scanLoopStatement(conditional.thenBlock(), entry);
+                    conditional.elseBranch().ifPresent(branch -> {
+                        switch (branch) {
+                            case Either.Left<IfStatement, Block> left -> scanLoopStatement(left.value(), entry);
+                            case Either.Right<IfStatement, Block> right -> scanLoopStatement(right.value(), entry);
+                        }
+                    });
+                }
+                case WhileStatement loop -> {
+                    scanLoopExpression(loop.condition(), entry);
+                    scanLoopStatement(loop.body(), entry);
+                }
+                case ForOfStatement loop -> {
+                    // This iterable repeats as part of the enclosing loop.
+                    scanLoopExpression(loop.iterable(), entry);
+                    scanLoopStatement(loop.body(), entry);
+                }
+                case TryStatement tried -> {
+                    scanLoopStatement(tried.tryBlock(), entry);
+                    scanLoopStatement(tried.catchBlock(), entry);
+                }
+                case ExportDeclaration exported -> scanLoopStatement(exported.declaration(), entry);
+                default -> { }
+            }
+        } finally {
+            if (block) pendingScopes.pop();
+            currentScope = savedScope;
+        }
+    }
+
+    private void scanLoopExpression(ExpressionNode expression, NullNarrowing entry) {
+        switch (expression) {
+            case AssignmentExpr assignment -> {
+                if (assignment.target() instanceof IdentifierExpr identifier)
+                    entry.invalidate(resolveVisibleBinding(identifier.name()));
+                scanLoopExpression(assignment.target(), entry);
+                scanLoopExpression(assignment.value(), entry);
+            }
+            case AwaitExpression await -> {
+                entry.invalidateAll();
+                scanLoopExpression(await.callee(), entry);
+            }
+            case BinaryExpr binary -> {
+                scanLoopExpression(binary.left(), entry);
+                scanLoopExpression(binary.right(), entry);
+            }
+            case ConditionalExpr conditional -> {
+                scanLoopExpression(conditional.condition(), entry);
+                scanLoopExpression(conditional.consequent(), entry);
+                scanLoopExpression(conditional.alternate(), entry);
+            }
+            case UnaryExpr unary -> scanLoopExpression(unary.expr(), entry);
+            case AssertionExpr assertion -> scanLoopExpression(assertion.value(), entry);
+            case InstanceofExpr test -> scanLoopExpression(test.value(), entry);
+            case OptionalGuardExpr guard -> scanLoopExpression(guard.value(), entry);
+            case OptionalChainExpr chain -> scanLoopExpression(chain.expression(), entry);
+            case CallExpr call -> {
+                scanLoopExpression(call.callee(), entry);
+                call.args().forEach(argument -> scanLoopExpression(argument, entry));
+            }
+            case MemberAccessExpr member -> scanLoopExpression(member.object(), entry);
+            case IndexExpr index -> {
+                scanLoopExpression(index.array(), entry);
+                scanLoopExpression(index.index(), entry);
+            }
+            case HasExpr has -> {
+                scanLoopExpression(has.object(), entry);
+                scanLoopExpression(has.key(), entry);
+            }
+            case ArrayLiteralExpr array -> array.elements().forEach(element -> scanLoopExpression(element, entry));
+            case ObjectLiteralExpr object -> object.properties().forEach(property -> {
+                if (property.key() != null) scanLoopExpression(property.key(), entry);
+                scanLoopExpression(property.value(), entry);
+            });
+            case TemplateLiteralExpr template -> template.parts().forEach(part -> scanLoopExpression(part, entry));
+            // Function expressions are deliberately not traversed.
+            default -> { }
+        }
     }
 
     // =======================================================================
@@ -1196,17 +1249,15 @@ public final class TypeChecker {
 
         NullNarrowing savedNarrowing = narrowing;
         loopSavedNarrowing.push(savedNarrowing);
-        narrowing = new NullNarrowing();
+        narrowing = loopEntryFlow(null, fos.body());
         loopDepth++;
         loopAssignments.push(newBindingAssignmentSet());
         walkStatement(fos.body()); // Enters Block scope via scopeMap
         Set<Symbol> assigned = loopAssignments.pop();
         loopDepth--;
         loopSavedNarrowing.pop();
-        // The for-of back-edge invalidates every binding assigned in the
-        // body exactly like while (call-preserved narrowing does
-        // not cross loop back-edges): the recorded bindings propagate to
-        // an enclosing loop and the still-visible ones lose their entry.
+        // Propagate assigned identities to enclosing loops and invalidate
+        // still-visible saved continuation facts, as for while.
         closeLoopAssignments(assigned, savedNarrowing);
         narrowing = savedNarrowing;
     }
@@ -2754,11 +2805,13 @@ public final class TypeChecker {
         // base (including readonly), not just its element descriptor.
         Type base = expectedType instanceof Type.Nullable n ? n.inner() : expectedType;
         Type.Array arrayContext = base instanceof Type.Array a ? a : null;
+        boolean unknownContext = base instanceof Type.Unknown;
         Type elementContext = arrayContext == null ? null : arrayContext.element();
 
         List<ExpressionNode> elements = arr.elements();
         if (elements.isEmpty()) {
             if (arrayContext != null) return arrayContext;
+            if (unknownContext) return Types.array(Type.Unknown.INSTANCE);
             error(DiagnosticCode.E3002, "Cannot infer type of empty array literal", arr.span());
             return Type.Error.INSTANCE;
         }
@@ -2792,18 +2845,23 @@ public final class TypeChecker {
 
         Type firstType = null;
         boolean mixed = false;
+        boolean invalid = false;
         for (ExpressionNode elem : elements) {
+            Type savedExpected = expectedType;
+            expectedType = unknownContext ? Type.Unknown.INSTANCE : null;
             Type elemType = checkExpression(elem);
+            expectedType = savedExpected;
             if (Types.resultOnly(elemType)) {
                 voidDataError(DiagnosticCode.E3001, "Void results cannot be stored in arrays",
                         elem.span(), elem, "array.element");
-                mixed = true;
+                invalid = true;
                 continue;
             }
-            if (elemType == Type.Error.INSTANCE) { mixed = true; continue; }
+            if (elemType == Type.Error.INSTANCE) { invalid = true; continue; }
             if (firstType == null) firstType = elemType;
             else if (!Types.equals(firstType, elemType)) {
                 mixed = true;
+                if (unknownContext) continue;
                 diagnostics.add(CompilerDiagnostic.error(DiagnosticCode.E3011,
                     "Mixed types in array literal: " + typeName(firstType) + " and " + typeName(elemType), elem.span())
                         .withFacts(new deal.diagnostics.DiagnosticFacts("array.mixed-inference", "array.inference", typeName(firstType), typeName(elemType),
@@ -2811,8 +2869,8 @@ public final class TypeChecker {
                                 .withLanguageDifference(deal.diagnostics.LanguageDifference.semantics("homogeneous-array-inference"))));
             }
         }
-        if (mixed || firstType == null) return Type.Error.INSTANCE;
-        return Types.array(firstType);
+        if (invalid || firstType == null || mixed && !unknownContext) return Type.Error.INSTANCE;
+        return Types.array(mixed ? Type.Unknown.INSTANCE : firstType);
     }
 
     // =======================================================================
@@ -2848,7 +2906,7 @@ public final class TypeChecker {
                 if (!(key instanceof Type.String) && key != Type.Error.INSTANCE)
                     error(DiagnosticCode.E3018, "Record key must be string", prop.key().span());
             }
-            expectedType = table == Type.Table.STRING ? table.valueType() : null;
+            expectedType = table.valueType();
             Type value = checkExpression(prop.value());
             expectedType = null;
             if (Types.resultOnly(value))
