@@ -46,6 +46,38 @@ public final class TypeLegalityFlowTest {
                 throw new AssertionError("frontend rejection " + backend + ": " + compiler.diagnostics());
         }
     }
+    private static void loopExitFlow() {
+        check("function f(x:string|null):string{while(x===null){x=\"ready\";}return x;}", null);
+        check("function f(x:string|null):string{while(true){if(x===null){x=\"ready\";}break;}return x;}", null);
+        check("function f(x:string|null,b:boolean):string{while(true){if(b){break;}x=\"ready\";break;}return x;}", "E5003");
+        check("function f(x:string|null):void{while(true){x=\"ready\";break;x=null;}let s:string=x;}", null);
+        check("function f(x:string|null):void{while(true){while(true){break;}x=\"ready\";break;}let s:string=x;}", null);
+        check("function f(x:string|null):void{for(let i of [1]){x=\"ready\";}let s:string=x;}", "E3001");
+        check("function f():void{let x:string|null=\"ready\";for(let i of [1]){x=\"again\";continue;}let s:string=x;}", null);
+        check("function f():void{let x:string|null=\"ready\";for(let i of [1]){x=null;continue;}let s:string=x;}", "E3001");
+        check("function f(x:string|null):string{try{x=\"ready\";}catch(e){return \"caught\";}return x;}", null);
+        check("function f(x:string|null):string{try{x=\"ready\";}catch(e){throw e as Error;}return x;}", null);
+        check("function f(x:string|null):string{try{x=\"ready\";}catch(e){}return x;}", "E5003");
+        check("function f(x:string|null):void{while(true){try{x=\"ready\";}catch(e){continue;}break;}let s:string=x;}", null);
+        check("function f(x:string|null):void{while(true){let g=():void=>{while(true){break;}};x=\"ready\";break;}let s:string=x;}", null);
+    }
+
+    private static void loopExitRuntime(Path root) throws Exception {
+        CompositionProductionTest.execute("""
+            function ready(x:string|null):string{while(x===null){x="ready";}return x;}
+            function breaks(x:string|null):string{while(true){if(x===null){x="break";}break;}return x;}
+            function tried(x:string|null,fail:boolean):string{
+              try{if(fail){throw {name:"X",message:"x"};}x="try";}catch(e){return "caught";}return x;
+            }
+            export function main():void{
+              if(ready(null)!=="ready"||ready("live")!=="live"||breaks(null)!=="break"||tried(null,false)!=="try"||tried(null,true)!=="caught"){throw {name:"FAIL",message:"exit flow"};}
+              let x:string|null="entry";for(let i of [1,2]){x="body";continue;}let s:string=x;
+              let empty:number[]=[];let y:string|null="zero";for(let i of empty){y="body";}let t:string=y;
+              if(s!=="body"||t!=="zero"){throw {name:"FAIL",message:"for exits"};}
+            }
+            """, "", "", root, null, List.of(Backend.values()), Map.of(), true);
+    }
+
     private static void exactIndexReads() {
         for (String read : List.of("r.x", "r[\"x\"]", "r[k]")) {
             check("function f(r:Record<string,unknown>,k:string):void{if(typeof " + read
@@ -524,6 +556,7 @@ public final class TypeLegalityFlowTest {
     }
 
     public static void main(String[] args) throws Exception {
+        loopExitFlow();
         exactIndexReads();
         primitiveTypeof();
         bindingOwnership();
@@ -597,6 +630,7 @@ public final class TypeLegalityFlowTest {
         if (!(CanonicalRuntimeTypeDescriptor.parseResult("void") instanceof DescriptorAst)) throw new AssertionError("void result");
         Path root = Files.createTempDirectory("type-legality-flow-");
         try {
+            loopExitRuntime(root.resolve("loop-exits"));
             exactIndexRuntime(root.resolve("exact-index"));
             primitiveTypeofRuntime(root.resolve("primitive-typeof"));
             stableLoopRefinements();

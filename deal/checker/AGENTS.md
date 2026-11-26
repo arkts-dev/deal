@@ -49,7 +49,7 @@ and reverse polarity for negation. Join only paths reaching continuation.
 Assignments invalidate binding and exceptional snapshots; await clears enclosing
 function/loop/exceptional facts. Both function-entry paths isolate these states.
 Catch entry uses saved entry facts with invalidations, not successful exit-type
-equality. Captured reads use declared types; calls preserve binding facts and
+equality. Merge only reaching try/catch exits; never reset successful assigned facts. Captured reads use declared types; calls preserve binding facts and
 consuming boundaries revalidate stale values.
 
 Direct fields and Record/array indexes use receiver-binding and declaration/literal
@@ -59,8 +59,10 @@ exceptional snapshots. Diagnostic-only invalidation evidence uses the owning ope
 receivers/keys/asserted descendants remain reads. Pre-scan loop conditions/bodies by
 binding identity, excluding nested functions: assignments drop incoming binding facts,
 await drops all, and properties never persist across iterations. Retain stable bindings;
-while entries reapply evaluated guards without body-to-guard propagation. For-of iterable
-effects precede the scan and follow ordinary invalidation.
+while entries reapply evaluated guards without body-to-guard propagation. Merge
+condition-false/break while exits; for-of merges post-iterable zero-entry, completion,
+continue and break facts. Ignore unreachable tails when collecting exits, but still
+check their syntax/types. For-of iterable effects precede the scan and follow ordinary invalidation.
 
 Track exact instanceof targets and nullish/typeof polarity. Primitive typeof tests
 select/remove nullable and optional members; unknown complements remain unknown. Never infer object/

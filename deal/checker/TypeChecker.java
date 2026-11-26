@@ -153,6 +153,9 @@ public final class TypeChecker {
 
     // -- Loop depth for break/continue validation (F8) --
     private int loopDepth = 0;
+    private boolean flowReachable = true;
+    private record LoopFlow(List<NullNarrowing> breaks, List<NullNarrowing> continues) {}
+    private Deque<LoopFlow> loopFlows = new ArrayDeque<>();
 
     // -- Variables assigned inside the innermost loop: assignments
     //    invalidate their saved continuation refinements. Entries are the
@@ -264,7 +267,12 @@ public final class TypeChecker {
 
     private void walkStatements(List<StatementNode> statements) {
         for (StatementNode stmt : statements) {
+            boolean reaching = flowReachable;
+            NullNarrowing before = narrowing;
+            if (!reaching) narrowing = before.branch();
             walkStatement(stmt);
+            if (!reaching) { narrowing = before; flowReachable = false; }
+            else if (ReturnAnalysis.cannotCompleteNormally(stmt, this::neverExpression)) flowReachable = false;
         }
     }
 
@@ -760,10 +768,9 @@ public final class TypeChecker {
     /**
      * Assignment bookkeeping shared by assignment expressions: the
      * old refinement is cleared, and the resolved binding is
-     * recorded for the enclosing loop (a loop back-edge invalidates the
-     * entry for the code after the loop) and for the open try blocks of
-     * the current function (after a try/catch every binding assigned
-     * inside the try region reverts to its declared type). The binding is
+     * recorded for enclosing loop and try-region bookkeeping. Exceptional
+     * entry facts lose assigned refinements; successful reaching exits keep
+     * their own checked facts. The binding is
      * identified by its resolved symbol, never by name: a loop-local or
      * try-local declaration's same-named binding is not an assignment to
      * the enclosing binding.
@@ -772,7 +779,8 @@ public final class TypeChecker {
         Symbol binding = resolveVisibleBinding(varName);
         if (binding == null) return;
         narrowing.invalidateAtAssignment(binding, span.range());
-        for (NullNarrowing entry : tryEntryFacts) entry.invalidateAtAssignment(binding, span.range());
+        if (flowReachable)
+            for (NullNarrowing entry : tryEntryFacts) entry.invalidateAtAssignment(binding, span.range());
         if (!loopAssignments.isEmpty()) {
             loopAssignments.peek().add(binding);
         }
@@ -836,8 +844,14 @@ public final class TypeChecker {
         Deque<NullNarrowing> savedLoopSavedNarrowing = loopSavedNarrowing;
         loopSavedNarrowing = new ArrayDeque<>();
         int savedLoopDepth = loopDepth;
+        boolean savedReachable = flowReachable;
+        Deque<LoopFlow> savedLoopFlows = loopFlows;
+        loopFlows = new ArrayDeque<>();
+        flowReachable = true;
         loopDepth = 0;
         walkStatement(fd.body());
+        flowReachable = savedReachable;
+        loopFlows = savedLoopFlows;
         narrowing = savedNarrowing;
         loopAssignments = savedLoopAssignments;
         tryAssignments = savedTryAssignments;
@@ -952,10 +966,12 @@ public final class TypeChecker {
         }
 
         // The condition's true/false states include short-circuit effects.
+        boolean entryReaches = flowReachable;
         narrowCondition(is.condition(), true);
         walkStatement(is.thenBlock());
         NullNarrowing thenNarrowing = narrowing;
 
+        flowReachable = entryReaches;
         narrowCondition(is.condition(), false);
         if (is.elseBranch().isPresent()) {
             switch (is.elseBranch().get()) {
@@ -974,6 +990,7 @@ public final class TypeChecker {
         if (thenStops && !elseStops) narrowing = elseNarrowing;
         else if (elseStops && !thenStops) narrowing = thenNarrowing;
         else narrowing = mergeFlows(thenNarrowing, elseNarrowing);
+        flowReachable = entryReaches && !(thenStops && elseStops);
     }
 
     /** Apply nominal tests with the same branch polarity as nullish/typeof tests. */
@@ -1052,8 +1069,10 @@ public final class TypeChecker {
 
     private void invalidatePropertyNarrowing(Span span, NullNarrowing.Invalidation operation) {
         narrowing.invalidatePropertiesAt(span.range(), operation);
-        for (NullNarrowing entry : tryEntryFacts) entry.invalidatePropertiesAt(span.range(), operation);
-        for (NullNarrowing saved : loopSavedNarrowing) saved.invalidatePropertiesAt(span.range(), operation);
+        if (flowReachable) {
+            for (NullNarrowing entry : tryEntryFacts) entry.invalidatePropertiesAt(span.range(), operation);
+            for (NullNarrowing saved : loopSavedNarrowing) saved.invalidatePropertiesAt(span.range(), operation);
+        }
     }
 
     // =======================================================================
@@ -1078,15 +1097,32 @@ public final class TypeChecker {
             conditionError("While", condType, ws.condition().span());
         }
 
+        narrowCondition(ws.condition(), false);
+        NullNarrowing falseExit = narrowing.branch();
         narrowCondition(ws.condition(), true);
+        boolean entryReaches = flowReachable;
+        LoopFlow exits = new LoopFlow(new ArrayList<>(), new ArrayList<>());
+        loopFlows.push(exits);
         loopDepth++;
         walkStatement(ws.body());
+        loopFlows.pop();
         // Assignments also invalidate the saved continuation after the loop.
         Set<Symbol> assigned = loopAssignments.pop();
         loopDepth--;
         loopSavedNarrowing.pop();
         closeLoopAssignments(assigned, savedNarrowing);
-        narrowing = savedNarrowing;
+        List<NullNarrowing> reaching = new ArrayList<>(exits.breaks());
+        if (!(ws.condition() instanceof LiteralExpr literal
+                && literal.value() instanceof LiteralValue.BooleanLiteral bool && bool.value())) reaching.add(falseExit);
+        narrowing = mergeExits(reaching, savedNarrowing);
+        flowReachable = entryReaches && !ReturnAnalysis.cannotCompleteNormally(ws, this::neverExpression);
+    }
+
+    private NullNarrowing mergeExits(List<NullNarrowing> exits, NullNarrowing fallback) {
+        if (exits.isEmpty()) return fallback.emptyBranch();
+        NullNarrowing result = exits.getFirst().branch();
+        for (int i = 1; i < exits.size(); i++) result.merge(exits.get(i));
+        return result;
     }
 
     /** Scan effects without checking expressions or changing published types/symbols. */
@@ -1278,16 +1314,27 @@ public final class TypeChecker {
         NullNarrowing savedNarrowing = narrowing;
         loopSavedNarrowing.push(savedNarrowing);
         narrowing = loopEntryFlow(null, fos.body());
+        boolean entryReaches = flowReachable;
+        NullNarrowing zeroIterations = savedNarrowing.branch();
+        LoopFlow exits = new LoopFlow(new ArrayList<>(), new ArrayList<>());
+        loopFlows.push(exits);
         loopDepth++;
         loopAssignments.push(newBindingAssignmentSet());
         walkStatement(fos.body()); // Enters Block scope via scopeMap
+        if (flowReachable) exits.continues().add(narrowing.branch());
+        loopFlows.pop();
         Set<Symbol> assigned = loopAssignments.pop();
         loopDepth--;
         loopSavedNarrowing.pop();
         // Propagate assigned identities to enclosing loops and invalidate
         // still-visible saved continuation facts, as for while.
         closeLoopAssignments(assigned, savedNarrowing);
-        narrowing = savedNarrowing;
+        List<NullNarrowing> reaching = new ArrayList<>();
+        reaching.add(zeroIterations);
+        reaching.addAll(exits.continues());
+        reaching.addAll(exits.breaks());
+        narrowing = mergeExits(reaching, savedNarrowing);
+        flowReachable = entryReaches;
     }
 
     // =======================================================================
@@ -1295,12 +1342,14 @@ public final class TypeChecker {
     // =======================================================================
 
     private void checkBreak(BreakStatement bs) {
+        if (flowReachable && !loopFlows.isEmpty()) loopFlows.peek().breaks().add(narrowing.branch());
         if (loopDepth == 0) {
             error(DiagnosticCode.E2000, "'break' must be inside a loop", bs.span());
         }
     }
 
     private void checkContinue(ContinueStatement cs) {
+        if (flowReachable && !loopFlows.isEmpty()) loopFlows.peek().continues().add(narrowing.branch());
         if (loopDepth == 0) {
             error(DiagnosticCode.E2000, "'continue' must be inside a loop", cs.span());
         }
@@ -1311,10 +1360,8 @@ public final class TypeChecker {
     // =======================================================================
 
     private void checkTryStatement(TryStatement ts) {
-        // The try statement's own catch scope is current here
-        // (walkStatement enters scopeMap's entry before dispatch), so the
-        // code after the catch block lives in that scope's parent. The
-        // revert below tests visibility there, never in the catch scope.
+        // Catch-entry invalidation tests the continuation's scope, never
+        // the catch binding's independent, potentially shadowing scope.
         SymbolTable catchScope = scopeMap.get(ts);
         SymbolTable afterCatchScope = catchScope != null && catchScope.parent() != null
             ? catchScope.parent() : currentScope;
@@ -1324,6 +1371,7 @@ public final class TypeChecker {
         // catch block is its own flow (a direct assignment already cleared
         // the entry), while a try nested in an enclosing try region leaves
         // that enclosing frame open and collects the assignment there.
+        boolean entryReaches = flowReachable;
         Set<Symbol> assigned = newBindingAssignmentSet();
         tryAssignments.push(assigned);
         NullNarrowing tryEntry = narrowing.branch();
@@ -1333,6 +1381,7 @@ public final class TypeChecker {
         tryAssignments.pop();
         NullNarrowing normalExit = narrowing;
         narrowing = tryEntry;
+        flowReachable = entryReaches;
         for (Symbol binding : assigned) {
             if (resolveVisibleBinding(afterCatchScope, binding.name()) == binding)
                 narrowing.discardRefinement(binding);
@@ -1346,38 +1395,14 @@ public final class TypeChecker {
         boolean catchStops = ReturnAnalysis.cannotCompleteNormally(ts.catchBlock(), this::neverExpression);
         if (!tryStops) narrowing = catchStops ? normalExit : mergeFlows(normalExit, narrowing);
 
-        closeTryAssignments(assigned, afterCatchScope);
+        closeTryAssignments(assigned);
+        flowReachable = entryReaches && !(tryStops && catchStops);
     }
 
-    /**
-     * Closes one try statement's assignment frame
-     * (docs/spec-v1.6.md §Narrowing across try/catch: after a try/catch
-     * every variable assigned inside the try block reverts to its declared
-     * type). The recorded bindings propagate to an enclosing try statement's
-     * frame — a re-narrowing later inside that try block must not outlive
-     * the enclosing catch — and each binding still visible after the
-     * try/catch loses its narrowed entry.
-     *
-     * <p>Visibility is tested in {@code afterCatchScope}, the scope that
-     * receives the code after the catch block, so a binding whose scope
-     * ends inside the try statement is never mistaken for the same-named
-     * enclosing binding the try did not assign: a try-block declaration
-     * and, decisively, the try's own catch binding (a fresh Error binding
-     * of the catch scope) are dead there, so reassigning the catch binding
-     * inside this try's catch block never drops the enclosing binding's
-     * refinement. Resolving in the catch scope would resolve that catch
-     * binding to itself and invalidate the entry the catch scope just
-     * restored.</p>
-     */
-    private void closeTryAssignments(Set<Symbol> assigned,
-            SymbolTable afterCatchScope) {
+    /** Nested try writes also invalidate the enclosing region's catch entry. */
+    private void closeTryAssignments(Set<Symbol> assigned) {
         if (!tryAssignments.isEmpty()) {
             tryAssignments.peek().addAll(assigned);
-        }
-        for (Symbol binding : assigned) {
-            if (resolveVisibleBinding(afterCatchScope, binding.name()) == binding) {
-                narrowing.invalidate(binding);
-            }
         }
     }
 
@@ -1693,9 +1718,9 @@ public final class TypeChecker {
      */
     private void invalidateAllNarrowing(deal.diagnostics.DiagnosticRange awaitRange) {
         narrowing.invalidateAtAwait(awaitRange);
-        for (NullNarrowing entry : tryEntryFacts) entry.invalidateAtAwait(awaitRange);
-        for (NullNarrowing saved : loopSavedNarrowing) {
-            saved.invalidateAtAwait(awaitRange);
+        if (flowReachable) {
+            for (NullNarrowing entry : tryEntryFacts) entry.invalidateAtAwait(awaitRange);
+            for (NullNarrowing saved : loopSavedNarrowing) saved.invalidateAtAwait(awaitRange);
         }
     }
 
@@ -3269,6 +3294,10 @@ public final class TypeChecker {
         Deque<NullNarrowing> savedLoopSavedNarrowing = loopSavedNarrowing;
         loopSavedNarrowing = new ArrayDeque<>();
         int savedLoopDepth = loopDepth;
+        boolean savedReachable = flowReachable;
+        Deque<LoopFlow> savedLoopFlows = loopFlows;
+        loopFlows = new ArrayDeque<>();
+        flowReachable = true;
         loopDepth = 0;
         Type savedExpected = expectedType;
         Symbol.ClassSymbol savedClassContext = contextualClassDecl;
@@ -3296,6 +3325,8 @@ public final class TypeChecker {
         tryEntryFacts = savedTryEntryFacts;
         loopSavedNarrowing = savedLoopSavedNarrowing;
         loopDepth = savedLoopDepth;
+        flowReachable = savedReachable;
+        loopFlows = savedLoopFlows;
 
         if (!(returnType instanceof Type.Void)
                 && !ReturnAnalysis.definitelyReturns(fe.body(), this::neverExpression)) {
