@@ -365,15 +365,23 @@ Constraints:
 
 ### Narrowing and checked assertions
 
-Initialization and successful assignment replace local/parameter refinements with RHS types; declared write types stay fixed. When an RHS refinement has an array base and the declared base is readonly, retain the declared array base; preserve the RHS nullish members. Adapted functions retain target signatures.
+Initialization/successful assignment replace local/parameter refinements with RHS types; write types remain declared. For array-based RHSs and readonly declarations, retain declared bases and RHS nullish members. Adapted functions retain target signatures.
 
-Guards narrow bindings and `obj.field`: local/parameter receiver, declared class field. Exclude nested paths, computed accesses and optional chains. Narrowing `a.field` does not narrow `b.field`, even when `a === b`.
+Subjects:
 
+- Bindings, declared class fields, Record fields/indexes, array indexes.
+- Local/parameter receivers; literal/local/parameter keys; no nested paths/optional chains.
+- Match receivers and binding keys by declaration; `r.x` matches `r["x"]`.
+
+Effects:
+
+- Refined reads validate storage and refined types; never retag.
 - Null/undefined `===`/`!==` select/remove members; unknown complements stay unknown.
 - `!` swaps refinements.
-- `&&` checks RHS under the left operand's true refinement; `||` under its false refinement.
+- `&&` checks RHS under left-true refinements; `||` under left-false refinements.
 - `if`/ternary branches receive condition refinements.
-- Continuations retain refinements common to reaching paths.
+- While bodies receive condition-true refinements.
+- Continuations retain common refinements on reaching paths; only [definitely-returning statements](#definite-return-analysis), `break`/`continue` terminate paths.
 
 ```ts
 function use(value: string | null | undefined): void {
@@ -390,20 +398,32 @@ if (p.nick !== null) {
 }
 ```
 
-Narrowing invalidation:
+Guard aliases:
 
-- Writes, deletions and calls clear all property refinements.
+- Local `const` booleans retain true/false refinements from nullish comparisons, `typeof`/`instanceof`, aliases, `!`, `&&`, `||`.
+- Dependencies include subjects and aliased dependencies; invalidation permanently removes affected refinements.
+
+Loop exits:
+
+- While: merge condition-false/break-exit refinements; literal true excludes false exits.
+- For-of: merge post-iterable entry (zero iterations), body-completion/continue and break-exit refinements.
+
+Invalidation:
+
+- Writes, deletions and calls clear all field/index refinements.
 - Calls preserve binding refinements; captured mutation risks runtime-check failure.
-- Narrowing cannot cross functions.
-- Discard incoming property refinements before each iteration.
-- Before checking a loop, scan its condition and body, excluding nested functions: discard incoming refinements for assigned bindings, or all for `await`.
-- Retain remaining binding refinements across iterations.
-- While conditions receive retained refinements; each body entry receives the condition's true refinements.
-- Refinements established in bodies never propagate to conditions.
+- Discard incoming field/index refinements before each iteration.
+- Before checking loops, scan conditions and bodies excluding nested functions: discard assigned bindings’ incoming refinements, or all for `await`.
+- Body/continue refinements never propagate to while conditions.
 - Apply invalidation in evaluation order.
 - `await` clears enclosing-function refinements.
 
-`typeof x` returns `undefined`, `boolean`, `number`, `string`, `function`, or `object` (null/arrays/Records/classes/Errors). Direct tests `typeof x === "kind"` narrow unknown in the matching branch for the first four kinds; `!==` narrows the else branch. Other branches stay unknown; no object/function structural inference. `instanceof C` tests nominal tags (including Error) and narrows the true branch to C; other values yield false, never retagging records.
+Type tests:
+
+- `typeof x`: `undefined`, `boolean`, `number`, `string`, `function`, or `object` (null/arrays/Records/classes/Errors).
+- Direct `typeof` `===`/`!==`: first four kinds select/remove matching nullable/optional primitive members.
+- Unknown: matching branches select those kinds; complements stay unknown.
+- `instanceof C`: nominal tags (including Error); true branches narrow to C; otherwise false.
 
 `e as T` evaluates once, descriptor-checks data type T, and raises E8001 on mismatch; no coercion/construction. Allow unknown sources or compatibility in either direction. Array checks follow [Array type and semantics](#array-type-and-semantics).
 
@@ -499,7 +519,7 @@ Strings compare lexicographically by UTF-16 code-unit value; a proper prefix sor
 | array literal `[e1, ..., eN]` | see [Array literals](#array-literals) |
 | record literal `{ p: e, ... }` | see [Inference rules](#inference-rules) |
 | class body `{ ... }` with target `ClassName` | `ClassName` (contextual) |
-| index `a[b]` where `a: T[]` or `readonly T[]`, `b: number` | `T` |
+| index `a[b]` where `a: T[]` or `readonly T[]`, `b: number` | [Refined](#narrowing-and-checked-assertions) `T` |
 | record member/index read | see [Records](#reading-and-writing-fields) |
 | class member `a.p` | see [Field access](#field-access) |
 | `JSON.parse(s)` | see [JSON decoding](#json-decoding) |
@@ -582,13 +602,13 @@ Missing required literal fields are compile-time errors; untyped-boundary violat
 
 ### Field access
 
-Reading a required-present field yields the field type:
+Unrefined required-present reads yield the field type:
 
 ```ts
 let n: string = u.name; // OK
 ```
 
-Optional reads add undefined to the declared type; absence yields undefined. Writes use the declared type without adding undefined. Thus optionality and stored value type remain independent.
+Unrefined optional reads add undefined to declared types; absence yields undefined. Writes use declared types.
 
 ```ts
 class Profile {
@@ -813,7 +833,7 @@ if (n !== null) {
 
 ## Variables
 
-`const` uses `let` typing but only forbids binding reassignment at compile time.
+`const` uses `let` typing; reassignment is forbidden.
 
 ```ts
 let x: number = 1;
@@ -906,7 +926,7 @@ let name = data.name; // string | undefined
 
 ### Reading and writing fields
 
-Member/string-index reads infer unknown for `Record<string, unknown>`, `string | undefined` for `Record<string, string>`, regardless of context; absence yields undefined. Reads validate only the reached value. Writes assignment-check against the static value type and runtime-check against the stored descriptor before mutation.
+Unless refined, member/string-index reads infer unknown for `Record<string, unknown>`, `string | undefined` for `Record<string, string>`, regardless of context; absence yields undefined. Reads validate only the reached value. Writes assignment-check against the static value type and runtime-check against the stored descriptor before mutation.
 
 ```ts
 let data: Record<string, unknown> = {};
@@ -945,6 +965,7 @@ Establish inferred array types' element descriptors.
 - Otherwise:
   - Contextual `unknown` supplies element context.
   - Nonempty identically typed elements infer `T[]`.
+  - Otherwise combine identical non-nullish bases and nullish flags; infer `T[]`, with all-nullish element type `null | undefined`.
   - Otherwise require contextual `unknown`, assignment-check elements against unknown and infer `unknown[]`.
 
 ### Indexing
@@ -1098,7 +1119,7 @@ Catch binds the identical Error as unknown. Host failures normalize to Error wit
 
 ### Narrowing across try/catch
 
-After a `try`/`catch`, all variables assigned inside the `try` block revert to their declared type.
+- Catch entry: discard refinements for variables assigned in `try`.
 
 ```ts
 let x: number | null = 1;
