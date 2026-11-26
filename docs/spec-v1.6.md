@@ -373,7 +373,7 @@ Guards narrow bindings and `obj.field`: local/parameter receiver, declared class
 - `!` swaps refinements.
 - `&&` checks RHS under the left operand's true refinement; `||` under its false refinement.
 - `if`/ternary branches receive condition refinements.
-- Continuations retain facts common to reaching paths.
+- Continuations retain refinements common to reaching paths.
 
 ```ts
 function use(value: string | null | undefined): void {
@@ -392,12 +392,16 @@ if (p.nick !== null) {
 
 Narrowing invalidation:
 
-- Writes, deletions and calls clear all property facts.
+- Writes, deletions and calls clear all property refinements.
 - Calls preserve binding refinements; captured mutation risks runtime-check failure.
-- Narrowing cannot cross functions/back-edges.
-- Each while-body entry, including after continue, receives fresh true-guard refinement; no body-to-guard propagation.
+- Narrowing cannot cross functions.
+- Discard incoming property refinements before each iteration.
+- Before checking a loop, scan its condition and body, excluding nested functions: discard incoming refinements for assigned bindings, or all for `await`.
+- Retain remaining binding refinements across iterations.
+- While conditions receive retained refinements; each body entry receives the condition's true refinements.
+- Refinements established in bodies never propagate to conditions.
 - Apply invalidation in evaluation order.
-- `await` clears enclosing-function facts.
+- `await` clears enclosing-function refinements.
 
 `typeof x` returns `undefined`, `boolean`, `number`, `string`, `function`, or `object` (null/arrays/Records/classes/Errors). Direct tests `typeof x === "kind"` narrow unknown in the matching branch for the first four kinds; `!==` narrows the else branch. Other branches stay unknown; no object/function structural inference. `instanceof C` tests nominal tags (including Error) and narrows the true branch to C; other values yield false, never retagging records.
 
@@ -493,7 +497,7 @@ Strings compare lexicographically by UTF-16 code-unit value; a proper prefix sor
 | `-a` where `a: number` | `number` |
 | any other unary `-` | error |
 | array literal `[e1, ..., eN]` | see [Array literals](#array-literals) |
-| record literal `{ p: e, ... }` | contextual Record type |
+| record literal `{ p: e, ... }` | see [Inference rules](#inference-rules) |
 | class body `{ ... }` with target `ClassName` | `ClassName` (contextual) |
 | index `a[b]` where `a: T[]` or `readonly T[]`, `b: number` | `T` |
 | record member/index read | see [Records](#reading-and-writing-fields) |
@@ -835,6 +839,8 @@ let field = t.someField; // unknown; validate before typed use
 
 Object literals require context; array literals follow [Array literals](#array-literals).
 
+Under contextual `unknown`, object literals infer `Record<string, unknown>`; check property-value expressions under that context.
+
 Disallowed:
 
 ```ts
@@ -891,7 +897,7 @@ Other statements do not definitely return.
 
 ### Record type and semantics
 
-Records have string keys, reference identity and persistent value descriptors. Literals and JSON reconstruction establish the target descriptor; literals assignment-check values and infer the target type. Existing value descriptors must equal the checked type's value descriptor. Descriptorless host Records acquire the target value descriptor (unknown under unknown admission) only after full validation.
+Records have string keys, reference identity and persistent value descriptors. Literals infer contextual Record types, establish inferred descriptors and assignment-check values; JSON reconstruction establishes the target descriptor. Existing value descriptors must equal the checked type's value descriptor. Descriptorless host Records acquire the target value descriptor (unknown under unknown admission) only after full validation.
 
 ```ts
 let data: Record<string, string> = { name: "Ada" };
@@ -933,7 +939,13 @@ Deletion removes an own key. Stored classes/arrays/functions retain their tags, 
 
 ### Array literals
 
-With a target `T[]` or `readonly T[]`, assignment-check elements against T; infer that target and establish element descriptor T. Without a target, require a nonempty literal whose elements have identical types; infer `T[]`.
+Establish inferred array types' element descriptors.
+
+- With a target `T[]` or `readonly T[]`, assignment-check elements against T; infer that target.
+- Otherwise:
+  - Contextual `unknown` supplies element context.
+  - Nonempty identically typed elements infer `T[]`.
+  - Otherwise require contextual `unknown`, assignment-check elements against unknown and infer `unknown[]`.
 
 ### Indexing
 
