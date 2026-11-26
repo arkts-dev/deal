@@ -61,7 +61,8 @@ await drops all, and properties never persist across iterations. Retain stable b
 while entries reapply evaluated guards without body-to-guard propagation. For-of iterable
 effects precede the scan and follow ordinary invalidation.
 
-Track exact instanceof targets and nullish/typeof polarity. Never infer object/
+Track exact instanceof targets and nullish/typeof polarity. Primitive typeof tests
+select/remove nullable and optional members; unknown complements remain unknown. Never infer object/
 function types from typeof or narrow/convert unknown equality. Catch bindings are
 mutable unknowns with ordinary shadowing/capture rules; diagnostics anchor identifiers.
 

@@ -46,6 +46,49 @@ public final class TypeLegalityFlowTest {
                 throw new AssertionError("frontend rejection " + backend + ": " + compiler.diagnostics());
         }
     }
+    private static void primitiveTypeof() {
+        for (String type : List.of("boolean", "number", "string")) {
+            for (String flags : List.of("|null", "|undefined", "|null|undefined")) {
+                String complement = flags.substring(1);
+                check("function f(x:" + type + flags + "):void{if(typeof x===\"" + type
+                    + "\"){let yes:" + type + "=x;}else{let no:" + complement + "=x;}}", null);
+                check("function f(x:" + type + flags + "):void{if(\"" + type + "\"!==typeof x){let no:"
+                    + complement + "=x;}else{let yes:" + type + "=x;}}", null);
+                check("function f(x:" + type + flags + "):void{if(typeof x!==\"" + type
+                    + "\"){return;}let yes:" + type + "=x;}", null);
+            }
+        }
+        check("function f(x:null|undefined):void{if(typeof x===\"undefined\"){let a:undefined=x;}else{let b:null=x;}}", null);
+        check("function f(x:string|null|undefined):void{if(typeof x!==\"undefined\"){let a:string|null=x;}else{let b:undefined=x;}}", null);
+        check("class P{s?:string|null;n?:number;b?:boolean;}function f(p:P):void{if(typeof p.s===\"string\"){let s:string=p.s;}if(typeof p.n===\"number\"){let n:number=p.n;}if(typeof p.b===\"boolean\"){let b:boolean=p.b;}}", null);
+        check("function f(x:unknown):void{if(typeof x!==\"string\"){let s:string=x;}}", "E3001");
+        check("function f(x:string|null):void{if(typeof x===\"object\"){let n:null=x;}}", "E3001");
+        check("function f(x:string|null):void{if(typeof x===\"string\"){x=null;let s:string=x;}}", "E3001");
+    }
+
+    private static void primitiveTypeofRuntime(Path root) throws Exception {
+        CompositionProductionTest.execute("""
+            class P{s?:string|null;n?:number;b?:boolean;}
+            function text(x:string|null|undefined):string{
+              if(typeof x==="string"){return x;}
+              if(typeof x==="undefined"){let u:undefined=x;return "absent";}
+              let n:null=x;return "null";
+            }
+            function number(x:number|null):number{if(typeof x!=="number"){return 0;}return x+1;}
+            function boolean(x:boolean|undefined):boolean{if(typeof x==="undefined"){return false;}return x;}
+            function fields(p:P):number{
+              let n=0;if(typeof p.s==="string"){n=n+p.s.length;}
+              if(typeof p.n==="number"){n=n+p.n;}if(typeof p.b==="boolean"){if(p.b){n++;}}return n;
+            }
+            export function main():void{
+              if(text("yes")!=="yes"||text(null)!=="null"||text(undefined)!=="absent"||number(null)!==0||number(2)!==3||boolean(undefined)||!boolean(true)||fields({})!==0||fields({s:"abc",n:2,b:true})!==6){throw {name:"FAIL",message:"primitive typeof"};}
+              let x:string|null="live";let clear=():boolean=>{x=null;return true;};let caught=false;
+              try{if(typeof x==="string"&&clear()){let n=x.length;}}catch(e){caught=(e as Error).name==="E8001";}
+              if(!caught){throw {name:"FAIL",message:"refined read must validate"};}
+            }
+            """, "", "", root, null, List.of(Backend.values()), Map.of(), true);
+    }
+
     private static void stableLoopRefinements() {
         for (String loop : List.of("while(true)", "for(let item of [1,2])")) {
             String prefix = "function f(x:string|null):void{if(x!==null){";
@@ -431,6 +474,7 @@ public final class TypeLegalityFlowTest {
     }
 
     public static void main(String[] args) throws Exception {
+        primitiveTypeof();
         bindingOwnership();
         coalescingLiteralContext();
         ternaryLiteralContext();
@@ -502,6 +546,7 @@ public final class TypeLegalityFlowTest {
         if (!(CanonicalRuntimeTypeDescriptor.parseResult("void") instanceof DescriptorAst)) throw new AssertionError("void result");
         Path root = Files.createTempDirectory("type-legality-flow-");
         try {
+            primitiveTypeofRuntime(root.resolve("primitive-typeof"));
             stableLoopRefinements();
             unknownLiteralContexts();
             contextualInvariants(root.resolve("context"));

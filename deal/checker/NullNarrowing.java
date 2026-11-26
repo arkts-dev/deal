@@ -90,12 +90,12 @@ public final class NullNarrowing {
         if (singleton instanceof UnaryExpr unary && unary.op() == UnaryOp.TYPEOF) {
             ExpressionNode swap = subject; subject = singleton; singleton = swap;
         }
-        if (matching && subject instanceof UnaryExpr unary && unary.op() == UnaryOp.TYPEOF
+        if (subject instanceof UnaryExpr unary && unary.op() == UnaryOp.TYPEOF
                 && singleton instanceof LiteralExpr literal
                 && literal.value() instanceof LiteralValue.StringLiteral text) {
             Subject key = resolveSubject.apply(unary.expr());
-            if (key == null || !(narrowed.getOrDefault(key,
-                    declaredTypeOf.apply(unary.expr())) instanceof Type.Unknown)) return;
+            if (key == null) return;
+            Type current = narrowed.getOrDefault(key, declaredTypeOf.apply(unary.expr()));
             Type type = switch (text.value()) {
                 case "undefined" -> Type.Undefined.INSTANCE;
                 case "boolean" -> Type.Boolean.INSTANCE;
@@ -103,7 +103,25 @@ public final class NullNarrowing {
                 case "string" -> Type.String.INSTANCE;
                 default -> null;
             };
-            if (type != null) narrow(key, type);
+            if (type == null || current == null) return;
+            if (current instanceof Type.Unknown) {
+                if (matching) narrow(key, type);
+            } else if (current instanceof Type.Nullable nullable) {
+                if (type instanceof Type.Undefined) {
+                    if (nullable.admitsUndefined() || nullable.inner() instanceof Type.Undefined) {
+                        if (matching) narrow(key, type);
+                        else if (nullable.inner() instanceof Type.Undefined) narrow(key, Type.Null.INSTANCE);
+                        else narrow(key, nullable.admitsNull()
+                            ? Types.withNullish(nullable.inner(), false, false) : nullable.inner());
+                    }
+                } else if (Types.equals(nullable.inner(), type)) {
+                    if (matching) narrow(key, type);
+                    else if (nullable.admitsNull() && nullable.admitsUndefined())
+                        narrow(key, Types.optionalRead(Type.Null.INSTANCE));
+                    else if (nullable.admitsNull()) narrow(key, Type.Null.INSTANCE);
+                    else if (nullable.admitsUndefined()) narrow(key, Type.Undefined.INSTANCE);
+                }
+            }
         }
     }
 
