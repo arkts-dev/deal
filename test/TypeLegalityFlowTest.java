@@ -184,10 +184,19 @@ public final class TypeLegalityFlowTest {
             function nominal(r:Record<string,unknown>):number{
               if(r.child instanceof C){return r["child"].n;}return 0;
             }
-            export function main():void{
+            function nullableReceiver(r:Record<string,unknown>|null):number{
+              if(r!==null&&typeof r.x==="number"){return r.x+1;}return 0;
+            }
+            function callable(a:((()=>number)|null)[],i:number):number{
+              if(a[i]!==null){return a[i]();}return 0;
+            }
+            function instance(a:(C|null)[],i:number):number{
+              if(a[i]!==null){return a[i].n;}return 0;
+            }
+            export function run():void{
               let c:C={n:7};let r:Record<string,unknown>={x:"abc",child:c};
               let a:(number|null)[]=[2,null];
-              if(record(r,"x")!==3||record(r,"missing")!==0||strings({x:"yes"},"x")!=="yes"||strings({},"x")!=="missing"||array(a,0)!==3||array(a,1)!==0||nominal(r)!==7){throw {name:"FAIL",message:"exact reads"};}
+              if(record(r,"x")!==3||record(r,"missing")!==0||strings({x:"yes"},"x")!=="yes"||strings({},"x")!=="missing"||array(a,0)!==3||array(a,1)!==0||nominal(r)!==7||nullableReceiver({x:2})!==3||callable([():number=>9,null],0)!==9||instance([c,null],0)!==7){throw {name:"FAIL",message:"exact reads"};}
               if(typeof r.x==="string"){let s:string=r["x"];if(s!=="abc"){throw {name:"FAIL",message:"key equivalence"};}}
               let caught=false;try{let wrong:Record<string,string>=opaque(r) as Record<string,string>;}catch(e){caught=true;}
               if(!caught){throw {name:"FAIL",message:"record descriptor preserved"};}
@@ -195,7 +204,41 @@ public final class TypeLegalityFlowTest {
               if(!caught){throw {name:"FAIL",message:"bounds retained"};}
               let xs:unknown[]=["text"];if(typeof xs[0]==="string"){let n=xs[0].length;if(n!==4){throw {name:"FAIL",message:"unknown element"};}}
             }
+            export function main():void{run();}
             """, "", "", root, null, List.of(Backend.values()), Map.of(), true);
+        verifyTransportedOracle(root);
+    }
+
+    private static void verifyTransportedOracle(Path root) throws Exception {
+        Path entry = root.resolve("JS/src/main.deal");
+        var invocation = deal.semantic.CompilerProfileProvider.resolve(
+            deal.semantic.ReleaseConfiguration.CURRENT_RELEASE_STATE,
+            deal.semantic.ReleaseConfiguration.releaseCapabilityRegistry());
+        var compiler = new deal.module.CompilationOrchestrator(entry, root.resolve("oracle"),
+            false, false, false, false, Backend.JS, null, List.of(entry.getParent()),
+            Path.of("").toAbsolutePath(), null, invocation);
+        if (!compiler.compile()) throw new AssertionError(compiler.diagnostics());
+        var project = compiler.producedProject();
+        var parsed = deal.semantic.ir.ContractSnapshotCanonicalizer.parseProject(
+            (deal.semantic.ir.CanonicalJson.Obj) deal.semantic.ir.CanonicalJson.parse(
+                deal.semantic.ir.SemanticIrValidator.toProjectText(project)));
+        var modules = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.LoweredModuleUnit>();
+        parsed.modules().forEach(raw -> {var unit = deal.semantic.ir.RawUnitMaterializer.materialize(raw); modules.put(unit.moduleId(), unit);});
+        var transported = new deal.semantic.ir.ExecutableLoweredProject(project.semanticProfile(),
+            parsed.interfaceIndex(), modules, project.entryModule(), parsed.classSeeds());
+        var facts = new deal.semantic.ir.SemanticIrValidator.ComparisonFacts(
+            project.interfaceIndex().interfaceIndexDigest(), project.semanticProfile(), invocation.capabilityRegistryHash());
+        for (var executable : List.of(project, transported)) {
+            var failure = deal.semantic.ir.SemanticIrValidator.validate(executable, facts);
+            if (failure.isPresent()) throw new AssertionError(failure);
+            var tables = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.StructuredBodyTable>();
+            var registries = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.ClassFactoryRegistry>();
+            executable.modules().forEach((id, unit) -> {tables.put(id, unit.bodyTable()); registries.put(id, unit.classFactories());});
+            var result = deal.semantic.SemanticOracle.invokeSyncEntry(executable, tables, registries,
+                new deal.semantic.SemanticOracle.HostResponder(){}, executable.entryModule(), "run", List.of());
+            if (!(result.terminal() instanceof deal.semantic.SemanticRuntimeModel.Terminal.Success))
+                throw new AssertionError("Narrowing Oracle: " + result.comparisonReport());
+        }
     }
 
     private static void primitiveTypeof() {
